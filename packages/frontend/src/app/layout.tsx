@@ -26,10 +26,10 @@ export const metadata: Metadata = {
   metadataBase: new URL("https://tokens.ci"),
   icons: {
     icon: [
-      { url: "/favicon-16x16.png", sizes: "16x16", type: "image/png" },
-      { url: "/favicon-32x32.png", sizes: "32x32", type: "image/png" },
+      { url: "/favicon-16x16.png?v=2", sizes: "16x16", type: "image/png" },
+      { url: "/favicon-32x32.png?v=2", sizes: "32x32", type: "image/png" },
     ],
-    apple: "/apple-icon.png",
+    apple: "/apple-icon.png?v=2",
   },
   manifest: "/site.webmanifest",
   openGraph: {
@@ -40,7 +40,7 @@ export const metadata: Metadata = {
     siteName: "Tokens",
     images: [
       {
-        url: "https://tokens.ci/og-image.png",
+        url: "https://tokens.ci/og.png",
         width: 1200,
         height: 630,
         alt: "Tokens - AI Token Usage Tracker",
@@ -51,7 +51,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: "Tokens - AI Token Usage Tracker & Leaderboard",
     description: "Track, visualize, and compete on AI coding assistant token usage across Claude Code, Cursor, OpenCode, Codex, Gemini, Kimi, and Qwen.",
-    images: ["https://tokens.ci/og-image.png"],
+    images: ["https://tokens.ci/og.png"],
   },
 };
 

@@ -40,21 +40,10 @@ function MoonIcon({ size = 18 }: { size?: number }) {
 }
 
 function BrandMark({ size = 28 }: { size?: number }) {
-  // The Tokens mark: three ascending bars (matching the brand icon used on the
-  // embed cards). Reads as "usage growth / leaderboard" and stays crisp small.
+  // The Tokens brand mark (transparent-background circular badge).
   return (
-    <svg width={size} height={size} viewBox="0 0 28 28" fill="none" aria-hidden="true" className="shrink-0">
-      <defs>
-        <linearGradient id="tk-brand" x1="0" y1="0" x2="28" y2="28" gradientUnits="userSpaceOnUse">
-          <stop stopColor="#3B8DFF" />
-          <stop offset="1" stopColor="#0F5FE0" />
-        </linearGradient>
-      </defs>
-      <rect width="28" height="28" rx="8" fill="url(#tk-brand)" />
-      <rect x="6.5" y="15" width="3.6" height="6.5" rx="1.8" fill="#fff" fillOpacity="0.6" />
-      <rect x="12.2" y="10.5" width="3.6" height="11" rx="1.8" fill="#fff" />
-      <rect x="17.9" y="7.5" width="3.6" height="14" rx="1.8" fill="#fff" fillOpacity="0.82" />
-    </svg>
+    // eslint-disable-next-line @next/next/no-img-element
+    <img src="/brand-logo.png" alt="Tokens" width={size} height={size} className="shrink-0" />
   );
 }
 

@@ -35,7 +35,7 @@ export async function generateMetadata({ params }: { params: Promise<{ username:
       siteName: 'Tokens',
       images: [
         {
-          url: 'https://tokens.ci/og-image.png',
+          url: 'https://tokens.ci/og.png',
           width: 1200,
           height: 630,
           alt: `${username}'s Token Usage on Tokens`,
@@ -45,7 +45,7 @@ export async function generateMetadata({ params }: { params: Promise<{ username:
     twitter: {
       card: 'summary_large_image',
       title: `@${username}'s Token Usage | Tokens`,
-      images: ['https://tokens.ci/og-image.png'],
+      images: ['https://tokens.ci/og.png'],
     },
   };
 }
