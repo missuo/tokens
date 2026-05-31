@@ -390,19 +390,23 @@ impl App {
             provider
         };
         let lookup_key = super::colors::model_shade_key(provider, model);
-        self.model_shade_map
+        let color = self
+            .model_shade_map
             .get(&lookup_key)
             .copied()
-            .unwrap_or_else(|| get_provider_shade(provider, 0))
+            .unwrap_or_else(|| get_provider_shade(provider, 0));
+        self.theme.color(color)
     }
 
     pub fn model_color(&self, model: &str) -> Color {
         let provider = get_provider_from_model(model);
         let lookup_key = super::colors::model_shade_key(provider, model);
-        self.model_shade_map
+        let color = self
+            .model_shade_map
             .get(&lookup_key)
             .copied()
-            .unwrap_or_else(|| get_model_color(model))
+            .unwrap_or_else(|| get_model_color(model));
+        self.theme.color(color)
     }
 
     pub fn has_visible_data(&self) -> bool {
@@ -3227,11 +3231,11 @@ mod tests {
 
         assert_eq!(
             app.model_color_for("anthropic", "sonnet-shared"),
-            get_provider_shade("anthropic", 0)
+            app.theme.color(get_provider_shade("anthropic", 0))
         );
         assert_eq!(
             app.model_color_for("openai", "sonnet-shared"),
-            get_provider_shade("openai", 0)
+            app.theme.color(get_provider_shade("openai", 0))
         );
         assert_ne!(
             app.model_color_for("anthropic", "sonnet-shared"),

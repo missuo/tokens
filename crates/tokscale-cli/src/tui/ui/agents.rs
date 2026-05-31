@@ -34,6 +34,7 @@ pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
     let theme_accent = app.theme.accent;
     let theme_muted = app.theme.muted;
     let theme_selection = app.theme.selection;
+    let striped_row_style = app.theme.striped_row_style();
 
     let agents = app.get_sorted_agents();
     if agents.is_empty() {
@@ -136,7 +137,7 @@ pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
             let row_style = if is_selected {
                 Style::default().bg(theme_selection)
             } else if is_striped {
-                Style::default().bg(Color::Rgb(20, 24, 30))
+                striped_row_style
             } else {
                 Style::default()
             };

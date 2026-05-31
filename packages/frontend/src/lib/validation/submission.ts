@@ -8,6 +8,7 @@
 
 import { createHash } from "node:crypto";
 import { z } from "zod";
+import { SUPPORTED_CLIENT_TYPES } from "../types";
 
 // ============================================================================
 // SCHEMAS
@@ -50,32 +51,7 @@ const ClientContributionProvenanceSchema = z.object({
   modelCount: NonNegativeIntegerSchema,
 });
 
-const SUPPORTED_SOURCES = [
-  "opencode",
-  "claude",
-  "codex",
-  "copilot",
-  "gemini",
-  "cursor",
-  "amp",
-  "codebuff",
-  "droid",
-  "openclaw",
-  "hermes",
-  "pi",
-  "kimi",
-  "qwen",
-  "roocode",
-  "kilo",
-  "mux",
-  "crush",
-  "goose",
-  "antigravity",
-  "kiro",
-  "zed",
-  "synthetic",
-] as const;
-const SourceSchema = z.enum(SUPPORTED_SOURCES);
+const SourceSchema = z.enum(SUPPORTED_CLIENT_TYPES);
 
 const ClientContributionSchema = z.object({
   client: SourceSchema,

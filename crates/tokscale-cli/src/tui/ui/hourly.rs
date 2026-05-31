@@ -5,7 +5,7 @@ use ratatui::widgets::{
 };
 
 use super::hourly_profile;
-use super::widgets::{format_cache_hit_rate, format_cost, format_tokens};
+use super::widgets::{format_cache_hit_rate, format_cost, format_cost_per_million, format_tokens};
 use crate::tui::app::{App, HourlyViewMode, SortDirection, SortField};
 
 pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
@@ -51,6 +51,12 @@ fn render_table(frame: &mut Frame, app: &mut App, area: Rect) {
     let selected_index = app.selected_index;
     let theme_accent = app.theme.accent;
     let theme_selection = app.theme.selection;
+    let metric_input_style = app.theme.metric_input_style();
+    let metric_output_style = app.theme.metric_output_style();
+    let metric_cache_read_style = app.theme.metric_cache_read_style();
+    let metric_cache_write_style = app.theme.metric_cache_write_style();
+    let current_row_style = app.theme.current_row_style();
+    let striped_row_style = app.theme.striped_row_style();
     let now = Local::now().naive_local();
     let current_hour = now.date().and_hms_opt(now.hour(), 0, 0).unwrap_or(now);
 
@@ -65,12 +71,12 @@ fn render_table(frame: &mut Frame, app: &mut App, area: Rect) {
     } else if has_turn_data {
         vec![
             "Hour", "Source", "Turn", "Msgs", "Input", "Output", "Cache R", "Cache W", "Cache×",
-            "Total", "Cost",
+            "Total", "Cost", "Cost/1M",
         ]
     } else {
         vec![
             "Hour", "Source", "Msgs", "Input", "Output", "Cache R", "Cache W", "Cache×", "Total",
-            "Cost",
+            "Cost", "Cost/1M",
         ]
     };
 
@@ -200,14 +206,12 @@ fn render_table(frame: &mut Frame, app: &mut App, area: Rect) {
                 }
                 cells.extend([
                     Cell::from(hour.message_count.to_string()),
-                    Cell::from(format_tokens(hour.tokens.input))
-                        .style(Style::default().fg(Color::Rgb(100, 200, 100))),
-                    Cell::from(format_tokens(hour.tokens.output))
-                        .style(Style::default().fg(Color::Rgb(200, 100, 100))),
+                    Cell::from(format_tokens(hour.tokens.input)).style(metric_input_style),
+                    Cell::from(format_tokens(hour.tokens.output)).style(metric_output_style),
                     Cell::from(format_tokens(hour.tokens.cache_read))
-                        .style(Style::default().fg(Color::Rgb(100, 150, 200))),
+                        .style(metric_cache_read_style),
                     Cell::from(format_tokens(hour.tokens.cache_write))
-                        .style(Style::default().fg(Color::Rgb(200, 150, 100))),
+                        .style(metric_cache_write_style),
                     Cell::from(format_cache_hit_rate(
                         hour.tokens.cache_read,
                         hour.tokens.input,
@@ -216,6 +220,8 @@ fn render_table(frame: &mut Frame, app: &mut App, area: Rect) {
                     .style(Style::default().fg(Color::Cyan)),
                     Cell::from(format_tokens(hour.tokens.total())),
                     Cell::from(format_cost(hour.cost)).style(Style::default().fg(Color::Green)),
+                    Cell::from(format_cost_per_million(hour.cost, hour.tokens.total()))
+                        .style(Style::default().fg(Color::Rgb(150, 200, 150))),
                 ]);
                 cells
             };
@@ -223,9 +229,9 @@ fn render_table(frame: &mut Frame, app: &mut App, area: Rect) {
             let row_style = if is_selected {
                 Style::default().bg(theme_selection)
             } else if is_current {
-                Style::default().bg(Color::Rgb(28, 42, 34))
+                current_row_style
             } else if is_striped {
-                Style::default().bg(Color::Rgb(20, 24, 30))
+                striped_row_style
             } else {
                 Style::default()
             };
@@ -266,6 +272,7 @@ fn render_table(frame: &mut Frame, app: &mut App, area: Rect) {
             Constraint::Length(8),
             Constraint::Length(10),
             Constraint::Length(10),
+            Constraint::Length(10),
         ]
     } else {
         vec![
@@ -277,6 +284,7 @@ fn render_table(frame: &mut Frame, app: &mut App, area: Rect) {
             Constraint::Length(10),
             Constraint::Length(10),
             Constraint::Length(8),
+            Constraint::Length(10),
             Constraint::Length(10),
             Constraint::Length(10),
         ]

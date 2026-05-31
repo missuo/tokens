@@ -2,6 +2,10 @@ import { getSession, getSessionFromHeader, type SessionUser } from "./session";
 
 const MUTATING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
+interface GetSessionFromRequestOptions {
+  allowAuthorizationHeader?: boolean;
+}
+
 function getAllowedOrigins(): string[] {
   const env = process.env.CSRF_ALLOWED_ORIGINS;
   if (env) {
@@ -10,10 +14,13 @@ function getAllowedOrigins(): string[] {
   return ["https://tokens.ci", "http://localhost:3000"];
 }
 
-export async function getSessionFromRequest(request: Request): Promise<SessionUser | null> {
+export async function getSessionFromRequest(
+  request: Request,
+  options: GetSessionFromRequestOptions = {}
+): Promise<SessionUser | null> {
   const authHeader = request.headers.get("Authorization");
 
-  if (authHeader) {
+  if (authHeader && options.allowAuthorizationHeader !== false) {
     return getSessionFromHeader(request);
   }
 

@@ -347,7 +347,7 @@ tokscale --client opencode,claude
 # Repeated: same effect, useful with shell aliases
 tokscale -c opencode -c claude
 
-# Cursor IDE uses Tokscale's API cache; run login + sync first
+# Cursor IDE uses Tokscale's API cache; run login + sync --json first
 tokscale --client cursor
 
 # Synthetic (synthetic.new) is detected from other agent sessions
@@ -514,7 +514,7 @@ Setup:
    - Network tab: make any request to `cursor.com/api/*`, then copy the value after `WorkosCursorSessionToken=` from the `Cookie` request header.
    - Application tab: open Cookies -> `https://www.cursor.com`, then copy the `WorkosCursorSessionToken` value.
 3. Run `tokscale cursor login --name work` and paste the token.
-4. Run `tokscale cursor sync` to populate `~/.config/tokscale/cursor-cache/usage.csv`.
+4. Run `tokscale cursor sync --json` to populate `~/.config/tokscale/cursor-cache/usage.csv`.
 5. Run `tokscale --client cursor` or any report command.
 
 Treat the session token like a password. It is stored locally in `~/.config/tokscale/cursor-credentials.json`.
@@ -531,7 +531,7 @@ tokscale cursor status
 tokscale cursor accounts
 
 # Manually refresh cached Cursor usage
-tokscale cursor sync
+tokscale cursor sync --json
 
 # Switch active account (controls which account syncs to cursor-cache/usage.csv)
 tokscale cursor switch work

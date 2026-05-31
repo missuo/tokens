@@ -3002,9 +3002,9 @@ fn cursor_setup_warning_for_wrapped(
     }
 
     let action = if cursor_logged_in {
-        "run `tokens cursor sync`"
+        "run `tokens cursor sync --json`"
     } else {
-        "run `tokens cursor login` and `tokens cursor sync`"
+        "run `tokens cursor login` and `tokens cursor sync --json`"
     };
 
     Some(format!(
@@ -3020,14 +3020,14 @@ mod cursor_setup_warning_tests {
     fn wrapped_cursor_warning_suggests_login_when_not_authenticated() {
         let warning = cursor_setup_warning_for_wrapped(true, false, false).unwrap();
         assert!(warning.contains("tokens cursor login"));
-        assert!(warning.contains("tokens cursor sync"));
+        assert!(warning.contains("tokens cursor sync --json"));
     }
 
     #[test]
     fn wrapped_cursor_warning_suggests_sync_only_when_authenticated() {
         let warning = cursor_setup_warning_for_wrapped(true, false, true).unwrap();
         assert!(!warning.contains("tokens cursor login"));
-        assert!(warning.contains("tokens cursor sync"));
+        assert!(warning.contains("tokens cursor sync --json"));
     }
 
     #[test]

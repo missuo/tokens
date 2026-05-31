@@ -7,6 +7,7 @@ use super::utils::file_modified_timestamp_ms;
 use super::UnifiedMessage;
 use crate::TokenBreakdown;
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 
@@ -92,6 +93,7 @@ pub fn parse_kimi_file(path: &Path) -> Vec<UnifiedMessage> {
 
     let reader = BufReader::new(file);
     let mut messages: Vec<UnifiedMessage> = Vec::new();
+    let mut keyed_indices: HashMap<String, usize> = HashMap::new();
 
     for line in reader.lines() {
         let line = match line {
@@ -153,7 +155,7 @@ pub fn parse_kimi_file(path: &Path) -> Vec<UnifiedMessage> {
 
         let dedup_key = payload.message_id;
 
-        messages.push(UnifiedMessage::new_with_dedup(
+        let message = UnifiedMessage::new_with_dedup(
             "kimi",
             model.clone(),
             DEFAULT_PROVIDER,
@@ -169,10 +171,47 @@ pub fn parse_kimi_file(path: &Path) -> Vec<UnifiedMessage> {
             },
             0.0,
             dedup_key,
-        ));
+        );
+        push_or_replace_status_update(&mut messages, &mut keyed_indices, message);
     }
 
     messages
+}
+
+fn should_replace_status_update(existing: &UnifiedMessage, candidate: &UnifiedMessage) -> bool {
+    let existing_total = existing.tokens.total();
+    let candidate_total = candidate.tokens.total();
+
+    candidate_total > existing_total
+        || (candidate_total == existing_total && candidate.timestamp >= existing.timestamp)
+}
+
+fn push_or_replace_status_update(
+    messages: &mut Vec<UnifiedMessage>,
+    keyed_indices: &mut HashMap<String, usize>,
+    message: UnifiedMessage,
+) {
+    let dedup_key = message
+        .dedup_key
+        .as_ref()
+        .filter(|key| !key.is_empty())
+        .cloned();
+
+    let Some(dedup_key) = dedup_key else {
+        messages.push(message);
+        return;
+    };
+
+    if let Some(index) = keyed_indices.get(&dedup_key).copied() {
+        if should_replace_status_update(&messages[index], &message) {
+            messages[index] = message;
+        }
+        return;
+    }
+
+    let index = messages.len();
+    messages.push(message);
+    keyed_indices.insert(dedup_key, index);
 }
 
 #[cfg(test)]
@@ -289,6 +328,41 @@ mod tests {
         assert_eq!(messages[0].tokens.output, 205);
         assert_eq!(messages[0].tokens.cache_read, 4864);
         assert_eq!(messages[0].tokens.cache_write, 0);
+    }
+
+    #[test]
+    fn test_parse_kimi_deduplicates_repeated_status_updates_by_message_id() {
+        let content = r#"{"type": "metadata", "protocol_version": "1.3"}
+{"timestamp": 1770983410.0, "message": {"type": "StatusUpdate", "payload": {"token_usage": {"input_other": 100, "output": 10, "input_cache_read": 0, "input_cache_creation": 0}, "message_id": "msg-progressive"}}}
+{"timestamp": 1770983420.0, "message": {"type": "StatusUpdate", "payload": {"token_usage": {"input_other": 120, "output": 30, "input_cache_read": 5, "input_cache_creation": 0}, "message_id": "msg-progressive"}}}"#;
+        let file = create_test_file(content);
+
+        let messages = parse_kimi_file(file.path());
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].dedup_key.as_deref(), Some("msg-progressive"));
+        assert_eq!(messages[0].tokens.input, 120);
+        assert_eq!(messages[0].tokens.output, 30);
+        assert_eq!(messages[0].tokens.cache_read, 5);
+        assert_eq!(messages[0].timestamp, 1770983420000);
+    }
+
+    #[test]
+    fn test_parse_kimi_keeps_distinct_and_missing_message_ids_separate() {
+        let content = r#"{"type": "metadata", "protocol_version": "1.3"}
+{"timestamp": 1770983410.0, "message": {"type": "StatusUpdate", "payload": {"token_usage": {"input_other": 10, "output": 1, "input_cache_read": 0, "input_cache_creation": 0}, "message_id": "msg-1"}}}
+{"timestamp": 1770983420.0, "message": {"type": "StatusUpdate", "payload": {"token_usage": {"input_other": 20, "output": 2, "input_cache_read": 0, "input_cache_creation": 0}, "message_id": "msg-2"}}}
+{"timestamp": 1770983430.0, "message": {"type": "StatusUpdate", "payload": {"token_usage": {"input_other": 30, "output": 3, "input_cache_read": 0, "input_cache_creation": 0}}}}
+{"timestamp": 1770983440.0, "message": {"type": "StatusUpdate", "payload": {"token_usage": {"input_other": 40, "output": 4, "input_cache_read": 0, "input_cache_creation": 0}}}}"#;
+        let file = create_test_file(content);
+
+        let messages = parse_kimi_file(file.path());
+
+        assert_eq!(messages.len(), 4);
+        assert_eq!(messages[0].dedup_key.as_deref(), Some("msg-1"));
+        assert_eq!(messages[1].dedup_key.as_deref(), Some("msg-2"));
+        assert!(messages[2].dedup_key.is_none());
+        assert!(messages[3].dedup_key.is_none());
     }
 
     #[test]

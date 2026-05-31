@@ -1942,6 +1942,16 @@ mod tests {
             },
         );
         m.insert(
+            "moonshotai/kimi-k2.6".into(),
+            ModelPricing {
+                input_cost_per_token: Some(9.5e-7),
+                output_cost_per_token: Some(0.000004),
+                cache_read_input_token_cost: None,
+                cache_creation_input_token_cost: None,
+                ..Default::default()
+            },
+        );
+        m.insert(
             "moonshotai/kimi-k2-thinking".into(),
             ModelPricing {
                 input_cost_per_token: Some(4e-7),
@@ -2190,6 +2200,39 @@ mod tests {
         let result = lookup.lookup("kimi-k2.5-free").unwrap();
         assert_eq!(result.matched_key, "moonshotai/kimi-k2.5");
         assert_eq!(result.source, "OpenRouter");
+    }
+
+    #[test]
+    fn test_opencode_zen_kimi_k2_6_aliases() {
+        let lookup = create_lookup();
+        for model_id in ["k2p6", "k2-p6", "kimi-k2p6", "Kimi-K2.6"] {
+            let result = lookup.lookup(model_id).unwrap();
+            assert_eq!(result.matched_key, "moonshotai/kimi-k2.6");
+            assert_eq!(result.source, "OpenRouter");
+            assert_eq!(result.pricing.input_cost_per_token, Some(9.5e-7));
+            assert_eq!(result.pricing.output_cost_per_token, Some(0.000004));
+        }
+    }
+
+    #[test]
+    fn test_opencode_zen_kimi_k2_6_provider_hint_from_kimi_for_coding() {
+        let lookup = create_lookup();
+        let result = lookup
+            .lookup_with_provider("k2p6", Some("kimi-for-coding"))
+            .unwrap();
+        assert_eq!(result.matched_key, "moonshotai/kimi-k2.6");
+        assert_eq!(result.source, "OpenRouter");
+    }
+
+    #[test]
+    fn test_opencode_zen_kimi_k2_5_aliases_unchanged() {
+        let lookup = create_lookup();
+
+        let raw_k2p5 = lookup.lookup("k2p5").unwrap();
+        assert_eq!(raw_k2p5.matched_key, "moonshotai/kimi-k2-thinking");
+
+        let dotted = lookup.lookup("kimi-k2.5").unwrap();
+        assert_eq!(dotted.matched_key, "moonshotai/kimi-k2.5");
     }
 
     // =========================================================================

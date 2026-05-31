@@ -10,7 +10,7 @@ use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
-const CACHE_SCHEMA_VERSION: u32 = 14;
+const CACHE_SCHEMA_VERSION: u32 = 15;
 const CACHE_FILENAME: &str = "source-message-cache.bin";
 const CACHE_LOCK_FILENAME: &str = "source-message-cache.lock";
 const MAX_CACHE_FILE_BYTES: u64 = 256 * 1024 * 1024;
@@ -419,7 +419,9 @@ impl SourceMessageCache {
                 .unwrap_or_default();
 
         for path in &self.deleted_paths {
-            merged_entries.remove(path);
+            if !path.to_path_buf().exists() {
+                merged_entries.remove(path);
+            }
         }
         for path in &self.dirty_keys {
             if let Some(entry) = self.entries.get(path) {
@@ -720,20 +722,24 @@ mod tests {
         Option<std::ffi::OsString>,
         Option<std::ffi::OsString>,
         Option<std::ffi::OsString>,
+        Option<std::ffi::OsString>,
     ) {
         let prev_home = std::env::var_os("HOME");
         let prev_xdg_config = std::env::var_os("XDG_CONFIG_HOME");
         let prev_xdg_cache = std::env::var_os("XDG_CACHE_HOME");
+        let prev_override = std::env::var_os("TOKSCALE_CONFIG_DIR");
         unsafe {
             std::env::set_var("HOME", temp_home);
             std::env::set_var("XDG_CONFIG_HOME", temp_home.join(".config"));
             std::env::set_var("XDG_CACHE_HOME", temp_home.join(".cache"));
+            std::env::remove_var("TOKSCALE_CONFIG_DIR");
         }
-        (prev_home, prev_xdg_config, prev_xdg_cache)
+        (prev_home, prev_xdg_config, prev_xdg_cache, prev_override)
     }
 
     fn restore_cache_env(
         prev: (
+            Option<std::ffi::OsString>,
             Option<std::ffi::OsString>,
             Option<std::ffi::OsString>,
             Option<std::ffi::OsString>,
@@ -742,6 +748,7 @@ mod tests {
         restore_env_var("HOME", prev.0);
         restore_env_var("XDG_CONFIG_HOME", prev.1);
         restore_env_var("XDG_CACHE_HOME", prev.2);
+        restore_env_var("TOKSCALE_CONFIG_DIR", prev.3);
     }
 
     fn write_temp_file(content: &[u8]) -> NamedTempFile {
@@ -1100,6 +1107,82 @@ mod tests {
         }
 
         restore_env_var("HOME", original_home);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_save_if_dirty_preserves_recreated_path_from_concurrent_writer() {
+        let temp_home = TempDir::new().unwrap();
+        let prev_env = sandbox_cache_env(temp_home.path());
+
+        {
+            let source_dir = TempDir::new().unwrap();
+            let path = source_dir.path().join("session.jsonl");
+            std::fs::write(&path, b"{\"id\":\"old\"}\n").unwrap();
+
+            let mut seed = SourceMessageCache::default();
+            seed.insert(CachedSourceEntry::new(
+                &path,
+                SourceFingerprint::from_path(&path).unwrap(),
+                vec![UnifiedMessage::new(
+                    "client",
+                    "gpt-5",
+                    "provider",
+                    "old-session",
+                    1,
+                    TokenBreakdown {
+                        input: 1,
+                        output: 0,
+                        cache_read: 0,
+                        cache_write: 0,
+                        reasoning: 0,
+                    },
+                    0.0,
+                )],
+                Vec::new(),
+                None,
+            ));
+            seed.save_if_dirty();
+
+            let mut stale_deleter = SourceMessageCache::load();
+            std::fs::remove_file(&path).unwrap();
+            stale_deleter.prune_missing_files();
+
+            std::fs::write(&path, b"{\"id\":\"fresh\"}\n").unwrap();
+            let mut fresh_writer = SourceMessageCache::load();
+            fresh_writer.insert(CachedSourceEntry::new(
+                &path,
+                SourceFingerprint::from_path(&path).unwrap(),
+                vec![UnifiedMessage::new(
+                    "client",
+                    "gpt-5",
+                    "provider",
+                    "fresh-session",
+                    2,
+                    TokenBreakdown {
+                        input: 2,
+                        output: 0,
+                        cache_read: 0,
+                        cache_write: 0,
+                        reasoning: 0,
+                    },
+                    0.0,
+                )],
+                Vec::new(),
+                None,
+            ));
+            fresh_writer.save_if_dirty();
+
+            stale_deleter.save_if_dirty();
+
+            let loaded = SourceMessageCache::load();
+            let entry = loaded
+                .get(&path)
+                .expect("recreated source cache entry should survive stale delete");
+            assert_eq!(entry.messages[0].session_id, "fresh-session");
+        }
+
+        restore_cache_env(prev_env);
     }
 
     #[test]

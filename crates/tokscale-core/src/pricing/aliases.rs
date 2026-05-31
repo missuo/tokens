@@ -8,6 +8,9 @@ static MODEL_ALIASES: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|| {
     m.insert("bigpickle", "glm-4.7");
     m.insert("k2p5", "kimi-k2-thinking");
     m.insert("k2-p5", "kimi-k2-thinking");
+    m.insert("k2p6", "kimi-k2.6");
+    m.insert("k2-p6", "kimi-k2.6");
+    m.insert("kimi-k2p6", "kimi-k2.6");
     m.insert("kimi-k2.5-thinking", "kimi-k2-thinking");
     m.insert("kimi-for-coding", "kimi-k2.5");
 
@@ -84,5 +87,16 @@ mod tests {
             resolve_alias("anthropic/claude-4-6-sonnet"),
             Some("claude-sonnet-4-6")
         );
+    }
+
+    #[test]
+    fn resolves_kimi_k2p6_aliases_without_regressing_k2p5() {
+        assert_eq!(resolve_alias("k2p6"), Some("kimi-k2.6"));
+        assert_eq!(resolve_alias("k2-p6"), Some("kimi-k2.6"));
+        assert_eq!(resolve_alias("kimi-k2p6"), Some("kimi-k2.6"));
+        assert_eq!(resolve_alias("KIMI-K2P6"), Some("kimi-k2.6"));
+
+        assert_eq!(resolve_alias("k2p5"), Some("kimi-k2-thinking"));
+        assert_eq!(resolve_alias("k2-p5"), Some("kimi-k2-thinking"));
     }
 }

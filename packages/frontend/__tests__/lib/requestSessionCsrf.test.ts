@@ -146,4 +146,56 @@ describe("getSessionFromRequest — CSRF origin check (B6)", () => {
     expect(mockState.getSessionFromHeader).toHaveBeenCalledTimes(1);
     expect(mockState.getSession).not.toHaveBeenCalled();
   });
+
+  it("does not resolve Authorization header sessions when bearer auth is disabled", async () => {
+    mockState.getSessionFromHeader.mockResolvedValue(validUser);
+    mockState.getSession.mockResolvedValue(null);
+
+    const result = await getSessionFromRequest(
+      makeRequest("POST", {
+        Origin: "http://localhost:3000",
+        Authorization: "Bearer tt_sometoken",
+      }),
+      { allowAuthorizationHeader: false }
+    );
+
+    expect(result).toBeNull();
+    expect(mockState.getSessionFromHeader).not.toHaveBeenCalled();
+    expect(mockState.getSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("allows cookie sessions when bearer auth is disabled and Origin is allowed", async () => {
+    mockState.getSession.mockResolvedValue(validUser);
+
+    const result = await getSessionFromRequest(
+      makeRequest("POST", { Origin: "http://localhost:3000" }),
+      { allowAuthorizationHeader: false }
+    );
+
+    expect(result).toEqual(validUser);
+    expect(mockState.getSessionFromHeader).not.toHaveBeenCalled();
+    expect(mockState.getSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores Authorization headers when bearer auth is disabled and still uses valid cookies", async () => {
+    mockState.getSessionFromHeader.mockResolvedValue({
+      id: "token-user",
+      username: "token-user",
+      displayName: null,
+      avatarUrl: null,
+    });
+    mockState.getSession.mockResolvedValue(validUser);
+
+    const result = await getSessionFromRequest(
+      makeRequest("POST", {
+        Origin: "http://localhost:3000",
+        Authorization: "Bearer tt_sometoken",
+      }),
+      { allowAuthorizationHeader: false }
+    );
+
+    expect(result).toEqual(validUser);
+    expect(mockState.getSessionFromHeader).not.toHaveBeenCalled();
+    expect(mockState.getSession).toHaveBeenCalledTimes(1);
+  });
 });

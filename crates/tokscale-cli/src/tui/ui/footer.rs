@@ -281,7 +281,7 @@ fn render_status_row(frame: &mut Frame, app: &App, area: Rect) {
     let mut spans: Vec<Span> = Vec::new();
 
     if app.data.loading {
-        let scanner_spans = get_scanner_spans(app.spinner_frame);
+        let scanner_spans = get_scanner_spans(app.spinner_frame, &app.theme);
         spans.extend(scanner_spans);
         spans.push(Span::raw(" "));
         spans.push(Span::styled(
@@ -295,7 +295,7 @@ fn render_status_row(frame: &mut Frame, app: &App, area: Rect) {
                 Style::default().fg(app.theme.muted),
             ));
         } else {
-            let scanner_spans = get_scanner_spans(app.spinner_frame);
+            let scanner_spans = get_scanner_spans(app.spinner_frame, &app.theme);
             spans.extend(scanner_spans);
             spans.push(Span::raw(" "));
             spans.push(Span::styled(

@@ -1666,11 +1666,11 @@ pub async fn get_hourly_report(options: ReportOptions) -> Result<HourlyReport, S
         clients
     });
 
-    let pricing = pricing::PricingService::get_or_init().await?;
+    let pricing = load_pricing_for_local_parse().await;
     let all_messages = parse_all_messages_with_pricing_with_env_strategy(
         &home_dir,
         &clients,
-        Some(&pricing),
+        pricing.as_deref(),
         options.use_env_roots,
         &options.scanner_settings,
     );
@@ -3386,6 +3386,83 @@ mod tests {
         assert_eq!(messages[0].client, "cursor");
         assert_eq!(messages[0].model_id, "Composer 1.5");
         assert!(messages[0].cost > 0.0);
+    }
+
+    fn write_kimi_repeated_status_fixture(source_home: &std::path::Path) {
+        let session_dir = source_home.join(".kimi/sessions/group-1/session-1");
+        std::fs::create_dir_all(&session_dir).unwrap();
+        std::fs::write(
+            session_dir.join("wire.jsonl"),
+            r#"{"type": "metadata", "protocol_version": "1.3"}
+{"timestamp": 1770983410.0, "message": {"type": "StatusUpdate", "payload": {"token_usage": {"input_other": 10, "output": 1, "input_cache_read": 0, "input_cache_creation": 0}, "message_id": "msg-progressive"}}}
+{"timestamp": 1770983420.0, "message": {"type": "StatusUpdate", "payload": {"token_usage": {"input_other": 20, "output": 2, "input_cache_read": 0, "input_cache_creation": 0}, "message_id": "msg-progressive"}}}
+{"timestamp": 1770983430.0, "message": {"type": "StatusUpdate", "payload": {"token_usage": {"input_other": 5, "output": 1, "input_cache_read": 0, "input_cache_creation": 0}, "message_id": "msg-distinct"}}}
+{"timestamp": 1770983440.0, "message": {"type": "StatusUpdate", "payload": {"token_usage": {"input_other": 7, "output": 1, "input_cache_read": 0, "input_cache_creation": 0}}}}
+{"timestamp": 1770983450.0, "message": {"type": "StatusUpdate", "payload": {"token_usage": {"input_other": 8, "output": 1, "input_cache_read": 0, "input_cache_creation": 0}}}}"#,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_parse_all_messages_with_pricing_kimi_deduplicates_repeated_status_updates() {
+        let cache_home = tempfile::TempDir::new().unwrap();
+        let source_home = tempfile::TempDir::new().unwrap();
+        let original_home = std::env::var("HOME").ok();
+        std::env::set_var("HOME", cache_home.path());
+
+        {
+            write_kimi_repeated_status_fixture(source_home.path());
+
+            let messages = parse_all_messages_with_pricing(
+                source_home.path().to_str().unwrap(),
+                &["kimi".to_string()],
+                None,
+            );
+
+            assert_eq!(messages.len(), 4);
+            assert_eq!(messages.iter().map(|m| m.tokens.input).sum::<i64>(), 40);
+            assert_eq!(messages.iter().map(|m| m.tokens.output).sum::<i64>(), 5);
+        }
+
+        match original_home {
+            Some(home) => std::env::set_var("HOME", home),
+            None => std::env::remove_var("HOME"),
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_parse_local_clients_kimi_deduplicates_repeated_status_updates() {
+        let cache_home = tempfile::TempDir::new().unwrap();
+        let source_home = tempfile::TempDir::new().unwrap();
+        let original_home = std::env::var("HOME").ok();
+        std::env::set_var("HOME", cache_home.path());
+
+        {
+            write_kimi_repeated_status_fixture(source_home.path());
+
+            let parsed = parse_local_clients(LocalParseOptions {
+                home_dir: Some(source_home.path().to_str().unwrap().to_string()),
+                use_env_roots: false,
+                clients: Some(vec!["kimi".to_string()]),
+                since: None,
+                until: None,
+                year: None,
+                scanner_settings: scanner::ScannerSettings::default(),
+            })
+            .unwrap();
+
+            assert_eq!(parsed.counts.get(ClientId::Kimi), 4);
+            assert_eq!(parsed.messages.len(), 4);
+            assert_eq!(parsed.messages.iter().map(|m| m.input).sum::<i64>(), 40);
+            assert_eq!(parsed.messages.iter().map(|m| m.output).sum::<i64>(), 5);
+        }
+
+        match original_home {
+            Some(home) => std::env::set_var("HOME", home),
+            None => std::env::remove_var("HOME"),
+        }
     }
 
     #[test]
@@ -5255,6 +5332,42 @@ mod tests {
         apply_pricing_if_available(&mut msg, Some(&pricing));
 
         assert_eq!(msg.cost, 0.2);
+    }
+
+    #[test]
+    fn test_apply_pricing_if_available_prices_kimi_k2p6_alias() {
+        let mut openrouter = HashMap::new();
+        openrouter.insert(
+            "moonshotai/kimi-k2.6".into(),
+            pricing::ModelPricing {
+                input_cost_per_token: Some(9.5e-7),
+                output_cost_per_token: Some(0.000004),
+                ..Default::default()
+            },
+        );
+        let pricing = pricing::PricingService::new(HashMap::new(), openrouter);
+
+        let mut msg = UnifiedMessage::new(
+            "kimi",
+            "k2p6",
+            "kimi-for-coding",
+            "session-1",
+            1_776_000_000_000,
+            TokenBreakdown {
+                input: 1_000_000,
+                output: 250_000,
+                cache_read: 0,
+                cache_write: 0,
+                reasoning: 0,
+            },
+            0.0,
+        );
+
+        apply_pricing_if_available(&mut msg, Some(&pricing));
+
+        let expected = 1_000_000.0 * 9.5e-7 + 250_000.0 * 0.000004;
+        assert!((msg.cost - expected).abs() < 1e-12);
+        assert!(msg.cost > 0.0);
     }
 
     #[test]

@@ -192,6 +192,8 @@ fn render_top_models(frame: &mut Frame, app: &mut App, area: Rect, items_per_pag
     let theme_muted = app.theme.muted;
     let theme_foreground = app.theme.foreground;
     let theme_selection = app.theme.selection;
+    let secondary_text_style = app.theme.secondary_text_style();
+    let subtle_text_style = app.theme.subtle_text_style();
     let scroll_offset = app.scroll_offset;
     let selected_index = app.selected_index;
     let is_narrow = app.is_narrow();
@@ -332,47 +334,29 @@ fn render_top_models(frame: &mut Frame, app: &mut App, area: Rect, items_per_pag
         let line2_spans = if is_narrow {
             vec![
                 Span::raw("  "),
-                Span::styled(
-                    format_tokens(model.tokens_input),
-                    Style::default().fg(Color::Rgb(170, 170, 170)),
-                ),
-                Span::styled("/", Style::default().fg(Color::Rgb(102, 102, 102))),
-                Span::styled(
-                    format_tokens(model.tokens_output),
-                    Style::default().fg(Color::Rgb(170, 170, 170)),
-                ),
-                Span::styled("/", Style::default().fg(Color::Rgb(102, 102, 102))),
-                Span::styled(
-                    format_tokens(model.tokens_cache_read),
-                    Style::default().fg(Color::Rgb(170, 170, 170)),
-                ),
-                Span::styled("/", Style::default().fg(Color::Rgb(102, 102, 102))),
+                Span::styled(format_tokens(model.tokens_input), secondary_text_style),
+                Span::styled("/", subtle_text_style),
+                Span::styled(format_tokens(model.tokens_output), secondary_text_style),
+                Span::styled("/", subtle_text_style),
+                Span::styled(format_tokens(model.tokens_cache_read), secondary_text_style),
+                Span::styled("/", subtle_text_style),
                 Span::styled(
                     format_tokens(model.tokens_cache_write),
-                    Style::default().fg(Color::Rgb(170, 170, 170)),
+                    secondary_text_style,
                 ),
             ]
         } else {
             vec![
-                Span::styled("  In: ", Style::default().fg(Color::Rgb(102, 102, 102))),
-                Span::styled(
-                    format_tokens(model.tokens_input),
-                    Style::default().fg(Color::Rgb(170, 170, 170)),
-                ),
-                Span::styled(" · Out: ", Style::default().fg(Color::Rgb(102, 102, 102))),
-                Span::styled(
-                    format_tokens(model.tokens_output),
-                    Style::default().fg(Color::Rgb(170, 170, 170)),
-                ),
-                Span::styled(" · CR: ", Style::default().fg(Color::Rgb(102, 102, 102))),
-                Span::styled(
-                    format_tokens(model.tokens_cache_read),
-                    Style::default().fg(Color::Rgb(170, 170, 170)),
-                ),
-                Span::styled(" · CW: ", Style::default().fg(Color::Rgb(102, 102, 102))),
+                Span::styled("  In: ", subtle_text_style),
+                Span::styled(format_tokens(model.tokens_input), secondary_text_style),
+                Span::styled(" · Out: ", subtle_text_style),
+                Span::styled(format_tokens(model.tokens_output), secondary_text_style),
+                Span::styled(" · CR: ", subtle_text_style),
+                Span::styled(format_tokens(model.tokens_cache_read), secondary_text_style),
+                Span::styled(" · CW: ", subtle_text_style),
                 Span::styled(
                     format_tokens(model.tokens_cache_write),
-                    Style::default().fg(Color::Rgb(170, 170, 170)),
+                    secondary_text_style,
                 ),
             ]
         };

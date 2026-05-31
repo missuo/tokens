@@ -5,8 +5,8 @@ use ratatui::widgets::{
 };
 
 use super::widgets::{
-    format_cache_hit_rate, format_cost, format_tokens, get_client_display_name,
-    get_provider_display_name,
+    format_cache_hit_rate, format_cost, format_cost_per_million, format_tokens,
+    get_client_display_name, get_provider_display_name,
 };
 use crate::tui::app::{App, SortDirection, SortField};
 
@@ -51,6 +51,12 @@ pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
     let selected_index = app.selected_index;
     let theme_accent = app.theme.accent;
     let theme_selection = app.theme.selection;
+    let metric_input_style = app.theme.metric_input_style();
+    let metric_output_style = app.theme.metric_output_style();
+    let metric_cache_read_style = app.theme.metric_cache_read_style();
+    let metric_cache_write_style = app.theme.metric_cache_write_style();
+    let current_row_style = app.theme.current_row_style();
+    let striped_row_style = app.theme.striped_row_style();
     let today = Local::now().date_naive();
 
     let header_cells = if is_very_narrow {
@@ -64,11 +70,12 @@ pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
     } else if has_turn_data {
         vec![
             "Date", "Turn", "Msgs", "Input", "Output", "Cache R", "Cache W", "Cache×", "Total",
-            "Cost",
+            "Cost", "Cost/1M",
         ]
     } else {
         vec![
             "Date", "Msgs", "Input", "Output", "Cache R", "Cache W", "Cache×", "Total", "Cost",
+            "Cost/1M",
         ]
     };
 
@@ -183,14 +190,12 @@ pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
                     }
                     cells.extend([
                         Cell::from(day.message_count.to_string()),
-                        Cell::from(format_tokens(day.tokens.input))
-                            .style(Style::default().fg(Color::Rgb(100, 200, 100))),
-                        Cell::from(format_tokens(day.tokens.output))
-                            .style(Style::default().fg(Color::Rgb(200, 100, 100))),
+                        Cell::from(format_tokens(day.tokens.input)).style(metric_input_style),
+                        Cell::from(format_tokens(day.tokens.output)).style(metric_output_style),
                         Cell::from(format_tokens(day.tokens.cache_read))
-                            .style(Style::default().fg(Color::Rgb(100, 150, 200))),
+                            .style(metric_cache_read_style),
                         Cell::from(format_tokens(day.tokens.cache_write))
-                            .style(Style::default().fg(Color::Rgb(200, 150, 100))),
+                            .style(metric_cache_write_style),
                         Cell::from(format_cache_hit_rate(
                             day.tokens.cache_read,
                             day.tokens.input,
@@ -199,6 +204,8 @@ pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
                         .style(Style::default().fg(Color::Cyan)),
                         Cell::from(format_tokens(day.tokens.total())),
                         Cell::from(format_cost(day.cost)).style(Style::default().fg(Color::Green)),
+                        Cell::from(format_cost_per_million(day.cost, day.tokens.total()))
+                            .style(Style::default().fg(Color::Rgb(150, 200, 150))),
                     ]);
                     cells
                 };
@@ -206,9 +213,9 @@ pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
             let row_style = if is_selected {
                 Style::default().bg(theme_selection)
             } else if is_today {
-                Style::default().bg(Color::Rgb(28, 42, 34))
+                current_row_style
             } else if is_striped {
-                Style::default().bg(Color::Rgb(20, 24, 30))
+                striped_row_style
             } else {
                 Style::default()
             };
@@ -246,6 +253,7 @@ pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
             Constraint::Length(8),
             Constraint::Length(10),
             Constraint::Length(10),
+            Constraint::Length(10),
         ]
     } else {
         vec![
@@ -256,6 +264,7 @@ pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
             Constraint::Length(10),
             Constraint::Length(10),
             Constraint::Length(8),
+            Constraint::Length(10),
             Constraint::Length(10),
             Constraint::Length(10),
         ]
@@ -327,6 +336,11 @@ fn render_detail(frame: &mut Frame, app: &mut App, area: Rect) {
     let theme_accent = app.theme.accent;
     let theme_muted = app.theme.muted;
     let theme_selection = app.theme.selection;
+    let metric_input_style = app.theme.metric_input_style();
+    let metric_output_style = app.theme.metric_output_style();
+    let metric_cache_read_style = app.theme.metric_cache_read_style();
+    let metric_cache_write_style = app.theme.metric_cache_write_style();
+    let striped_row_style = app.theme.striped_row_style();
 
     let header_cells = if is_very_narrow {
         vec!["Model", "Cost"]
@@ -425,14 +439,11 @@ fn render_detail(frame: &mut Frame, app: &mut App, area: Rect) {
                     Cell::from(get_client_display_name(row.source))
                         .style(Style::default().fg(theme_muted)),
                     Cell::from(row.messages.to_string()),
-                    Cell::from(format_tokens(row.tokens.input))
-                        .style(Style::default().fg(Color::Rgb(100, 200, 100))),
-                    Cell::from(format_tokens(row.tokens.output))
-                        .style(Style::default().fg(Color::Rgb(200, 100, 100))),
-                    Cell::from(format_tokens(row.tokens.cache_read))
-                        .style(Style::default().fg(Color::Rgb(100, 150, 200))),
+                    Cell::from(format_tokens(row.tokens.input)).style(metric_input_style),
+                    Cell::from(format_tokens(row.tokens.output)).style(metric_output_style),
+                    Cell::from(format_tokens(row.tokens.cache_read)).style(metric_cache_read_style),
                     Cell::from(format_tokens(row.tokens.cache_write))
-                        .style(Style::default().fg(Color::Rgb(200, 150, 100))),
+                        .style(metric_cache_write_style),
                     Cell::from(format_cache_hit_rate(
                         row.tokens.cache_read,
                         row.tokens.input,
@@ -447,7 +458,7 @@ fn render_detail(frame: &mut Frame, app: &mut App, area: Rect) {
             let row_style = if is_selected {
                 Style::default().bg(theme_selection)
             } else if is_striped {
-                Style::default().bg(Color::Rgb(20, 24, 30))
+                striped_row_style
             } else {
                 Style::default()
             };

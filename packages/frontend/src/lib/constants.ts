@@ -1,3 +1,5 @@
+import type { ClientType } from "./types";
+
 // 2D Canvas
 export const BOX_WIDTH = 10;
 export const BOX_MARGIN = 2;
@@ -24,7 +26,7 @@ export const DAY_LABELS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"
 export const MONTH_LABELS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 // Source configuration
-export const SOURCE_DISPLAY_NAMES: Record<string, string> = {
+export const SOURCE_DISPLAY_NAMES: Record<ClientType, string> = {
   opencode: "OpenCode",
   claude: "Claude Code",
   codex: "Codex CLI",
@@ -48,12 +50,13 @@ export const SOURCE_DISPLAY_NAMES: Record<string, string> = {
   goose: "Goose",
   antigravity: "Antigravity",
   zed: "Zed Agent",
+  trae: "Trae",
   synthetic: "Synthetic",
 };
 
 // Client logos from GitHub CDN (public repo)
 const GITHUB_CDN_BASE = "https://raw.githubusercontent.com/junhoyeo/tokscale/main/.github/assets";
-export const SOURCE_LOGOS: Record<string, string> = {
+export const SOURCE_LOGOS: Record<ClientType, string> = {
   opencode: `${GITHUB_CDN_BASE}/client-opencode.png`,
   claude: `${GITHUB_CDN_BASE}/client-claude.jpg`,
   codex: `${GITHUB_CDN_BASE}/client-openai.jpg`,
@@ -77,10 +80,11 @@ export const SOURCE_LOGOS: Record<string, string> = {
   goose: `${GITHUB_CDN_BASE}/client-goose.png`,
   antigravity: `${GITHUB_CDN_BASE}/client-antigravity.png`,
   zed: `${GITHUB_CDN_BASE}/client-zed.webp`,
+  trae: `${GITHUB_CDN_BASE}/client-trae.png`,
   synthetic: `${GITHUB_CDN_BASE}/client-synthetic.png`,
 };
 
-export const SOURCE_COLORS: Record<string, string> = {
+export const SOURCE_COLORS: Record<ClientType, string> = {
   opencode: "#00A8E8",
   claude: "#f97316",
   codex: "#3b82f6",
@@ -104,10 +108,11 @@ export const SOURCE_COLORS: Record<string, string> = {
   goose: "#64B4DC",
   antigravity: "#6366F1",
   zed: "#084CCF",
+  trae: "#00BFA5",
   synthetic: "#4ADE80",
 };
 
-export const SOURCE_TEXT_COLORS: Record<string, string> = {
+export const SOURCE_TEXT_COLORS: Partial<Record<ClientType, string>> = {
   droid: "#FFFFFF",
 };
 
