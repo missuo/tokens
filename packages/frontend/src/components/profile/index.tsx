@@ -5,7 +5,8 @@ import { Button } from "@heroui/react";
 import { toast } from "react-toastify";
 import { GraphContainer } from "@/components/GraphContainer";
 import type { TokenContributionData } from "@/lib/types";
-import { formatNumber, formatCurrency, formatDuration } from "@/lib/utils";
+import { formatNumber, formatCurrency, formatDuration, formatDateFull } from "@/lib/utils";
+import type { DailyContribution } from "@/lib/types";
 import { ProfileEmbedDialog } from "./ProfileEmbedDialog";
 
 export interface ProfileUser {
@@ -278,6 +279,110 @@ export function ProfileStats({ stats, favoriteModel }: ProfileStatsProps) {
           <p className="mt-1 truncate font-mono text-lg font-semibold text-foreground tabular-nums" title={item.value}>{item.value}</p>
         </div>
       ))}
+    </div>
+  );
+}
+
+const WEEKDAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+// Display order is Monday-first; each entry is the JS getDay() index + a compact axis label.
+const WEEKDAY_ORDER: { idx: number; short: string }[] = [
+  { idx: 1, short: "Mo" },
+  { idx: 2, short: "Tu" },
+  { idx: 3, short: "We" },
+  { idx: 4, short: "Th" },
+  { idx: 5, short: "Fr" },
+  { idx: 6, short: "Sa" },
+  { idx: 0, short: "Su" },
+];
+
+// Weekday of a "YYYY-MM-DD" calendar label, parsed at local midnight so the
+// result matches the labelled date regardless of the viewer's timezone.
+function weekdayIndexOf(date: string): number {
+  const [y, m, d] = date.split("-").map(Number);
+  return new Date(y, m - 1, d).getDay();
+}
+
+export interface ProfileHabitsProps {
+  contributions: DailyContribution[];
+}
+
+// "Coding Patterns" — fun, accurate stats derived purely from the per-day
+// contribution data: which weekday you ship the most on, and your single
+// biggest day. (Time-of-day isn't shown because the pipeline only stores
+// per-UTC-day totals, not hourly buckets.)
+export function ProfileHabits({ contributions }: ProfileHabitsProps) {
+  const weekdayTokens = [0, 0, 0, 0, 0, 0, 0];
+  let totalTokens = 0;
+  let biggestDay: DailyContribution | null = null;
+
+  for (const day of contributions) {
+    const tokens = day.totals.tokens;
+    if (tokens <= 0) continue;
+    weekdayTokens[weekdayIndexOf(day.date)] += tokens;
+    totalTokens += tokens;
+    if (!biggestDay || tokens > biggestDay.totals.tokens) biggestDay = day;
+  }
+
+  // No real activity yet — nothing meaningful to show.
+  if (totalTokens <= 0 || !biggestDay) return null;
+
+  const topWeekdayIdx = weekdayTokens.indexOf(Math.max(...weekdayTokens));
+  const topWeekdayTokens = weekdayTokens[topWeekdayIdx];
+  const topWeekdayShare = totalTokens > 0 ? (topWeekdayTokens / totalTokens) * 100 : 0;
+  const maxWeekdayTokens = topWeekdayTokens;
+
+  return (
+    <div className="rounded-2xl border border-line bg-surface p-4 sm:p-6">
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="text-sm font-semibold text-foreground">Coding Patterns</h3>
+        <span className="text-[11px] font-semibold tracking-wider text-muted uppercase">Last 12 months</span>
+      </div>
+
+      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+        {/* #2 — most-active weekday */}
+        <div className="rounded-xl border border-line bg-surface-secondary p-4">
+          <p className="text-[11px] font-semibold tracking-wider text-muted uppercase">Most productive day</p>
+          <p className="mt-1 text-lg font-semibold text-foreground">{WEEKDAY_NAMES[topWeekdayIdx]}</p>
+          <p className="mt-0.5 font-mono text-xs text-muted tabular-nums" title={topWeekdayTokens.toLocaleString()}>
+            {formatNumber(topWeekdayTokens)} tokens · {topWeekdayShare.toFixed(0)}% of total
+          </p>
+        </div>
+
+        {/* #3 — biggest single day */}
+        <div className="rounded-xl border border-line bg-surface-secondary p-4">
+          <p className="text-[11px] font-semibold tracking-wider text-muted uppercase">Biggest day</p>
+          <p className="mt-1 font-mono text-lg font-semibold text-accent tabular-nums" title={biggestDay.totals.tokens.toLocaleString()}>
+            {formatNumber(biggestDay.totals.tokens)} tokens
+          </p>
+          <p className="mt-0.5 font-mono text-xs text-muted tabular-nums">
+            {formatDateFull(biggestDay.date)} · {formatCurrency(biggestDay.totals.cost)}
+          </p>
+        </div>
+      </div>
+
+      {/* Weekday distribution */}
+      <div className="mt-4">
+        <p className="mb-2 text-[11px] font-semibold tracking-wider text-muted uppercase">Tokens by weekday</p>
+        <div className="flex items-end gap-1.5 sm:gap-2">
+          {WEEKDAY_ORDER.map(({ idx, short }) => {
+            const tokens = weekdayTokens[idx];
+            const isTop = idx === topWeekdayIdx;
+            const heightPct = maxWeekdayTokens > 0 ? Math.max((tokens / maxWeekdayTokens) * 100, tokens > 0 ? 6 : 2) : 2;
+            return (
+              <div key={idx} className="flex flex-1 flex-col items-center gap-1.5">
+                <div className="flex h-16 w-full items-end">
+                  <div
+                    className={`w-full rounded-md transition-all ${isTop ? "bg-accent" : "bg-foreground/15"}`}
+                    style={{ height: `${heightPct}%` }}
+                    title={`${WEEKDAY_NAMES[idx]}: ${formatNumber(tokens)} tokens`}
+                  />
+                </div>
+                <span className={`text-[10px] font-medium tabular-nums ${isTop ? "text-foreground" : "text-muted"}`}>{short}</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }

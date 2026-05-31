@@ -9,6 +9,7 @@ import {
   ProfileActivity,
   ProfileEmptyActivity,
   ProfileStats,
+  ProfileHabits,
   type ProfileUser,
   type ProfileStatsData,
   type ProfileTab,
@@ -169,6 +170,7 @@ const EARLY_ADOPTERS = ["code-yeongyu", "gtg7784", "qodot"];
                     stats={stats}
                     favoriteModel={data.modelUsage?.reduce((max, current) => (current.cost > max.cost ? current : max), data.modelUsage[0])?.model}
                   />
+                  <ProfileHabits contributions={data.contributions} />
                 </div>
               ) : (
                 <ProfileEmptyActivity />
