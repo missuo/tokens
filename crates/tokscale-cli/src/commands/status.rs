@@ -1,5 +1,6 @@
 use crate::{auth, device, paths};
 use anyhow::Result;
+use std::{fs, path::Path};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum StatusProcessKind {
@@ -62,6 +63,21 @@ struct StatusService {
     serve_pids: Vec<u32>,
     warm_tui_cache_pids: Vec<u32>,
     interval_minutes: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    scheduler: Option<StatusScheduler>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StatusScheduler {
+    kind: &'static str,
+    path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    interval_seconds: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    command: Option<String>,
+    scheduled_submit: bool,
+    legacy_keep_alive: bool,
 }
 
 #[derive(serde::Serialize)]
@@ -158,6 +174,192 @@ fn detect_status_processes() -> Vec<StatusProcess> {
     parse_status_processes(&String::from_utf8_lossy(&output.stdout))
 }
 
+fn command_has_token(command: &str, token: &str) -> bool {
+    command
+        .split_whitespace()
+        .any(|part| part.trim_matches('"') == token)
+}
+
+fn command_references_tokens_binary(command: &str) -> bool {
+    command.split_whitespace().any(|part| {
+        let part = part.trim_matches('"');
+        part == "tokens"
+            || part == "tokscale"
+            || part.ends_with("/tokens")
+            || part.ends_with("/tokscale")
+    })
+}
+
+fn command_is_tokens_submit(command: &str) -> bool {
+    command_references_tokens_binary(command) && command_has_token(command, "submit")
+}
+
+fn command_is_tokens_serve(command: &str) -> bool {
+    command_references_tokens_binary(command) && command_has_token(command, "serve")
+}
+
+fn extract_xml_strings(content: &str) -> Vec<String> {
+    let mut values = Vec::new();
+    let mut rest = content;
+    while let Some(start) = rest.find("<string>") {
+        rest = &rest[start + "<string>".len()..];
+        let Some(end) = rest.find("</string>") else {
+            break;
+        };
+        values.push(rest[..end].trim().to_string());
+        rest = &rest[end + "</string>".len()..];
+    }
+    values
+}
+
+fn extract_launchd_program_arguments(content: &str) -> Option<String> {
+    let (_, after_key) = content.split_once("<key>ProgramArguments</key>")?;
+    let (_, after_array) = after_key.split_once("<array>")?;
+    let (array, _) = after_array.split_once("</array>")?;
+    let args = extract_xml_strings(array);
+    (!args.is_empty()).then(|| args.join(" "))
+}
+
+fn extract_launchd_start_interval(content: &str) -> Option<u64> {
+    let (_, after_key) = content.split_once("<key>StartInterval</key>")?;
+    let (_, after_integer) = after_key.split_once("<integer>")?;
+    let (value, _) = after_integer.split_once("</integer>")?;
+    value.trim().parse().ok()
+}
+
+fn parse_systemd_duration_seconds(raw: &str) -> Option<u64> {
+    let value = raw.trim();
+    if let Some(minutes) = value.strip_suffix("min") {
+        return minutes.trim().parse::<u64>().ok().map(|m| m * 60);
+    }
+    if let Some(seconds) = value.strip_suffix('s') {
+        return seconds.trim().parse::<u64>().ok();
+    }
+    if let Some(hours) = value.strip_suffix('h') {
+        return hours.trim().parse::<u64>().ok().map(|h| h * 60 * 60);
+    }
+    value.parse().ok()
+}
+
+fn parse_systemd_key_value<'a>(content: &'a str, key: &str) -> Option<&'a str> {
+    content.lines().find_map(|line| {
+        let line = line.trim();
+        let (line_key, value) = line.split_once('=')?;
+        (line_key.trim() == key).then_some(value.trim())
+    })
+}
+
+fn parse_homebrew_launchd_scheduler(path: &str, content: &str) -> Option<StatusScheduler> {
+    let command = extract_launchd_program_arguments(content)?;
+    if !command_references_tokens_binary(&command) {
+        return None;
+    }
+    let interval_seconds = extract_launchd_start_interval(content);
+    let legacy_keep_alive =
+        content.contains("<key>KeepAlive</key>") || command_is_tokens_serve(&command);
+    let scheduled_submit = interval_seconds.is_some() && command_is_tokens_submit(&command);
+
+    Some(StatusScheduler {
+        kind: "homebrew-launchd",
+        path: path.to_string(),
+        interval_seconds,
+        command: Some(command),
+        scheduled_submit,
+        legacy_keep_alive,
+    })
+}
+
+fn parse_systemd_scheduler(
+    kind: &'static str,
+    path: &str,
+    timer_content: &str,
+    service_content: &str,
+) -> Option<StatusScheduler> {
+    let interval_seconds = parse_systemd_key_value(timer_content, "OnUnitActiveSec")
+        .and_then(parse_systemd_duration_seconds);
+    let command = parse_systemd_key_value(service_content, "ExecStart").map(str::to_string);
+    if command
+        .as_deref()
+        .is_some_and(|command| !command_references_tokens_binary(command))
+    {
+        return None;
+    }
+    let legacy_keep_alive = service_content.lines().any(|line| {
+        let line = line.trim();
+        line.starts_with("Restart=") && !line.ends_with("no")
+    }) || command.as_deref().is_some_and(command_is_tokens_serve);
+    let scheduled_submit =
+        interval_seconds.is_some() && command.as_deref().is_some_and(command_is_tokens_submit);
+
+    Some(StatusScheduler {
+        kind,
+        path: path.to_string(),
+        interval_seconds,
+        command,
+        scheduled_submit,
+        legacy_keep_alive,
+    })
+}
+
+fn read_to_string_if_exists(path: &Path) -> Option<String> {
+    path.exists()
+        .then(|| fs::read_to_string(path).ok())
+        .flatten()
+}
+
+fn detect_status_scheduler() -> Option<StatusScheduler> {
+    let home_dir = dirs::home_dir()?;
+
+    let launchd_path = home_dir.join("Library/LaunchAgents/homebrew.mxcl.tokens.plist");
+    if let Some(content) = read_to_string_if_exists(&launchd_path) {
+        if let Some(scheduler) =
+            parse_homebrew_launchd_scheduler(&launchd_path.display().to_string(), &content)
+        {
+            return Some(scheduler);
+        }
+    }
+
+    let systemd_user_dir = home_dir.join(".config/systemd/user");
+    for (kind, timer_name, service_name) in [
+        (
+            "homebrew-systemd",
+            "homebrew.tokens.timer",
+            "homebrew.tokens.service",
+        ),
+        ("systemd-user", "tokens.timer", "tokens.service"),
+    ] {
+        let timer_path = systemd_user_dir.join(timer_name);
+        let Some(timer_content) = read_to_string_if_exists(&timer_path) else {
+            continue;
+        };
+        let service_content =
+            fs::read_to_string(systemd_user_dir.join(service_name)).unwrap_or_default();
+        if let Some(scheduler) = parse_systemd_scheduler(
+            kind,
+            &timer_path.display().to_string(),
+            &timer_content,
+            &service_content,
+        ) {
+            return Some(scheduler);
+        }
+    }
+
+    None
+}
+
+fn format_interval_seconds(seconds: u64) -> String {
+    if seconds % 60 == 0 {
+        let minutes = seconds / 60;
+        if minutes == 1 {
+            "1 min".to_string()
+        } else {
+            format!("{minutes} min")
+        }
+    } else {
+        format!("{seconds} sec")
+    }
+}
+
 fn build_status_report() -> Result<StatusReport> {
     let auth_token = auth::resolve_api_token();
     let auth_source = auth_token.as_ref().map(|token| match token.source {
@@ -174,6 +376,7 @@ fn build_status_report() -> Result<StatusReport> {
             device::SubmitDeviceSource::ConfigFile => "config",
         });
     let processes = detect_status_processes();
+    let scheduler = detect_status_scheduler();
     let serve_pids: Vec<u32> = processes
         .iter()
         .filter(|process| process.kind == StatusProcessKind::Serve.as_str())
@@ -189,9 +392,18 @@ fn build_status_report() -> Result<StatusReport> {
     if auth_token.is_none() {
         notes.push("Run `tokens login` before starting background submission.".to_string());
     }
-    if serve_pids.is_empty() {
+    if serve_pids.is_empty() && scheduler.is_none() {
         notes.push(
-            "No long-running `tokens serve` process detected. This is expected for scheduled services; use `brew services info tokens` or `systemctl --user list-timers tokens.timer` to verify the scheduler."
+            "No long-running `tokens serve` process or scheduled submit service detected. Start background submission with `brew services start tokens` or `systemctl --user enable --now tokens.timer`."
+                .to_string(),
+        );
+    }
+    if scheduler
+        .as_ref()
+        .is_some_and(|scheduler| scheduler.legacy_keep_alive)
+    {
+        notes.push(
+            "A legacy keep-alive service is configured. Reinstall or restart the service after upgrading to switch to scheduled submits."
                 .to_string(),
         );
     }
@@ -229,6 +441,7 @@ fn build_status_report() -> Result<StatusReport> {
             serve_pids,
             warm_tui_cache_pids,
             interval_minutes: resolve_serve_interval_minutes(None),
+            scheduler,
         },
         processes,
         notes,
@@ -307,6 +520,41 @@ pub fn run(json: bool) -> Result<()> {
         );
     }
 
+    if let Some(scheduler) = &report.service.scheduler {
+        let interval = scheduler
+            .interval_seconds
+            .map(format_interval_seconds)
+            .unwrap_or_else(|| "unknown interval".to_string());
+        if scheduler.scheduled_submit {
+            println!(
+                "{}",
+                format!(
+                    "  Scheduler: {} scheduled submit configured ({interval})",
+                    scheduler.kind
+                )
+                .green()
+            );
+        } else if scheduler.legacy_keep_alive {
+            println!(
+                "{}",
+                format!(
+                    "  Scheduler: {} legacy keep-alive service configured",
+                    scheduler.kind
+                )
+                .yellow()
+            );
+        } else {
+            println!(
+                "{}",
+                format!(
+                    "  Scheduler: {} service configured ({interval})",
+                    scheduler.kind
+                )
+                .yellow()
+            );
+        }
+    }
+
     println!(
         "{}",
         format!("  Config: {}", report.paths.config_dir).bright_black()
@@ -374,5 +622,89 @@ mod tests {
         assert_eq!(processes[0].kind, "serve");
         assert_eq!(processes[1].pid, 124);
         assert_eq!(processes[1].kind, "warm-tui-cache");
+    }
+
+    #[test]
+    fn parse_homebrew_launchd_scheduler_detects_interval_submit() {
+        let scheduler = parse_homebrew_launchd_scheduler(
+            "/Users/example/Library/LaunchAgents/homebrew.mxcl.tokens.plist",
+            r#"
+<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>homebrew.mxcl.tokens</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/opt/tokens/bin/tokens</string>
+    <string>--no-spinner</string>
+    <string>submit</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StartInterval</key>
+  <integer>1800</integer>
+</dict>
+</plist>
+"#,
+        )
+        .expect("scheduled launchd plist should parse");
+
+        assert_eq!(scheduler.kind, "homebrew-launchd");
+        assert_eq!(scheduler.interval_seconds, Some(1800));
+        assert!(scheduler.scheduled_submit);
+        assert!(!scheduler.legacy_keep_alive);
+    }
+
+    #[test]
+    fn parse_homebrew_launchd_scheduler_flags_legacy_keep_alive_serve() {
+        let scheduler = parse_homebrew_launchd_scheduler(
+            "/Users/example/Library/LaunchAgents/homebrew.mxcl.tokens.plist",
+            r#"
+<plist version="1.0">
+<dict>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/opt/tokens/bin/tokens</string>
+    <string>serve</string>
+  </array>
+  <key>KeepAlive</key>
+  <true/>
+</dict>
+</plist>
+"#,
+        )
+        .expect("legacy launchd plist should parse");
+
+        assert_eq!(scheduler.kind, "homebrew-launchd");
+        assert_eq!(scheduler.interval_seconds, None);
+        assert!(!scheduler.scheduled_submit);
+        assert!(scheduler.legacy_keep_alive);
+    }
+
+    #[test]
+    fn parse_systemd_scheduler_detects_timer_submit() {
+        let scheduler = parse_systemd_scheduler(
+            "systemd-user",
+            "/home/example/.config/systemd/user/tokens.timer",
+            r#"
+[Timer]
+OnActiveSec=2min
+OnUnitActiveSec=30min
+Persistent=true
+Unit=tokens.service
+"#,
+            r#"
+[Service]
+Type=oneshot
+ExecStart=tokens --no-spinner submit
+"#,
+        )
+        .expect("systemd timer should parse");
+
+        assert_eq!(scheduler.kind, "systemd-user");
+        assert_eq!(scheduler.interval_seconds, Some(1800));
+        assert!(scheduler.scheduled_submit);
+        assert!(!scheduler.legacy_keep_alive);
     }
 }
