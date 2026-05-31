@@ -12,8 +12,30 @@ permissions:
   contents: write
 
 jobs:
-  release:
+  # Create the GitHub Release first so the per-target build jobs have something
+  # to upload to (the upload action attaches to an existing release, it does not
+  # create one — without this, parallel jobs fail with "release not found").
+  create-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create release if it does not exist
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME already exists."
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$GITHUB_REF_NAME" \
+              --generate-notes \
+              --verify-tag
+          fi
+
+  upload:
     name: ${{ matrix.target }}
+    needs: create-release
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -39,9 +61,9 @@ jobs:
 
       # Builds `cargo build --release --bin tokens --target <target>` (using
       # `cross` automatically for targets that need it, e.g. aarch64 Linux),
-      # archives the binary as a .tar.gz, and uploads it to the Release for the
-      # pushed tag (creating the Release if it does not exist yet).
-      - name: Build and publish binary
+      # archives the binary as a .tar.gz, and uploads it to the Release created
+      # by the create-release job above.
+      - name: Build and upload binary
         uses: taiki-e/upload-rust-binary-action@v1
         with:
           bin: tokens
