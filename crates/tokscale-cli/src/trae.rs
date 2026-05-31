@@ -47,8 +47,8 @@ pub mod auth {
     //! These are fixed names, not derived from the report client id (`client_str()`).
     //! Cache directory: `<tokscale config dir>/trae-cache/`, where the
     //! config dir is resolved by [`paths::get_config_dir`] and honors
-    //! `TOKSCALE_CONFIG_DIR` plus XDG defaults (typically
-    //! `~/.config/tokscale` on Linux/macOS).
+    //! `TOKENS_CONFIG_DIR` plus XDG defaults (typically
+    //! `~/.config/tokens` on Linux/macOS).
 
     use crate::trae::safestorage;
     use anyhow::{Context, Result};
@@ -319,7 +319,7 @@ pub mod auth {
 
         // 4. Everything failed.
         Err(anyhow::anyhow!(
-        "Could not obtain a Trae {} access token. Run `tokscale trae login --manual --variant {}` to paste a JWT manually.",
+        "Could not obtain a Trae {} access token. Run `tokens trae login --manual --variant {}` to paste a JWT manually.",
         variant.client_str(),
         variant.cli_arg()
     ))
@@ -1352,11 +1352,11 @@ pub mod sync {
 
         if credentialed.is_empty() {
             if variants.is_empty() {
-                println!("  No Trae credentials found. Run `tokscale trae login` first.");
+                println!("  No Trae credentials found. Run `tokens trae login` first.");
             } else {
                 for variant in variants {
                     println!(
-                        "  Trae {}: no credentials — run `tokscale trae login --variant {}` first",
+                        "  Trae {}: no credentials — run `tokens trae login --variant {}` first",
                         variant.client_str(),
                         variant.cli_arg()
                     );

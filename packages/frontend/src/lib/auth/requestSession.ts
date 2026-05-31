@@ -7,7 +7,7 @@ function getAllowedOrigins(): string[] {
   if (env) {
     return env.split(",").map((o) => o.trim()).filter(Boolean);
   }
-  return ["https://tokscale.dev", "http://localhost:3000"];
+  return ["https://tokens.ci", "http://localhost:3000"];
 }
 
 export async function getSessionFromRequest(request: Request): Promise<SessionUser | null> {

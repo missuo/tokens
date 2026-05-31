@@ -19,8 +19,8 @@ const IMAGE_WIDTH: i32 = 1200 * SCALE;
 const IMAGE_HEIGHT: i32 = 1200 * SCALE;
 const PADDING: i32 = 56 * SCALE;
 
-const TOKSCALE_LOGO_SVG_URL: &str = "https://tokscale.ai/tokscale-logo.svg";
-const TOKSCALE_LOGO_PNG_SIZE: i32 = 400;
+const TOKENS_LOGO_SVG_URL: &str = "https://tokens.ci/tokscale-logo.svg";
+const TOKENS_LOGO_PNG_SIZE: i32 = 400;
 const FIGTREE_REGULAR_FILE: &str = "Figtree-Regular.ttf";
 const FIGTREE_REGULAR_URL: &str =
     "https://fonts.gstatic.com/s/figtree/v9/_Xmz-HUzqDCFdgfMsYiV_F7wfS-Bs_d_QF5e.ttf";
@@ -745,9 +745,9 @@ async fn generate_wrapped_image(data: &WrappedData, options: &RenderOptions) -> 
 
     if let Ok(logo_path) = fetch_svg_and_convert_to_png(
         &client,
-        TOKSCALE_LOGO_SVG_URL,
+        TOKENS_LOGO_SVG_URL,
         "tokscale-logo@2x.png",
-        TOKSCALE_LOGO_PNG_SIZE * SCALE,
+        TOKENS_LOGO_PNG_SIZE * SCALE,
     )
     .await
     {
@@ -1459,28 +1459,28 @@ fn client_display_name(client: &str) -> Option<&'static str> {
 
 fn client_logo_url(client_name: &str) -> Option<&'static str> {
     match client_name {
-        "OpenCode" => Some("https://tokscale.ai/assets/logos/opencode.png"),
-        "Claude Code" => Some("https://tokscale.ai/assets/logos/claude.jpg"),
-        "Codex CLI" => Some("https://tokscale.ai/assets/logos/openai.jpg"),
+        "OpenCode" => Some("https://tokens.ci/assets/logos/opencode.png"),
+        "Claude Code" => Some("https://tokens.ci/assets/logos/claude.jpg"),
+        "Codex CLI" => Some("https://tokens.ci/assets/logos/openai.jpg"),
         "Copilot CLI" => Some(
             "https://raw.githubusercontent.com/junhoyeo/tokscale/main/.github/assets/client-copilot.jpg",
         ),
-        "Gemini CLI" => Some("https://tokscale.ai/assets/logos/gemini.png"),
-        "Cursor IDE" => Some("https://tokscale.ai/assets/logos/cursor.jpg"),
-        "Amp" => Some("https://tokscale.ai/assets/logos/amp.png"),
+        "Gemini CLI" => Some("https://tokens.ci/assets/logos/gemini.png"),
+        "Cursor IDE" => Some("https://tokens.ci/assets/logos/cursor.jpg"),
+        "Amp" => Some("https://tokens.ci/assets/logos/amp.png"),
         "Codebuff" => Some(
             "https://raw.githubusercontent.com/junhoyeo/tokscale/main/.github/assets/client-codebuff.png",
         ),
-        "Droid" => Some("https://tokscale.ai/assets/logos/droid.png"),
-        "OpenClaw" => Some("https://tokscale.ai/assets/logos/openclaw.png"),
-        "Hermes Agent" => Some("https://tokscale.ai/assets/logos/hermes.png"),
-        "Pi" => Some("https://tokscale.ai/assets/logos/pi.png"),
-        "Kimi CLI" => Some("https://tokscale.ai/assets/logos/kimi.png"),
-        "Qwen CLI" => Some("https://tokscale.ai/assets/logos/qwen.png"),
-        "Roo Code" => Some("https://tokscale.ai/assets/logos/roocode.png"),
-        "Kilo" => Some("https://tokscale.ai/assets/logos/kilocode.png"),
-        "Kilo CLI" => Some("https://tokscale.ai/assets/logos/kilocode.png"),
-        "Mux" => Some("https://tokscale.ai/assets/logos/mux.png"),
+        "Droid" => Some("https://tokens.ci/assets/logos/droid.png"),
+        "OpenClaw" => Some("https://tokens.ci/assets/logos/openclaw.png"),
+        "Hermes Agent" => Some("https://tokens.ci/assets/logos/hermes.png"),
+        "Pi" => Some("https://tokens.ci/assets/logos/pi.png"),
+        "Kimi CLI" => Some("https://tokens.ci/assets/logos/kimi.png"),
+        "Qwen CLI" => Some("https://tokens.ci/assets/logos/qwen.png"),
+        "Roo Code" => Some("https://tokens.ci/assets/logos/roocode.png"),
+        "Kilo" => Some("https://tokens.ci/assets/logos/kilocode.png"),
+        "Kilo CLI" => Some("https://tokens.ci/assets/logos/kilocode.png"),
+        "Mux" => Some("https://tokens.ci/assets/logos/mux.png"),
         "Crush" => Some(
             "https://raw.githubusercontent.com/junhoyeo/tokscale/6b483d0f2de3717266dec8faed13acd067f90ff3/.github/assets/client-crush.png",
         ),
@@ -1493,18 +1493,18 @@ fn client_logo_url(client_name: &str) -> Option<&'static str> {
         "Zed Agent" => Some(
             "https://raw.githubusercontent.com/junhoyeo/tokscale/main/.github/assets/client-zed.webp",
         ),
-        "Synthetic" => Some("https://tokscale.ai/assets/logos/synthetic.png"),
+        "Synthetic" => Some("https://tokens.ci/assets/logos/synthetic.png"),
         _ => None,
     }
 }
 
 fn provider_logo_url(provider: &str) -> Option<&'static str> {
     match provider {
-        "anthropic" => Some("https://tokscale.ai/assets/logos/claude.jpg"),
-        "openai" => Some("https://tokscale.ai/assets/logos/openai.jpg"),
-        "google" => Some("https://tokscale.ai/assets/logos/gemini.png"),
-        "xai" => Some("https://tokscale.ai/assets/logos/grok.jpg"),
-        "zai" => Some("https://tokscale.ai/assets/logos/zai.jpg"),
+        "anthropic" => Some("https://tokens.ci/assets/logos/claude.jpg"),
+        "openai" => Some("https://tokens.ci/assets/logos/openai.jpg"),
+        "google" => Some("https://tokens.ci/assets/logos/gemini.png"),
+        "xai" => Some("https://tokens.ci/assets/logos/grok.jpg"),
+        "zai" => Some("https://tokens.ci/assets/logos/zai.jpg"),
         _ => None,
     }
 }
@@ -2128,17 +2128,17 @@ mod tests {
     fn font_cache_reads_legacy_path_when_canonical_missing() {
         let temp_home = TempDir::new().unwrap();
         let previous_home = env::var_os("HOME");
-        let previous_override = env::var_os("TOKSCALE_CONFIG_DIR");
+        let previous_override = env::var_os("TOKENS_CONFIG_DIR");
         let previous_xdg_config = env::var_os("XDG_CONFIG_HOME");
         unsafe {
             env::set_var("HOME", temp_home.path());
-            env::remove_var("TOKSCALE_CONFIG_DIR");
+            env::remove_var("TOKENS_CONFIG_DIR");
             env::remove_var("XDG_CONFIG_HOME");
         }
 
         let legacy_path = temp_home
             .path()
-            .join(".cache/tokscale/fonts")
+            .join(".cache/tokens/fonts")
             .join(FIGTREE_REGULAR_FILE);
         fs::create_dir_all(legacy_path.parent().unwrap()).unwrap();
         fs::write(&legacy_path, b"legacy-font-bytes").unwrap();
@@ -2151,7 +2151,7 @@ mod tests {
         assert_eq!(fs::read(&resolved).unwrap(), b"legacy-font-bytes");
 
         restore_env_var("HOME", previous_home);
-        restore_env_var("TOKSCALE_CONFIG_DIR", previous_override);
+        restore_env_var("TOKENS_CONFIG_DIR", previous_override);
         restore_env_var("XDG_CONFIG_HOME", previous_xdg_config);
     }
 
@@ -2475,7 +2475,7 @@ mod tests {
     fn test_client_logo_url_opencode() {
         assert_eq!(
             client_logo_url("OpenCode"),
-            Some("https://tokscale.ai/assets/logos/opencode.png")
+            Some("https://tokens.ci/assets/logos/opencode.png")
         );
     }
 
@@ -2483,7 +2483,7 @@ mod tests {
     fn test_client_logo_url_claude_code() {
         assert_eq!(
             client_logo_url("Claude Code"),
-            Some("https://tokscale.ai/assets/logos/claude.jpg")
+            Some("https://tokens.ci/assets/logos/claude.jpg")
         );
     }
 
@@ -2491,7 +2491,7 @@ mod tests {
     fn test_client_logo_url_codex_cli() {
         assert_eq!(
             client_logo_url("Codex CLI"),
-            Some("https://tokscale.ai/assets/logos/openai.jpg")
+            Some("https://tokens.ci/assets/logos/openai.jpg")
         );
     }
 
@@ -2509,7 +2509,7 @@ mod tests {
     fn test_client_logo_url_gemini_cli() {
         assert_eq!(
             client_logo_url("Gemini CLI"),
-            Some("https://tokscale.ai/assets/logos/gemini.png")
+            Some("https://tokens.ci/assets/logos/gemini.png")
         );
     }
 
@@ -2517,7 +2517,7 @@ mod tests {
     fn test_client_logo_url_cursor_ide() {
         assert_eq!(
             client_logo_url("Cursor IDE"),
-            Some("https://tokscale.ai/assets/logos/cursor.jpg")
+            Some("https://tokens.ci/assets/logos/cursor.jpg")
         );
     }
 
@@ -2525,7 +2525,7 @@ mod tests {
     fn test_client_logo_url_amp() {
         assert_eq!(
             client_logo_url("Amp"),
-            Some("https://tokscale.ai/assets/logos/amp.png")
+            Some("https://tokens.ci/assets/logos/amp.png")
         );
     }
 
@@ -2533,7 +2533,7 @@ mod tests {
     fn test_client_logo_url_droid() {
         assert_eq!(
             client_logo_url("Droid"),
-            Some("https://tokscale.ai/assets/logos/droid.png")
+            Some("https://tokens.ci/assets/logos/droid.png")
         );
     }
 
@@ -2541,7 +2541,7 @@ mod tests {
     fn test_client_logo_url_openclaw() {
         assert_eq!(
             client_logo_url("OpenClaw"),
-            Some("https://tokscale.ai/assets/logos/openclaw.png")
+            Some("https://tokens.ci/assets/logos/openclaw.png")
         );
     }
 
@@ -2549,7 +2549,7 @@ mod tests {
     fn test_client_logo_url_hermes() {
         assert_eq!(
             client_logo_url("Hermes Agent"),
-            Some("https://tokscale.ai/assets/logos/hermes.png")
+            Some("https://tokens.ci/assets/logos/hermes.png")
         );
     }
 
@@ -2567,7 +2567,7 @@ mod tests {
     fn test_client_logo_url_pi() {
         assert_eq!(
             client_logo_url("Pi"),
-            Some("https://tokscale.ai/assets/logos/pi.png")
+            Some("https://tokens.ci/assets/logos/pi.png")
         );
     }
 
@@ -2575,7 +2575,7 @@ mod tests {
     fn test_client_logo_url_kilo_cli() {
         assert_eq!(
             client_logo_url("Kilo CLI"),
-            Some("https://tokscale.ai/assets/logos/kilocode.png")
+            Some("https://tokens.ci/assets/logos/kilocode.png")
         );
     }
 
@@ -2632,7 +2632,7 @@ mod tests {
     fn test_provider_logo_url_anthropic() {
         assert_eq!(
             provider_logo_url("anthropic"),
-            Some("https://tokscale.ai/assets/logos/claude.jpg")
+            Some("https://tokens.ci/assets/logos/claude.jpg")
         );
     }
 
@@ -2640,7 +2640,7 @@ mod tests {
     fn test_provider_logo_url_openai() {
         assert_eq!(
             provider_logo_url("openai"),
-            Some("https://tokscale.ai/assets/logos/openai.jpg")
+            Some("https://tokens.ci/assets/logos/openai.jpg")
         );
     }
 
@@ -2648,7 +2648,7 @@ mod tests {
     fn test_provider_logo_url_google() {
         assert_eq!(
             provider_logo_url("google"),
-            Some("https://tokscale.ai/assets/logos/gemini.png")
+            Some("https://tokens.ci/assets/logos/gemini.png")
         );
     }
 
@@ -2656,7 +2656,7 @@ mod tests {
     fn test_provider_logo_url_xai() {
         assert_eq!(
             provider_logo_url("xai"),
-            Some("https://tokscale.ai/assets/logos/grok.jpg")
+            Some("https://tokens.ci/assets/logos/grok.jpg")
         );
     }
 
@@ -2664,7 +2664,7 @@ mod tests {
     fn test_provider_logo_url_zai() {
         assert_eq!(
             provider_logo_url("zai"),
-            Some("https://tokscale.ai/assets/logos/zai.jpg")
+            Some("https://tokens.ci/assets/logos/zai.jpg")
         );
     }
 
@@ -3002,13 +3002,13 @@ fn cursor_setup_warning_for_wrapped(
     }
 
     let action = if cursor_logged_in {
-        "run `tokscale cursor sync`"
+        "run `tokens cursor sync`"
     } else {
-        "run `tokscale cursor login` and `tokscale cursor sync`"
+        "run `tokens cursor login` and `tokens cursor sync`"
     };
 
     Some(format!(
-        "Cursor usage requires Tokscale's Cursor API cache at `~/.config/tokscale/cursor-cache/usage*.csv`; {action}. Tokscale does not parse local `~/.cursor` session data."
+        "Cursor usage requires Tokens's Cursor API cache at `~/.config/tokens/cursor-cache/usage*.csv`; {action}. Tokens does not parse local `~/.cursor` session data."
     ))
 }
 
@@ -3019,15 +3019,15 @@ mod cursor_setup_warning_tests {
     #[test]
     fn wrapped_cursor_warning_suggests_login_when_not_authenticated() {
         let warning = cursor_setup_warning_for_wrapped(true, false, false).unwrap();
-        assert!(warning.contains("tokscale cursor login"));
-        assert!(warning.contains("tokscale cursor sync"));
+        assert!(warning.contains("tokens cursor login"));
+        assert!(warning.contains("tokens cursor sync"));
     }
 
     #[test]
     fn wrapped_cursor_warning_suggests_sync_only_when_authenticated() {
         let warning = cursor_setup_warning_for_wrapped(true, false, true).unwrap();
-        assert!(!warning.contains("tokscale cursor login"));
-        assert!(warning.contains("tokscale cursor sync"));
+        assert!(!warning.contains("tokens cursor login"));
+        assert!(warning.contains("tokens cursor sync"));
     }
 
     #[test]

@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 const DEVICE_FILE_NAME: &str = "device.json";
-const DEVICE_ID_ENV: &str = "TOKSCALE_DEVICE_ID";
-const DEVICE_NAME_ENV: &str = "TOKSCALE_DEVICE_NAME";
+const DEVICE_ID_ENV: &str = "TOKENS_DEVICE_ID";
+const DEVICE_NAME_ENV: &str = "TOKENS_DEVICE_NAME";
 const MAX_DEVICE_ID_LEN: usize = 96;
 const MAX_DEVICE_NAME_LEN: usize = 120;
 
@@ -141,9 +141,9 @@ mod tests {
         Option<std::ffi::OsString>,
     ) {
         (
-            env::var_os("TOKSCALE_CONFIG_DIR"),
-            env::var_os("TOKSCALE_DEVICE_ID"),
-            env::var_os("TOKSCALE_DEVICE_NAME"),
+            env::var_os("TOKENS_CONFIG_DIR"),
+            env::var_os("TOKENS_DEVICE_ID"),
+            env::var_os("TOKENS_DEVICE_NAME"),
         )
     }
 
@@ -168,16 +168,16 @@ mod tests {
     ) {
         unsafe {
             match prev.0 {
-                Some(v) => env::set_var("TOKSCALE_CONFIG_DIR", v),
-                None => env::remove_var("TOKSCALE_CONFIG_DIR"),
+                Some(v) => env::set_var("TOKENS_CONFIG_DIR", v),
+                None => env::remove_var("TOKENS_CONFIG_DIR"),
             }
             match prev.1 {
-                Some(v) => env::set_var("TOKSCALE_DEVICE_ID", v),
-                None => env::remove_var("TOKSCALE_DEVICE_ID"),
+                Some(v) => env::set_var("TOKENS_DEVICE_ID", v),
+                None => env::remove_var("TOKENS_DEVICE_ID"),
             }
             match prev.2 {
-                Some(v) => env::set_var("TOKSCALE_DEVICE_NAME", v),
-                None => env::remove_var("TOKSCALE_DEVICE_NAME"),
+                Some(v) => env::set_var("TOKENS_DEVICE_NAME", v),
+                None => env::remove_var("TOKENS_DEVICE_NAME"),
             }
         }
     }
@@ -189,9 +189,9 @@ mod tests {
         let _restore = EnvRestore(prev.0, prev.1, prev.2);
         let dir = tempfile::tempdir().unwrap();
         unsafe {
-            env::set_var("TOKSCALE_CONFIG_DIR", dir.path());
-            env::set_var("TOKSCALE_DEVICE_ID", "dev_ci");
-            env::set_var("TOKSCALE_DEVICE_NAME", "CI runner");
+            env::set_var("TOKENS_CONFIG_DIR", dir.path());
+            env::set_var("TOKENS_DEVICE_ID", "dev_ci");
+            env::set_var("TOKENS_DEVICE_NAME", "CI runner");
         }
 
         let device = resolve_submit_device().unwrap();
@@ -208,9 +208,9 @@ mod tests {
         let _restore = EnvRestore(prev.0, prev.1, prev.2);
         let dir = tempfile::tempdir().unwrap();
         unsafe {
-            env::set_var("TOKSCALE_CONFIG_DIR", dir.path());
-            env::remove_var("TOKSCALE_DEVICE_ID");
-            env::remove_var("TOKSCALE_DEVICE_NAME");
+            env::set_var("TOKENS_CONFIG_DIR", dir.path());
+            env::remove_var("TOKENS_DEVICE_ID");
+            env::remove_var("TOKENS_DEVICE_NAME");
         }
 
         let first = resolve_submit_device().unwrap();

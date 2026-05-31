@@ -1,63 +1,33 @@
 "use client";
 
 import React from "react";
-import { createGlobalStyle } from "styled-components";
-import reset from "styled-reset";
-import { StyledComponentsRegistry } from "./StyledComponentsRegistry";
+import { ThemeProvider } from "next-themes";
+import { RouterProvider } from "@heroui/react";
+import { useRouter } from "nextjs-toploader/app";
 
-
-const GlobalStyle = createGlobalStyle`
-  ${reset}
-  
-  *, *::before, *::after {
-    box-sizing: border-box;
-  }
-  
-  html {
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-  }
-  
-  body {
-    font-family: var(--font-figtree), "Figtree", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    line-height: 1.5;
-  }
-  
-  code, pre, kbd, samp {
-    font-family: var(--font-mono), "JetBrains Mono", "Inconsolata", monospace !important;
-  }
-  
-  img, picture, video, canvas, svg {
-    display: block;
-    max-width: 100%;
-  }
-  
-  input, button, textarea, select {
-    font: inherit;
-  }
-  
-  p, h1, h2, h3, h4, h5, h6 {
-    overflow-wrap: break-word;
-  }
-  
-  a {
-    color: inherit;
-    text-decoration: none;
-  }
-  
-  button {
-    background: none;
-    border: none;
-    cursor: pointer;
-  }
-`;
-
+/**
+ * App-wide providers.
+ *
+ * HeroUI v3 needs no styling provider — styles come from `@heroui/styles`
+ * imported in globals.css. We add:
+ *  - next-themes for the light/dark toggle (class strategy → `.dark` on <html>,
+ *    which HeroUI reads via its `.dark` / [data-theme="dark"] selectors).
+ *  - react-aria's RouterProvider so HeroUI components with `href` use Next.js
+ *    client-side navigation (and trigger the top-loader).
+ */
 export function Providers({ children }: { children: React.ReactNode }) {
+  const router = useRouter();
+
   return (
-    <StyledComponentsRegistry>
-      <GlobalStyle />
-      {children}
-    </StyledComponentsRegistry>
+    <ThemeProvider
+      attribute="class"
+      defaultTheme="system"
+      enableSystem
+      disableTransitionOnChange
+    >
+      <RouterProvider navigate={(href) => router.push(href)}>
+        {children}
+      </RouterProvider>
+    </ThemeProvider>
   );
 }
-

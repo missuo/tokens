@@ -19,7 +19,7 @@ use std::time::Duration;
 use tui::Tab;
 
 #[derive(Parser)]
-#[command(name = "tokscale")]
+#[command(name = "tokens")]
 #[command(author, version, about = "AI token usage analytics")]
 struct Cli {
     #[command(subcommand)]
@@ -47,7 +47,7 @@ struct Cli {
         long = "write-cache",
         requires = "light",
         conflicts_with = "no_write_cache",
-        help = "After --light renders, atomically overwrite the TUI cache with this report's data so the next `tokscale tui` starts from fresh data. Persists across invocations via settings.json `light.writeCache`."
+        help = "After --light renders, atomically overwrite the TUI cache with this report's data so the next `tokens tui` starts from fresh data. Persists across invocations via settings.json `light.writeCache`."
     )]
     write_cache: bool,
 
@@ -113,7 +113,7 @@ enum Commands {
             long = "write-cache",
             requires = "light",
             conflicts_with = "no_write_cache",
-            help = "After --light renders, atomically overwrite the TUI cache with this report's data so the next `tokscale tui` starts from fresh data. Persists across invocations via settings.json `light.writeCache`."
+            help = "After --light renders, atomically overwrite the TUI cache with this report's data so the next `tokens tui` starts from fresh data. Persists across invocations via settings.json `light.writeCache`."
         )]
         write_cache: bool,
         #[arg(
@@ -175,15 +175,15 @@ enum Commands {
         #[arg(long, help = "Output as JSON")]
         json: bool,
     },
-    #[command(about = "Login to Tokscale (opens browser for GitHub auth)")]
+    #[command(about = "Login to Tokens (opens browser for GitHub auth)")]
     Login {
         #[arg(
             long,
-            help = "Save an existing Tokscale API token without browser auth"
+            help = "Save an existing Tokens API token without browser auth"
         )]
         token: Option<String>,
     },
-    #[command(about = "Logout from Tokscale")]
+    #[command(about = "Logout from Tokens")]
     Logout,
     #[command(about = "Show current logged in user")]
     Whoami,
@@ -212,7 +212,7 @@ enum Commands {
         #[command(flatten)]
         date: DateRangeFlags,
     },
-    #[command(about = "Submit usage data to the Tokscale social platform")]
+    #[command(about = "Submit usage data to the Tokens social platform")]
     Submit {
         #[command(flatten)]
         clients: ClientFlags,
@@ -223,6 +223,17 @@ enum Commands {
             help = "Show what would be submitted without actually submitting"
         )]
         dry_run: bool,
+    },
+    #[command(about = "Run in the background and submit usage on a recurring interval")]
+    Serve {
+        #[command(flatten)]
+        clients: ClientFlags,
+        #[arg(
+            long,
+            value_name = "MINUTES",
+            help = "Minutes between submissions (default 30, or $TOKENS_SUBMIT_INTERVAL)"
+        )]
+        interval: Option<u64>,
     },
     #[command(about = "Capture subprocess output for token usage tracking")]
     Headless {
@@ -622,6 +633,11 @@ fn main() -> Result<()> {
             // to upload). Pass an explicit empty defaults slice.
             let clients = build_client_filter_with_defaults(clients, &[]);
             run_submit_command(clients, since, until, year, dry_run)
+        }
+        Some(Commands::Serve { clients, interval }) => {
+            reject_unsupported_home_override(&cli.home, "serve")?;
+            let clients = build_client_filter_with_defaults(clients, &[]);
+            run_serve(interval, clients)
         }
         Some(Commands::Headless {
             source,
@@ -1033,7 +1049,7 @@ pub struct DateRangeFlags {
 /// 2. Append any legacy `--<client>` boolean flags that are set, emitting a
 ///    one-time stderr deprecation warning so existing scripts keep working.
 /// 3. If steps 1 and 2 produced nothing, fall back to user-configured
-///    `defaultClients` from `~/.config/tokscale/settings.json` when present.
+///    `defaultClients` from `~/.config/tokens/settings.json` when present.
 /// 4. Deduplicate while preserving first-seen order.
 ///
 /// Returns `None` when no filters are active *and* no defaults configured
@@ -1175,11 +1191,11 @@ fn cursor_setup_state(home_dir: &Option<String>) -> Option<CursorSetupState> {
     let has_cache = cursor::has_cursor_usage_cache_in_home(&home_path);
     let cache_glob = if home_override {
         home_path
-            .join(".config/tokscale/cursor-cache/usage*.csv")
+            .join(".config/tokens/cursor-cache/usage*.csv")
             .to_string_lossy()
             .to_string()
     } else {
-        "~/.config/tokscale/cursor-cache/usage*.csv".to_string()
+        "~/.config/tokens/cursor-cache/usage*.csv".to_string()
     };
 
     Some(CursorSetupState {
@@ -1204,7 +1220,7 @@ fn cursor_setup_warnings_for_report(
 
     let Some(state) = cursor_setup_state(home_dir) else {
         return vec![
-            "Cursor usage requires Tokscale's Cursor API cache, but the home directory could not be resolved. Tokscale does not parse local ~/.cursor session data.".to_string(),
+            "Cursor usage requires Tokens's Cursor API cache, but the home directory could not be resolved. Tokens does not parse local ~/.cursor session data.".to_string(),
         ];
     };
     if state.has_cache {
@@ -1214,13 +1230,13 @@ fn cursor_setup_warnings_for_report(
     let action = if state.home_override {
         "populate that cache before running a report with --home"
     } else if state.has_credentials {
-        "run `tokscale cursor sync`"
+        "run `tokens cursor sync`"
     } else {
-        "run `tokscale cursor login` and `tokscale cursor sync`"
+        "run `tokens cursor login` and `tokens cursor sync`"
     };
 
     vec![format!(
-        "Cursor usage requires Tokscale's Cursor API cache at `{}`; {}. Tokscale does not parse local `~/.cursor` session data.",
+        "Cursor usage requires Tokens's Cursor API cache at `{}`; {}. Tokens does not parse local `~/.cursor` session data.",
         state.cache_glob, action
     )]
 }
@@ -1254,8 +1270,8 @@ fn auto_sync_cursor_for_local_report(
     }
 
     // Skip the implicit refresh when each expected Cursor account cache is
-    // recent enough — running `tokscale models` 30× in a script must not
-    // produce 30 Cursor API calls. The manual `tokscale cursor sync` command
+    // recent enough — running `tokens models` 30× in a script must not
+    // produce 30 Cursor API calls. The manual `tokens cursor sync` command
     // bypasses this gate.
     if cursor::cursor_usage_cache_is_fresh(cursor::CURSOR_AUTO_SYNC_FRESHNESS) {
         return None;
@@ -2958,7 +2974,7 @@ fn run_wrapped_command(
 ) -> Result<()> {
     use colored::Colorize;
 
-    println!("{}", "\n  Tokscale - Generate Wrapped Image\n".cyan());
+    println!("{}", "\n  Tokens - Generate Wrapped Image\n".cyan());
 
     println!("{}", "  Generating wrapped image...".bright_black());
     println!();
@@ -3479,7 +3495,7 @@ fn run_clients_command(json: bool, home_dir: Option<String>) -> Result<()> {
 
     let all_clients: std::collections::HashSet<ClientId> = ClientId::iter().collect();
     let extra_dirs: Vec<(ClientId, String)> = if use_env_roots {
-        let extra_dirs_val = std::env::var("TOKSCALE_EXTRA_DIRS").unwrap_or_default();
+        let extra_dirs_val = std::env::var("TOKENS_EXTRA_DIRS").unwrap_or_default();
         tokscale_core::parse_extra_dirs(&extra_dirs_val, &all_clients)
     } else {
         Vec::new()
@@ -3747,14 +3763,14 @@ fn run_clients_command(json: bool, home_dir: Option<String>) -> Result<()> {
 fn get_headless_roots(home_dir: &Path) -> Vec<PathBuf> {
     let mut roots = Vec::new();
 
-    if let Ok(env_dir) = std::env::var("TOKSCALE_HEADLESS_DIR") {
+    if let Ok(env_dir) = std::env::var("TOKENS_HEADLESS_DIR") {
         roots.push(PathBuf::from(env_dir));
     } else {
-        roots.push(home_dir.join(".config/tokscale/headless"));
+        roots.push(home_dir.join(".config/tokens/headless"));
 
         #[cfg(target_os = "macos")]
         {
-            roots.push(home_dir.join("Library/Application Support/tokscale/headless"));
+            roots.push(home_dir.join("Library/Application Support/tokens/headless"));
         }
     }
 
@@ -4010,7 +4026,7 @@ fn run_delete_data_command() -> Result<()> {
     use tokio::runtime::Runtime;
 
     let auth_token = auth::resolve_api_token().ok_or_else(|| {
-        anyhow::anyhow!("Not logged in. Run `tokscale login` or set TOKSCALE_API_TOKEN.")
+        anyhow::anyhow!("Not logged in. Run `tokens login` or set TOKENS_API_TOKEN.")
     })?;
 
     println!("\n{}", "  ⚠ Delete all submitted usage data".red().bold());
@@ -4155,10 +4171,10 @@ fn legacy_macos_star_cache_path() -> Option<PathBuf> {
 
 fn load_star_cache(username: &str) -> Option<StarCache> {
     // Read the canonical path first; on macOS, fall back once to the
-    // pre-#468 location under `~/Library/Application Support/tokscale/`
+    // pre-#468 location under `~/Library/Application Support/tokens/`
     // so existing users don't get re-prompted to star the repo just
     // because their previous cache lives at the legacy path. The legacy
-    // read is suppressed when `TOKSCALE_CONFIG_DIR` is set so isolated
+    // read is suppressed when `TOKENS_CONFIG_DIR` is set so isolated
     // profiles stay hermetic.
     let primary = star_cache_path().and_then(|path| std::fs::read_to_string(path).ok());
     let content = primary.or_else(|| {
@@ -4736,6 +4752,72 @@ fn report_excluded_tokenless_rows(excluded: &[ExcludedTokenlessRow]) {
     println!();
 }
 
+/// Long-running service loop: submit immediately, then every `interval` minutes.
+///
+/// Designed to be supervised by launchd (`brew services`) / systemd, which keep
+/// it alive and start it at login/boot. There is no durable state to flush, so
+/// the default SIGTERM disposition (terminate) is a perfectly clean shutdown —
+/// the next start just submits again.
+fn run_serve(interval_min: Option<u64>, clients: Option<Vec<String>>) -> Result<()> {
+    use colored::Colorize;
+    use std::time::Duration;
+
+    // Resolve cadence: --interval flag > $TOKENS_SUBMIT_INTERVAL > 30 min (min 1).
+    let interval_min = interval_min
+        .or_else(|| {
+            std::env::var("TOKENS_SUBMIT_INTERVAL")
+                .ok()
+                .and_then(|v| v.trim().parse::<u64>().ok())
+        })
+        .filter(|m| *m >= 1)
+        .unwrap_or(30);
+    let interval = Duration::from_secs(interval_min * 60);
+
+    // Fail fast if not authenticated so the supervisor surfaces a clear error
+    // instead of spinning forever on a login prompt.
+    if auth::resolve_api_token().is_none() {
+        eprintln!("\n  {}", "Not logged in.".yellow());
+        eprintln!(
+            "{}",
+            "  Run 'tokens login' before starting the service.\n".bright_black()
+        );
+        std::process::exit(1);
+    }
+
+    // One-time per-process offset so a fleet of machines doesn't all submit on
+    // the same minute. Derived from the clock — no rng dependency needed.
+    let jitter = serve_startup_jitter(interval);
+
+    println!(
+        "  {} submitting every {interval_min} min (SIGTERM/Ctrl-C to stop)",
+        "tokens serve:".cyan()
+    );
+
+    loop {
+        let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+        match run_submit_command(clients.clone(), None, None, None, false) {
+            Ok(()) => println!("  {} [{ts}] submit complete", "•".green()),
+            // Never crash the daemon on a transient failure — log and retry next cycle.
+            Err(error) => eprintln!("  {} [{ts}] submit failed: {error}", "✗".yellow()),
+        }
+        std::thread::sleep(interval + jitter);
+    }
+}
+
+/// A stable per-process delay in `0..=min(interval/10, 60s)` to stagger a fleet.
+fn serve_startup_jitter(interval: std::time::Duration) -> std::time::Duration {
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+    let max = std::cmp::min(interval.as_secs() / 10, 60);
+    if max == 0 {
+        return Duration::ZERO;
+    }
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| u64::from(d.subsec_nanos()))
+        .unwrap_or(0);
+    Duration::from_secs(nanos % (max + 1))
+}
+
 fn run_submit_command(
     clients: Option<Vec<String>>,
     since: Option<String>,
@@ -4754,7 +4836,7 @@ fn run_submit_command(
             eprintln!("\n  {}", "Not logged in.".yellow());
             eprintln!(
                 "{}",
-                "  Run 'bunx tokscale@latest login' or set TOKSCALE_API_TOKEN.\n".bright_black()
+                "  Run 'tokens login' or set TOKENS_API_TOKEN.\n".bright_black()
             );
             std::process::exit(1);
         }
@@ -4769,7 +4851,7 @@ fn run_submit_command(
         }
     }
 
-    println!("\n  {}\n", "Tokscale - Submit Usage Data".cyan());
+    println!("\n  {}\n", "Tokens - Submit Usage Data".cyan());
 
     let explicit_cursor_filter = client_filter_explicitly_requests_cursor(&clients);
     let clients = clients.or_else(|| Some(default_submit_clients()));
@@ -4998,7 +5080,7 @@ fn run_submit_command(
         }
     }
 
-    // Warm the TUI cache so the next `tokscale` launch is instant.
+    // Warm the TUI cache so the next `tokens` launch is instant.
     // Detached subprocess so submit returns to the shell immediately on large
     // datasets — a full re-scan would otherwise block for tens of seconds.
     spawn_warm_tui_cache_detached();
@@ -5036,7 +5118,7 @@ fn spawn_warm_tui_cache_detached() {
 /// Mirrors the resolution that `build_client_filter` + `tui::run` perform
 /// when the user passes no CLI client flag:
 ///
-/// 1. If `defaultClients` from `~/.config/tokscale/settings.json` is
+/// 1. If `defaultClients` from `~/.config/tokens/settings.json` is
 ///    set, use that (after dropping unknown ids).
 /// 2. Otherwise fall back to `ClientFilter::default_set()` (every real
 ///    client, Synthetic excluded).
@@ -5107,7 +5189,7 @@ fn write_light_cache(
     // The TUI cache key is `(enabled_clients, group_by)` only — it does
     // NOT include `--since`, `--until`, `--year`, or `--home`. Writing
     // date-filtered or home-scoped data under that key would silently
-    // poison subsequent TUI launches: the next `tokscale tui` would
+    // poison subsequent TUI launches: the next `tokens tui` would
     // hit the cache and render the date-filtered slice as if it were
     // the full report. Refuse the write when any of those filters is
     // present and tell the user; their CLI report still prints fine.
@@ -5402,7 +5484,7 @@ fn run_headless_command(
         let root = headless_roots
             .first()
             .cloned()
-            .unwrap_or_else(|| home_dir.join(".config/tokscale/headless"));
+            .unwrap_or_else(|| home_dir.join(".config/tokens/headless"));
         let dir = root.join(&source_lower);
         std::fs::create_dir_all(&dir)?;
 
@@ -5509,7 +5591,7 @@ fn run_headless_command(
             "{}",
             format!("\n  Subprocess timed out after {}s", timeout.as_secs()).red()
         );
-        eprintln!("{}", "  Partial output saved. Increase timeout with TOKSCALE_NATIVE_TIMEOUT_MS or settings.json".bright_black());
+        eprintln!("{}", "  Partial output saved. Increase timeout with TOKENS_NATIVE_TIMEOUT_MS or settings.json".bright_black());
         println!();
         std::process::exit(124);
     }
@@ -5643,7 +5725,7 @@ mod tests {
 
     // Tests below call `build_client_filter_with_defaults` directly with
     // an explicit `defaults` slice instead of `build_client_filter`, which
-    // reads from `~/.config/tokscale/settings.json`. Reading host config
+    // reads from `~/.config/tokens/settings.json`. Reading host config
     // makes tests non-hermetic — a developer with their own
     // `defaultClients` set would break the assertions. The wrapper is
     // covered separately by tests that pass an explicit `&[]`.
@@ -6084,14 +6166,14 @@ mod tests {
         // End-to-end smoke test: ensure clap derives accept the new
         // `--client a,b` and `-c a -c b` shapes through the CLI parser.
         let cli =
-            Cli::try_parse_from(["tokscale", "--client", "opencode,claude"]).expect("parse ok");
+            Cli::try_parse_from(["tokens", "--client", "opencode,claude"]).expect("parse ok");
         assert_eq!(
             cli.clients.clients,
             vec![ClientFilter::Opencode, ClientFilter::Claude]
         );
 
         let cli =
-            Cli::try_parse_from(["tokscale", "-c", "opencode", "-c", "claude"]).expect("parse ok");
+            Cli::try_parse_from(["tokens", "-c", "opencode", "-c", "claude"]).expect("parse ok");
         assert_eq!(
             cli.clients.clients,
             vec![ClientFilter::Opencode, ClientFilter::Claude]
@@ -6100,7 +6182,7 @@ mod tests {
 
     #[test]
     fn test_wrapped_parses_clients_view_flag() {
-        let cli = Cli::try_parse_from(["tokscale", "wrapped"]).expect("parse ok");
+        let cli = Cli::try_parse_from(["tokens", "wrapped"]).expect("parse ok");
         let Some(Commands::Wrapped {
             show_clients,
             agents,
@@ -6112,7 +6194,7 @@ mod tests {
         assert!(!show_clients);
         assert!(!agents);
 
-        let cli = Cli::try_parse_from(["tokscale", "wrapped", "--clients"]).expect("parse ok");
+        let cli = Cli::try_parse_from(["tokens", "wrapped", "--clients"]).expect("parse ok");
         let Some(Commands::Wrapped { show_clients, .. }) = cli.command else {
             panic!("expected wrapped command");
         };
@@ -6122,7 +6204,7 @@ mod tests {
     #[test]
     fn test_wrapped_client_filter_coexists_with_clients_view_flag() {
         let cli =
-            Cli::try_parse_from(["tokscale", "wrapped", "--client", "opencode"]).expect("parse ok");
+            Cli::try_parse_from(["tokens", "wrapped", "--client", "opencode"]).expect("parse ok");
         let Some(Commands::Wrapped {
             client_flags,
             show_clients,
@@ -6134,7 +6216,7 @@ mod tests {
         assert_eq!(client_flags.clients, vec![ClientFilter::Opencode]);
         assert!(!show_clients);
 
-        let cli = Cli::try_parse_from(["tokscale", "wrapped", "--clients", "--client", "opencode"])
+        let cli = Cli::try_parse_from(["tokens", "wrapped", "--clients", "--client", "opencode"])
             .expect("parse ok");
         let Some(Commands::Wrapped {
             client_flags,
@@ -6151,7 +6233,7 @@ mod tests {
     #[test]
     fn test_client_flags_legacy_still_parses() {
         // Legacy `--claude` keeps working even though it is hidden in --help.
-        let cli = Cli::try_parse_from(["tokscale", "--claude"]).expect("parse ok");
+        let cli = Cli::try_parse_from(["tokens", "--claude"]).expect("parse ok");
         assert!(cli.clients.claude);
         assert!(cli.clients.clients.is_empty());
     }
@@ -6159,10 +6241,10 @@ mod tests {
     #[test]
     fn test_client_flag_accepts_uppercase() {
         let cli =
-            Cli::try_parse_from(["tokscale", "--client", "OPENCODE"]).expect("uppercase parses");
+            Cli::try_parse_from(["tokens", "--client", "OPENCODE"]).expect("uppercase parses");
         assert_eq!(cli.clients.clients, vec![ClientFilter::Opencode]);
 
-        let cli = Cli::try_parse_from(["tokscale", "-c", "Codebuff,Antigravity"])
+        let cli = Cli::try_parse_from(["tokens", "-c", "Codebuff,Antigravity"])
             .expect("mixed-case parses");
         assert_eq!(
             cli.clients.clients,
@@ -6172,13 +6254,13 @@ mod tests {
 
     #[test]
     fn test_client_flag_rejects_unknown_and_empty_values() {
-        assert!(Cli::try_parse_from(["tokscale", "--client", "unknown"]).is_err());
-        assert!(Cli::try_parse_from(["tokscale", "--client", ""]).is_err());
+        assert!(Cli::try_parse_from(["tokens", "--client", "unknown"]).is_err());
+        assert!(Cli::try_parse_from(["tokens", "--client", ""]).is_err());
     }
 
     #[test]
     fn test_legacy_bool_flag_rejects_duplicates() {
-        let result = Cli::try_parse_from(["tokscale", "--opencode", "--opencode"]);
+        let result = Cli::try_parse_from(["tokens", "--opencode", "--opencode"]);
         assert!(
             result.is_err(),
             "clap rejects duplicated boolean flags by default; if this changes, document it explicitly"
@@ -6254,13 +6336,13 @@ mod tests {
 
     #[test]
     fn test_delete_submitted_data_command_parses() {
-        let cli = Cli::try_parse_from(["tokscale", "delete-submitted-data"]).unwrap();
+        let cli = Cli::try_parse_from(["tokens", "delete-submitted-data"]).unwrap();
         assert!(matches!(cli.command, Some(Commands::DeleteSubmittedData)));
     }
 
     #[test]
     fn test_login_token_option_parses() {
-        let cli = Cli::try_parse_from(["tokscale", "login", "--token", "tt_ci_token"]).unwrap();
+        let cli = Cli::try_parse_from(["tokens", "login", "--token", "tt_ci_token"]).unwrap();
         assert!(matches!(
             cli.command,
             Some(Commands::Login {
@@ -6854,20 +6936,20 @@ mod tests {
     #[serial_test::serial]
     fn test_load_star_cache_falls_back_to_legacy_macos_path() {
         // Existing macOS users have star-cache.json at the pre-#468 path under
-        // `~/Library/Application Support/tokscale/`. After upgrade, the read
-        // path moves to `~/.config/tokscale/`, so without the legacy fallback
+        // `~/Library/Application Support/tokens/`. After upgrade, the read
+        // path moves to `~/.config/tokens/`, so without the legacy fallback
         // load_star_cache returns None and the user gets re-prompted to star
         // the repo even though they already starred it.
         use std::env;
         let temp = tempfile::TempDir::new().unwrap();
         let prev_home = env::var_os("HOME");
-        let prev_override = env::var_os("TOKSCALE_CONFIG_DIR");
+        let prev_override = env::var_os("TOKENS_CONFIG_DIR");
         unsafe {
             env::set_var("HOME", temp.path());
-            env::remove_var("TOKSCALE_CONFIG_DIR");
+            env::remove_var("TOKENS_CONFIG_DIR");
         }
 
-        let legacy_dir = temp.path().join("Library/Application Support/tokscale");
+        let legacy_dir = temp.path().join("Library/Application Support/tokens");
         std::fs::create_dir_all(&legacy_dir).unwrap();
         std::fs::write(
             legacy_dir.join("star-cache.json"),
@@ -6875,7 +6957,7 @@ mod tests {
         )
         .unwrap();
 
-        let new_path = temp.path().join(".config/tokscale/star-cache.json");
+        let new_path = temp.path().join(".config/tokens/star-cache.json");
         assert!(!new_path.exists());
 
         let cache = load_star_cache("junhoyeo");
@@ -6893,8 +6975,8 @@ mod tests {
                 None => env::remove_var("HOME"),
             }
             match prev_override {
-                Some(v) => env::set_var("TOKSCALE_CONFIG_DIR", v),
-                None => env::remove_var("TOKSCALE_CONFIG_DIR"),
+                Some(v) => env::set_var("TOKENS_CONFIG_DIR", v),
+                None => env::remove_var("TOKENS_CONFIG_DIR"),
             }
         }
     }
@@ -6903,22 +6985,22 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[serial_test::serial]
     fn test_load_star_cache_skips_legacy_fallback_when_config_dir_overridden() {
-        // Same hermeticity contract as the Settings test: TOKSCALE_CONFIG_DIR
+        // Same hermeticity contract as the Settings test: TOKENS_CONFIG_DIR
         // must isolate the test/CI/sandbox profile from the real user's
         // legacy macOS star-cache.json.
         use std::env;
         let temp = tempfile::TempDir::new().unwrap();
         let legacy_root = tempfile::TempDir::new().unwrap();
         let prev_home = env::var_os("HOME");
-        let prev_override = env::var_os("TOKSCALE_CONFIG_DIR");
+        let prev_override = env::var_os("TOKENS_CONFIG_DIR");
         unsafe {
             env::set_var("HOME", legacy_root.path());
-            env::set_var("TOKSCALE_CONFIG_DIR", temp.path());
+            env::set_var("TOKENS_CONFIG_DIR", temp.path());
         }
 
         let legacy_dir = legacy_root
             .path()
-            .join("Library/Application Support/tokscale");
+            .join("Library/Application Support/tokens");
         std::fs::create_dir_all(&legacy_dir).unwrap();
         std::fs::write(
             legacy_dir.join("star-cache.json"),
@@ -6937,8 +7019,8 @@ mod tests {
                 None => env::remove_var("HOME"),
             }
             match prev_override {
-                Some(v) => env::set_var("TOKSCALE_CONFIG_DIR", v),
-                None => env::remove_var("TOKSCALE_CONFIG_DIR"),
+                Some(v) => env::set_var("TOKENS_CONFIG_DIR", v),
+                None => env::remove_var("TOKENS_CONFIG_DIR"),
             }
         }
     }
@@ -6990,31 +7072,31 @@ mod tests {
 
     #[test]
     fn clap_rejects_write_cache_without_light() {
-        assert!(Cli::try_parse_from(["tokscale", "--write-cache"]).is_err());
+        assert!(Cli::try_parse_from(["tokens", "--write-cache"]).is_err());
     }
 
     #[test]
     fn clap_rejects_no_write_cache_without_light() {
-        assert!(Cli::try_parse_from(["tokscale", "--no-write-cache"]).is_err());
+        assert!(Cli::try_parse_from(["tokens", "--no-write-cache"]).is_err());
     }
 
     #[test]
     fn clap_rejects_both_write_flags_together() {
         assert!(
-            Cli::try_parse_from(["tokscale", "--light", "--write-cache", "--no-write-cache",])
+            Cli::try_parse_from(["tokens", "--light", "--write-cache", "--no-write-cache",])
                 .is_err()
         );
     }
 
     #[test]
     fn clap_accepts_models_light_write_cache_after_subcommand() {
-        assert!(Cli::try_parse_from(["tokscale", "models", "--light", "--write-cache"]).is_ok());
+        assert!(Cli::try_parse_from(["tokens", "models", "--light", "--write-cache"]).is_ok());
     }
 
     #[test]
     fn clap_accepts_cursor_sync_command() {
-        assert!(Cli::try_parse_from(["tokscale", "cursor", "sync"]).is_ok());
-        assert!(Cli::try_parse_from(["tokscale", "cursor", "sync", "--json"]).is_ok());
+        assert!(Cli::try_parse_from(["tokens", "cursor", "sync"]).is_ok());
+        assert!(Cli::try_parse_from(["tokens", "cursor", "sync", "--json"]).is_ok());
     }
 
     #[test]
@@ -7068,7 +7150,7 @@ mod tests {
     fn write_light_cache_refuses_when_since_filter_set() {
         // Date/home filters are NOT part of the TUI cache key. Writing
         // the filtered slice would silently poison subsequent TUI launches
-        // (next `tokscale tui` would render the filtered slice as if it
+        // (next `tokens tui` would render the filtered slice as if it
         // were the default report). The function returns `()` and prints
         // an eprintln; reaching this assertion line proves the function
         // returned normally without panicking or attempting the write.

@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import styled from "styled-components";
 import { toast } from "react-toastify";
 import { EMBED_TEMPLATES, type EmbedTemplate } from "@/lib/embed/embedShared";
 import { getPaletteNames, getPalette, type ColorPaletteName } from "@/lib/themes";
@@ -24,14 +23,49 @@ interface ProfileEmbedDialogProps {
   onClose: () => void;
 }
 
-const TOKSCALE_URL = "https://tokscale.ai";
+// Absolute base for shareable snippets (README image links must resolve publicly).
+const SITE_URL = process.env.NEXT_PUBLIC_URL || "https://tokens.ci";
 
-export function ProfileEmbedDialog({
-  open,
-  username,
-  displayName,
-  onClose,
-}: ProfileEmbedDialogProps) {
+function Segmented<T extends string>({
+  options,
+  value,
+  onChange,
+}: {
+  options: { id: T; label: string }[];
+  value: T;
+  onChange: (v: T) => void;
+}) {
+  return (
+    <div className="flex flex-wrap gap-2">
+      {options.map((opt) => {
+        const active = value === opt.id;
+        return (
+          <button
+            key={opt.id}
+            type="button"
+            onClick={() => onChange(opt.id)}
+            className={`inline-flex min-h-10 items-center justify-center rounded-full border px-3.5 py-2.5 text-sm font-semibold transition hover:-translate-y-px ${
+              active ? "border-[rgba(133,202,255,0.24)] bg-gradient-to-br from-[rgba(22,154,255,0.18)] to-[rgba(133,202,255,0.1)] text-foreground" : "border-line bg-[var(--surface-tertiary)] text-muted hover:text-foreground"
+            }`}
+          >
+            {opt.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function OptionGroup({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex flex-col gap-2.5 rounded-2xl border border-line bg-surface/70 p-4">
+      <span className="text-sm font-semibold text-foreground">{label}</span>
+      {children}
+    </div>
+  );
+}
+
+export function ProfileEmbedDialog({ open, username, displayName, onClose }: ProfileEmbedDialogProps) {
   const [theme, setTheme] = useState<EmbedTheme>("dark");
   const [sortBy, setSortBy] = useState<EmbedSortBy>("tokens");
   const [compact, setCompact] = useState(false);
@@ -43,36 +77,24 @@ export function ProfileEmbedDialog({
   const [rankFormat, setRankFormat] = useState<EmbedRankFormat>("plain");
   const [graph, setGraph] = useState(false);
 
-  // Templates whose contribution graph is toggleable via `?graph=1`.
   const graphCapable = template !== "graph" && template !== "vitals";
 
   useEffect(() => {
     if (!open) return;
-
     const previousOverflow = document.body.style.overflow;
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        onClose();
-      }
+      if (event.key === "Escape") onClose();
     };
-
     document.body.style.overflow = "hidden";
     window.addEventListener("keydown", handleKeyDown);
-
     return () => {
       document.body.style.overflow = previousOverflow;
       window.removeEventListener("keydown", handleKeyDown);
     };
   }, [open, onClose]);
 
-  const {
-    embedUrl,
-    markdownSnippet,
-    htmlSnippet,
-    profileUrl,
-  } = useMemo(() => {
+  const { embedUrl, previewSrc, markdownSnippet, htmlSnippet, profileUrl } = useMemo(() => {
     const params = new URLSearchParams();
-
     if (view === "3d") params.set("view", "3d");
     if (theme !== "dark") params.set("theme", theme);
     if (sortBy !== "tokens") params.set("sort", sortBy);
@@ -85,14 +107,15 @@ export function ProfileEmbedDialog({
     params.set("cost", costFormat);
 
     const query = params.toString();
-    const baseEmbedUrl = `${TOKSCALE_URL}/api/embed/${username}/svg`;
-    const resolvedEmbedUrl = query ? `${baseEmbedUrl}?${query}` : baseEmbedUrl;
-    const resolvedProfileUrl = `${TOKSCALE_URL}/u/${username}`;
+    const path = `/api/embed/${username}/svg${query ? `?${query}` : ""}`;
+    const resolvedEmbedUrl = `${SITE_URL}${path}`;
+    const resolvedProfileUrl = `${SITE_URL}/u/${username}`;
 
     return {
       embedUrl: resolvedEmbedUrl,
-      markdownSnippet: `[![Tokscale Stats](${resolvedEmbedUrl})](${resolvedProfileUrl})`,
-      htmlSnippet: `<a href="${resolvedProfileUrl}"><img alt="Tokscale Stats for @${username}" src="${resolvedEmbedUrl}" /></a>`,
+      previewSrc: path,
+      markdownSnippet: `[![Tokens Stats](${resolvedEmbedUrl})](${resolvedProfileUrl})`,
+      htmlSnippet: `<a href="${resolvedProfileUrl}"><img alt="Tokens Stats for @${username}" src="${resolvedEmbedUrl}" /></a>`,
       profileUrl: resolvedProfileUrl,
     };
   }, [color, compact, costFormat, graph, graphCapable, rankFormat, sortBy, template, theme, tokensFormat, username, view]);
@@ -106,698 +129,149 @@ export function ProfileEmbedDialog({
     }
   };
 
-  if (!open || typeof document === "undefined") {
-    return null;
-  }
+  if (!open || typeof document === "undefined") return null;
 
   return createPortal(
-    <Overlay onClick={(event) => {
-      if (event.target === event.currentTarget) onClose();
-    }}>
-      <Dialog
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="profile-embed-dialog-title"
-      >
-        <DialogHeader>
-          <HeaderCopy>
-            <Eyebrow>GitHub README embed</Eyebrow>
-            <DialogTitle id="profile-embed-dialog-title">
-              Share @{username} with a polished Tokscale card
-            </DialogTitle>
-            <DialogDescription>
+    <div
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+      className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/80 p-6 backdrop-blur-lg max-[640px]:items-end max-[640px]:p-3"
+    >
+      <div role="dialog" aria-modal="true" aria-labelledby="profile-embed-dialog-title" className="max-h-[88vh] w-full max-w-[1040px] overflow-auto rounded-[28px] border border-[rgba(133,202,255,0.16)] bg-surface shadow-2xl max-[640px]:rounded-t-3xl max-[640px]:rounded-b-none">
+        <div className="flex items-start justify-between gap-4 px-7 pt-7 max-[640px]:px-[18px] max-[640px]:pt-[22px]">
+          <div className="flex min-w-0 flex-col gap-2.5">
+            <span className="w-fit rounded-full border border-[rgba(133,202,255,0.18)] bg-[rgba(133,202,255,0.08)] px-3 py-1.5 text-xs font-bold tracking-widest text-[var(--color-accent-blue)] uppercase">
+              GitHub README embed
+            </span>
+            <h2 id="profile-embed-dialog-title" className="text-[clamp(28px,3vw,38px)] leading-tight font-bold tracking-tight text-foreground">
+              Share @{username} with a polished Tokens card
+            </h2>
+            <p className="max-w-[720px] text-[15px] leading-relaxed text-muted">
               Preview the live embed, tweak the presentation, and copy a ready-to-paste snippet for your README.
-            </DialogDescription>
-          </HeaderCopy>
+            </p>
+          </div>
 
-          <CloseButton type="button" onClick={onClose} aria-label="Close embed dialog">
-            <CloseIcon />
-          </CloseButton>
-        </DialogHeader>
+          <button type="button" onClick={onClose} aria-label="Close embed dialog" className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-line bg-[var(--surface-tertiary)] text-foreground transition hover:-translate-y-px">
+            <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none">
+              <path d="M18 6L6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              <path d="M6 6L18 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            </svg>
+          </button>
+        </div>
 
-        <DialogBody>
-          <PreviewPanel>
-            <PreviewSurface>
-              <PreviewLabel>Live preview</PreviewLabel>
-              <PreviewFrame>
-                <PreviewImage
-                  src={embedUrl}
-                  alt={`Tokscale README embed preview for ${displayName || username}`}
-                />
-              </PreviewFrame>
-            </PreviewSurface>
+        <div className="grid grid-cols-[minmax(0,1.1fr)_minmax(320px,420px)] gap-6 px-7 pt-7 pb-10 max-[920px]:grid-cols-1 max-[640px]:gap-[18px] max-[640px]:px-[18px] max-[640px]:pt-[18px] max-[640px]:pb-8">
+          <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-4 rounded-3xl border border-[rgba(133,202,255,0.12)] bg-background p-5">
+              <span className="text-xs font-semibold tracking-wider text-muted uppercase">Live preview</span>
+              <div className="flex min-h-[360px] items-center justify-center rounded-[18px] border border-dashed border-[rgba(133,202,255,0.16)] bg-white/[0.02] p-6 max-[640px]:min-h-[220px] max-[640px]:p-4">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={previewSrc} alt={`Tokens README embed preview for ${displayName || username}`} className="h-auto w-full max-w-full drop-shadow-2xl" />
+              </div>
+            </div>
 
-            <HighlightsList>
-              <HighlightItem>GitHub-ready markdown with a linked image card</HighlightItem>
-              <HighlightItem>Matches the new Tokscale 2.0 visual language</HighlightItem>
-              <HighlightItem>Automatically refreshes as profile stats update</HighlightItem>
-            </HighlightsList>
-          </PreviewPanel>
+            <ul className="grid list-none gap-2.5 p-0">
+              {["GitHub-ready markdown with a linked image card", "Matches the Tokens visual language", "Automatically refreshes as profile stats update"].map((t) => (
+                <li key={t} className="relative pl-[18px] text-sm leading-relaxed text-muted before:absolute before:top-2 before:left-0 before:h-[7px] before:w-[7px] before:rounded-full before:bg-gradient-to-br before:from-[#169aff] before:to-[#85caff]">
+                  {t}
+                </li>
+              ))}
+            </ul>
+          </div>
 
-          <ControlsPanel>
-            <OptionGroup>
-              <OptionLabel>Template</OptionLabel>
-              <SegmentedControl>
-                {EMBED_TEMPLATES.map((tpl) => (
-                  <SegmentButton
-                    key={tpl}
-                    type="button"
-                    $active={template === tpl}
-                    onClick={() => setTemplate(tpl)}
-                  >
-                    {titleCase(tpl)}
-                  </SegmentButton>
-                ))}
-              </SegmentedControl>
+          <div className="flex flex-col gap-4">
+            <OptionGroup label="Template">
+              <Segmented options={EMBED_TEMPLATES.map((tpl) => ({ id: tpl, label: titleCase(tpl) }))} value={template} onChange={setTemplate} />
             </OptionGroup>
 
-            <OptionGroup>
-              <OptionLabel>View</OptionLabel>
-              <SegmentedControl>
-                <SegmentButton
-                  type="button"
-                  $active={view === "2d"}
-                  onClick={() => setView("2d")}
-                >
-                  2D
-                </SegmentButton>
-                <SegmentButton
-                  type="button"
-                  $active={view === "3d"}
-                  onClick={() => setView("3d")}
-                >
-                  3D
-                </SegmentButton>
-              </SegmentedControl>
+            <OptionGroup label="View">
+              <Segmented options={[{ id: "2d", label: "2D" }, { id: "3d", label: "3D" }]} value={view} onChange={setView} />
             </OptionGroup>
 
-            <OptionGroup>
-              <OptionLabel>Theme</OptionLabel>
-              <SegmentedControl>
-                <SegmentButton
-                  type="button"
-                  $active={theme === "dark"}
-                  onClick={() => setTheme("dark")}
-                >
-                  Dark
-                </SegmentButton>
-                <SegmentButton
-                  type="button"
-                  $active={theme === "light"}
-                  onClick={() => setTheme("light")}
-                >
-                  Light
-                </SegmentButton>
-              </SegmentedControl>
+            <OptionGroup label="Theme">
+              <Segmented options={[{ id: "dark", label: "Dark" }, { id: "light", label: "Light" }]} value={theme} onChange={setTheme} />
             </OptionGroup>
 
-            <OptionGroup>
-              <OptionLabel>Accent color</OptionLabel>
-              <SwatchRow>
-                <Swatch
+            <OptionGroup label="Accent color">
+              <div className="flex flex-wrap gap-2.5">
+                <button
                   type="button"
-                  $active={color === null}
-                  $color="var(--color-border-default)"
                   aria-label="Default accent color"
                   title="Default"
                   onClick={() => setColor(null)}
+                  className="h-[34px] w-[34px] rounded-full ring-1 ring-line transition hover:-translate-y-px"
+                  style={{ background: "var(--border)", border: color === null ? "2px solid var(--foreground)" : "2px solid transparent" }}
                 />
                 {getPaletteNames().map((name) => (
-                  <Swatch
+                  <button
                     key={name}
                     type="button"
-                    $active={color === name}
-                    $color={getPalette(name).grade3}
                     aria-label={`${name} accent color`}
                     title={titleCase(name)}
                     onClick={() => setColor(name)}
+                    className="h-[34px] w-[34px] rounded-full ring-1 ring-line transition hover:-translate-y-px"
+                    style={{ background: getPalette(name).grade3, border: color === name ? "2px solid var(--foreground)" : "2px solid transparent" }}
                   />
                 ))}
-              </SwatchRow>
+              </div>
             </OptionGroup>
 
-            <OptionGroup>
-              <OptionLabel>Ranking</OptionLabel>
-              <SegmentedControl>
-                <SegmentButton
-                  type="button"
-                  $active={sortBy === "tokens"}
-                  onClick={() => setSortBy("tokens")}
-                >
-                  Tokens
-                </SegmentButton>
-                <SegmentButton
-                  type="button"
-                  $active={sortBy === "cost"}
-                  onClick={() => setSortBy("cost")}
-                >
-                  Cost
-                </SegmentButton>
-              </SegmentedControl>
+            <OptionGroup label="Ranking">
+              <Segmented options={[{ id: "tokens", label: "Tokens" }, { id: "cost", label: "Cost" }]} value={sortBy} onChange={setSortBy} />
             </OptionGroup>
 
-            <OptionGroup>
-              <OptionLabel>Rank format</OptionLabel>
-              <SegmentedControl>
-                {(["plain", "percent", "total"] as const).map((mode) => (
-                  <SegmentButton
-                    key={mode}
-                    type="button"
-                    $active={rankFormat === mode}
-                    onClick={() => setRankFormat(mode)}
-                  >
-                    {titleCase(mode)}
-                  </SegmentButton>
-                ))}
-              </SegmentedControl>
+            <OptionGroup label="Rank format">
+              <Segmented options={(["plain", "percent", "total"] as const).map((m) => ({ id: m, label: titleCase(m) }))} value={rankFormat} onChange={setRankFormat} />
             </OptionGroup>
 
             {template === "classic" && (
-              <OptionGroup>
-                <OptionLabel>Layout</OptionLabel>
-                <SegmentedControl>
-                  <SegmentButton
-                    type="button"
-                    $active={!compact}
-                    onClick={() => setCompact(false)}
-                  >
-                    Full
-                  </SegmentButton>
-                  <SegmentButton
-                    type="button"
-                    $active={compact}
-                    onClick={() => setCompact(true)}
-                  >
-                    Compact
-                  </SegmentButton>
-                </SegmentedControl>
+              <OptionGroup label="Layout">
+                <Segmented options={[{ id: "full", label: "Full" }, { id: "compact", label: "Compact" }]} value={compact ? "compact" : "full"} onChange={(v) => setCompact(v === "compact")} />
               </OptionGroup>
             )}
 
             {graphCapable && (
-              <OptionGroup>
-                <OptionLabel>Contribution graph</OptionLabel>
-                <SegmentedControl>
-                  <SegmentButton
-                    type="button"
-                    $active={!graph}
-                    onClick={() => setGraph(false)}
-                  >
-                    Off
-                  </SegmentButton>
-                  <SegmentButton
-                    type="button"
-                    $active={graph}
-                    onClick={() => setGraph(true)}
-                  >
-                    On
-                  </SegmentButton>
-                </SegmentedControl>
+              <OptionGroup label="Contribution graph">
+                <Segmented options={[{ id: "off", label: "Off" }, { id: "on", label: "On" }]} value={graph ? "on" : "off"} onChange={(v) => setGraph(v === "on")} />
               </OptionGroup>
             )}
 
-            <OptionGroup>
-              <OptionLabel>Token number format</OptionLabel>
-              <SegmentedControl>
-                <SegmentButton
-                  type="button"
-                  $active={tokensFormat === "compact"}
-                  onClick={() => setTokensFormat("compact")}
-                >
-                  Compact
-                </SegmentButton>
-                <SegmentButton
-                  type="button"
-                  $active={tokensFormat === "full"}
-                  onClick={() => setTokensFormat("full")}
-                >
-                  Full
-                </SegmentButton>
-              </SegmentedControl>
+            <OptionGroup label="Token number format">
+              <Segmented options={[{ id: "compact", label: "Compact" }, { id: "full", label: "Full" }]} value={tokensFormat} onChange={setTokensFormat} />
             </OptionGroup>
 
-            <OptionGroup>
-              <OptionLabel>Cost number format</OptionLabel>
-              <SegmentedControl>
-                <SegmentButton
-                  type="button"
-                  $active={costFormat === "compact"}
-                  onClick={() => setCostFormat("compact")}
-                >
-                  Compact
-                </SegmentButton>
-                <SegmentButton
-                  type="button"
-                  $active={costFormat === "full"}
-                  onClick={() => setCostFormat("full")}
-                >
-                  Full
-                </SegmentButton>
-              </SegmentedControl>
+            <OptionGroup label="Cost number format">
+              <Segmented options={[{ id: "compact", label: "Compact" }, { id: "full", label: "Full" }]} value={costFormat} onChange={setCostFormat} />
             </OptionGroup>
 
-            <SnippetSection>
-              <SnippetHeader>
-                <SnippetTitle>Markdown snippet</SnippetTitle>
-                <InlineActions>
-                  <InlineActionButton type="button" onClick={() => copyToClipboard(embedUrl, "Image URL")}>
+            <div className="flex flex-col gap-3.5 rounded-3xl border border-[rgba(133,202,255,0.16)] bg-surface p-5">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <h3 className="text-[15px] font-bold text-foreground">Markdown snippet</h3>
+                <div className="flex flex-wrap gap-2">
+                  <button type="button" onClick={() => copyToClipboard(embedUrl, "Image URL")} className="inline-flex min-h-[34px] items-center justify-center rounded-full border border-line bg-[var(--surface-tertiary)] px-3 py-2 text-[13px] font-semibold text-muted transition hover:text-foreground">
                     Copy image URL
-                  </InlineActionButton>
-                  <InlineActionButton type="button" onClick={() => copyToClipboard(htmlSnippet, "HTML snippet")}>
+                  </button>
+                  <button type="button" onClick={() => copyToClipboard(htmlSnippet, "HTML snippet")} className="inline-flex min-h-[34px] items-center justify-center rounded-full border border-line bg-[var(--surface-tertiary)] px-3 py-2 text-[13px] font-semibold text-muted transition hover:text-foreground">
                     Copy HTML
-                  </InlineActionButton>
-                </InlineActions>
-              </SnippetHeader>
+                  </button>
+                </div>
+              </div>
 
-              <CodeBlock>{markdownSnippet}</CodeBlock>
+              <pre className="overflow-auto rounded-[18px] border border-white/5 bg-black/40 p-4 font-mono text-[13px] leading-relaxed break-words whitespace-pre-wrap text-[#d9edff]">{markdownSnippet}</pre>
 
-              <PrimaryActions>
-                <PrimaryButton type="button" onClick={() => copyToClipboard(markdownSnippet, "Markdown snippet")}>
+              <div className="flex flex-wrap gap-2.5">
+                <button type="button" onClick={() => copyToClipboard(markdownSnippet, "Markdown snippet")} className="inline-flex min-h-11 items-center justify-center rounded-full border border-[rgba(133,202,255,0.26)] bg-gradient-to-br from-[#169aff] to-[#0073ff] px-4 py-3 text-sm font-bold text-white transition hover:brightness-105">
                   Copy markdown
-                </PrimaryButton>
-                <SecondaryLink href={profileUrl} target="_blank" rel="noopener noreferrer">
+                </button>
+                <a href={profileUrl} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 items-center justify-center rounded-full border border-line bg-[var(--surface-tertiary)] px-4 py-3 text-sm font-semibold text-foreground transition hover:-translate-y-px">
                   View profile
-                </SecondaryLink>
-              </PrimaryActions>
-            </SnippetSection>
-          </ControlsPanel>
-        </DialogBody>
-      </Dialog>
-    </Overlay>,
-    document.body
-  );
-}
-
-const Overlay = styled.div`
-  position: fixed;
-  inset: 0;
-  z-index: 1000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  background:
-    radial-gradient(circle at top, rgba(22, 154, 255, 0.18), transparent 32%),
-    rgba(6, 10, 18, 0.82);
-  backdrop-filter: blur(18px);
-
-  @media (max-width: 640px) {
-    align-items: flex-end;
-    padding: 12px;
-  }
-`;
-
-const Dialog = styled.div`
-  width: min(100%, 1040px);
-  max-height: min(88vh, 920px);
-  overflow: auto;
-  border: 1px solid rgba(133, 202, 255, 0.16);
-  border-radius: 28px;
-  background:
-    radial-gradient(circle at top right, rgba(22, 154, 255, 0.16), transparent 30%),
-    linear-gradient(180deg, rgba(26, 33, 42, 0.98) 0%, rgba(17, 17, 19, 0.98) 100%);
-  box-shadow:
-    0 30px 80px rgba(0, 0, 0, 0.55),
-    inset 0 1px 0 rgba(255, 255, 255, 0.04);
-
-  @media (max-width: 640px) {
-    width: 100%;
-    max-height: 92vh;
-    border-radius: 24px 24px 0 0;
-  }
-`;
-
-const DialogHeader = styled.div`
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 28px 28px 0;
-
-  @media (max-width: 640px) {
-    padding: 22px 18px 0;
-  }
-`;
-
-const HeaderCopy = styled.div`
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  min-width: 0;
-`;
-
-const Eyebrow = styled.span`
-  display: inline-flex;
-  width: fit-content;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  border: 1px solid rgba(133, 202, 255, 0.18);
-  border-radius: 999px;
-  background: rgba(133, 202, 255, 0.08);
-  color: var(--color-accent-blue);
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-`;
-
-const DialogTitle = styled.h2`
-  color: var(--color-fg-default);
-  font-size: clamp(28px, 3vw, 38px);
-  font-weight: 700;
-  line-height: 1.05;
-  letter-spacing: -0.04em;
-`;
-
-const DialogDescription = styled.p`
-  max-width: 720px;
-  color: var(--color-fg-muted);
-  font-size: 15px;
-  line-height: 1.6;
-`;
-
-const CloseButton = styled.button`
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 44px;
-  height: 44px;
-  flex-shrink: 0;
-  border: 1px solid var(--color-border-default);
-  border-radius: 999px;
-  background: rgba(32, 41, 50, 0.82);
-  color: var(--color-fg-default);
-  transition:
-    transform 150ms ease,
-    border-color 150ms ease,
-    background 150ms ease;
-
-  &:hover {
-    transform: translateY(-1px);
-    border-color: rgba(133, 202, 255, 0.28);
-    background: rgba(32, 41, 50, 1);
-  }
-`;
-
-const DialogBody = styled.div`
-  display: grid;
-  grid-template-columns: minmax(0, 1.1fr) minmax(320px, 420px);
-  gap: 24px;
-  padding: 28px;
-
-  @media (max-width: 920px) {
-    grid-template-columns: 1fr;
-  }
-
-  @media (max-width: 640px) {
-    gap: 18px;
-    padding: 18px;
-  }
-`;
-
-const PreviewPanel = styled.div`
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-`;
-
-const PreviewSurface = styled.div`
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  min-height: 100%;
-  padding: 20px;
-  border: 1px solid rgba(133, 202, 255, 0.12);
-  border-radius: 24px;
-  background:
-    linear-gradient(180deg, rgba(16, 18, 28, 0.98) 0%, rgba(10, 12, 18, 0.98) 100%);
-`;
-
-const PreviewLabel = styled.span`
-  color: var(--color-fg-muted);
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-`;
-
-const PreviewFrame = styled.div`
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 360px;
-  padding: 24px;
-  border: 1px dashed rgba(133, 202, 255, 0.16);
-  border-radius: 18px;
-  background:
-    linear-gradient(135deg, rgba(22, 154, 255, 0.06) 0%, transparent 35%),
-    rgba(255, 255, 255, 0.02);
-
-  @media (max-width: 640px) {
-    min-height: 220px;
-    padding: 16px;
-  }
-`;
-
-const PreviewImage = styled.img`
-  width: 100%;
-  max-width: 100%;
-  height: auto;
-  filter: drop-shadow(0 22px 48px rgba(0, 0, 0, 0.36));
-`;
-
-const HighlightsList = styled.ul`
-  display: grid;
-  gap: 10px;
-  padding: 0;
-  margin: 0;
-  list-style: none;
-`;
-
-const HighlightItem = styled.li`
-  position: relative;
-  padding-left: 18px;
-  color: var(--color-fg-muted);
-  font-size: 14px;
-  line-height: 1.5;
-
-  &::before {
-    content: "";
-    position: absolute;
-    left: 0;
-    top: 8px;
-    width: 7px;
-    height: 7px;
-    border-radius: 999px;
-    background: linear-gradient(135deg, #169aff 0%, #85caff 100%);
-    box-shadow: 0 0 12px rgba(22, 154, 255, 0.5);
-  }
-`;
-
-const ControlsPanel = styled.div`
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-`;
-
-const OptionGroup = styled.div`
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 16px;
-  border: 1px solid var(--color-border-default);
-  border-radius: 20px;
-  background: rgba(16, 18, 28, 0.68);
-`;
-
-const OptionLabel = styled.span`
-  color: var(--color-fg-default);
-  font-size: 14px;
-  font-weight: 600;
-`;
-
-const SegmentedControl = styled.div`
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-`;
-
-const SegmentButton = styled.button<{ $active: boolean }>`
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 40px;
-  padding: 10px 14px;
-  border: 1px solid ${({ $active }) => $active ? "rgba(133, 202, 255, 0.24)" : "var(--color-border-default)"};
-  border-radius: 999px;
-  background: ${({ $active }) =>
-    $active
-      ? "linear-gradient(135deg, rgba(22, 154, 255, 0.18) 0%, rgba(133, 202, 255, 0.1) 100%)"
-      : "rgba(32, 41, 50, 0.8)"};
-  color: ${({ $active }) => $active ? "var(--color-fg-default)" : "var(--color-fg-muted)"};
-  font-size: 14px;
-  font-weight: 600;
-  transition:
-    transform 150ms ease,
-    border-color 150ms ease,
-    color 150ms ease,
-    background 150ms ease;
-
-  &:hover {
-    transform: translateY(-1px);
-    color: var(--color-fg-default);
-    border-color: rgba(133, 202, 255, 0.24);
-  }
-`;
-
-const SwatchRow = styled.div`
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-`;
-
-const Swatch = styled.button<{ $active: boolean; $color: string }>`
-  width: 34px;
-  height: 34px;
-  border-radius: 999px;
-  background: ${({ $color }) => $color};
-  border: 2px solid ${({ $active }) => ($active ? "var(--color-fg-default)" : "transparent")};
-  box-shadow: inset 0 0 0 1px var(--color-border-default);
-  cursor: pointer;
-  transition: transform 150ms ease;
-
-  &:hover {
-    transform: translateY(-1px);
-  }
-`;
-
-const SnippetSection = styled.div`
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  padding: 20px;
-  border: 1px solid rgba(133, 202, 255, 0.16);
-  border-radius: 24px;
-  background:
-    linear-gradient(180deg, rgba(26, 33, 42, 0.92) 0%, rgba(17, 18, 24, 0.92) 100%);
-`;
-
-const SnippetHeader = styled.div`
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
-`;
-
-const SnippetTitle = styled.h3`
-  color: var(--color-fg-default);
-  font-size: 15px;
-  font-weight: 700;
-`;
-
-const InlineActions = styled.div`
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-`;
-
-const InlineActionButton = styled.button`
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 34px;
-  padding: 8px 12px;
-  border: 1px solid var(--color-border-default);
-  border-radius: 999px;
-  background: rgba(32, 41, 50, 0.68);
-  color: var(--color-fg-muted);
-  font-size: 13px;
-  font-weight: 600;
-  transition:
-    border-color 150ms ease,
-    color 150ms ease,
-    background 150ms ease;
-
-  &:hover {
-    color: var(--color-fg-default);
-    border-color: rgba(133, 202, 255, 0.2);
-    background: rgba(32, 41, 50, 0.92);
-  }
-`;
-
-const CodeBlock = styled.pre`
-  overflow: auto;
-  margin: 0;
-  padding: 16px;
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 18px;
-  background: rgba(8, 12, 18, 0.92);
-  color: #d9edff;
-  font-family: var(--font-mono), ui-monospace, monospace;
-  font-size: 13px;
-  line-height: 1.7;
-  white-space: pre-wrap;
-  word-break: break-word;
-`;
-
-const PrimaryActions = styled.div`
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-`;
-
-const PrimaryButton = styled.button`
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 44px;
-  padding: 12px 16px;
-  border: 1px solid rgba(133, 202, 255, 0.26);
-  border-radius: 999px;
-  background: linear-gradient(135deg, #169aff 0%, #0073ff 100%);
-  color: #fff;
-  font-size: 14px;
-  font-weight: 700;
-  transition:
-    transform 150ms ease,
-    filter 150ms ease;
-
-  &:hover {
-    transform: translateY(-1px);
-    filter: brightness(1.06);
-  }
-`;
-
-const SecondaryLink = styled.a`
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 44px;
-  padding: 12px 16px;
-  border: 1px solid var(--color-border-default);
-  border-radius: 999px;
-  background: rgba(32, 41, 50, 0.68);
-  color: var(--color-fg-default);
-  font-size: 14px;
-  font-weight: 600;
-  text-decoration: none;
-  transition:
-    transform 150ms ease,
-    border-color 150ms ease;
-
-  &:hover {
-    transform: translateY(-1px);
-    border-color: rgba(133, 202, 255, 0.22);
-  }
-`;
-
-function CloseIcon() {
-  return (
-    <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none">
-      <path d="M18 6L6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-      <path d="M6 6L18 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-    </svg>
+                </a>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }

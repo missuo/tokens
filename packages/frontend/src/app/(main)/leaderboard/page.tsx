@@ -1,8 +1,5 @@
 import { Suspense } from "react";
 import { cookies } from "next/headers";
-import { Navigation } from "@/components/layout/Navigation";
-import { Footer } from "@/components/layout/Footer";
-import { BlackholeHero } from "@/components/BlackholeHero";
 import { LeaderboardSkeleton } from "@/components/Skeleton";
 import { getLeaderboardData, getUserRank } from "@/lib/leaderboard/getLeaderboard";
 import type { LeaderboardData, Period, SortBy } from "@/lib/leaderboard/types";
@@ -53,24 +50,12 @@ interface PageProps {
 
 export default function LeaderboardPage({ searchParams }: PageProps) {
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        display: "flex",
-        flexDirection: "column",
-        backgroundColor: "var(--color-bg-default)",
-      }}
-    >
-      <Navigation />
-
+    <div className="flex min-h-screen flex-col">
       <main className="main-container">
-        <BlackholeHero />
         <Suspense fallback={<LeaderboardSkeleton />}>
           <LeaderboardWithPreferences searchParams={searchParams} />
         </Suspense>
       </main>
-
-      <Footer />
     </div>
   );
 }

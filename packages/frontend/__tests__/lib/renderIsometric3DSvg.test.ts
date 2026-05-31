@@ -104,10 +104,10 @@ describe("renderIsometric3DEmbedSvg", () => {
     expect(uniqueFills.size).toBeGreaterThan(3);
   });
 
-  it("includes tokscale.ai profile link", () => {
+  it("includes tokens.ci profile link", () => {
     const svg = renderIsometric3DEmbedSvg(mockStats, mockContributions);
 
-    expect(svg).toContain("tokscale.ai/u/octocat");
+    expect(svg).toContain("tokens.ci/u/octocat");
   });
 
   it("escapes XML in user-provided text", () => {
@@ -188,7 +188,7 @@ describe("renderIsometric3DErrorSvg", () => {
 
     expect(svg).toContain("<svg");
     expect(svg).toContain("Something went wrong");
-    expect(svg).toContain("Tokscale Stats");
+    expect(svg).toContain("Tokens Stats");
   });
 
   it("escapes XML in error message", () => {

@@ -25,27 +25,27 @@ async function getProfileData(username: string) {
 export async function generateMetadata({ params }: { params: Promise<{ username: string }> }): Promise<Metadata> {
   const { username } = await params;
   return {
-    title: `@${username} - Token Usage | Tokscale`,
-    description: `View ${username}'s AI token usage statistics and cost breakdown on Tokscale`,
+    title: `@${username} - Token Usage | Tokens`,
+    description: `View ${username}'s AI token usage statistics and cost breakdown on Tokens`,
     openGraph: {
-      title: `@${username}'s Token Usage | Tokscale`,
-      description: `AI token usage statistics for ${username} on Tokscale`,
+      title: `@${username}'s Token Usage | Tokens`,
+      description: `AI token usage statistics for ${username} on Tokens`,
       type: 'profile',
-      url: `https://tokscale.ai/u/${username}`,
-      siteName: 'Tokscale',
+      url: `https://tokens.ci/u/${username}`,
+      siteName: 'Tokens',
       images: [
         {
-          url: 'https://tokscale.ai/og-image.png',
+          url: 'https://tokens.ci/og-image.png',
           width: 1200,
           height: 630,
-          alt: `${username}'s Token Usage on Tokscale`,
+          alt: `${username}'s Token Usage on Tokens`,
         },
       ],
     },
     twitter: {
       card: 'summary_large_image',
-      title: `@${username}'s Token Usage | Tokscale`,
-      images: ['https://tokscale.ai/og-image.png'],
+      title: `@${username}'s Token Usage | Tokens`,
+      images: ['https://tokens.ci/og-image.png'],
     },
   };
 }

@@ -81,7 +81,7 @@ export function renderReceiptEmbedSvg(
   const add = (s: string) => parts.push(s);
 
   add(`<?xml version="1.0" encoding="UTF-8"?>`);
-  add(`<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Tokscale usage receipt for @${escapeXml(data.user.username)}">`);
+  add(`<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Tokens usage receipt for @${escapeXml(data.user.username)}">`);
 
   // Torn-edge paper shape.
   const paperPath = `M 0 ${AMP}${zigzag(0, W, AMP, 0)} L ${W} ${H - AMP}${zigzag(W, 0, H - AMP, H)} Z`;
@@ -91,7 +91,7 @@ export function renderReceiptEmbedSvg(
   const center = W / 2;
 
   // Header.
-  add(`  <text x="${center}" y="44" fill="${ink}" font-size="17" font-weight="700" letter-spacing="0.16em" text-anchor="middle" ${mono}>TOKSCALE</text>`);
+  add(`  <text x="${center}" y="44" fill="${ink}" font-size="17" font-weight="700" letter-spacing="0.16em" text-anchor="middle" ${mono}>TOKENS</text>`);
   add(`  <text x="${center}" y="62" fill="${faint}" font-size="10" letter-spacing="0.18em" text-anchor="middle" ${mono}>AI USAGE RECEIPT</text>`);
   add(`  <line x1="${MX}" y1="78" x2="${W - MX}" y2="78" stroke="${faint}" stroke-width="1" stroke-dasharray="2 3"/>`);
 
@@ -136,7 +136,7 @@ export function renderReceiptEmbedSvg(
   }
 
   // Barcode (deterministic from the username).
-  const name = data.user.username || "tokscale";
+  const name = data.user.username || "tokens";
   let bx = MX;
   const barTop = ty + 44 + (drawGraph ? GBAND : 0);
   while (bx < W - MX - 2) {
@@ -148,7 +148,7 @@ export function renderReceiptEmbedSvg(
     bx += bw + 2;
   }
   add(`  <text x="${center}" y="${barTop + 50}" fill="${faint}" font-size="9" letter-spacing="0.22em" text-anchor="middle" ${mono}>THANK YOU FOR VIBE CODING</text>`);
-  add(`  <text x="${center}" y="${barTop + 64}" fill="${faint}" font-size="9" letter-spacing="0.1em" text-anchor="middle" ${mono}>tokscale.ai/u/${escapeXml(data.user.username)}</text>`);
+  add(`  <text x="${center}" y="${barTop + 64}" fill="${faint}" font-size="9" letter-spacing="0.1em" text-anchor="middle" ${mono}>tokens.ci/u/${escapeXml(data.user.username)}</text>`);
 
   add(`</svg>`);
   return parts.join("\n");

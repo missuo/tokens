@@ -1,104 +1,151 @@
-:root {
-  --color-bg-darkest: #111113;
-  --color-bg-default: #10121C;
-  --color-bg-elevated: #1A212A;
-  --color-bg-button: #202932;
-  --color-bg-subtle: #1E2733;
-  --color-bg-active: #0073FF;
+@import "tailwindcss";
+@import "@heroui/styles";
 
-  --color-text-primary: #FFFFFF;
-  --color-text-muted: #4B6486;
+/* Make Tailwind's `dark:` variant follow the `.dark` class that next-themes
+   toggles on <html>, matching how HeroUI themes via .dark / [data-theme="dark"]. */
+@custom-variant dark (&:where(.dark, .dark *));
 
-  --color-primary: #53d1f3;
-  --color-primary-hover: #3bc4e8;
-  --color-primary-active: #2ab8dc;
-
-  --color-accent-blue: #85CAFF;
-  --color-accent-link: #169AFF;
-
-  --color-graph-empty: #1A212A;
-  --color-graph-canvas: #10121C;
-
-  --color-canvas-default: #10121C;
-  --color-canvas-subtle: #1A212A;
-  --color-canvas-inset: #111113;
-  --color-fg-default: #FFFFFF;
-  --color-fg-muted: #7691b7;
-  --color-fg-subtle: #4B6486;
-  --color-border-default: #1E2733;
-  --color-border-muted: #1E2733;
-  --color-border-subtle: rgba(255, 255, 255, 0.1);
-  --color-accent-fg: #85CAFF;
-  --color-accent-emphasis: #169AFF;
-  --color-card-bg: #1A212A;
-  --color-card-border: #1E2733;
-  --color-btn-bg: #202932;
-  --color-btn-border: #1E2733;
-  --color-btn-hover-bg: #2C2C2F;
-  --color-btn-active-bg: #2C2C2F;
-  --color-btn-selected-bg: #111113;
-  --color-badge-bg: rgba(133, 202, 255, 0.15);
-  --color-badge-text: #85CAFF;
-  --background: #000;
-  --foreground: #FFFFFF;
+/* App fonts. `--font-figtree` / `--font-jetbrains` are injected by next/font in
+   layout.tsx. Exposing them through @theme makes `font-sans` / `font-mono`
+   utilities work and keeps a `--font-mono` root var for any code using it. */
+@theme {
+  --font-sans: var(--font-figtree), system-ui, -apple-system, sans-serif;
+  --font-mono: var(--font-jetbrains), ui-monospace, SFMono-Regular, "SF Mono",
+    Menlo, Consolas, "Liberation Mono", monospace;
 }
 
-* {
-  font-family: var(--font-figtree), system-ui, -apple-system, sans-serif !important;
+/* Expose HeroUI's semantic tokens as Tailwind color utilities so app code can
+   use `bg-surface`, `text-muted`, `border-line`, `bg-accent`, etc. — and they
+   track the active theme because the values are the live HeroUI CSS vars. */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-surface-secondary: var(--surface-secondary);
+  --color-surface-tertiary: var(--surface-tertiary);
+  --color-overlay: var(--overlay);
+  --color-muted: var(--muted);
+  --color-line: var(--border);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-danger: var(--danger);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+}
+
+/* Brand palette — override HeroUI v3 semantic tokens with the Tokens look:
+   a refined developer-tool aesthetic, electric-blue accent, crisp 1px lines.
+   Light = clean near-white with white cards; dark = deep cosmic navy. */
+:root,
+.light,
+[data-theme="light"] {
+  --accent: #0073ff;
+  --accent-foreground: #ffffff;
+  --background: #fbfbfc;
+  --foreground: #0b0d14;
+  --surface: #ffffff;
+  --surface-secondary: #f4f5f7;
+  --surface-tertiary: #eceef1;
+  --overlay: #ffffff;
+  --muted: #5b6473;
+  --border: #e6e8ec;
+  --separator: #e6e8ec;
+}
+
+.dark,
+[data-theme="dark"] {
+  --accent: #3b82f6;
+  --accent-foreground: #ffffff;
+  --background: #0a0c12;
+  --foreground: #e9ecf3;
+  --surface: #12151e;
+  --surface-secondary: #171b26;
+  --surface-tertiary: #1d2230;
+  --overlay: #12151e;
+  --muted: #8b94a7;
+  --border: #232a39;
+  --separator: #232a39;
+}
+
+/* Compatibility layer: the old `--color-*` design tokens, remapped onto the
+   live HeroUI semantic vars. Canvas code (TokenGraph2D/3D) reads these via
+   getComputedStyle and a few components still set them inline; mapping them here
+   means everything themes correctly without re-deriving every color by hand. */
+:root {
+  --color-bg-darkest: var(--background);
+  --color-bg-default: var(--background);
+  --color-bg-elevated: var(--surface);
+  --color-bg-button: var(--surface-tertiary);
+  --color-bg-subtle: var(--surface-secondary);
+  --color-bg-active: var(--accent);
+
+  --color-primary: var(--accent);
+  --color-accent-blue: #85caff;
+  --color-accent-link: #169aff;
+  --color-accent-fg: var(--accent);
+
+  --color-graph-empty: var(--surface-secondary);
+  --color-graph-canvas: var(--surface);
+
+  --color-canvas-default: var(--background);
+  --color-canvas-subtle: var(--surface);
+  --color-fg-default: var(--foreground);
+  --color-fg-muted: var(--muted);
+  --color-fg-subtle: var(--muted);
+  --color-border-default: var(--border);
+  --color-border-muted: var(--border);
+  --color-card-bg: var(--surface);
+  --color-card-border: var(--border);
+}
+
+html {
+  scrollbar-gutter: stable;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: var(--font-figtree), system-ui, -apple-system, sans-serif;
   font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-code, pre, .font-mono {
-  font-family: var(--font-mono), ui-monospace, SFMono-Regular, "SF Mono", 
-    Menlo, Consolas, "Liberation Mono", monospace !important;
+/* Tabular figures for any numeric value — keeps stat columns aligned. */
+.tnum {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
 }
 
-button {
-  cursor: pointer;
-}
-
-a:hover {
-  text-decoration: none !important;
-}
-
-.bg-canvas { background-color: var(--color-canvas-default); }
-.bg-canvas-subtle { background-color: var(--color-canvas-subtle); }
-.bg-card { background-color: var(--color-card-bg); }
-.text-fg { color: var(--color-fg-default); }
-.text-fg-muted { color: var(--color-fg-muted); }
-.border-default { border-color: var(--color-border-default); }
-.border-subtle { border-color: var(--color-border-subtle); }
-
-
+/* Page width helper. Centered column shared by every route. */
 .main-container {
   flex: 1;
-  max-width: 1280px;
-  margin-left: auto;
-  margin-right: auto;
-  padding-left: 24px;
-  padding-right: 24px;
-  padding-bottom: 40px;
   width: 100%;
+  max-width: 1200px;
+  margin-inline: auto;
+  padding-inline: 24px;
+  padding-top: 32px;
+  padding-bottom: 64px;
 }
 
-@media (max-width: 560px) {
+@media (max-width: 640px) {
   .main-container {
-    padding-left: 12px;
-    padding-right: 12px;
+    padding-inline: 16px;
+    padding-top: 20px;
+    padding-bottom: 48px;
   }
 }
 
 @media (max-width: 400px) {
   .main-container {
-    padding-left: 8px;
-    padding-right: 8px;
+    padding-inline: 12px;
   }
+}
+
+/* Thin, theme-aware scrollbars on overflow regions (e.g. mobile tab strips). */
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
 }

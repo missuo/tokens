@@ -1,6 +1,6 @@
 "use client";
 
-import styled, { css } from "styled-components";
+import React from "react";
 
 export interface TabItem<T extends string> {
   id: T;
@@ -11,73 +11,28 @@ export interface TabBarProps<T extends string> {
   tabs: TabItem<T>[];
   activeTab: T;
   onTabChange: (tab: T) => void;
+  /** `md` = page-level segmented control, `sm` = inline (e.g. a sort toggle). */
+  size?: "sm" | "md";
+  /** Stretch to fill the container and scroll horizontally when it overflows. */
+  fluid?: boolean;
+  "aria-label"?: string;
 }
-
-const TabBarContainer = styled.div`
-  display: inline-flex;
-  flex-direction: row;
-  align-items: center;
-  border-radius: 25px;
-  border: 1px solid;
-  padding: 6px;
-`;
-
-const TabButton = styled.button<{ $active?: boolean }>`
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 25px;
-  padding-left: 1.25rem;
-  padding-right: 1.25rem;
-  padding-top: 10px;
-  padding-bottom: 10px;
-  transition: color 150ms, background-color 150ms;
-
-  &:focus-visible {
-    outline: none;
-    box-shadow: 0 0 0 2px var(--background, #10121C), 0 0 0 4px #3b82f6;
-  }
-
-  ${(props) =>
-    props.$active
-      ? css`
-          background-color: var(--color-bg-active);
-        `
-      : css`
-          background-color: transparent;
-        `}
-`;
-
-const TabLabel = styled.span<{ $active?: boolean }>`
-  font-size: 1.125rem;
-  font-weight: 600;
-  line-height: 1;
-  white-space: nowrap;
-
-  ${(props) =>
-    props.$active
-      ? css`
-          color: var(--color-fg-default);
-        `
-      : css`
-          color: var(--color-fg-muted);
-        `}
-`;
 
 export function TabBar<T extends string>({
   tabs,
   activeTab,
   onTabChange,
+  size = "md",
+  fluid = false,
+  "aria-label": ariaLabel = "Content tabs",
 }: TabBarProps<T>) {
   const handleKeyDown = (e: React.KeyboardEvent, currentIndex: number) => {
     if (e.key === "ArrowRight" || e.key === "ArrowDown") {
       e.preventDefault();
-      const nextIndex = (currentIndex + 1) % tabs.length;
-      onTabChange(tabs[nextIndex].id);
+      onTabChange(tabs[(currentIndex + 1) % tabs.length].id);
     } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
       e.preventDefault();
-      const prevIndex = (currentIndex - 1 + tabs.length) % tabs.length;
-      onTabChange(tabs[prevIndex].id);
+      onTabChange(tabs[(currentIndex - 1 + tabs.length) % tabs.length].id);
     } else if (e.key === "Home") {
       e.preventDefault();
       onTabChange(tabs[0].id);
@@ -87,34 +42,36 @@ export function TabBar<T extends string>({
     }
   };
 
+  const pad = size === "sm" ? "px-3 py-1.5 text-xs" : "px-3.5 py-1.5 text-sm";
+
   return (
-    <TabBarContainer
+    <div
       role="tablist"
-      aria-label="Content tabs"
-      style={{
-        width: "fit-content",
-        backgroundColor: "var(--color-bg-elevated)",
-        borderColor: "var(--color-border-default)",
-      }}
+      aria-label={ariaLabel}
+      className={`no-scrollbar flex items-center gap-1 overflow-x-auto rounded-lg border border-line bg-surface-secondary p-1 ${
+        fluid ? "w-full" : "w-full sm:w-fit"
+      }`}
     >
       {tabs.map((tab, index) => {
         const isActive = activeTab === tab.id;
         return (
-          <TabButton
+          <button
             key={tab.id}
             role="tab"
             aria-selected={isActive}
             tabIndex={isActive ? 0 : -1}
             onClick={() => onTabChange(tab.id)}
             onKeyDown={(e) => handleKeyDown(e, index)}
-            $active={isActive}
+            className={`flex flex-1 items-center justify-center rounded-md font-medium whitespace-nowrap transition-colors outline-none focus-visible:ring-2 focus-visible:ring-accent sm:flex-none ${pad} ${
+              isActive
+                ? "bg-surface text-foreground shadow-sm ring-1 ring-line"
+                : "bg-transparent text-muted hover:text-foreground"
+            }`}
           >
-            <TabLabel $active={isActive}>
-              {tab.label}
-            </TabLabel>
-          </TabButton>
+            {tab.label}
+          </button>
         );
       })}
-    </TabBarContainer>
+    </div>
   );
 }

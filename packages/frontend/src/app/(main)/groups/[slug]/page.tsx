@@ -1,6 +1,4 @@
 import { notFound } from "next/navigation";
-import { Navigation } from "@/components/layout/Navigation";
-import { Footer } from "@/components/layout/Footer";
 import { getSession } from "@/lib/auth/session";
 import { getGroupLeaderboardData } from "@/lib/groups/getGroupLeaderboard";
 import { getGroupMembership } from "@/lib/groups/permissions";
@@ -21,9 +19,7 @@ function PageShell({ children }: { children: React.ReactNode }) {
         backgroundColor: "var(--color-bg-default)",
       }}
     >
-      <Navigation />
       <main className="main-container">{children}</main>
-      <Footer />
     </div>
   );
 }

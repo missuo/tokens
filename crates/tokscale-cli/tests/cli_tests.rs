@@ -16,9 +16,9 @@ fn prime_pricing_cache(base: &Path) {
     let payload = format!(r#"{{"timestamp":{},"data":{{}}}}"#, now);
 
     for dir in [
-        base.join("Library/Caches/tokscale"),
-        base.join(".cache/tokscale"),
-        base.join(".config/tokscale/cache"),
+        base.join("Library/Caches/tokens"),
+        base.join(".cache/tokens"),
+        base.join(".config/tokens/cache"),
     ] {
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("pricing-litellm.json"), &payload).unwrap();
@@ -320,17 +320,17 @@ fn create_conflicting_codex_fixture_dir() -> TempDir {
 
 /// Build a Command pointing HOME at the given temp dir, with --no-spinner and --opencode flags.
 fn cmd_with_home(tmp: &Path) -> Command {
-    let mut cmd = cargo_bin_cmd!("tokscale");
+    let mut cmd = cargo_bin_cmd!("tokens");
     cmd.env("HOME", tmp)
         .env("XDG_CONFIG_HOME", tmp.join(".config"))
         .env("XDG_DATA_HOME", tmp.join(".local/share"))
         .env("XDG_CACHE_HOME", tmp.join(".cache"))
-        .env("TOKSCALE_PRICING_CACHE_ONLY", "1");
+        .env("TOKENS_PRICING_CACHE_ONLY", "1");
     cmd
 }
 
 fn cmd_with_conflicting_env(tmp: &Path) -> Command {
-    let mut cmd = cargo_bin_cmd!("tokscale");
+    let mut cmd = cargo_bin_cmd!("tokens");
     cmd.env("HOME", tmp)
         .env("XDG_CONFIG_HOME", tmp.join(".config"))
         .env("XDG_DATA_HOME", tmp.join(".local/share"))
@@ -339,7 +339,7 @@ fn cmd_with_conflicting_env(tmp: &Path) -> Command {
 }
 
 fn offline_cmd_with_home(tmp: &Path) -> Command {
-    let mut cmd = cargo_bin_cmd!("tokscale");
+    let mut cmd = cargo_bin_cmd!("tokens");
     // Pin every XDG_* var so the cache resolvers stay inside the sandbox.
     // Without XDG_CONFIG_HOME the post-#470 cache root can leak to the
     // host's $XDG_CONFIG_HOME (set globally on some CI runners) and
@@ -364,16 +364,16 @@ fn write_pricing_cache(base: &Path, timestamp: u64) {
 
     // Seed all three locations so the test exercises the same fallback
     // chain the binary uses post-#470: canonical
-    // <config_dir>/cache/, then legacy dirs::cache_dir()/tokscale, then
-    // ~/.cache/tokscale. Without the canonical path seeded, CI runners
+    // <config_dir>/cache/, then legacy dirs::cache_dir()/tokens, then
+    // ~/.cache/tokens. Without the canonical path seeded, CI runners
     // where dirs::cache_dir() resolves outside the sandboxed HOME (e.g.
     // some Linux runners with XDG_CACHE_HOME set globally) miss the
     // pricing cache entirely and the report falls back to embedded
     // source costs.
     for dir in [
-        base.join(".config/tokscale/cache"),
-        base.join("Library/Caches/tokscale"),
-        base.join(".cache/tokscale"),
+        base.join(".config/tokens/cache"),
+        base.join("Library/Caches/tokens"),
+        base.join(".cache/tokens"),
     ] {
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("pricing-litellm.json"), &litellm).unwrap();
@@ -406,9 +406,9 @@ fn write_fireworks_pricing_cache(base: &Path) {
     });
 
     for dir in [
-        base.join(".config/tokscale/cache"),
-        base.join("Library/Caches/tokscale"),
-        base.join(".cache/tokscale"),
+        base.join(".config/tokens/cache"),
+        base.join("Library/Caches/tokens"),
+        base.join(".cache/tokens"),
     ] {
         fs::create_dir_all(&dir).unwrap();
         fs::write(
@@ -425,7 +425,7 @@ fn write_fireworks_pricing_cache(base: &Path) {
 }
 
 fn write_fake_credentials(base: &Path) {
-    let creds_dir = base.join(".config/tokscale");
+    let creds_dir = base.join(".config/tokens");
     fs::create_dir_all(&creds_dir).unwrap();
     fs::write(
         creds_dir.join("credentials.json"),
@@ -444,10 +444,10 @@ fn settings_json_path(base: &Path) -> std::path::PathBuf {
     if cfg!(target_os = "windows") {
         base.join("AppData")
             .join("Roaming")
-            .join("tokscale")
+            .join("tokens")
             .join("settings.json")
     } else {
-        base.join(".config").join("tokscale").join("settings.json")
+        base.join(".config").join("tokens").join("settings.json")
     }
 }
 
@@ -481,13 +481,13 @@ fn write_codex_token_session(dir: &Path, name: &str, model: &str, input: i64, ou
 }
 
 fn write_cursor_usage_cache(base: &Path) {
-    let cache_dir = base.join(".config/tokscale/cursor-cache");
+    let cache_dir = base.join(".config/tokens/cursor-cache");
     fs::create_dir_all(&cache_dir).unwrap();
     fs::write(cache_dir.join("usage.csv"), "Date,Model\n").unwrap();
 }
 
 fn write_cursor_credentials(base: &Path) {
-    let config_dir = base.join(".config/tokscale");
+    let config_dir = base.join(".config/tokens");
     fs::create_dir_all(&config_dir).unwrap();
     fs::write(
         config_dir.join("cursor-credentials.json"),
@@ -512,7 +512,7 @@ fn write_cursor_credentials(base: &Path) {
 
 #[test]
 fn test_help_command() {
-    let mut cmd = cargo_bin_cmd!("tokscale");
+    let mut cmd = cargo_bin_cmd!("tokens");
     cmd.arg("--help")
         .assert()
         .success()
@@ -521,7 +521,7 @@ fn test_help_command() {
 
 #[test]
 fn test_help_short_flag() {
-    let mut cmd = cargo_bin_cmd!("tokscale");
+    let mut cmd = cargo_bin_cmd!("tokens");
     cmd.arg("-h")
         .assert()
         .success()
@@ -530,19 +530,19 @@ fn test_help_short_flag() {
 
 #[test]
 fn test_version_flag() {
-    let mut cmd = cargo_bin_cmd!("tokscale");
+    let mut cmd = cargo_bin_cmd!("tokens");
     cmd.arg("--version")
         .assert()
         .success()
         .stdout(predicate::str::contains(format!(
-            "tokscale {}",
+            "tokens {}",
             env!("CARGO_PKG_VERSION")
         )));
 }
 
 #[test]
 fn test_models_command_help() {
-    let mut cmd = cargo_bin_cmd!("tokscale");
+    let mut cmd = cargo_bin_cmd!("tokens");
     cmd.arg("models")
         .arg("--help")
         .assert()
@@ -552,7 +552,7 @@ fn test_models_command_help() {
 
 #[test]
 fn test_monthly_command_help() {
-    let mut cmd = cargo_bin_cmd!("tokscale");
+    let mut cmd = cargo_bin_cmd!("tokens");
     cmd.arg("monthly")
         .arg("--help")
         .assert()
@@ -562,7 +562,7 @@ fn test_monthly_command_help() {
 
 #[test]
 fn test_pricing_command_help() {
-    let mut cmd = cargo_bin_cmd!("tokscale");
+    let mut cmd = cargo_bin_cmd!("tokens");
     cmd.arg("pricing")
         .arg("--help")
         .assert()
@@ -572,7 +572,7 @@ fn test_pricing_command_help() {
 
 #[test]
 fn test_clients_command_help() {
-    let mut cmd = cargo_bin_cmd!("tokscale");
+    let mut cmd = cargo_bin_cmd!("tokens");
     cmd.arg("clients")
         .arg("--help")
         .assert()
@@ -582,7 +582,7 @@ fn test_clients_command_help() {
 
 #[test]
 fn test_graph_command_help() {
-    let mut cmd = cargo_bin_cmd!("tokscale");
+    let mut cmd = cargo_bin_cmd!("tokens");
     cmd.arg("graph")
         .arg("--help")
         .assert()
@@ -592,7 +592,7 @@ fn test_graph_command_help() {
 
 #[test]
 fn test_tui_command_help() {
-    let mut cmd = cargo_bin_cmd!("tokscale");
+    let mut cmd = cargo_bin_cmd!("tokens");
     cmd.arg("tui")
         .arg("--help")
         .assert()
@@ -602,7 +602,7 @@ fn test_tui_command_help() {
 
 #[test]
 fn test_headless_command_help() {
-    let mut cmd = cargo_bin_cmd!("tokscale");
+    let mut cmd = cargo_bin_cmd!("tokens");
     cmd.arg("headless")
         .arg("--help")
         .assert()
@@ -612,27 +612,27 @@ fn test_headless_command_help() {
 
 #[test]
 fn test_login_command_help() {
-    let mut cmd = cargo_bin_cmd!("tokscale");
+    let mut cmd = cargo_bin_cmd!("tokens");
     cmd.arg("login")
         .arg("--help")
         .assert()
         .success()
-        .stdout(predicate::str::contains("Login to Tokscale"));
+        .stdout(predicate::str::contains("Login to Tokens"));
 }
 
 #[test]
 fn test_logout_command_help() {
-    let mut cmd = cargo_bin_cmd!("tokscale");
+    let mut cmd = cargo_bin_cmd!("tokens");
     cmd.arg("logout")
         .arg("--help")
         .assert()
         .success()
-        .stdout(predicate::str::contains("Logout from Tokscale"));
+        .stdout(predicate::str::contains("Logout from Tokens"));
 }
 
 #[test]
 fn test_whoami_command_help() {
-    let mut cmd = cargo_bin_cmd!("tokscale");
+    let mut cmd = cargo_bin_cmd!("tokens");
     cmd.arg("whoami")
         .arg("--help")
         .assert()
@@ -642,31 +642,31 @@ fn test_whoami_command_help() {
 
 #[test]
 fn test_invalid_command() {
-    let mut cmd = cargo_bin_cmd!("tokscale");
+    let mut cmd = cargo_bin_cmd!("tokens");
     cmd.arg("invalid-command").assert().failure();
 }
 
 #[test]
 fn test_invalid_subcommand() {
-    let mut cmd = cargo_bin_cmd!("tokscale");
+    let mut cmd = cargo_bin_cmd!("tokens");
     cmd.arg("models").arg("invalid-flag").assert().failure();
 }
 
 #[test]
 fn test_pricing_command_missing_model() {
-    let mut cmd = cargo_bin_cmd!("tokscale");
+    let mut cmd = cargo_bin_cmd!("tokens");
     cmd.arg("pricing").assert().failure();
 }
 
 #[test]
 fn test_headless_command_missing_client() {
-    let mut cmd = cargo_bin_cmd!("tokscale");
+    let mut cmd = cargo_bin_cmd!("tokens");
     cmd.arg("headless").assert().failure();
 }
 
 #[test]
 fn test_headless_command_invalid_client() {
-    let mut cmd = cargo_bin_cmd!("tokscale");
+    let mut cmd = cargo_bin_cmd!("tokens");
     cmd.arg("headless")
         .arg("invalid-client")
         .arg("test")
@@ -704,7 +704,7 @@ fn test_models_with_invalid_year() {
 
 #[test]
 fn test_global_theme_flag() {
-    let mut cmd = cargo_bin_cmd!("tokscale");
+    let mut cmd = cargo_bin_cmd!("tokens");
     cmd.arg("--theme")
         .arg("blue")
         .arg("--help")
@@ -714,7 +714,7 @@ fn test_global_theme_flag() {
 
 #[test]
 fn test_global_debug_flag() {
-    let mut cmd = cargo_bin_cmd!("tokscale");
+    let mut cmd = cargo_bin_cmd!("tokens");
     cmd.arg("--debug").arg("--help").assert().success();
 }
 
@@ -880,7 +880,7 @@ fn test_models_home_override_ignores_conflicting_codex_home_env() {
 fn test_tui_rejects_home_override() {
     let tmp = TempDir::new().unwrap();
 
-    cargo_bin_cmd!("tokscale")
+    cargo_bin_cmd!("tokens")
         .args(["--home", tmp.path().to_str().unwrap(), "tui"])
         .assert()
         .failure()
@@ -1091,7 +1091,7 @@ fn assert_cursor_setup_warning(json: &serde_json::Value) {
     assert!(
         warnings.iter().any(|warning| warning
             .as_str()
-            .is_some_and(|text| text.contains("tokscale cursor login")
+            .is_some_and(|text| text.contains("tokens cursor login")
                 && text.contains("cursor-cache/usage*.csv"))),
         "warnings did not explain Cursor setup: {warnings:?}"
     );
@@ -1175,7 +1175,7 @@ fn test_models_cursor_explicit_missing_cache_reports_setup_warning_text() {
         .assert()
         .success()
         .stderr(predicate::str::contains("Cursor usage requires"))
-        .stderr(predicate::str::contains("tokscale cursor login"));
+        .stderr(predicate::str::contains("tokens cursor login"));
 }
 
 #[test]
@@ -1237,9 +1237,9 @@ fn test_models_cursor_logged_in_missing_cache_suggests_sync_only_json() {
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     let warnings = json["warnings"].as_array().unwrap();
     let warning = warnings[0].as_str().unwrap();
-    assert!(warning.contains("tokscale cursor sync"));
+    assert!(warning.contains("tokens cursor sync"));
     assert!(
-        !warning.contains("tokscale cursor login"),
+        !warning.contains("tokens cursor login"),
         "logged-in users with no cache should be told to sync, not log in again: {warning}"
     );
 }
@@ -1275,19 +1275,19 @@ fn test_graph_cursor_explicit_missing_cache_reports_setup_warning_text() {
         .assert()
         .success()
         .stderr(predicate::str::contains("Cursor usage requires"))
-        .stderr(predicate::str::contains("tokscale cursor login"));
+        .stderr(predicate::str::contains("tokens cursor login"));
 }
 
 #[test]
 fn test_submit_cursor_explicit_missing_cache_reports_setup_warning_text() {
     let tmp = create_empty_fixture_dir();
     cmd_with_home(tmp.path())
-        .env("TOKSCALE_API_TOKEN", "test-token")
+        .env("TOKENS_API_TOKEN", "test-token")
         .args(["submit", "--client", "cursor", "--dry-run"])
         .assert()
         .success()
         .stderr(predicate::str::contains("Cursor usage requires"))
-        .stderr(predicate::str::contains("tokscale cursor login"));
+        .stderr(predicate::str::contains("tokens cursor login"));
 }
 
 #[test]
@@ -1612,7 +1612,7 @@ fn test_hourly_home_override_uses_explicit_home_scanner_settings() {
     );
 
     let output = cmd_with_conflicting_env(conflicting_home.path())
-        .env("TOKSCALE_PRICING_CACHE_ONLY", "1")
+        .env("TOKENS_PRICING_CACHE_ONLY", "1")
         .env("CODEX_HOME", conflicting_home.path().join(".codex"))
         .args([
             "hourly",
@@ -1990,7 +1990,7 @@ fn test_models_group_by_workspace_model_surfaces_workspace_fields_for_opencode()
 
 #[test]
 fn test_pricing_command_success() {
-    let mut cmd = cargo_bin_cmd!("tokscale");
+    let mut cmd = cargo_bin_cmd!("tokens");
     cmd.args(["pricing", "claude-sonnet-4-20250514", "--no-spinner"])
         .assert()
         .success()
@@ -2001,7 +2001,7 @@ fn test_pricing_command_success() {
 
 #[test]
 fn test_pricing_command_json() {
-    let output = cargo_bin_cmd!("tokscale")
+    let output = cargo_bin_cmd!("tokens")
         .args([
             "pricing",
             "claude-sonnet-4-20250514",
@@ -2024,7 +2024,7 @@ fn test_pricing_command_json() {
 
 #[test]
 fn test_pricing_command_with_provider() {
-    let mut cmd = cargo_bin_cmd!("tokscale");
+    let mut cmd = cargo_bin_cmd!("tokens");
     cmd.args([
         "pricing",
         "claude-sonnet-4-20250514",
@@ -2038,7 +2038,7 @@ fn test_pricing_command_with_provider() {
 
 #[test]
 fn test_pricing_command_invalid_provider() {
-    let mut cmd = cargo_bin_cmd!("tokscale");
+    let mut cmd = cargo_bin_cmd!("tokens");
     cmd.args([
         "pricing",
         "claude-sonnet-4-20250514",
@@ -2471,7 +2471,7 @@ fn light_with_write_cache_writes_to_canonical_path() {
     prime_override_pricing_cache(&config_dir);
 
     cmd_with_home(tmp.path())
-        .env("TOKSCALE_CONFIG_DIR", &config_dir)
+        .env("TOKENS_CONFIG_DIR", &config_dir)
         .args(["--light", "--opencode", "--write-cache", "--no-spinner"])
         .assert()
         .success()

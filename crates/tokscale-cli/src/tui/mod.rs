@@ -120,7 +120,7 @@ pub fn run(
     enable_raw_mode()?;
     let mut stdout = io::stdout();
 
-    let _ = execute!(stdout, SetTitle("Tokscale"));
+    let _ = execute!(stdout, SetTitle("Tokens"));
 
     if let Err(e) = execute!(stdout, EnterAlternateScreen, EnableMouseCapture) {
         let _ = disable_raw_mode();

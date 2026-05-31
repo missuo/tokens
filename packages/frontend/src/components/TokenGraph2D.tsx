@@ -1,21 +1,12 @@
 "use client";
 
 import { useRef, useEffect, useCallback, useMemo } from "react";
-import styled from "styled-components";
+import { useTheme } from "next-themes";
 import type { DailyContribution, GraphColorPalette, TooltipPosition } from "@/lib/types";
 import { getGradeColor } from "@/lib/themes";
 import { groupByWeek } from "@/lib/utils";
-import { useSystemDarkMode } from "@/lib/useMediaQuery";
 import { BOX_WIDTH, CELL_SIZE, CANVAS_MARGIN, HEADER_HEIGHT, TEXT_HEIGHT, FONT_SIZE, FONT_FAMILY, DAY_LABELS_SHORT, MONTH_LABELS_SHORT } from "@/lib/constants";
 import { parseISO, getMonth } from "date-fns";
-
-const Container = styled.div`
-  overflow-x: auto;
-`;
-
-const GraphCanvas = styled.canvas`
-  cursor: pointer;
-`;
 
 interface TokenGraph2DProps {
   contributions: DailyContribution[];
@@ -28,12 +19,18 @@ interface TokenGraph2DProps {
 export function TokenGraph2D({ contributions, palette, year, onDayHover, onDayClick }: TokenGraph2DProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const weeksData = useMemo(() => groupByWeek(contributions, year), [contributions, year]);
-  const isDark = useSystemDarkMode();
+  const { resolvedTheme } = useTheme();
+  const isDark = resolvedTheme === "dark";
 
-  const getCSSVar = (varName: string): string => {
-    if (typeof window === "undefined") return "";
-    return getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
-  };
+  // Theme colors are derived from `isDark` (next-themes' resolvedTheme — the
+  // React source of truth) rather than read via getComputedStyle. Child effects
+  // fire before the ancestor ThemeProvider flips the `.dark`/`.light` class on
+  // <html>, so a getComputedStyle read here would lag one theme behind on every
+  // toggle. These hexes mirror --surface / --surface-secondary / --muted in
+  // globals.css.
+  const graphBg = isDark ? "#12151e" : "#ffffff";
+  const graphEmptyCell = isDark ? "#171b26" : "#f4f5f7";
+  const graphMuted = isDark ? "#8b94a7" : "#5b6473";
 
   const CANVAS_LABEL_RIGHT_PADDING = 32;
   const canvasWidth = CANVAS_MARGIN * 2 + TEXT_HEIGHT + weeksData.length * CELL_SIZE + CANVAS_LABEL_RIGHT_PADDING;
@@ -53,13 +50,11 @@ export function TokenGraph2D({ contributions, palette, year, onDayHover, onDayCl
     canvas.style.height = `${canvasHeight}px`;
     ctx.scale(dpr, dpr);
 
-    const bgColor = getCSSVar("--color-graph-canvas") || (isDark ? "#0d1117" : "#ffffff");
-    ctx.fillStyle = bgColor;
+    ctx.fillStyle = graphBg;
     ctx.fillRect(0, 0, canvasWidth, canvasHeight);
 
     ctx.font = `${FONT_SIZE}px ${FONT_FAMILY}`;
-    const metaColor = getCSSVar("--color-fg-muted") || (isDark ? "#7d8590" : "#656d76");
-    ctx.fillStyle = metaColor;
+    ctx.fillStyle = graphMuted;
     ctx.textAlign = "left";
 
     let lastMonth = -1;
@@ -91,16 +86,14 @@ export function TokenGraph2D({ contributions, palette, year, onDayHover, onDayCl
 
         const intensity = day?.intensity ?? 0;
         const colorHex = getGradeColor(palette, intensity);
-        const resolvedColor = colorHex.startsWith("var(")
-          ? getCSSVar("--color-graph-empty") || (isDark ? "#161b22" : "#ebedf0")
-          : colorHex;
+        const resolvedColor = colorHex.startsWith("var(") ? graphEmptyCell : colorHex;
         ctx.fillStyle = resolvedColor;
 
         roundRect(ctx, x, y, BOX_WIDTH, BOX_WIDTH, 2);
         ctx.fill();
       }
     }
-  }, [contributions, palette, year, weeksData, canvasWidth, canvasHeight, isDark]);
+  }, [contributions, palette, year, weeksData, canvasWidth, canvasHeight, graphBg, graphEmptyCell, graphMuted]);
 
   const getDayAtPosition = useCallback(
     (clientX: number, clientY: number): { day: DailyContribution | null; position: TooltipPosition } | null => {
@@ -148,15 +141,16 @@ export function TokenGraph2D({ contributions, palette, year, onDayHover, onDayCl
   );
 
   return (
-    <Container>
-      <GraphCanvas
+    <div className="overflow-x-auto">
+      <canvas
         ref={canvasRef}
+        className="cursor-pointer"
         onMouseMove={handleMouseMove}
         onMouseLeave={() => onDayHover(null, null)}
         onClick={handleClick}
         style={{ minWidth: canvasWidth }}
       />
-    </Container>
+    </div>
   );
 }
 

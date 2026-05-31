@@ -1,0 +1,14 @@
+node_modules
+.next
+.git
+.env
+.env.*
+compose.yaml
+Dockerfile
+.dockerignore
+*.log
+coverage
+playwright-report
+test-results
+.turbo
+.vercel

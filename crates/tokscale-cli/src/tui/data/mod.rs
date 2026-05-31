@@ -13,7 +13,7 @@ use tokscale_core::{
 
 /// Returns the scanner settings that `DataLoader` should use when building
 /// `LocalParseOptions`. Under `#[cfg(test)]` this intentionally ignores
-/// `~/.config/tokscale/settings.json` so data-loader unit tests stay
+/// `~/.config/tokens/settings.json` so data-loader unit tests stay
 /// hermetic across developer machines; production builds still honor
 /// user-configured paths.
 #[cfg(not(test))]
@@ -1599,7 +1599,7 @@ mod tests {
     fn test_data_loader_scanner_settings_is_hermetic_under_cfg_test() {
         // Regression guard: the `#[cfg(test)]` branch of
         // `data_loader_scanner_settings` must not read
-        // `~/.config/tokscale/settings.json`. Otherwise every DataLoader
+        // `~/.config/tokens/settings.json`. Otherwise every DataLoader
         // unit test becomes machine-dependent as soon as a developer
         // pins extra OpenCode dbs in their real settings.json.
         //

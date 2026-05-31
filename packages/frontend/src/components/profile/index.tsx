@@ -1,13 +1,11 @@
 "use client";
 
 import React, { useState } from "react";
-import Image from "next/image";
-import styled, { css } from "styled-components";
+import { Button } from "@heroui/react";
 import { toast } from "react-toastify";
 import { GraphContainer } from "@/components/GraphContainer";
 import type { TokenContributionData } from "@/lib/types";
 import { formatNumber, formatCurrency, formatDuration } from "@/lib/utils";
-import { legacy } from "@/lib/responsive";
 import { ProfileEmbedDialog } from "./ProfileEmbedDialog";
 
 export interface ProfileUser {
@@ -36,321 +34,40 @@ export interface ProfileHeaderProps {
   lastUpdated?: string;
 }
 
-const HeaderContainer = styled.div`
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  border-radius: 1rem;
-  border-width: 1px;
-  border-style: solid;
-  padding: 1rem;
-  padding-bottom: 18px;
-`;
+const EmbedIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) => (
+  <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" {...props}>
+    <path d="M8 8L4 12L8 16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M16 8L20 12L16 16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M13.5 5L10.5 19" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
 
-const HeaderContent = styled.div`
-  display: flex;
-  flex-direction: column;
-  gap: 1.5rem;
+// Inline SVGs (currentColor) so they inherit the button's text color and stay
+// visible in both light and dark themes — the old /icons/*.svg files had a
+// hardcoded white stroke that vanished on light backgrounds.
+const ShareIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) => (
+  <svg aria-hidden="true" width="20" height="20" viewBox="0 0 20 20" fill="none" {...props}>
+    <path
+      d="M7.15833 11.2583L12.85 14.575M12.8417 5.42499L7.15833 8.74166M17.5 4.16666C17.5 5.54737 16.3807 6.66666 15 6.66666C13.6193 6.66666 12.5 5.54737 12.5 4.16666C12.5 2.78594 13.6193 1.66666 15 1.66666C16.3807 1.66666 17.5 2.78594 17.5 4.16666ZM7.5 9.99999C7.5 11.3807 6.38071 12.5 5 12.5C3.61929 12.5 2.5 11.3807 2.5 9.99999C2.5 8.61928 3.61929 7.49999 5 7.49999C6.38071 7.49999 7.5 8.61928 7.5 9.99999ZM17.5 15.8333C17.5 17.214 16.3807 18.3333 15 18.3333C13.6193 18.3333 12.5 17.214 12.5 15.8333C12.5 14.4526 13.6193 13.3333 15 13.3333C16.3807 13.3333 17.5 14.4526 17.5 15.8333Z"
+      stroke="currentColor"
+      strokeWidth="1.667"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  </svg>
+);
 
-  @media (min-width: 1024px) {
-    flex-direction: row;
-    gap: 2.5rem;
-  }
-`;
-
-const UserInfoCard = styled.div`
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  gap: 19px;
-  border-radius: 20px;
-  padding-top: 0.75rem;
-  padding-bottom: 0.75rem;
-  padding-left: 0.75rem;
-  padding-right: 2rem;
-  flex: 1;
-`;
-
-const AvatarContainer = styled.div`
-  position: relative;
-  width: 72px;
-  height: 72px;
-  border-radius: 7px;
-  overflow: hidden;
-  border-width: 2px;
-  border-style: solid;
-  flex-shrink: 0;
-
-  ${legacy.up('navXs')} {
-    width: 80px;
-    height: 80px;
-  }
-
-  @media (min-width: 480px) {
-    width: 88px;
-    height: 88px;
-  }
-
-  ${legacy.up('phone')} {
-    width: 96px;
-    height: 96px;
-  }
-
-  @media (min-width: 768px) {
-    width: 100px;
-    height: 100px;
-  }
-`;
-
-const StyledAvatarImage = styled(Image)`
-  object-fit: cover;
-`;
-
-const UserDetails = styled.div`
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-width: 0;
-  justify-content: flex-end;
-  gap: 6px;
-  padding-top: 0;
-  padding-bottom: 0.25rem;
-  min-height: 72px;
-
-  ${legacy.up('navXs')} {
-    min-height: 80px;
-  }
-
-  @media (min-width: 480px) {
-    min-height: 88px;
-  }
-
-  ${legacy.up('phone')} {
-    min-height: 96px;
-  }
-
-  @media (min-width: 768px) {
-    min-height: 100px;
-  }
-`;
-
-const RankBadge = styled.div`
-  min-width: 2rem;
-  height: 2rem;
-  padding: 0 0.375rem;
-  border-radius: 0.5rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  white-space: nowrap;
-  align-self: flex-start;
-`;
-
-const RankText = styled.span`
-  font-size: 1rem;
-  font-weight: 500;
-`;
-
-const NameContainer = styled.div`
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  flex: 1;
-  justify-content: flex-end;
-  min-width: 0;
-`;
-
-const NameHeading = styled.h1`
-  font-size: 1.25rem;
-  font-weight: 700;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  line-height: 1.2;
-
-  @media (min-width: 390px) {
-    font-size: 1.375rem;
-  }
-
-  @media (min-width: 480px) {
-    font-size: 1.5rem;
-  }
-`;
-
-const HandleText = styled.p`
-  font-size: 0.875rem;
-  font-weight: 700;
-  line-height: 1;
-`;
-
-const StatsRow = styled.div`
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  gap: 0.75rem;
-  min-height: 88px;
-  flex: 1;
-
-  @media (min-width: 390px) {
-    gap: 1rem;
-    min-height: 92px;
-  }
-
-  @media (min-width: 480px) {
-    gap: 1.25rem;
-    min-height: 104px;
-  }
-
-  ${legacy.up('phone')} {
-    gap: 1.5rem;
-    min-height: 112px;
-  }
-
-  @media (min-width: 768px) {
-    gap: 1.75rem;
-    min-height: 124px;
-  }
-`;
-
-const StatItem = styled.div`
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  flex: 1;
-  min-width: 0;
-
-  @media (min-width: 390px) {
-    gap: 7px;
-  }
-
-  @media (min-width: 480px) {
-    gap: 8px;
-    min-width: 100px;
-  }
-
-  ${legacy.up('phone')} {
-    min-width: 110px;
-  }
-
-  @media (min-width: 768px) {
-    min-width: 120px;
-  }
-`;
-
-const StatLabel = styled.span`
-  font-size: 0.875rem;
-  font-weight: 600;
-  line-height: 1;
-
-  @media (min-width: 390px) {
-    font-size: 0.9375rem;
-  }
-
-  @media (min-width: 480px) {
-    font-size: 1rem;
-  }
-`;
-
-const StatValue = styled.span`
-  font-size: 22px;
-  font-weight: 700;
-  line-height: 1;
-
-  @media (min-width: 390px) {
-    font-size: 24px;
-  }
-
-  @media (min-width: 480px) {
-    font-size: 26px;
-  }
-
-  ${legacy.up('phone')} {
-    font-size: 27px;
-  }
-`;
-
-const Divider = styled.div`
-  width: 100%;
-  height: 1px;
-`;
-
-const FooterRow = styled.div`
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  gap: 0.75rem;
-  align-items: flex-start;
-
-  @media (min-width: 640px) {
-    flex-direction: row;
-    align-items: flex-end;
-  }
-`;
-
-const LastUpdatedText = styled.span`
-  font-size: 0.875rem;
-  line-height: 1.21;
-`;
-
-const ActionButtons = styled.div`
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  gap: 6px;
-`;
-
-const actionButtonStyles = css`
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  border-radius: 9999px;
-  border-width: 1px;
-  border-style: solid;
-  padding: 12px 11px;
-  min-height: 44px;
-  transition: opacity 150ms ease-in-out;
-  cursor: pointer;
-
-  background-color: var(--color-btn-bg);
-  border-color: var(--color-border-default);
-
-  color: var(--color-fg-default);
-
-  &:hover {
-    opacity: 0.8;
-  }
-  
-  &:focus-visible {
-    outline: none;
-    box-shadow: 0 0 0 2px var(--color-bg-default), 0 0 0 4px #3b82f6;
-  }
-`;
-
-const ActionButton = styled.button`
-  ${actionButtonStyles}
-`;
-
-const PrimaryActionButton = styled(ActionButton)`
-  background: linear-gradient(135deg, #169AFF 0%, #0A84FF 100%);
-  border-color: color-mix(in srgb, #9FD4FB 45%, var(--color-border-default));
-  color: #F8FBFF;
-
-  &:focus-visible {
-    box-shadow: 0 0 0 2px var(--color-bg-default), 0 0 0 4px #169AFF;
-  }
-`;
-
-const ActionLink = styled.a`
-  ${actionButtonStyles}
-  text-decoration: none;
-`;
-
-const ActionText = styled.span`
-  font-size: 0.875rem;
-  line-height: 1;
-`;
+const GitHubIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) => (
+  <svg aria-hidden="true" width="20" height="20" viewBox="0 0 20 20" fill="none" {...props}>
+    <path
+      d="M12.5 18.3333V15C12.6159 13.9561 12.3166 12.9084 11.6666 12.0833C14.1666 12.0833 16.6666 10.4167 16.6666 7.49999C16.7333 6.45832 16.4416 5.43332 15.8333 4.58332C16.0666 3.62499 16.0666 2.62499 15.8333 1.66666C15.8333 1.66666 15 1.66666 13.3333 2.91666C11.1333 2.49999 8.86663 2.49999 6.66663 2.91666C4.99996 1.66666 4.16663 1.66666 4.16663 1.66666C3.91663 2.62499 3.91663 3.62499 4.16663 4.58332C3.55985 5.42989 3.26535 6.46065 3.33329 7.49999C3.33329 10.4167 5.83329 12.0833 8.33329 12.0833C8.00829 12.4917 7.76663 12.9583 7.62496 13.4583C7.48329 13.9583 7.44163 14.4833 7.49996 15M7.49996 15V18.3333M7.49996 15C3.74163 16.6667 3.33329 13.3333 1.66663 13.3333"
+      stroke="currentColor"
+      strokeWidth="1.667"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  </svg>
+);
 
 export function ProfileHeader({ user, stats, lastUpdated }: ProfileHeaderProps) {
   const [isEmbedDialogOpen, setIsEmbedDialogOpen] = useState(false);
@@ -365,175 +82,80 @@ export function ProfileHeader({ user, stats, lastUpdated }: ProfileHeaderProps) 
     }
   };
 
+  const ghostBtn =
+    "inline-flex h-9 items-center gap-1.5 rounded-lg border border-line bg-surface px-3 text-sm font-medium text-foreground transition hover:border-foreground/20 hover:bg-surface-secondary";
+
   return (
-    <HeaderContainer
-      style={{ backgroundColor: "#141A21", borderColor: "var(--color-border-default)" }}
-    >
-      <HeaderContent>
-        <UserInfoCard
-          style={{ backgroundColor: "var(--color-bg-darkest)" }}
-        >
-          <AvatarContainer
-            style={{ borderColor: "var(--color-border-default)" }}
-          >
-            <StyledAvatarImage
-              src={avatarUrl}
-              alt={user.username}
-              fill
-            />
-          </AvatarContainer>
-
-          <UserDetails>
-            {user.rank && (
-              <RankBadge
-                style={{
-                  background: "linear-gradient(135deg, var(--color-bg-darkest) 0%, color-mix(in srgb, var(--color-accent-blue) 20%, var(--color-bg-darkest)) 50%, color-mix(in srgb, var(--color-accent-blue) 35%, var(--color-bg-darkest)) 100%)",
-                  border: "1px solid var(--color-border-default)",
-                }}
-              >
-                <RankText
-                  style={{ color: "var(--color-accent-blue)" }}
-                >
+    <div className="rounded-2xl border border-line bg-surface p-4 sm:p-5">
+      <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
+        {/* Identity */}
+        <div className="flex items-center gap-4">
+          <div className="relative h-[68px] w-[68px] shrink-0 overflow-hidden rounded-xl ring-1 ring-line sm:h-20 sm:w-20">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={avatarUrl} alt={user.username} className="h-full w-full object-cover" />
+          </div>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="truncate text-xl leading-tight font-bold text-foreground sm:text-2xl">{user.displayName || user.username}</h1>
+              {user.rank != null && (
+                <span className="inline-flex items-center rounded-md border border-accent/30 bg-accent/10 px-2 py-0.5 font-mono text-xs font-semibold text-accent tabular-nums">
                   #{user.rank}
-                </RankText>
-              </RankBadge>
-            )}
+                </span>
+              )}
+            </div>
+            <p className="mt-1 font-mono text-sm text-muted">@{user.username}</p>
+            {lastUpdated && <p className="mt-1.5 text-xs text-muted">Updated {new Date(lastUpdated).toLocaleString()}</p>}
+          </div>
+        </div>
 
-            <NameContainer>
-              <NameHeading
-                style={{ color: "var(--color-fg-default)" }}
-              >
-                {user.displayName || user.username}
-              </NameHeading>
-              <HandleText
-                style={{ color: "var(--color-fg-muted)" }}
-              >
-                @{user.username}
-              </HandleText>
-            </NameContainer>
-          </UserDetails>
-        </UserInfoCard>
-
-        <StatsRow>
-          <StatItem>
-            <StatLabel
-              style={{ color: "var(--color-accent-blue)" }}
-            >
-              Total Tokens
-            </StatLabel>
-            <StatValue
-              style={{
-                background: "linear-gradient(117deg, #169AFF 0%, #9FD4FB 26%, #B9DFF8 52%)",
-                WebkitBackgroundClip: "text",
-                WebkitTextFillColor: "transparent",
-                backgroundClip: "text",
-                textDecoration: "none",
-              }}
-              title={stats.totalTokens.toLocaleString()}
-            >
+        {/* Metrics */}
+        <div className="flex items-center gap-8 sm:gap-10">
+          <div className="flex flex-col gap-1">
+            <span className="text-[11px] font-semibold tracking-wider text-muted uppercase">Total Tokens</span>
+            <span className="font-mono text-2xl font-semibold text-accent tabular-nums" title={stats.totalTokens.toLocaleString()}>
               {formatNumber(stats.totalTokens)}
-            </StatValue>
-          </StatItem>
-
-          <StatItem>
-            <StatLabel
-              style={{ color: "var(--color-fg-default)" }}
-            >
-              Total Cost
-            </StatLabel>
-            <StatValue
-              style={{ color: "var(--color-fg-default)", textDecoration: "none" }}
-              title={stats.totalCost.toLocaleString('en-US', { style: 'currency', currency: 'USD' })}
-            >
+            </span>
+          </div>
+          <div className="flex flex-col gap-1">
+            <span className="text-[11px] font-semibold tracking-wider text-muted uppercase">Total Cost</span>
+            <span className="font-mono text-2xl font-semibold text-foreground tabular-nums" title={stats.totalCost.toLocaleString("en-US", { style: "currency", currency: "USD" })}>
               {formatCurrency(stats.totalCost)}
-            </StatValue>
-          </StatItem>
-        </StatsRow>
-      </HeaderContent>
+            </span>
+          </div>
+        </div>
+      </div>
 
-      <Divider style={{ backgroundColor: "var(--color-border-default)" }} />
+      <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-line pt-4">
+        <Button
+          onPress={() => setIsEmbedDialogOpen(true)}
+          aria-label={`Open GitHub README embed options for ${user.displayName || user.username}`}
+          className="h-9 rounded-lg bg-accent px-3 text-sm font-semibold text-accent-foreground"
+        >
+          <EmbedIcon width={18} height={18} />
+          <span className="leading-none">Embed</span>
+        </Button>
 
-      <FooterRow>
-        {lastUpdated && (
-          <LastUpdatedText
-            style={{ color: "var(--color-fg-muted)" }}
-          >
-            Last Updated: {new Date(lastUpdated).toLocaleString()}
-          </LastUpdatedText>
-        )}
+        <button type="button" onClick={handleShareClick} aria-label={`Share ${user.displayName || user.username}'s profile`} className={ghostBtn}>
+          <ShareIcon width={18} height={18} />
+          <span className="leading-none">Share</span>
+        </button>
 
-        <ActionButtons>
-          <PrimaryActionButton
-            onClick={() => setIsEmbedDialogOpen(true)}
-            aria-label={`Open GitHub README embed options for ${user.displayName || user.username}`}
-          >
-            <EmbedIcon />
-            <ActionText>Embed</ActionText>
-          </PrimaryActionButton>
+        <a
+          href={`https://github.com/${user.username}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label={`View ${user.username}'s GitHub profile (opens in new tab)`}
+          className={ghostBtn}
+        >
+          <GitHubIcon width={18} height={18} />
+          <span className="leading-none">GitHub</span>
+        </a>
+      </div>
 
-          <ActionButton
-            onClick={handleShareClick}
-            aria-label={`Share ${user.displayName || user.username}'s profile`}
-          >
-            <Image src="/icons/icon-share.svg" alt="" width={20} height={20} aria-hidden="true" />
-            <ActionText>Share</ActionText>
-          </ActionButton>
-
-          <ActionLink
-            href={`https://github.com/${user.username}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            aria-label={`View ${user.username}'s GitHub profile (opens in new tab)`}
-          >
-            <Image src="/icons/icon-github.svg" alt="" width={20} height={20} aria-hidden="true" />
-            <ActionText>GitHub</ActionText>
-          </ActionLink>
-        </ActionButtons>
-      </FooterRow>
-
-      <ProfileEmbedDialog
-        open={isEmbedDialogOpen}
-        username={user.username}
-        displayName={user.displayName}
-        onClose={() => setIsEmbedDialogOpen(false)}
-      />
-    </HeaderContainer>
+      <ProfileEmbedDialog open={isEmbedDialogOpen} username={user.username} displayName={user.displayName} onClose={() => setIsEmbedDialogOpen(false)} />
+    </div>
   );
 }
-
-const EmbedIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) => (
-  <svg
-    aria-hidden="true"
-    width="20"
-    height="20"
-    viewBox="0 0 24 24"
-    fill="none"
-    xmlns="http://www.w3.org/2000/svg"
-    {...props}
-  >
-    <path
-      d="M8 8L4 12L8 16"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    />
-    <path
-      d="M16 8L20 12L16 16"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    />
-    <path
-      d="M13.5 5L10.5 19"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    />
-  </svg>
-);
 
 export type ProfileTab = "activity" | "breakdown" | "models";
 
@@ -541,79 +163,6 @@ export interface ProfileTabBarProps {
   activeTab: ProfileTab;
   onTabChange: (tab: ProfileTab) => void;
 }
-
-const TabBarContainer = styled.div`
-  display: inline-flex;
-  flex-direction: row;
-  align-items: center;
-  border-radius: 25px;
-  border-width: 1px;
-  border-style: solid;
-  padding: 6px;
-  width: fit-content;
-  max-width: 100%;
-  overflow-x: auto;
-  overflow-y: hidden;
-  -webkit-overflow-scrolling: touch;
-  scrollbar-width: none;
-
-  &::-webkit-scrollbar {
-    display: none;
-  }
-`;
-
-const TabButton = styled.button`
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 25px;
-  padding: 10px 1rem;
-  transition: background-color 150ms;
-  cursor: pointer;
-  border: none;
-  flex-shrink: 0;
-  min-height: 44px;
-  scroll-snap-align: start;
-
-  @media (max-width: 400px) {
-    padding-left: 0.875rem;
-    padding-right: 0.875rem;
-  }
-
-  @media (min-width: 390px) {
-    padding-left: 1.125rem;
-    padding-right: 1.125rem;
-  }
-
-  @media (min-width: 480px) {
-    padding-left: 1.25rem;
-    padding-right: 1.25rem;
-  }
-
-  &:focus-visible {
-    outline: none;
-    box-shadow: 0 0 0 2px var(--color-bg-elevated), 0 0 0 4px #3b82f6;
-  }
-`;
-
-const TabText = styled.span`
-  font-size: 0.9375rem;
-  font-weight: 600;
-  line-height: 1;
-  white-space: nowrap;
-
-  @media (min-width: 390px) {
-    font-size: 1rem;
-  }
-
-  @media (min-width: 480px) {
-    font-size: 1.0625rem;
-  }
-
-  ${legacy.up('phone')} {
-    font-size: 1.125rem;
-  }
-`;
 
 export function ProfileTabBar({ activeTab, onTabChange }: ProfileTabBarProps) {
   const tabs: { id: ProfileTab; label: string }[] = [
@@ -625,12 +174,10 @@ export function ProfileTabBar({ activeTab, onTabChange }: ProfileTabBarProps) {
   const handleKeyDown = (e: React.KeyboardEvent, currentIndex: number) => {
     if (e.key === "ArrowRight" || e.key === "ArrowDown") {
       e.preventDefault();
-      const nextIndex = (currentIndex + 1) % tabs.length;
-      onTabChange(tabs[nextIndex].id);
+      onTabChange(tabs[(currentIndex + 1) % tabs.length].id);
     } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
       e.preventDefault();
-      const prevIndex = (currentIndex - 1 + tabs.length) % tabs.length;
-      onTabChange(tabs[prevIndex].id);
+      onTabChange(tabs[(currentIndex - 1 + tabs.length) % tabs.length].id);
     } else if (e.key === "Home") {
       e.preventDefault();
       onTabChange(tabs[0].id);
@@ -641,18 +188,11 @@ export function ProfileTabBar({ activeTab, onTabChange }: ProfileTabBarProps) {
   };
 
   return (
-    <TabBarContainer
-      role="tablist"
-      aria-label="Profile tabs"
-      style={{
-        backgroundColor: "var(--color-bg-elevated)",
-        borderColor: "var(--color-border-default)",
-      }}
-    >
+    <div role="tablist" aria-label="Profile tabs" className="no-scrollbar flex w-full items-center gap-1 overflow-x-auto rounded-lg border border-line bg-surface-secondary p-1 sm:w-fit">
       {tabs.map((tab, index) => {
         const isActive = activeTab === tab.id;
         return (
-          <TabButton
+          <button
             key={tab.id}
             id={`tab-${tab.id}`}
             role="tab"
@@ -661,99 +201,21 @@ export function ProfileTabBar({ activeTab, onTabChange }: ProfileTabBarProps) {
             tabIndex={isActive ? 0 : -1}
             onClick={() => onTabChange(tab.id)}
             onKeyDown={(e) => handleKeyDown(e, index)}
-            style={{
-              backgroundColor: isActive ? "var(--color-bg-active)" : "transparent",
-            }}
+            className={`flex flex-1 shrink-0 items-center justify-center rounded-md px-3.5 py-1.5 text-sm font-medium whitespace-nowrap transition-colors outline-none focus-visible:ring-2 focus-visible:ring-accent sm:flex-none ${
+              isActive ? "bg-surface text-foreground shadow-sm ring-1 ring-line" : "text-muted hover:text-foreground"
+            }`}
           >
-            <TabText
-              style={{
-                color: isActive ? "var(--color-fg-default)" : "color-mix(in srgb, var(--color-fg-default) 50%, transparent)",
-              }}
-            >
-              {tab.label}
-            </TabText>
-          </TabButton>
+            {tab.label}
+          </button>
         );
       })}
-    </TabBarContainer>
+    </div>
   );
 }
 
 export interface TokenBreakdownProps {
   stats: ProfileStatsData;
 }
-
-const BreakdownContainer = styled.div`
-  border-radius: 1rem;
-  border-width: 1px;
-  border-style: solid;
-  padding: 1rem;
-
-  @media (min-width: 640px) {
-    padding: 1.5rem;
-  }
-`;
-
-const ProgressBarWrapper = styled.div`
-  margin-bottom: 1.5rem;
-`;
-
-const ProgressBar = styled.div`
-  height: 0.75rem;
-  border-radius: 9999px;
-  overflow: hidden;
-  display: flex;
-`;
-
-const LegendGrid = styled.div`
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 1rem;
-
-  @media (min-width: 768px) {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-  }
-`;
-
-const LegendItem = styled.div`
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-`;
-
-const LegendDot = styled.div`
-  width: 0.75rem;
-  height: 0.75rem;
-  border-radius: 9999px;
-  flex-shrink: 0;
-`;
-
-const LegendInfo = styled.div`
-  min-width: 0;
-`;
-
-const LegendHeader = styled.div`
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-`;
-
-const LegendLabel = styled.p`
-  font-size: 0.75rem;
-`;
-
-const LegendPercentage = styled.span`
-  font-size: 0.75rem;
-`;
-
-const LegendValue = styled.p`
-  font-size: 1rem;
-  font-weight: 600;
-
-  @media (min-width: 640px) {
-    font-size: 1.125rem;
-  }
-`;
 
 export function TokenBreakdown({ stats }: TokenBreakdownProps) {
   const { totalTokens, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens } = stats;
@@ -766,51 +228,32 @@ export function TokenBreakdown({ stats }: TokenBreakdownProps) {
   ];
 
   return (
-    <BreakdownContainer
-      style={{ backgroundColor: "var(--color-bg-default)", borderColor: "var(--color-border-default)" }}
-    >
+    <div className="rounded-2xl border border-line bg-surface p-4 sm:p-6">
       {totalTokens > 0 && (
-        <ProgressBarWrapper>
-          <ProgressBar
-            style={{ backgroundColor: "var(--color-bg-subtle)" }}
-          >
+        <div className="mb-6">
+          <div className="flex h-2.5 overflow-hidden rounded-full bg-surface-secondary">
             {tokenTypes.map((type) => (
-              <div
-                key={type.label}
-                style={{
-                  width: `${type.percentage}%`,
-                  backgroundColor: type.color,
-                }}
-                title={`${type.label}: ${formatNumber(type.value)}`}
-              />
+              <div key={type.label} style={{ width: `${type.percentage}%`, backgroundColor: type.color }} title={`${type.label}: ${formatNumber(type.value)}`} />
             ))}
-          </ProgressBar>
-        </ProgressBarWrapper>
+          </div>
+        </div>
       )}
 
-      <LegendGrid>
+      <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
         {tokenTypes.map((type) => (
-          <LegendItem key={type.label}>
-            <LegendDot style={{ backgroundColor: type.color }} />
-            <LegendInfo>
-              <LegendHeader>
-                <LegendLabel style={{ color: "var(--color-fg-muted)" }}>{type.label}</LegendLabel>
-                {type.percentage > 0 && (
-                  <LegendPercentage style={{ color: "var(--color-fg-subtle)" }}>
-                    {type.percentage.toFixed(1)}%
-                  </LegendPercentage>
-                )}
-              </LegendHeader>
-              <LegendValue
-                style={{ color: "var(--color-fg-default)" }}
-              >
-                {formatNumber(type.value)}
-              </LegendValue>
-            </LegendInfo>
-          </LegendItem>
+          <div key={type.label} className="flex items-start gap-2.5">
+            <div className="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: type.color }} />
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <p className="text-xs text-muted">{type.label}</p>
+                {type.percentage > 0 && <span className="font-mono text-xs text-muted/70 tabular-nums">{type.percentage.toFixed(1)}%</span>}
+              </div>
+              <p className="font-mono text-base font-semibold text-foreground tabular-nums sm:text-lg">{formatNumber(type.value)}</p>
+            </div>
+          </div>
         ))}
-      </LegendGrid>
-    </BreakdownContainer>
+      </div>
+    </div>
   );
 }
 
@@ -819,90 +262,39 @@ export interface ProfileStatsProps {
   favoriteModel?: string;
 }
 
-const StatsContainer = styled(BreakdownContainer)``;
-
-const StatsGrid = styled.div`
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 1rem;
-
-  @media (min-width: 640px) {
-    gap: 1.5rem;
-  }
-  
-  @media (min-width: 768px) {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-`;
-
-const StatsItem = styled.div`
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-`;
-
-const StatsLabel = styled.p`
-  font-size: 0.75rem;
-  
-  @media (min-width: 640px) {
-    font-size: 0.875rem;
-  }
-`;
-
-const StatsValue = styled.p`
-  font-size: 1.125rem;
-  font-weight: 700;
-
-  @media (min-width: 640px) {
-    font-size: 1.25rem;
-  }
-`;
-
 export function ProfileStats({ stats, favoriteModel }: ProfileStatsProps) {
   const statItems = [
-    { label: "Submits", value: (stats.submissionCount ?? 0).toString(), color: "var(--color-primary)" },
-    { label: "Favorite Model", value: favoriteModel ?? "N/A", color: "var(--color-primary)" },
-    ...(stats.totalActiveTimeMs && stats.totalActiveTimeMs > 0
-      ? [{ label: "Active Time", value: formatDuration(stats.totalActiveTimeMs), color: "var(--color-primary)" }]
-      : []),
-    ...(stats.sessionCount && stats.sessionCount > 0
-      ? [{ label: "Sessions", value: stats.sessionCount.toString(), color: "var(--color-primary)" }]
-      : []),
+    { label: "Submits", value: (stats.submissionCount ?? 0).toString() },
+    { label: "Favorite Model", value: favoriteModel ?? "N/A" },
+    ...(stats.totalActiveTimeMs && stats.totalActiveTimeMs > 0 ? [{ label: "Active Time", value: formatDuration(stats.totalActiveTimeMs) }] : []),
+    ...(stats.sessionCount && stats.sessionCount > 0 ? [{ label: "Sessions", value: stats.sessionCount.toString() }] : []),
   ];
 
   return (
-    <StatsContainer
-      style={{ backgroundColor: "var(--color-bg-default)", borderColor: "var(--color-border-default)" }}
-    >
-      <StatsGrid>
-        {statItems.map((item) => (
-          <StatsItem key={item.label}>
-            <StatsLabel style={{ color: "var(--color-fg-muted)" }}>{item.label}</StatsLabel>
-            <StatsValue
-              style={{ color: item.color }}
-            >
-              {item.value}
-            </StatsValue>
-          </StatsItem>
-        ))}
-      </StatsGrid>
-    </StatsContainer>
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      {statItems.map((item) => (
+        <div key={item.label} className="flex flex-col rounded-xl border border-line bg-surface px-4 py-3.5">
+          <p className="text-[11px] font-semibold tracking-wider text-muted uppercase">{item.label}</p>
+          <p className="mt-1 truncate font-mono text-lg font-semibold text-foreground tabular-nums" title={item.value}>{item.value}</p>
+        </div>
+      ))}
+    </div>
   );
 }
 
 const MODEL_COLORS: Record<string, string> = {
-  "claude": "#D97706",
-  "sonnet": "#D97706",
-  "opus": "#DC2626",
-  "haiku": "#059669",
-  "gpt": "#10B981",
-  "o1": "#6366F1",
-  "o3": "#8B5CF6",
-  "gemini": "#3B82F6",
-  "deepseek": "#06B6D4",
-  "codex": "#F59E0B",
-  "kimi": "#A855F7",
-  "qwen": "#1A73E8",
+  claude: "#D97706",
+  sonnet: "#D97706",
+  opus: "#DC2626",
+  haiku: "#059669",
+  gpt: "#10B981",
+  o1: "#6366F1",
+  o3: "#8B5CF6",
+  gemini: "#3B82F6",
+  deepseek: "#06B6D4",
+  codex: "#F59E0B",
+  kimi: "#A855F7",
+  qwen: "#1A73E8",
 };
 
 function getModelColor(modelName: string): string {
@@ -925,229 +317,60 @@ export interface ProfileModelsProps {
   modelUsage?: ModelUsage[];
 }
 
-const ModelsListContainer = styled.div`
-  border-radius: 1rem;
-  border-width: 1px;
-  border-style: solid;
-  overflow: hidden;
-`;
-
-const ModelsListHeader = styled.div`
-  display: grid;
-  grid-template-columns: 1fr auto auto;
-  gap: 0.75rem;
-  padding-left: 0.75rem;
-  padding-right: 0.75rem;
-  padding-top: 0.75rem;
-  padding-bottom: 0.75rem;
-  font-size: 0.75rem;
-  font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  border-bottom-width: 1px;
-  border-bottom-style: solid;
-
-  @media (min-width: 480px) {
-    grid-template-columns: 1fr auto auto auto;
-    gap: 1rem;
-    padding-left: 1rem;
-    padding-right: 1rem;
-  }
-
-  @media (min-width: 640px) {
-    padding-left: 1.5rem;
-    padding-right: 1.5rem;
-  }
-`;
-
-const ModelsListRow = styled.div`
-  display: grid;
-  grid-template-columns: 1fr auto auto;
-  gap: 0.75rem;
-  padding-left: 0.75rem;
-  padding-right: 0.75rem;
-  padding-top: 0.75rem;
-  padding-bottom: 0.75rem;
-  align-items: center;
-
-  @media (min-width: 480px) {
-    grid-template-columns: 1fr auto auto auto;
-    gap: 1rem;
-    padding-left: 1rem;
-    padding-right: 1rem;
-  }
-
-  @media (min-width: 640px) {
-    padding-left: 1.5rem;
-    padding-right: 1.5rem;
-  }
-`;
-
-const ModelNameCell = styled.div`
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  min-width: 0;
-`;
-
-const ModelColorDot = styled.div`
-  width: 0.5rem;
-  height: 0.5rem;
-  border-radius: 9999px;
-  flex-shrink: 0;
-`;
-
-const ModelNameText = styled.span`
-  font-size: 0.8125rem;
-  font-weight: 500;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-
-  @media (min-width: 390px) {
-    font-size: 0.84375rem;
-  }
-
-  @media (min-width: 480px) {
-    font-size: 0.875rem;
-  }
-`;
-
-const ModelMetricCell = styled.div<{ $width: string; $smWidth: string; $hideOnMobile?: boolean }>`
-  text-align: right;
-  width: ${props => props.$width};
-
-  ${props => props.$hideOnMobile && css`
-    @media (max-width: 479px) {
-      display: none;
-    }
-  `}
-
-  @media (min-width: 640px) {
-    width: ${props => props.$smWidth};
-  }
-`;
-
-const MetricText = styled.span`
-  font-size: 0.8125rem;
-
-  @media (min-width: 390px) {
-    font-size: 0.84375rem;
-  }
-
-  @media (min-width: 480px) {
-    font-size: 0.875rem;
-  }
-`;
-
-const CostText = styled.span`
-  font-size: 0.8125rem;
-  font-weight: 500;
-
-  @media (min-width: 390px) {
-    font-size: 0.84375rem;
-  }
-
-  @media (min-width: 480px) {
-    font-size: 0.875rem;
-  }
-`;
-
-const ModelsTagsContainer = styled(BreakdownContainer)``;
-
-const ModelsTagsWrapper = styled.div`
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-`;
-
-const ModelTag = styled.span`
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding-left: 0.75rem;
-  padding-right: 0.75rem;
-  padding-top: 0.375rem;
-  padding-bottom: 0.375rem;
-  border-radius: 9999px;
-  font-size: 0.875rem;
-  font-weight: 500;
-`;
-
 export function ProfileModels({ models, modelUsage }: ProfileModelsProps) {
   const filteredModels = models.filter((m) => m !== "<synthetic>");
-
   if (filteredModels.length === 0) return null;
 
   if (modelUsage && modelUsage.length > 0) {
     const sortedUsage = [...modelUsage].sort((a, b) => b.cost - a.cost);
 
     return (
-      <ModelsListContainer
-        style={{ backgroundColor: "var(--color-bg-default)", borderColor: "var(--color-border-default)" }}
-      >
-        <ModelsListHeader
-          style={{ backgroundColor: "var(--color-bg-elevated)", borderColor: "var(--color-border-default)", color: "var(--color-fg-muted)" }}
-        >
+      <div className="overflow-hidden rounded-2xl border border-line bg-surface">
+        <div className="grid grid-cols-[1fr_auto_auto] gap-3 border-b border-line bg-surface-secondary px-3 py-3 text-xs font-medium tracking-wider text-muted uppercase sm:px-6 min-[480px]:grid-cols-[1fr_auto_auto_auto] min-[480px]:gap-4 min-[480px]:px-4">
           <div>Model</div>
-          <ModelMetricCell $width="5rem" $smWidth="6rem">Tokens</ModelMetricCell>
-          <ModelMetricCell $width="4rem" $smWidth="5rem">Cost</ModelMetricCell>
-          <ModelMetricCell $width="3rem" $smWidth="4rem" $hideOnMobile>%</ModelMetricCell>
-        </ModelsListHeader>
+          <div className="w-20 text-right sm:w-24">Tokens</div>
+          <div className="w-16 text-right sm:w-20">Cost</div>
+          <div className="hidden w-12 text-right sm:w-16 min-[480px]:block">%</div>
+        </div>
 
         <div>
           {sortedUsage.map((usage, index) => (
-            <ModelsListRow
+            <div
               key={usage.model}
-              style={{
-                backgroundColor: index % 2 === 1 ? "var(--color-bg-elevated)" : "transparent",
-                borderTop: index > 0 ? "1px solid var(--color-border-default)" : undefined,
-              }}
+              className="grid grid-cols-[1fr_auto_auto] items-center gap-3 px-3 py-3 sm:px-6 min-[480px]:grid-cols-[1fr_auto_auto_auto] min-[480px]:gap-4 min-[480px]:px-4"
+              style={{ backgroundColor: index % 2 === 1 ? "var(--surface-secondary)" : "transparent", borderTop: index > 0 ? "1px solid var(--border)" : undefined }}
             >
-              <ModelNameCell>
-                <ModelColorDot style={{ backgroundColor: getModelColor(usage.model) }} />
-                <ModelNameText style={{ color: "var(--color-fg-default)" }}>
-                  {usage.model}
-                </ModelNameText>
-              </ModelNameCell>
-              <ModelMetricCell $width="5rem" $smWidth="6rem">
-                <MetricText style={{ color: "var(--color-fg-default)" }}>
-                  {formatNumber(usage.tokens)}
-                </MetricText>
-              </ModelMetricCell>
-              <ModelMetricCell $width="4rem" $smWidth="5rem">
-                <CostText style={{ color: "var(--color-primary)" }}>
-                  {formatCurrency(usage.cost)}
-                </CostText>
-              </ModelMetricCell>
-              <ModelMetricCell $width="3rem" $smWidth="4rem" $hideOnMobile>
-                <MetricText style={{ color: "var(--color-fg-muted)" }}>
-                  {usage.percentage.toFixed(1)}%
-                </MetricText>
-              </ModelMetricCell>
-            </ModelsListRow>
+              <div className="flex min-w-0 items-center gap-2">
+                <div className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: getModelColor(usage.model) }} />
+                <span className="truncate text-[13px] font-medium text-foreground sm:text-sm">{usage.model}</span>
+              </div>
+              <div className="w-20 text-right sm:w-24">
+                <span className="font-mono text-[13px] text-foreground tabular-nums sm:text-sm">{formatNumber(usage.tokens)}</span>
+              </div>
+              <div className="w-16 text-right sm:w-20">
+                <span className="font-mono text-[13px] font-medium text-accent tabular-nums sm:text-sm">{formatCurrency(usage.cost)}</span>
+              </div>
+              <div className="hidden w-12 text-right sm:w-16 min-[480px]:block">
+                <span className="font-mono text-[13px] text-muted tabular-nums sm:text-sm">{usage.percentage.toFixed(1)}%</span>
+              </div>
+            </div>
           ))}
         </div>
-      </ModelsListContainer>
+      </div>
     );
   }
 
   return (
-    <ModelsTagsContainer
-      style={{ backgroundColor: "var(--color-bg-default)", borderColor: "var(--color-border-default)" }}
-    >
-      <ModelsTagsWrapper>
+    <div className="rounded-2xl border border-line bg-surface p-4 sm:p-6">
+      <div className="flex flex-wrap gap-2">
         {filteredModels.map((model) => (
-          <ModelTag
-            key={model}
-            style={{ backgroundColor: "var(--color-bg-subtle)", color: "var(--color-fg-default)" }}
-          >
-            <ModelColorDot style={{ backgroundColor: getModelColor(model) }} />
+          <span key={model} className="flex items-center gap-2 rounded-full bg-surface-secondary px-3 py-1.5 text-sm font-medium text-foreground">
+            <div className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: getModelColor(model) }} />
             {model}
-          </ModelTag>
+          </span>
         ))}
-      </ModelsTagsWrapper>
-    </ModelsTagsContainer>
+      </div>
+    </div>
   );
 }
 
@@ -1157,67 +380,18 @@ export interface ProfileActivityProps {
   sessionCount?: number | null;
 }
 
-const ActivityContainer = styled.div`
-  overflow-x: auto;
-  margin-left: -1rem;
-  margin-right: -1rem;
-  padding-left: 1rem;
-  padding-right: 1rem;
-
-  @media (min-width: 640px) {
-    margin-left: 0;
-    margin-right: 0;
-    padding-left: 0;
-    padding-right: 0;
-  }
-`;
-
-const ActivityInner = styled.div`
-  min-width: 600px;
-  
-  @media (min-width: 640px) {
-    min-width: 0;
-  }
-`;
-
 export function ProfileActivity({ data, totalActiveTimeMs, sessionCount }: ProfileActivityProps) {
-  return (
-    <ActivityContainer>
-      <ActivityInner>
-        <GraphContainer data={data} totalActiveTimeMs={totalActiveTimeMs} sessionCount={sessionCount} />
-      </ActivityInner>
-    </ActivityContainer>
-  );
+  // GraphContainer renders the graph card *plus* the breakdown and statistics
+  // panels. The contribution canvas scrolls horizontally on its own (see
+  // TokenGraph2D), so we must NOT wrap the whole container in a min-width box —
+  // doing so forced the breakdown/stats panels off-screen on mobile.
+  return <GraphContainer data={data} totalActiveTimeMs={totalActiveTimeMs} sessionCount={sessionCount} />;
 }
-
-const EmptyActivityContainer = styled.div`
-  border-radius: 1rem;
-  border-width: 1px;
-  border-style: solid;
-  padding: 1.5rem;
-  text-align: center;
-
-  @media (min-width: 640px) {
-    padding: 2rem;
-  }
-`;
-
-const EmptyActivityText = styled.p`
-  font-size: 0.875rem;
-
-  @media (min-width: 640px) {
-    font-size: 1rem;
-  }
-`;
 
 export function ProfileEmptyActivity() {
   return (
-    <EmptyActivityContainer
-      style={{ backgroundColor: "var(--color-bg-default)", borderColor: "var(--color-border-default)" }}
-    >
-      <EmptyActivityText style={{ color: "var(--color-fg-muted)" }}>
-        No contribution data available yet.
-      </EmptyActivityText>
-    </EmptyActivityContainer>
+    <div className="rounded-2xl border border-line bg-surface p-6 text-center sm:p-8">
+      <p className="text-sm text-muted sm:text-base">No contribution data available yet.</p>
+    </div>
   );
 }

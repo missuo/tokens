@@ -1397,7 +1397,7 @@ mod tests {
     /// Cache is not loaded when the file is missing (load returns None).
     #[test]
     fn test_migration_cache_missing_returns_none() {
-        // load_opencode_migration_cache reads from ~/.cache/tokscale/opencode-migration.json
+        // load_opencode_migration_cache reads from ~/.cache/tokens/opencode-migration.json
         // We can't easily override the path in a unit test, but we can verify that
         // serde_json::from_str returns None for invalid input (simulating missing file).
         let result: Option<OpenCodeMigrationCache> = serde_json::from_str("").ok();
@@ -1443,16 +1443,16 @@ mod tests {
         let temp_xdg_cache = tempfile::tempdir().unwrap();
         let prev_home = env::var_os("HOME");
         let prev_xdg_cache = env::var_os("XDG_CACHE_HOME");
-        let prev_override = env::var_os("TOKSCALE_CONFIG_DIR");
+        let prev_override = env::var_os("TOKENS_CONFIG_DIR");
         let _guard = EnvGuard(vec![
-            ("TOKSCALE_CONFIG_DIR", prev_override),
+            ("TOKENS_CONFIG_DIR", prev_override),
             ("XDG_CACHE_HOME", prev_xdg_cache),
             ("HOME", prev_home),
         ]);
         unsafe {
             env::set_var("HOME", temp_home.path());
             env::set_var("XDG_CACHE_HOME", temp_xdg_cache.path());
-            env::remove_var("TOKSCALE_CONFIG_DIR");
+            env::remove_var("TOKENS_CONFIG_DIR");
         }
 
         let legacy_path = crate::paths::legacy_dirs_cache_dir()

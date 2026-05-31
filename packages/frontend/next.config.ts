@@ -1,11 +1,6 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // Enable styled-components SSR
-  compiler: {
-    styledComponents: true,
-  },
-
   // Allow images from GitHub
   images: {
     remotePatterns: [

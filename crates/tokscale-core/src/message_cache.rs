@@ -54,7 +54,7 @@ fn legacy_cache_paths() -> Vec<PathBuf> {
 fn fallback_cache_dir() -> Option<PathBuf> {
     std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
-        .map(|path| path.join("tokscale"))
+        .map(|path| path.join("tokens"))
         .or_else(user_scoped_temp_dir)
 }
 
@@ -1026,7 +1026,7 @@ mod tests {
         {
             assert_eq!(
                 fallback_cache_dir(),
-                Some(runtime_dir.path().join("tokscale"))
+                Some(runtime_dir.path().join("tokens"))
             );
         }
 
@@ -1110,12 +1110,12 @@ mod tests {
         let original_home = std::env::var_os("HOME");
         let original_xdg_cache = std::env::var_os("XDG_CACHE_HOME");
         let original_xdg_config = std::env::var_os("XDG_CONFIG_HOME");
-        let original_override = std::env::var_os("TOKSCALE_CONFIG_DIR");
+        let original_override = std::env::var_os("TOKENS_CONFIG_DIR");
 
         restore_env_var("HOME", Some(temp_home.path()));
         restore_env_var("XDG_CACHE_HOME", Some(temp_xdg_cache.path()));
         restore_env_var("XDG_CONFIG_HOME", Some(temp_home.path().join(".config")));
-        restore_env_var("TOKSCALE_CONFIG_DIR", None::<&str>);
+        restore_env_var("TOKENS_CONFIG_DIR", None::<&str>);
 
         let source = write_temp_file(b"legacy-dirs\n");
         let entry = CachedSourceEntry::new(
@@ -1143,7 +1143,7 @@ mod tests {
         restore_env_var("HOME", original_home);
         restore_env_var("XDG_CACHE_HOME", original_xdg_cache);
         restore_env_var("XDG_CONFIG_HOME", original_xdg_config);
-        restore_env_var("TOKSCALE_CONFIG_DIR", original_override);
+        restore_env_var("TOKENS_CONFIG_DIR", original_override);
     }
 
     #[test]
@@ -1153,12 +1153,12 @@ mod tests {
         let original_home = std::env::var_os("HOME");
         let original_xdg_cache = std::env::var_os("XDG_CACHE_HOME");
         let original_xdg_config = std::env::var_os("XDG_CONFIG_HOME");
-        let original_override = std::env::var_os("TOKSCALE_CONFIG_DIR");
+        let original_override = std::env::var_os("TOKENS_CONFIG_DIR");
 
         restore_env_var("HOME", Some(temp_home.path()));
         restore_env_var("XDG_CACHE_HOME", None::<&str>);
         restore_env_var("XDG_CONFIG_HOME", Some(temp_home.path().join(".config")));
-        restore_env_var("TOKSCALE_CONFIG_DIR", None::<&str>);
+        restore_env_var("TOKENS_CONFIG_DIR", None::<&str>);
 
         let source = write_temp_file(b"legacy-dot\n");
         let entry = CachedSourceEntry::new(
@@ -1186,7 +1186,7 @@ mod tests {
         restore_env_var("HOME", original_home);
         restore_env_var("XDG_CACHE_HOME", original_xdg_cache);
         restore_env_var("XDG_CONFIG_HOME", original_xdg_config);
-        restore_env_var("TOKSCALE_CONFIG_DIR", original_override);
+        restore_env_var("TOKENS_CONFIG_DIR", original_override);
     }
 
     #[cfg(unix)]

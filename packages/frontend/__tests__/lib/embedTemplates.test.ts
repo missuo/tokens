@@ -129,8 +129,8 @@ describe("renderTerminalEmbedSvg", () => {
   it("renders a terminal window with a prompt and stats", () => {
     const svg = renderTerminalEmbedSvg(mockStats, { contributions: mockContributions });
     expect(svg).toContain("<svg");
-    expect(svg).toContain("tokscale — @octocat");
-    expect(svg).toContain("tokscale stats");
+    expect(svg).toContain("tokens — @octocat");
+    expect(svg).toContain("tokens stats");
     expect(svg).toContain("ui-monospace");
   });
 });

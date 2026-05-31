@@ -30,8 +30,8 @@ fn warn_if_escapes_home(client_id: ClientId, path: &Path) {
 /// User-controlled scanner settings loaded from a config file.
 ///
 /// This is the persistent, declarative counterpart to environment variables
-/// like `TOKSCALE_EXTRA_DIRS` — it lives on the `scanner` key inside
-/// `~/.config/tokscale/settings.json` and is threaded down into
+/// like `TOKENS_EXTRA_DIRS` — it lives on the `scanner` key inside
+/// `~/.config/tokens/settings.json` and is threaded down into
 /// [`scan_all_clients_with_scanner_settings`].
 ///
 /// `#[serde(default)]` at both the struct and field level guarantees that
@@ -168,19 +168,19 @@ impl ScanResult {
 
 pub fn headless_roots_with_env_strategy(home_dir: &str, use_env_roots: bool) -> Vec<PathBuf> {
     if use_env_roots {
-        if let Ok(path) = std::env::var("TOKSCALE_HEADLESS_DIR") {
+        if let Ok(path) = std::env::var("TOKENS_HEADLESS_DIR") {
             return vec![PathBuf::from(path)];
         }
     }
 
     let mut roots = Vec::new();
     roots.push(PathBuf::from(format!(
-        "{}/.config/tokscale/headless",
+        "{}/.config/tokens/headless",
         home_dir
     )));
 
     let mac_root = PathBuf::from(format!(
-        "{}/Library/Application Support/tokscale/headless",
+        "{}/Library/Application Support/tokens/headless",
         home_dir
     ));
     roots.push(mac_root);
@@ -290,7 +290,7 @@ pub fn scan_directory(root: &str, pattern: &str) -> Vec<PathBuf> {
     paths
 }
 
-/// Parse a `TOKSCALE_EXTRA_DIRS`-formatted string into (ClientId, path) pairs.
+/// Parse a `TOKENS_EXTRA_DIRS`-formatted string into (ClientId, path) pairs.
 ///
 /// Format: comma-separated `client:path` pairs.
 /// Example: `"claude:/path/to/mac/sessions,openclaw:/other/path"`
@@ -578,7 +578,7 @@ pub(crate) fn merge_user_opencode_db_paths(discovered: &mut Vec<PathBuf>, extra_
 /// [`ScannerSettings`] merged in.
 ///
 /// This is the preferred entry point when you have loaded persistent
-/// settings (e.g. from `~/.config/tokscale/settings.json`). Thin wrappers
+/// settings (e.g. from `~/.config/tokens/settings.json`). Thin wrappers
 /// [`scan_all_clients_with_env_strategy`] and [`scan_all_clients`] call
 /// into this with `ScannerSettings::default()` for callers that don't care
 /// about the persistent config.
@@ -666,7 +666,7 @@ fn scan_all_clients_with_env_strategy_inner(
     // Extra scan directories are part of the caller's environment, so they are
     // intentionally ignored when an explicit --home override disables env roots.
     if use_env_roots {
-        let extra_dirs_val = std::env::var("TOKSCALE_EXTRA_DIRS").unwrap_or_default();
+        let extra_dirs_val = std::env::var("TOKENS_EXTRA_DIRS").unwrap_or_default();
         for (client_id, path) in parse_extra_dirs(&extra_dirs_val, &enabled) {
             warn_if_escapes_home(client_id, &PathBuf::from(&path));
             push_unique_scan_task(&mut tasks, &mut seen_scan_roots, client_id, path);
@@ -694,7 +694,7 @@ fn scan_all_clients_with_env_strategy_inner(
 
         // Merge user-configured `scanner.opencodeDbPaths` here, INSIDE the
         // `enabled.contains(&ClientId::OpenCode)` guard, so a request like
-        // `tokscale --claude` does not pull in OpenCode dbs the user pinned
+        // `tokens --claude` does not pull in OpenCode dbs the user pinned
         // for unrelated reasons. Inflated OpenCode `counts` and wasted
         // SQLite parsing work otherwise sneak past the message-level
         // client filter that runs much later in the pipeline.
@@ -1434,14 +1434,14 @@ mod tests {
     #[test]
     #[serial]
     fn test_headless_roots_default() {
-        let previous = std::env::var("TOKSCALE_HEADLESS_DIR").ok();
-        unsafe { std::env::remove_var("TOKSCALE_HEADLESS_DIR") };
+        let previous = std::env::var("TOKENS_HEADLESS_DIR").ok();
+        unsafe { std::env::remove_var("TOKENS_HEADLESS_DIR") };
 
         let home = "/tmp/tokscale-test-home";
         let roots = headless_roots(home);
-        let config_root = PathBuf::from(format!("{}/.config/tokscale/headless", home));
+        let config_root = PathBuf::from(format!("{}/.config/tokens/headless", home));
         let mac_root = PathBuf::from(format!(
-            "{}/Library/Application Support/tokscale/headless",
+            "{}/Library/Application Support/tokens/headless",
             home
         ));
 
@@ -1449,37 +1449,37 @@ mod tests {
         assert!(roots.contains(&config_root));
         assert!(roots.contains(&mac_root));
 
-        restore_env("TOKSCALE_HEADLESS_DIR", previous);
+        restore_env("TOKENS_HEADLESS_DIR", previous);
     }
 
     #[test]
     #[serial]
     fn test_headless_roots_override() {
-        let previous = std::env::var("TOKSCALE_HEADLESS_DIR").ok();
-        unsafe { std::env::set_var("TOKSCALE_HEADLESS_DIR", "/custom/headless") };
+        let previous = std::env::var("TOKENS_HEADLESS_DIR").ok();
+        unsafe { std::env::set_var("TOKENS_HEADLESS_DIR", "/custom/headless") };
 
         let roots = headless_roots("/tmp/home");
         assert_eq!(roots, vec![PathBuf::from("/custom/headless")]);
 
-        restore_env("TOKSCALE_HEADLESS_DIR", previous);
+        restore_env("TOKENS_HEADLESS_DIR", previous);
     }
 
     #[test]
     #[serial]
     fn test_headless_roots_ignore_env_override_when_disabled() {
-        let previous = std::env::var("TOKSCALE_HEADLESS_DIR").ok();
-        unsafe { std::env::set_var("TOKSCALE_HEADLESS_DIR", "/custom/headless") };
+        let previous = std::env::var("TOKENS_HEADLESS_DIR").ok();
+        unsafe { std::env::set_var("TOKENS_HEADLESS_DIR", "/custom/headless") };
 
         let roots = headless_roots_with_env_strategy("/tmp/home", false);
         assert_eq!(
             roots,
             vec![
-                PathBuf::from("/tmp/home/.config/tokscale/headless"),
-                PathBuf::from("/tmp/home/Library/Application Support/tokscale/headless")
+                PathBuf::from("/tmp/home/.config/tokens/headless"),
+                PathBuf::from("/tmp/home/Library/Application Support/tokens/headless")
             ]
         );
 
-        restore_env("TOKSCALE_HEADLESS_DIR", previous);
+        restore_env("TOKENS_HEADLESS_DIR", previous);
     }
 
     #[test]
@@ -1855,7 +1855,7 @@ mod tests {
     #[test]
     #[serial]
     fn test_scan_all_clients_with_scanner_settings_dedups_settings_and_env_extra_paths() {
-        let previous = std::env::var("TOKSCALE_EXTRA_DIRS").ok();
+        let previous = std::env::var("TOKENS_EXTRA_DIRS").ok();
         let dir = TempDir::new().unwrap();
         let home = dir.path();
 
@@ -1869,7 +1869,7 @@ mod tests {
 
         unsafe {
             std::env::set_var(
-                "TOKSCALE_EXTRA_DIRS",
+                "TOKENS_EXTRA_DIRS",
                 format!("codex:{}", extra_root.join("..").join("sessions").display()),
             )
         };
@@ -1889,7 +1889,7 @@ mod tests {
         );
 
         assert_eq!(result.get(ClientId::Codex).len(), 2);
-        restore_env("TOKSCALE_EXTRA_DIRS", previous);
+        restore_env("TOKENS_EXTRA_DIRS", previous);
     }
 
     #[test]
@@ -1898,7 +1898,7 @@ mod tests {
         // Regression guard: previously the scanner unconditionally
         // merged `scanner.opencodeDbPaths` after the inner scan, which
         // bypassed the existing `enabled.contains(&ClientId::OpenCode)`
-        // guard. A request like `tokscale --claude` would still pull in
+        // guard. A request like `tokens --claude` would still pull in
         // user-pinned OpenCode dbs and inflate `parse_local_clients`
         // counts plus waste SQLite parsing work.
         //
@@ -2251,7 +2251,7 @@ mod tests {
         setup_mock_claude_dir(home);
         setup_mock_gemini_dir(home);
 
-        // use_env_roots=false to avoid interference from TOKSCALE_EXTRA_DIRS
+        // use_env_roots=false to avoid interference from TOKENS_EXTRA_DIRS
         // set by parallel tests
         let result = scan_all_clients_with_env_strategy(
             home.to_str().unwrap(),
@@ -2418,8 +2418,8 @@ mod tests {
     #[test]
     #[serial]
     fn test_scan_all_clients_headless_paths() {
-        let previous_headless = std::env::var("TOKSCALE_HEADLESS_DIR").ok();
-        unsafe { std::env::remove_var("TOKSCALE_HEADLESS_DIR") };
+        let previous_headless = std::env::var("TOKENS_HEADLESS_DIR").ok();
+        unsafe { std::env::remove_var("TOKENS_HEADLESS_DIR") };
 
         let dir = TempDir::new().unwrap();
         let home = dir.path();
@@ -2427,7 +2427,7 @@ mod tests {
         let mac_root = home
             .join("Library")
             .join("Application Support")
-            .join("tokscale")
+            .join("tokens")
             .join("headless");
 
         fs::create_dir_all(mac_root.join("codex")).unwrap();
@@ -2446,7 +2446,7 @@ mod tests {
         assert_eq!(result.get(ClientId::Codex).len(), 1);
         assert!(result.get(ClientId::Gemini).is_empty());
 
-        restore_env("TOKSCALE_HEADLESS_DIR", previous_headless);
+        restore_env("TOKENS_HEADLESS_DIR", previous_headless);
     }
 
     #[test]
@@ -2621,7 +2621,7 @@ mod tests {
     #[test]
     #[serial]
     fn test_scan_all_clients_with_extra_dirs() {
-        let previous = std::env::var("TOKSCALE_EXTRA_DIRS").ok();
+        let previous = std::env::var("TOKENS_EXTRA_DIRS").ok();
 
         let dir = TempDir::new().unwrap();
         let home = dir.path();
@@ -2637,7 +2637,7 @@ mod tests {
 
         unsafe {
             std::env::set_var(
-                "TOKSCALE_EXTRA_DIRS",
+                "TOKENS_EXTRA_DIRS",
                 format!("claude:{}", extra_dir.path().to_string_lossy()),
             )
         };
@@ -2646,7 +2646,7 @@ mod tests {
         // 1 from default path + 1 from extra dir
         assert_eq!(result.get(ClientId::Claude).len(), 2);
 
-        restore_env("TOKSCALE_EXTRA_DIRS", previous);
+        restore_env("TOKENS_EXTRA_DIRS", previous);
     }
 
     fn setup_mock_codebuff_chat(base: &Path, channel: &str, chat_id: &str) -> PathBuf {
@@ -2739,7 +2739,7 @@ mod tests {
     #[test]
     #[serial]
     fn test_scan_all_clients_ignores_extra_dirs_when_env_roots_disabled() {
-        let previous = std::env::var("TOKSCALE_EXTRA_DIRS").ok();
+        let previous = std::env::var("TOKENS_EXTRA_DIRS").ok();
 
         let dir = TempDir::new().unwrap();
         let home = dir.path();
@@ -2752,7 +2752,7 @@ mod tests {
 
         unsafe {
             std::env::set_var(
-                "TOKSCALE_EXTRA_DIRS",
+                "TOKENS_EXTRA_DIRS",
                 format!("claude:{}", extra_dir.path().to_string_lossy()),
             )
         };
@@ -2764,7 +2764,7 @@ mod tests {
         );
         assert_eq!(result.get(ClientId::Claude).len(), 1);
 
-        restore_env("TOKSCALE_EXTRA_DIRS", previous);
+        restore_env("TOKENS_EXTRA_DIRS", previous);
     }
 
     /// Verify that an extra scan path outside $HOME does not abort the scan.
@@ -2789,11 +2789,11 @@ mod tests {
         fs::create_dir_all(&session_dir).unwrap();
         File::create(session_dir.join("session-abc123.json")).unwrap();
 
-        // Set TOKSCALE_EXTRA_DIRS to point claude at the outside path.
-        let previous = std::env::var("TOKSCALE_EXTRA_DIRS").ok();
+        // Set TOKENS_EXTRA_DIRS to point claude at the outside path.
+        let previous = std::env::var("TOKENS_EXTRA_DIRS").ok();
         unsafe {
             std::env::set_var(
-                "TOKSCALE_EXTRA_DIRS",
+                "TOKENS_EXTRA_DIRS",
                 format!("claude:{}", outside_path.to_string_lossy()),
             )
         };
@@ -2803,10 +2803,10 @@ mod tests {
         let _result = scan_all_clients_with_env_strategy(
             fake_home.path().to_str().unwrap(),
             &["claude".to_string()],
-            true, // use_env_roots = true so TOKSCALE_EXTRA_DIRS is picked up
+            true, // use_env_roots = true so TOKENS_EXTRA_DIRS is picked up
         );
 
-        restore_env("TOKSCALE_EXTRA_DIRS", previous);
+        restore_env("TOKENS_EXTRA_DIRS", previous);
         // No assertion on result.get(ClientId::Claude) — the outside dir might
         // not match the expected file patterns. The test goal is only liveness:
         // the scan must not panic when an extra path escapes $HOME.

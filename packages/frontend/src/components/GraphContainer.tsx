@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
-import styled from "styled-components";
 import dynamic from "next/dynamic";
 import type { TokenContributionData, DailyContribution, ViewMode, ClientType, TooltipPosition } from "@/lib/types";
 import { getPalette } from "@/lib/themes";
@@ -12,53 +11,12 @@ import { TokenGraph2D } from "./TokenGraph2D";
 // Lazy load 3D graph (Three.js) - reduces initial bundle, SSR disabled for WebGL
 const TokenGraph3D = dynamic(() => import("./TokenGraph3D").then((mod) => mod.TokenGraph3D), {
   ssr: false,
-  loading: () => <Graph3DPlaceholder>Loading 3D view...</Graph3DPlaceholder>,
+  loading: () => <div className="flex h-[400px] items-center justify-center text-sm text-muted">Loading 3D view...</div>,
 });
 import { GraphControls } from "./GraphControls";
 import { Tooltip } from "./Tooltip";
 import { BreakdownPanel } from "./BreakdownPanel";
 import { StatsPanel } from "./StatsPanel";
-
-const Container = styled.div`
-  display: flex;
-  flex-direction: column;
-  gap: 24px;
-`;
-
-const Graph3DPlaceholder = styled.div`
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 400px;
-  color: var(--color-fg-muted);
-  font-size: 14px;
-`;
-
-const GraphCard = styled.div`
-  border-radius: 16px;
-  border: 1px solid var(--color-border-default);
-  padding-top: 16px;
-  padding-bottom: 16px;
-  overflow: hidden;
-  box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
-  transition: box-shadow 200ms;
-  background-color: var(--color-graph-canvas);
-
-  &:hover {
-    box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
-  }
-`;
-
-const ControlsWrapper = styled.div`
-  padding-left: 20px;
-  padding-right: 20px;
-`;
-
-const GraphWrapper = styled.div`
-  padding-left: 20px;
-  padding-right: 20px;
-  padding-bottom: 12px;
-`;
 
 interface GraphContainerProps {
   data: TokenContributionData;
@@ -132,9 +90,9 @@ export function GraphContainer({ data, totalActiveTimeMs, sessionCount }: GraphC
   }, []);
 
   return (
-    <Container>
-      <GraphCard>
-        <ControlsWrapper>
+    <div className="flex flex-col gap-6">
+      <div className="overflow-hidden rounded-2xl border border-line bg-surface py-4 shadow-sm transition-shadow hover:shadow-md">
+        <div className="px-5">
           <GraphControls
             view={view}
             onViewChange={setView}
@@ -149,9 +107,9 @@ export function GraphContainer({ data, totalActiveTimeMs, sessionCount }: GraphC
             palette={palette}
             totalTokens={totalTokens}
           />
-        </ControlsWrapper>
+        </div>
 
-        <GraphWrapper>
+        <div className="px-5 pb-3">
           {view === "2d" ? (
             <TokenGraph2D
               contributions={yearContributions}
@@ -177,12 +135,12 @@ export function GraphContainer({ data, totalActiveTimeMs, sessionCount }: GraphC
               onDayClick={handleDayClick}
             />
           )}
-        </GraphWrapper>
-      </GraphCard>
+        </div>
+      </div>
 
       {selectedDay && <BreakdownPanel day={selectedDay} onClose={() => setSelectedDay(null)} palette={palette} />}
       {view === "2d" && <StatsPanel data={filteredByClient} palette={palette} totalActiveTimeMs={clientFilter.length === 0 ? totalActiveTimeMs : null} sessionCount={clientFilter.length === 0 ? sessionCount : null} />}
       <Tooltip day={hoveredDay} position={tooltipPosition} visible={hoveredDay !== null} palette={palette} />
-    </Container>
+    </div>
   );
 }

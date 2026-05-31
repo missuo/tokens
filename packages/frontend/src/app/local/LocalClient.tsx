@@ -1,140 +1,53 @@
 "use client";
 
 import { useState } from "react";
-import styled from "styled-components";
 import type { TokenContributionData } from "@/lib/types";
 import { DataInput } from "@/components/DataInput";
 import { GraphContainer } from "@/components/GraphContainer";
-import { Navigation } from "@/components/layout/Navigation";
-import { Footer } from "@/components/layout/Footer";
-
-const Container = styled.div`
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-  background-color: var(--color-bg-default);
-`;
-
-const Main = styled.main`
-  flex: 1;
-  max-width: 1280px;
-  margin: 0 auto;
-  padding: 40px 24px;
-  width: 100%;
-`;
-
-const HeaderSection = styled.div`
-  margin-bottom: 32px;
-`;
-
-const Title = styled.h1`
-  font-size: 30px;
-  font-weight: bold;
-  margin-bottom: 8px;
-  color: var(--color-fg-default);
-`;
-
-const Description = styled.p`
-  color: var(--color-fg-muted);
-`;
-
-const ContentWrapper = styled.div`
-  display: flex;
-  flex-direction: column;
-  gap: 32px;
-`;
-
-const InfoCard = styled.div`
-  border-radius: 16px;
-  border: 1px solid var(--color-border-default);
-  padding: 20px;
-  background-color: var(--color-bg-default);
-`;
-
-const InfoContent = styled.div`
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 16px;
-  font-size: 14px;
-`;
-
-const MutedText = styled.span`
-  color: var(--color-fg-muted);
-`;
-
-const BoldText = styled.span`
-  font-weight: 600;
-  color: var(--color-fg-default);
-`;
-
-const Separator = styled.span`
-  color: var(--color-border-default);
-`;
-
-const PrimaryText = styled.span`
-  font-weight: 600;
-  color: var(--color-primary);
-`;
-
-const LoadButton = styled.button`
-  margin-left: auto;
-  padding: 8px 16px;
-  font-size: 14px;
-  font-weight: 500;
-  border-radius: 8px;
-  transition: opacity 0.2s;
-  color: var(--color-fg-muted);
-  
-  &:hover {
-    opacity: 0.8;
-  }
-`;
+import { Panel, PageHeader } from "@/components/ui/primitives";
 
 export default function LocalClient() {
   const [data, setData] = useState<TokenContributionData | null>(null);
 
   return (
-    <Container>
-      <Navigation />
-
-      <Main>
-        <HeaderSection>
-          <Title>Local Viewer</Title>
-          <Description>
-            View your token usage data locally without submitting
-          </Description>
-        </HeaderSection>
+    <div className="min-h-screen bg-background px-4 py-8 sm:px-6">
+      <div className="mx-auto max-w-[820px]">
+        <PageHeader
+          title="Local Viewer"
+          subtitle="View your token usage data locally without submitting"
+          className="mb-8"
+        />
 
         {!data ? (
           <DataInput onDataLoaded={setData} />
         ) : (
-          <ContentWrapper>
-            <InfoCard>
-              <InfoContent>
-                <MutedText>Data loaded:</MutedText>
-                <BoldText>
+          <div className="flex flex-col gap-6">
+            <Panel className="p-4 sm:p-6">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm">
+                <span className="text-muted">Data loaded:</span>
+                <span className="font-mono tabular-nums font-semibold text-foreground">
                   {data.meta.dateRange.start} - {data.meta.dateRange.end}
-                </BoldText>
-                <Separator>|</Separator>
-                <PrimaryText>
+                </span>
+                <span className="text-line">|</span>
+                <span className="font-mono tabular-nums font-semibold text-accent">
                   ${data.summary.totalCost.toFixed(2)} total
-                </PrimaryText>
-                <Separator>|</Separator>
-                <MutedText>
-                  {data.summary.activeDays} active days
-                </MutedText>
-                <LoadButton onClick={() => setData(null)}>
+                </span>
+                <span className="text-line">|</span>
+                <span className="text-muted">
+                  <span className="font-mono tabular-nums">{data.summary.activeDays}</span> active days
+                </span>
+                <button
+                  onClick={() => setData(null)}
+                  className="ml-auto inline-flex h-10 items-center justify-center gap-1.5 rounded-lg border border-line bg-surface px-4 text-sm font-medium text-foreground transition hover:border-foreground/20 hover:bg-surface-secondary"
+                >
                   Load Different Data
-                </LoadButton>
-              </InfoContent>
-            </InfoCard>
+                </button>
+              </div>
+            </Panel>
             <GraphContainer data={data} />
-          </ContentWrapper>
+          </div>
         )}
-      </Main>
-
-      <Footer />
-    </Container>
+      </div>
+    </div>
   );
 }

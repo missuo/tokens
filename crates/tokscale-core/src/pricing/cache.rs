@@ -140,7 +140,7 @@ mod tests {
         let previous_home = env::var_os("HOME");
         let previous_xdg_cache = env::var_os("XDG_CACHE_HOME");
         let previous_xdg_config = env::var_os("XDG_CONFIG_HOME");
-        let previous_override = env::var_os("TOKSCALE_CONFIG_DIR");
+        let previous_override = env::var_os("TOKENS_CONFIG_DIR");
         unsafe {
             env::set_var("HOME", temp_home.path());
             env::set_var("XDG_CACHE_HOME", temp_xdg_cache.path());
@@ -151,7 +151,7 @@ mod tests {
             // exercised because the binary never tries the right legacy
             // root either.
             env::set_var("XDG_CONFIG_HOME", temp_home.path().join(".config"));
-            env::remove_var("TOKSCALE_CONFIG_DIR");
+            env::remove_var("TOKENS_CONFIG_DIR");
         }
 
         let legacy_path = crate::paths::legacy_dirs_cache_dir()
@@ -174,6 +174,6 @@ mod tests {
         restore_env_var("HOME", previous_home);
         restore_env_var("XDG_CACHE_HOME", previous_xdg_cache);
         restore_env_var("XDG_CONFIG_HOME", previous_xdg_config);
-        restore_env_var("TOKSCALE_CONFIG_DIR", previous_override);
+        restore_env_var("TOKENS_CONFIG_DIR", previous_override);
     }
 }

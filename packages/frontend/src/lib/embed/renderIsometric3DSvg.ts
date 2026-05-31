@@ -355,7 +355,7 @@ export function renderIsometric3DEmbedSvg(
   const faceCss = buildFaceCSS(cls, [...palette.graphGrade]);
 
   return `<?xml version="1.0" encoding="UTF-8"?>
-<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Tokscale 3D contribution graph for ${escapeXml(username)}">
+<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Tokens 3D contribution graph for ${escapeXml(username)}">
   <defs>
     <style>
 @import url('${FIGTREE_FONT_IMPORT}');
@@ -382,14 +382,14 @@ ${faceCss}
   <rect x="0.5" y="0.5" width="${width - 1}" height="${height - 1}" rx="${rx - 0.5}" fill="none" stroke="${palette.border}"/>
   <rect width="${width}" height="${height}" rx="${rx}" fill="url(#glow)" clip-path="url(#card-clip)"/>
   ${brandIcon(px, 30, palette.brand)}
-  <text x="${px + 18}" y="30" fill="${palette.muted}" font-size="12" font-weight="600" font-family="${FIGTREE_FONT_STACK}">Tokscale Stats</text>
+  <text x="${px + 18}" y="30" fill="${palette.muted}" font-size="12" font-weight="600" font-family="${FIGTREE_FONT_STACK}">Tokens Stats</text>
   <text x="${px}" y="52" fill="${palette.text}" font-size="17" font-weight="700" font-family="${FIGTREE_FONT_STACK}">${escapeXml(username)}</text>
   <rect x="${px}" y="62" width="${width - px * 2}" height="1" fill="url(#divider-grad)"/>
   ${cubes}
   ${renderStatsBox(tokenUsageX, tokenUsageY, statsBoxW, "Token Usage", tokenUsageItems, tokenUsageFooter, palette)}
   ${renderStatsBox(streaksX, streaksY, streaksBoxW, "Streaks", streaksItems, null, palette)}
   <text x="${px}" y="${footerY}" fill="${palette.muted}" font-size="11" font-family="${FIGTREE_FONT_STACK}">${updated}</text>
-  <text x="${width - px}" y="${footerY}" fill="${palette.muted}" font-size="11" font-family="${FIGTREE_FONT_STACK}" text-anchor="end">tokscale.ai/u/${escapeXml(data.user.username)}</text>
+  <text x="${width - px}" y="${footerY}" fill="${palette.muted}" font-size="11" font-family="${FIGTREE_FONT_STACK}" text-anchor="end">tokens.ci/u/${escapeXml(data.user.username)}</text>
 </svg>`;
 }
 
@@ -406,7 +406,7 @@ export function renderIsometric3DErrorSvg(
   const px = 24;
 
   return `<?xml version="1.0" encoding="UTF-8"?>
-<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Tokscale 3D embed error">
+<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Tokens 3D embed error">
   <defs>
     <style>@import url('${FIGTREE_FONT_IMPORT}');</style>
     <linearGradient id="err-bg" x1="0" y1="0" x2="${width}" y2="${height}" gradientUnits="userSpaceOnUse">
@@ -422,10 +422,10 @@ export function renderIsometric3DErrorSvg(
   <rect width="${width}" height="${height}" rx="${rx}" fill="url(#err-bg)"/>
   <rect x="0.5" y="0.5" width="${width - 1}" height="${height - 1}" rx="${rx - 0.5}" fill="none" stroke="${palette.border}"/>
   ${brandIcon(px, 30, palette.brand)}
-  <text x="${px + 18}" y="30" fill="${palette.muted}" font-size="12" font-weight="600" font-family="${FIGTREE_FONT_STACK}">Tokscale Stats</text>
+  <text x="${px + 18}" y="30" fill="${palette.muted}" font-size="12" font-weight="600" font-family="${FIGTREE_FONT_STACK}">Tokens Stats</text>
   <rect x="${px}" y="40" width="${width - px * 2}" height="1" fill="url(#err-divider)"/>
   <text x="${px}" y="66" fill="${palette.title}" font-size="15" font-weight="700" font-family="${FIGTREE_FONT_STACK}">${safeMessage}</text>
   <text x="${px}" y="90" fill="${palette.muted}" font-size="12" font-family="${FIGTREE_FONT_STACK}">Submit your usage data first, then try again with view=3d.</text>
-  <text x="${width - px}" y="108" fill="${palette.muted}" font-size="11" font-family="${FIGTREE_FONT_STACK}" text-anchor="end">tokscale.ai</text>
+  <text x="${width - px}" y="108" fill="${palette.muted}" font-size="11" font-family="${FIGTREE_FONT_STACK}" text-anchor="end">tokens.ci</text>
 </svg>`;
 }

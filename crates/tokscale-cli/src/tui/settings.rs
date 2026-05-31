@@ -35,7 +35,7 @@ impl ExplicitHomeConfigLayout {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LightSettings {
-    /// When true, every `tokscale --light` run atomically overwrites the
+    /// When true, every `tokens --light` run atomically overwrites the
     /// TUI cache (same semantics as `--light --write-cache`). The CLI
     /// flags `--write-cache` / `--no-write-cache` override this per-invocation.
     #[serde(default)]
@@ -139,7 +139,7 @@ impl Default for Settings {
 /// calls this so user-configured scanner paths are honored on every
 /// invocation. Errors during load fall through to
 /// [`ScannerSettings::default`] — a missing or malformed settings.json
-/// should never break `tokscale` runs.
+/// should never break `tokens` runs.
 pub fn load_scanner_settings() -> ScannerSettings {
     Settings::load().scanner
 }
@@ -190,12 +190,12 @@ impl Settings {
         match layout {
             ExplicitHomeConfigLayout::UnixDotConfig => home_dir
                 .join(".config")
-                .join("tokscale")
+                .join("tokens")
                 .join("settings.json"),
             ExplicitHomeConfigLayout::WindowsRoaming => home_dir
                 .join("AppData")
                 .join("Roaming")
-                .join("tokscale")
+                .join("tokens")
                 .join("settings.json"),
         }
     }
@@ -205,10 +205,10 @@ impl Settings {
     }
 
     fn explicit_home_legacy_macos_path(home_dir: &Path) -> PathBuf {
-        home_dir.join("Library/Application Support/tokscale/settings.json")
+        home_dir.join("Library/Application Support/tokens/settings.json")
     }
 
-    /// Returns the legacy `~/Library/Application Support/tokscale/settings.json`
+    /// Returns the legacy `~/Library/Application Support/tokens/settings.json`
     /// path on macOS so `load()` can fall back to it during the transition.
     /// Returns `None` on other platforms or when HOME cannot be resolved.
     fn legacy_macos_path() -> Option<PathBuf> {
@@ -221,11 +221,11 @@ impl Settings {
             .and_then(|path| fs::read_to_string(path).ok());
 
         // Transparent macOS fallback: pre-fix releases wrote settings.json under
-        // `~/Library/Application Support/tokscale/`. Read it once if the new
+        // `~/Library/Application Support/tokens/`. Read it once if the new
         // path is empty so users don't lose theme / scanner / defaultClients
         // preferences after upgrading. The next `save()` lands at the new
-        // canonical path under `~/.config/tokscale/`. Skipped when the user
-        // has explicitly pinned a config root via `TOKSCALE_CONFIG_DIR` so
+        // canonical path under `~/.config/tokens/`. Skipped when the user
+        // has explicitly pinned a config root via `TOKENS_CONFIG_DIR` so
         // CI sandboxes and isolated profiles stay hermetic instead of
         // silently ingesting personal settings from the legacy macOS path.
         let raw = primary.or_else(|| {
@@ -303,7 +303,7 @@ impl Settings {
     }
 
     pub fn get_native_timeout(&self) -> Duration {
-        let timeout_ms = if let Ok(env_val) = std::env::var("TOKSCALE_NATIVE_TIMEOUT_MS") {
+        let timeout_ms = if let Ok(env_val) = std::env::var("TOKENS_NATIVE_TIMEOUT_MS") {
             env_val.parse::<u64>().unwrap_or(self.native_timeout_ms)
         } else {
             self.native_timeout_ms
@@ -326,7 +326,7 @@ mod tests {
                 Path::new("/home/alice"),
                 ExplicitHomeConfigLayout::UnixDotConfig,
             ),
-            PathBuf::from("/home/alice/.config/tokscale/settings.json")
+            PathBuf::from("/home/alice/.config/tokens/settings.json")
         );
     }
 
@@ -337,7 +337,7 @@ mod tests {
                 Path::new("C:/Users/Alice"),
                 ExplicitHomeConfigLayout::WindowsRoaming,
             ),
-            PathBuf::from("C:/Users/Alice/AppData/Roaming/tokscale/settings.json")
+            PathBuf::from("C:/Users/Alice/AppData/Roaming/tokens/settings.json")
         );
     }
 
@@ -364,17 +364,17 @@ mod tests {
         // Sandbox HOME so the test never reads or writes a real user's
         // settings.json. Existing macOS users upgrading to the unified
         // path must keep the theme + scanner settings they already have
-        // under `~/Library/Application Support/tokscale/`.
+        // under `~/Library/Application Support/tokens/`.
         use std::env;
         let temp = tempfile::TempDir::new().unwrap();
         let prev_home = env::var_os("HOME");
-        let prev_override = env::var_os("TOKSCALE_CONFIG_DIR");
+        let prev_override = env::var_os("TOKENS_CONFIG_DIR");
         unsafe {
             env::set_var("HOME", temp.path());
-            env::remove_var("TOKSCALE_CONFIG_DIR");
+            env::remove_var("TOKENS_CONFIG_DIR");
         }
 
-        let legacy_dir = temp.path().join("Library/Application Support/tokscale");
+        let legacy_dir = temp.path().join("Library/Application Support/tokens");
         fs::create_dir_all(&legacy_dir).unwrap();
         fs::write(
             legacy_dir.join("settings.json"),
@@ -383,7 +383,7 @@ mod tests {
         .unwrap();
 
         // Sanity: new path must be empty so the fallback is what we exercise.
-        let new_path = temp.path().join(".config/tokscale/settings.json");
+        let new_path = temp.path().join(".config/tokens/settings.json");
         assert!(!new_path.exists());
 
         let loaded = Settings::load();
@@ -396,8 +396,8 @@ mod tests {
                 None => env::remove_var("HOME"),
             }
             match prev_override {
-                Some(v) => env::set_var("TOKSCALE_CONFIG_DIR", v),
-                None => env::remove_var("TOKSCALE_CONFIG_DIR"),
+                Some(v) => env::set_var("TOKENS_CONFIG_DIR", v),
+                None => env::remove_var("TOKENS_CONFIG_DIR"),
             }
         }
     }
@@ -406,7 +406,7 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[serial_test::serial]
     fn load_skips_legacy_macos_fallback_when_config_dir_overridden() {
-        // The whole point of TOKSCALE_CONFIG_DIR is hermeticity. CI sandboxes,
+        // The whole point of TOKENS_CONFIG_DIR is hermeticity. CI sandboxes,
         // tests, and isolated profiles MUST NOT silently inherit theme /
         // scanner / defaultClients from `~/Library/Application Support/`
         // when the user explicitly pinned a config root.
@@ -414,15 +414,15 @@ mod tests {
         let temp = tempfile::TempDir::new().unwrap();
         let legacy_root = tempfile::TempDir::new().unwrap();
         let prev_home = env::var_os("HOME");
-        let prev_override = env::var_os("TOKSCALE_CONFIG_DIR");
+        let prev_override = env::var_os("TOKENS_CONFIG_DIR");
         unsafe {
             env::set_var("HOME", legacy_root.path());
-            env::set_var("TOKSCALE_CONFIG_DIR", temp.path());
+            env::set_var("TOKENS_CONFIG_DIR", temp.path());
         }
 
         let legacy_dir = legacy_root
             .path()
-            .join("Library/Application Support/tokscale");
+            .join("Library/Application Support/tokens");
         fs::create_dir_all(&legacy_dir).unwrap();
         fs::write(
             legacy_dir.join("settings.json"),
@@ -447,8 +447,8 @@ mod tests {
                 None => env::remove_var("HOME"),
             }
             match prev_override {
-                Some(v) => env::set_var("TOKSCALE_CONFIG_DIR", v),
-                None => env::remove_var("TOKSCALE_CONFIG_DIR"),
+                Some(v) => env::set_var("TOKENS_CONFIG_DIR", v),
+                None => env::remove_var("TOKENS_CONFIG_DIR"),
             }
         }
     }
@@ -593,7 +593,7 @@ mod tests {
     #[test]
     fn settings_default_clients_round_trips() {
         // User-configured list must survive load+save unchanged. This is
-        // what `tokscale --client opencode,claude` consults when no CLI
+        // what `tokens --client opencode,claude` consults when no CLI
         // flag is present.
         let json = r#"{
             "colorPalette": "blue",

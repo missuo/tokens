@@ -18,11 +18,22 @@ function getConnectionString(): string {
 // Passing a `postgres` Sql instance directly causes type errors on Vercel
 // due to duplicate package resolution in the monorepo (two copies of postgres
 // with incompatible branded types).
+// Decide whether to require TLS to Postgres. Managed providers (Vercel/Neon)
+// need it in production, but a Postgres reachable only over a private Docker
+// network does not — and forcing "require" there breaks the connection because
+// the server has no TLS configured. `DATABASE_SSL` opts in/out explicitly.
+function resolveSsl(): "require" | false {
+  const mode = process.env.DATABASE_SSL?.toLowerCase();
+  if (mode === "disable" || mode === "false" || mode === "off") return false;
+  if (mode === "require" || mode === "true" || mode === "on") return "require";
+  return process.env.NODE_ENV === "production" ? "require" : false;
+}
+
 function createDb() {
   return drizzle({
     connection: {
       url: getConnectionString(),
-      ssl: process.env.NODE_ENV === "production" ? "require" : false,
+      ssl: resolveSsl(),
 
       // Serverless-optimized pool settings:
       // Each Vercel function instance gets its own pool. With dozens of

@@ -249,7 +249,7 @@ export function formatDateLabel(value: string | null): string {
   }).format(date)} (UTC)`;
 }
 
-/** Three ascending bars used as the Tokscale brand mark. */
+/** Three ascending bars used as the Tokens brand mark. */
 export function brandIcon(x: number, baselineY: number, color: string): string {
   const top = baselineY - 12;
   return [

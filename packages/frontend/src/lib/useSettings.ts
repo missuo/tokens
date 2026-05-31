@@ -101,13 +101,6 @@ function subscribeToMounted(): () => void {
   return () => {};
 }
 
-function applyDarkModeToDocument(): void {
-  if (typeof document === "undefined") return;
-  const root = document.documentElement;
-  root.classList.remove("light");
-  root.classList.add("dark");
-}
-
 export function useSettings() {
   const settings = useSyncExternalStore(
     subscribeToSettings,
@@ -121,7 +114,8 @@ export function useSettings() {
   );
 
   useEffect(() => {
-    applyDarkModeToDocument();
+    // Theme (light/dark) is owned entirely by next-themes via the ThemeProvider,
+    // which follows the system preference by default. We only persist the sort.
     setSortByCookie(settings.leaderboardSortBy);
   }, [settings.leaderboardSortBy]);
 

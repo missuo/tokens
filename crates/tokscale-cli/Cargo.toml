@@ -8,7 +8,7 @@ repository.workspace = true
 description = "CLI and TUI for tokscale - AI token usage analytics"
 
 [[bin]]
-name = "tokscale"
+name = "tokens"
 path = "src/main.rs"
 
 [dependencies]

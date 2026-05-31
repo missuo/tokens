@@ -1,120 +1,12 @@
 "use client";
 
 import { useRef, useEffect, useCallback, useState, useMemo } from "react";
-import styled, { keyframes } from "styled-components";
+import { useTheme } from "next-themes";
 import type { DailyContribution, GraphColorPalette, TooltipPosition } from "@/lib/types";
 import { getGradeColor } from "@/lib/themes";
-import { useSystemDarkMode } from "@/lib/useMediaQuery";
 import { groupByWeek, hexToNumber, formatCurrency, formatTokenCount } from "@/lib/utils";
 import { formatContributionDate } from "@/lib/date-utils";
 import { CUBE_SIZE, MAX_CUBE_HEIGHT, MIN_CUBE_HEIGHT, ISO_CANVAS_WIDTH, ISO_CANVAS_HEIGHT } from "@/lib/constants";
-
-const pulse = keyframes`
-  0%, 100% { opacity: 1; }
-  50% { opacity: .5; }
-`;
-
-const LoadingContainer = styled.div`
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-`;
-
-const LoadingText = styled.div`
-  animation: ${pulse} 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-`;
-
-const Container = styled.div.attrs({ className: "ic-contributions-wrapper" })`
-  position: relative;
-  width: 100%;
-`;
-
-const StyledCanvas = styled.canvas`
-  cursor: pointer;
-  width: 100%;
-  height: auto;
-`;
-
-const TopRightStats = styled.div`
-  position: absolute;
-  top: 12px;
-  right: 20px;
-`;
-
-const BottomLeftStats = styled.div`
-  position: absolute;
-  bottom: 24px;
-  left: 20px;
-`;
-
-const StatsTitle = styled.h5`
-  margin-bottom: 4px;
-  font-size: 14px;
-  font-weight: 600;
-`;
-
-const StatsBox = styled.div`
-  display: flex;
-  justify-content: space-between;
-  border-radius: 6px;
-  border-width: 1px;
-  border-style: solid;
-  padding-left: 4px;
-  padding-right: 4px;
-  
-  @media (min-width: 768px) {
-    padding-left: 8px;
-    padding-right: 8px;
-  }
-`;
-
-const StatItem = styled.div`
-  padding: 8px;
-`;
-
-const HiddenStatItem = styled(StatItem)`
-  display: none;
-  @media (min-width: 1280px) {
-    display: block;
-  }
-`;
-
-const StatValue = styled.span`
-  display: block;
-  font-size: 24px;
-  font-weight: 700;
-  line-height: 1.25;
-`;
-
-const StatLabel = styled.span`
-  display: block;
-  font-size: 12px;
-  font-weight: 700;
-`;
-
-const StatSubtext = styled.span`
-  display: none;
-  font-size: 12px;
-  
-  @media (min-width: 640px) {
-    display: block;
-  }
-`;
-
-const StatsFooter = styled.p`
-  margin-top: 4px;
-  text-align: right;
-  font-size: 12px;
-`;
-
-const SpanBase = styled.span`
-  font-size: 16px;
-`;
-
-const SpanBold = styled.span`
-  font-weight: 700;
-`;
 
 interface TokenGraph3DProps {
   contributions: DailyContribution[];
@@ -153,7 +45,8 @@ export function TokenGraph3D({
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const obeliskRef = useRef<any>(null);
   const weeksData = useMemo(() => groupByWeek(contributions, year), [contributions, year]);
-  const isDark = useSystemDarkMode();
+  const { resolvedTheme } = useTheme();
+  const isDark = resolvedTheme === "dark";
 
   useEffect(() => {
     async function loadObelisk() {
@@ -182,7 +75,7 @@ export function TokenGraph3D({
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    ctx.fillStyle = isDark ? "#10121C" : "#FFFFFF";
+    ctx.fillStyle = isDark ? "#12151e" : "#ffffff";
     ctx.fillRect(0, 0, ISO_CANVAS_WIDTH, ISO_CANVAS_HEIGHT);
 
     const point = new obelisk.Point(130, 90);
@@ -209,9 +102,7 @@ export function TokenGraph3D({
 
         const intensity = day?.intensity ?? 0;
         const colorHex = getGradeColor(palette, intensity);
-        const resolvedColor = colorHex.startsWith("var(") 
-          ? (isDark ? "#1A212A" : "#EBEDF0") 
-          : colorHex;
+        const resolvedColor = colorHex.startsWith("var(") ? (isDark ? "#171b26" : "#f4f5f7") : colorHex;
         const colorNum = hexToNumber(resolvedColor);
 
         const dimension = new obelisk.CubeDimension(CUBE_SIZE, CUBE_SIZE, Math.max(cubeHeight, MIN_CUBE_HEIGHT));
@@ -246,19 +137,15 @@ export function TokenGraph3D({
       const day = weeksData[weekIndex]?.days[dayIndex] ?? null;
       return { day, position: { x: clientX, y: clientY } };
     },
-    [weeksData]
+    [weeksData],
   );
 
   const handleMouseMove = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
       const result = getDayAtPosition(e.clientX, e.clientY);
-      if (result) {
-        onDayHover(result.day, result.position);
-      } else {
-        onDayHover(null, null);
-      }
+      onDayHover(result ? result.day : null, result ? result.position : null);
     },
-    [getDayAtPosition, onDayHover]
+    [getDayAtPosition, onDayHover],
   );
 
   const handleClick = useCallback(
@@ -266,73 +153,74 @@ export function TokenGraph3D({
       const result = getDayAtPosition(e.clientX, e.clientY);
       if (result?.day) onDayClick(result.day);
     },
-    [getDayAtPosition, onDayClick]
+    [getDayAtPosition, onDayClick],
   );
+
+  const aspect = { aspectRatio: `${ISO_CANVAS_WIDTH} / ${ISO_CANVAS_HEIGHT}` };
 
   if (!obeliskLoaded) {
     return (
-      <LoadingContainer
-        ref={containerRef}
-        style={{ aspectRatio: `${ISO_CANVAS_WIDTH} / ${ISO_CANVAS_HEIGHT}`, backgroundColor: isDark ? "#10121C" : "#FFFFFF" }}
-      >
-        <LoadingText style={{ color: isDark ? "#4B6486" : "#656D76" }}>Loading 3D view...</LoadingText>
-      </LoadingContainer>
+      <div ref={containerRef} className="flex w-full items-center justify-center bg-background" style={aspect}>
+        <div className="animate-pulse text-muted">Loading 3D view...</div>
+      </div>
     );
   }
 
+  const statValue = "block text-2xl font-bold leading-tight";
+  const statLabel = "block text-xs font-bold text-foreground";
+  const statSubtext = "hidden text-xs text-muted sm:block";
+  const statsBox = "flex justify-between rounded-md border border-line bg-surface px-1 md:px-2";
+
   return (
-    <Container ref={containerRef}>
-      <StyledCanvas
+    <div ref={containerRef} className="relative w-full">
+      <canvas
         ref={canvasRef}
+        className="h-auto w-full cursor-pointer"
         onMouseMove={handleMouseMove}
         onMouseLeave={() => onDayHover(null, null)}
         onClick={handleClick}
-        style={{ aspectRatio: `${ISO_CANVAS_WIDTH} / ${ISO_CANVAS_HEIGHT}` }}
+        style={aspect}
       />
 
-      <TopRightStats>
-        <StatsTitle style={{ color: isDark ? "#FFFFFF" : "#1F2328" }}>Token Usage</StatsTitle>
-        <StatsBox
-          style={{ borderColor: isDark ? "#1E2733" : "#D0D7DE", backgroundColor: isDark ? "#1A212A" : "#FFFFFF" }}
-        >
-          <StatItem>
-            <StatValue style={{ color: palette.grade1 }}>{formatCurrency(totalCost)}</StatValue>
-            <StatLabel style={{ color: isDark ? "#FFFFFF" : "#1F2328" }}>Total</StatLabel>
-            <StatSubtext style={{ color: isDark ? "#4B6486" : "#656D76" }}>{dateRange.start} → {dateRange.end}</StatSubtext>
-          </StatItem>
-          <HiddenStatItem>
-            <StatValue style={{ color: palette.grade1 }}>{formatTokenCount(totalTokens)}</StatValue>
-            <StatLabel style={{ color: isDark ? "#FFFFFF" : "#1F2328" }}>Tokens</StatLabel>
-            <StatSubtext style={{ color: isDark ? "#4B6486" : "#656D76" }}>{activeDays} active days</StatSubtext>
-          </HiddenStatItem>
+      <div className="absolute top-3 right-5">
+        <h5 className="mb-1 text-sm font-semibold text-foreground">Token Usage</h5>
+        <div className={statsBox}>
+          <div className="p-2">
+            <span className={statValue} style={{ color: palette.grade1 }}>{formatCurrency(totalCost)}</span>
+            <span className={statLabel}>Total</span>
+            <span className={statSubtext}>{dateRange.start} → {dateRange.end}</span>
+          </div>
+          <div className="hidden p-2 min-[1280px]:block">
+            <span className={statValue} style={{ color: palette.grade1 }}>{formatTokenCount(totalTokens)}</span>
+            <span className={statLabel}>Tokens</span>
+            <span className={statSubtext}>{activeDays} active days</span>
+          </div>
           {bestDay && (
-            <StatItem>
-              <StatValue style={{ color: palette.grade1 }}>{formatCurrency(bestDay.totals.cost)}</StatValue>
-              <StatLabel style={{ color: isDark ? "#FFFFFF" : "#1F2328" }}>Best day</StatLabel>
-              <StatSubtext style={{ color: isDark ? "#4B6486" : "#656D76" }}>{formatContributionDate(bestDay).split(",")[0]}</StatSubtext>
-            </StatItem>
+            <div className="p-2">
+              <span className={statValue} style={{ color: palette.grade1 }}>{formatCurrency(bestDay.totals.cost)}</span>
+              <span className={statLabel}>Best day</span>
+              <span className={statSubtext}>{formatContributionDate(bestDay).split(",")[0]}</span>
+            </div>
           )}
-        </StatsBox>
-        <StatsFooter style={{ color: isDark ? "#4B6486" : "#656D76" }}>
-          Average: <SpanBold style={{ color: palette.grade1 }}>{formatCurrency(activeDays > 0 ? totalCost / activeDays : 0)}</SpanBold> / day
-        </StatsFooter>
-      </TopRightStats>
+        </div>
+        <p className="mt-1 text-right text-xs text-muted">
+          Average: <span className="font-bold" style={{ color: palette.grade1 }}>{formatCurrency(activeDays > 0 ? totalCost / activeDays : 0)}</span> / day
+        </p>
+      </div>
 
-      <BottomLeftStats>
-        <StatsTitle style={{ color: isDark ? "#FFFFFF" : "#1F2328" }}>Streaks</StatsTitle>
-        <StatsBox
-          style={{ borderColor: isDark ? "#1E2733" : "#D0D7DE", backgroundColor: isDark ? "#1A212A" : "#FFFFFF" }}
-        >
-          <StatItem>
-            <StatValue style={{ color: palette.grade1 }}>{longestStreak} <SpanBase>days</SpanBase></StatValue>
-            <StatLabel style={{ color: isDark ? "#FFFFFF" : "#1F2328" }}>Longest</StatLabel>
-          </StatItem>
-          <StatItem>
-            <StatValue style={{ color: palette.grade1 }}>{currentStreak} <SpanBase>days</SpanBase></StatValue>
-            <StatLabel style={{ color: isDark ? "#FFFFFF" : "#1F2328" }}>Current</StatLabel>
-          </StatItem>
-        </StatsBox>
-      </BottomLeftStats>
-    </Container>
+      <div className="absolute bottom-6 left-5">
+        <h5 className="mb-1 text-sm font-semibold text-foreground">Streaks</h5>
+        <div className={statsBox}>
+          <div className="p-2">
+            <span className={statValue} style={{ color: palette.grade1 }}>{longestStreak} <span className="text-base">days</span></span>
+            <span className={statLabel}>Longest</span>
+          </div>
+          <div className="p-2">
+            <span className={statValue} style={{ color: palette.grade1 }}>{currentStreak} <span className="text-base">days</span></span>
+            <span className={statLabel}>Current</span>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }

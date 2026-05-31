@@ -87,7 +87,7 @@ export function renderTerminalEmbedSvg(
   const add = (s: string) => parts.push(s);
 
   add(`<?xml version="1.0" encoding="UTF-8"?>`);
-  add(`<svg width="${W}" height="${height}" viewBox="0 0 ${W} ${height}" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Tokscale stats for @${escapeXml(data.user.username)}">`);
+  add(`<svg width="${W}" height="${height}" viewBox="0 0 ${W} ${height}" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Tokens stats for @${escapeXml(data.user.username)}">`);
   add(`  <defs><clipPath id="win"><rect width="${W}" height="${height}" rx="12"/></clipPath></defs>`);
 
   // Window body + title bar.
@@ -101,10 +101,10 @@ export function renderTerminalEmbedSvg(
   add(`  <circle cx="${PAD + 4}" cy="${dotY}" r="5.5" fill="#FF5F56"/>`);
   add(`  <circle cx="${PAD + 22}" cy="${dotY}" r="5.5" fill="#FFBD2E"/>`);
   add(`  <circle cx="${PAD + 40}" cy="${dotY}" r="5.5" fill="#27C93F"/>`);
-  add(`  <text x="${PAD + 60}" y="${dotY + 4}" fill="${palette.muted}" font-size="12" font-family="${MONO_FONT_STACK}">tokscale — @${escapeXml(data.user.username)}</text>`);
+  add(`  <text x="${PAD + 60}" y="${dotY + 4}" fill="${palette.muted}" font-size="12" font-family="${MONO_FONT_STACK}">tokens — @${escapeXml(data.user.username)}</text>`);
 
   // Prompt line.
-  add(`  <text x="${PAD}" y="${promptY}" font-size="13" font-family="${MONO_FONT_STACK}"><tspan fill="${palette.brand}" font-weight="700">$</tspan><tspan fill="${palette.text}"> tokscale stats</tspan></text>`);
+  add(`  <text x="${PAD}" y="${promptY}" font-size="13" font-family="${MONO_FONT_STACK}"><tspan fill="${palette.brand}" font-weight="700">$</tspan><tspan fill="${palette.text}"> tokens stats</tspan></text>`);
 
   // Aligned key/value rows.
   rows.forEach((row, i) => {
@@ -129,7 +129,7 @@ export function renderTerminalEmbedSvg(
 
   // Footer.
   add(`  <text x="${PAD}" y="${footerY}" fill="${palette.muted}" font-size="11" font-family="${MONO_FONT_STACK}">${updated}</text>`);
-  add(`  <text x="${W - PAD}" y="${footerY}" fill="${palette.muted}" font-size="11" text-anchor="end" font-family="${MONO_FONT_STACK}">tokscale.ai/u/${escapeXml(data.user.username)}</text>`);
+  add(`  <text x="${W - PAD}" y="${footerY}" fill="${palette.muted}" font-size="11" text-anchor="end" font-family="${MONO_FONT_STACK}">tokens.ci/u/${escapeXml(data.user.username)}</text>`);
   add(`</svg>`);
 
   return parts.join("\n");

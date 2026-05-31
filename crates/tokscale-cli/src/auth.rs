@@ -5,7 +5,7 @@ use std::io::IsTerminal;
 use std::io::Write;
 use std::path::PathBuf;
 
-const API_TOKEN_ENV_VAR: &str = "TOKSCALE_API_TOKEN";
+const API_TOKEN_ENV_VAR: &str = "TOKENS_API_TOKEN";
 
 fn home_dir() -> Result<PathBuf> {
     dirs::home_dir().context("Could not determine home directory")
@@ -70,11 +70,11 @@ struct TokenValidationResponse {
 }
 
 fn get_credentials_path() -> Result<PathBuf> {
-    Ok(home_dir()?.join(".config/tokscale/credentials.json"))
+    Ok(home_dir()?.join(".config/tokens/credentials.json"))
 }
 
 fn ensure_config_dir() -> Result<()> {
-    let config_dir = home_dir()?.join(".config/tokscale");
+    let config_dir = home_dir()?.join(".config/tokens");
 
     if !config_dir.exists() {
         fs::create_dir_all(&config_dir)?;
@@ -160,7 +160,7 @@ pub fn clear_credentials() -> Result<bool> {
 }
 
 pub fn get_api_base_url() -> String {
-    std::env::var("TOKSCALE_API_URL").unwrap_or_else(|_| "https://tokscale.ai".to_string())
+    std::env::var("TOKENS_API_URL").unwrap_or_else(|_| "https://tokens.ci".to_string())
 }
 
 fn get_device_name() -> String {
@@ -226,14 +226,14 @@ pub async fn login() -> Result<()> {
         );
         println!(
             "{}",
-            "  Run 'bunx tokscale@latest logout' to sign out first.\n".bright_black()
+            "  Run 'tokens logout' to sign out first.\n".bright_black()
         );
         return Ok(());
     }
 
     let base_url = get_api_base_url();
 
-    println!("\n  {}\n", "Tokscale - Login".cyan());
+    println!("\n  {}\n", "Tokens - Login".cyan());
     println!("{}", "  Requesting authorization code...".bright_black());
 
     let client = reqwest::Client::builder()
@@ -315,7 +315,7 @@ pub async fn login() -> Result<()> {
                             );
                             println!(
                                 "{}",
-                                "  You can now use 'bunx tokscale@latest submit' to share your usage.\n"
+                                "  You can now use 'tokens submit' to share your usage.\n"
                                     .bright_black()
                             );
                             return Ok(());
@@ -354,7 +354,7 @@ pub async fn login_with_token(token: &str) -> Result<()> {
         anyhow::bail!("API token cannot be empty.");
     }
     if !token.starts_with("tt_") {
-        anyhow::bail!("Tokscale API tokens must start with `tt_`.");
+        anyhow::bail!("Tokens API tokens must start with `tt_`.");
     }
 
     let base_url = get_api_base_url();
@@ -393,7 +393,7 @@ pub async fn login_with_token(token: &str) -> Result<()> {
     );
     println!(
         "{}",
-        "  You can now use 'bunx tokscale@latest submit' to share your usage.\n".bright_black()
+        "  You can now use 'tokens submit' to share your usage.\n".bright_black()
     );
 
     Ok(())
@@ -431,12 +431,12 @@ pub fn whoami() -> Result<()> {
         println!("\n  {}", "Not logged in.".yellow());
         println!(
             "{}",
-            "  Run 'bunx tokscale@latest login' to authenticate.\n".bright_black()
+            "  Run 'tokens login' to authenticate.\n".bright_black()
         );
         return Ok(());
     };
 
-    println!("\n  {}\n", "Tokscale - Account Info".cyan());
+    println!("\n  {}\n", "Tokens - Account Info".cyan());
     println!(
         "{}",
         format!("  Username:  {}", creds.username.bold()).white()
@@ -475,7 +475,7 @@ pub fn show_qr(yes: bool) -> Result<()> {
         println!("\n  {}", "Not logged in.".yellow());
         println!(
             "{}",
-            "  Run 'bunx tokscale@latest login' to authenticate.\n".bright_black()
+            "  Run 'tokens login' to authenticate.\n".bright_black()
         );
         return Ok(());
     };
@@ -524,7 +524,7 @@ pub fn show_qr(yes: bool) -> Result<()> {
         .quiet_zone(true)
         .build();
 
-    println!("\n  {}\n", "Tokscale - API Token QR Code".cyan());
+    println!("\n  {}\n", "Tokens - API Token QR Code".cyan());
     println!("  {}\n", "Scan to get your API token:".bright_black());
 
     for line in image.lines() {
@@ -614,20 +614,20 @@ mod tests {
     #[serial]
     fn test_get_api_base_url_default() {
         unsafe {
-            env::remove_var("TOKSCALE_API_URL");
+            env::remove_var("TOKENS_API_URL");
         }
-        assert_eq!(get_api_base_url(), "https://tokscale.ai");
+        assert_eq!(get_api_base_url(), "https://tokens.ci");
     }
 
     #[test]
     #[serial]
     fn test_get_api_base_url_custom() {
         unsafe {
-            env::set_var("TOKSCALE_API_URL", "https://custom.api.url");
+            env::set_var("TOKENS_API_URL", "https://custom.api.url");
         }
         assert_eq!(get_api_base_url(), "https://custom.api.url");
         unsafe {
-            env::remove_var("TOKSCALE_API_URL");
+            env::remove_var("TOKENS_API_URL");
         }
     }
 
@@ -708,7 +708,7 @@ mod tests {
         }
 
         let path = get_credentials_path().unwrap();
-        let expected = temp_dir.path().join(".config/tokscale/credentials.json");
+        let expected = temp_dir.path().join(".config/tokens/credentials.json");
 
         assert_eq!(path, expected);
 
@@ -852,7 +852,7 @@ mod tests {
             env::set_var("HOME", temp_dir.path());
         }
 
-        let config_dir = temp_dir.path().join(".config/tokscale");
+        let config_dir = temp_dir.path().join(".config/tokens");
         assert!(!config_dir.exists());
 
         ensure_config_dir().unwrap();
@@ -903,7 +903,7 @@ mod tests {
     #[test]
     #[serial]
     fn test_load_api_token_from_env_trims_value() {
-        let _token = TestEnvGuard::set("TOKSCALE_API_TOKEN", "  tt_ci_token  ");
+        let _token = TestEnvGuard::set("TOKENS_API_TOKEN", "  tt_ci_token  ");
 
         assert_eq!(load_api_token_from_env(), Some("tt_ci_token".to_string()));
     }
@@ -911,7 +911,7 @@ mod tests {
     #[test]
     #[serial]
     fn test_load_api_token_from_env_ignores_empty_values() {
-        let _token = TestEnvGuard::set("TOKSCALE_API_TOKEN", "   ");
+        let _token = TestEnvGuard::set("TOKENS_API_TOKEN", "   ");
 
         assert_eq!(load_api_token_from_env(), None);
     }
@@ -921,7 +921,7 @@ mod tests {
     fn test_resolve_api_token_prefers_env_over_saved_credentials() {
         let temp_dir = TempDir::new().unwrap();
         let _home = TestEnvGuard::set("HOME", temp_dir.path());
-        let _token = TestEnvGuard::set("TOKSCALE_API_TOKEN", "tt_env_token");
+        let _token = TestEnvGuard::set("TOKENS_API_TOKEN", "tt_env_token");
 
         save_credentials(&Credentials {
             token: "tt_saved_token".to_string(),

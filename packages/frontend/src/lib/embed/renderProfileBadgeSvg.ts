@@ -40,9 +40,9 @@ const METRIC_COLORS: Record<BadgeMetric, string> = {
 };
 
 const METRIC_LABELS: Record<BadgeMetric, string> = {
-  tokens: "Tokscale Tokens",
-  cost: "Tokscale Cost",
-  rank: "Tokscale Rank",
+  tokens: "Tokens Tokens",
+  cost: "Tokens Cost",
+  rank: "Tokens Rank",
 };
 
 function isFullWidth(code: number): boolean {
@@ -180,7 +180,7 @@ export function renderBadgeErrorSvg(
   options: Pick<RenderProfileBadgeOptions, "style" | "label"> = {},
 ): string {
   const style: BadgeStyle = options.style === "flat-square" ? "flat-square" : "flat";
-  const rawLabel = options.label ?? "Tokscale";
+  const rawLabel = options.label ?? "Tokens";
   const label = rawLabel.length > MAX_LABEL_LENGTH ? rawLabel.slice(0, MAX_LABEL_LENGTH) : rawLabel;
   const value = message;
 

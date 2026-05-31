@@ -1,5 +1,3 @@
-import { Navigation } from "@/components/layout/Navigation";
-import { Footer } from "@/components/layout/Footer";
 import JoinGroupClient from "./JoinGroupClient";
 
 export default async function JoinGroupPage({
@@ -18,11 +16,9 @@ export default async function JoinGroupPage({
         backgroundColor: "var(--color-bg-default)",
       }}
     >
-      <Navigation />
       <main className="main-container">
         <JoinGroupClient token={token} />
       </main>
-      <Footer />
     </div>
   );
 }

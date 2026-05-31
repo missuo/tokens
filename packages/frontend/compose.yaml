@@ -1,0 +1,55 @@
+name: tokscale
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: tokscale
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: tokscale
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - internal
+    # No `ports:` — the database is reachable only on the internal network,
+    # never published to the host or the outside world.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tokscale -d tokscale"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_URL: ${NEXT_PUBLIC_URL}
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      # The app talks to Postgres over the internal network; no TLS needed.
+      DATABASE_URL: postgres://tokscale:${POSTGRES_PASSWORD}@db:5432/tokscale?sslmode=disable
+      DATABASE_SSL: disable
+      NEXT_PUBLIC_URL: ${NEXT_PUBLIC_URL}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET}
+      CSRF_ALLOWED_ORIGINS: ${CSRF_ALLOWED_ORIGINS}
+    # Published only to localhost so your host Nginx can reverse-proxy it;
+    # nothing is exposed on the public interface. Host port is configurable via
+    # APP_PORT in .env (container always listens on 3000 internally).
+    ports:
+      - "127.0.0.1:${APP_PORT:-3001}:3000"
+    networks:
+      - internal
+
+networks:
+  internal:
+    driver: bridge
+
+volumes:
+  pgdata:

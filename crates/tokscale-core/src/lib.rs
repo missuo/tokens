@@ -295,7 +295,7 @@ pub struct LocalParseOptions {
     pub since: Option<String>,
     pub until: Option<String>,
     pub year: Option<String>,
-    /// Persistent scanner config loaded from `~/.config/tokscale/settings.json`.
+    /// Persistent scanner config loaded from `~/.config/tokens/settings.json`.
     /// Defaults to empty when callers don't care about user-configured paths.
     pub scanner_settings: scanner::ScannerSettings,
 }
@@ -395,7 +395,7 @@ pub struct ReportOptions {
     pub until: Option<String>,
     pub year: Option<String>,
     pub group_by: GroupBy,
-    /// Persistent scanner config loaded from `~/.config/tokscale/settings.json`.
+    /// Persistent scanner config loaded from `~/.config/tokens/settings.json`.
     /// Defaults to empty when callers don't care about user-configured paths.
     pub scanner_settings: scanner::ScannerSettings,
 }
@@ -1939,7 +1939,7 @@ where
 }
 
 async fn load_pricing_for_local_parse() -> Option<Arc<pricing::PricingService>> {
-    if std::env::var("TOKSCALE_PRICING_CACHE_ONLY")
+    if std::env::var("TOKENS_PRICING_CACHE_ONLY")
         .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
         .unwrap_or(false)
     {
@@ -3368,7 +3368,7 @@ mod tests {
     #[test]
     fn test_cursor_parse_path_reprices_zero_cost_composer_1_5_rows() {
         let temp_dir = tempfile::TempDir::new().unwrap();
-        let cursor_cache_dir = temp_dir.path().join(".config/tokscale/cursor-cache");
+        let cursor_cache_dir = temp_dir.path().join(".config/tokens/cursor-cache");
         std::fs::create_dir_all(&cursor_cache_dir).unwrap();
 
         let csv = r#"Date,Kind,Model,Max Mode,Input (w/ Cache Write),Input (w/o Cache Write),Cache Read,Output Tokens,Total Tokens,Cost
@@ -4668,7 +4668,7 @@ mod tests {
         let original_home = std::env::var("HOME").ok();
         std::env::set_var("HOME", temp_home.path());
         {
-            let cursor_cache_dir = source_home.path().join(".config/tokscale/cursor-cache");
+            let cursor_cache_dir = source_home.path().join(".config/tokens/cursor-cache");
             std::fs::create_dir_all(&cursor_cache_dir).unwrap();
 
             let csv = r#"Date,Kind,Model,Max Mode,Input (w/ Cache Write),Input (w/o Cache Write),Cache Read,Output Tokens,Total Tokens,Cost

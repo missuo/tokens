@@ -66,7 +66,7 @@ export function renderBlueprintEmbedSvg(
   const add = (s: string) => parts.push(s);
 
   add(`<?xml version="1.0" encoding="UTF-8"?>`);
-  add(`<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Tokscale usage schematic for @${escapeXml(data.user.username)}">`);
+  add(`<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Tokens usage schematic for @${escapeXml(data.user.username)}">`);
   add(`  <defs>`);
   add(`    <pattern id="grid" width="24" height="24" patternUnits="userSpaceOnUse"><path d="M24 0H0V24" fill="none" stroke="${palette.divider}" stroke-width="0.5" opacity="0.45"/></pattern>`);
   add(`    <clipPath id="card-clip"><rect width="${W}" height="${H}" rx="14"/></clipPath>`);
@@ -82,7 +82,7 @@ export function renderBlueprintEmbedSvg(
   }
 
   // Header.
-  add(`  <text x="${PAD}" y="40" font-family="${MONO_FONT_STACK}"><tspan fill="${accent}" font-size="16" font-weight="700" letter-spacing="0.04em">TOKSCALE</tspan><tspan fill="${palette.muted}" font-size="11" letter-spacing="0.14em">  AI USAGE SCHEMATIC</tspan></text>`);
+  add(`  <text x="${PAD}" y="40" font-family="${MONO_FONT_STACK}"><tspan fill="${accent}" font-size="16" font-weight="700" letter-spacing="0.04em">TOKENS</tspan><tspan fill="${palette.muted}" font-size="11" letter-spacing="0.14em">  AI USAGE SCHEMATIC</tspan></text>`);
   add(`  <text x="${W - PAD}" y="40" fill="${palette.text}" font-size="12" font-weight="700" text-anchor="end" font-family="${MONO_FONT_STACK}">@${escapeXml(data.user.username)}</text>`);
   add(`  <line x1="${PAD}" y1="52" x2="${W - PAD}" y2="52" stroke="${palette.divider}"/>`);
 
@@ -119,7 +119,7 @@ export function renderBlueprintEmbedSvg(
   const cells = [
     `BY    @${shortUser}`,
     `DATE    ${updated}`,
-    `SHEET    tokscale.ai`,
+    `SHEET    tokens.ci`,
   ];
   add(`  <rect x="${PAD}" y="${tbY}" width="${INNER}" height="${tbH}" fill="none" stroke="${accent}" stroke-opacity="0.55"/>`);
   cells.forEach((text, i) => {

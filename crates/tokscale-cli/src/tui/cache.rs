@@ -27,7 +27,7 @@ const CACHE_SCHEMA_VERSION: u32 = 8;
 /// cache. The cache file's `groupBy` field is compared verbatim against
 /// this on load (`cache.rs::load_cache`), so any code path that writes
 /// the cache — most importantly the detached `warm-tui-cache` subprocess
-/// fired after `tokscale submit` — must use this exact value, NOT
+/// fired after `tokens submit` — must use this exact value, NOT
 /// `GroupBy::default()`.
 ///
 /// Historical bug: the warm-tui-cache writer keyed on `GroupBy::default()`
@@ -43,7 +43,7 @@ const CACHE_SCHEMA_VERSION: u32 = 8;
 pub const TUI_DEFAULT_GROUP_BY: GroupBy = GroupBy::Model;
 
 /// Get the cache directory path
-/// Uses `~/.cache/tokscale/` to match TypeScript implementation for cache sharing
+/// Uses `~/.cache/tokens/` to match TypeScript implementation for cache sharing
 fn cache_dir() -> Option<PathBuf> {
     Some(crate::paths::get_cache_dir())
 }
@@ -1520,15 +1520,15 @@ mod tests {
     fn load_cache_falls_back_to_legacy_dot_cache_path() {
         let temp_dir = TempDir::new().unwrap();
         let previous_home = env::var_os("HOME");
-        let previous_override = env::var_os("TOKSCALE_CONFIG_DIR");
+        let previous_override = env::var_os("TOKENS_CONFIG_DIR");
         let previous_xdg_config_home = env::var_os("XDG_CONFIG_HOME");
         unsafe {
             env::set_var("HOME", temp_dir.path());
-            env::remove_var("TOKSCALE_CONFIG_DIR");
+            env::remove_var("TOKENS_CONFIG_DIR");
             env::set_var("XDG_CONFIG_HOME", temp_dir.path().join(".xdg-config"));
         }
 
-        let legacy_path = temp_dir.path().join(".cache/tokscale/tui-data-cache.json");
+        let legacy_path = temp_dir.path().join(".cache/tokens/tui-data-cache.json");
         fs::create_dir_all(legacy_path.parent().unwrap()).unwrap();
         fs::write(
             &legacy_path,
@@ -1564,8 +1564,8 @@ mod tests {
             None => unsafe { env::remove_var("HOME") },
         }
         match previous_override {
-            Some(value) => unsafe { env::set_var("TOKSCALE_CONFIG_DIR", value) },
-            None => unsafe { env::remove_var("TOKSCALE_CONFIG_DIR") },
+            Some(value) => unsafe { env::set_var("TOKENS_CONFIG_DIR", value) },
+            None => unsafe { env::remove_var("TOKENS_CONFIG_DIR") },
         }
         match previous_xdg_config_home {
             Some(value) => unsafe { env::set_var("XDG_CONFIG_HOME", value) },
@@ -1579,13 +1579,13 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let override_dir = TempDir::new().unwrap();
         let previous_home = env::var_os("HOME");
-        let previous_override = env::var_os("TOKSCALE_CONFIG_DIR");
+        let previous_override = env::var_os("TOKENS_CONFIG_DIR");
         unsafe {
             env::set_var("HOME", temp_dir.path());
-            env::set_var("TOKSCALE_CONFIG_DIR", override_dir.path());
+            env::set_var("TOKENS_CONFIG_DIR", override_dir.path());
         }
 
-        let legacy_path = temp_dir.path().join(".cache/tokscale/tui-data-cache.json");
+        let legacy_path = temp_dir.path().join(".cache/tokens/tui-data-cache.json");
         fs::create_dir_all(legacy_path.parent().unwrap()).unwrap();
         fs::write(
             &legacy_path,
@@ -1621,8 +1621,8 @@ mod tests {
             None => unsafe { env::remove_var("HOME") },
         }
         match previous_override {
-            Some(value) => unsafe { env::set_var("TOKSCALE_CONFIG_DIR", value) },
-            None => unsafe { env::remove_var("TOKSCALE_CONFIG_DIR") },
+            Some(value) => unsafe { env::set_var("TOKENS_CONFIG_DIR", value) },
+            None => unsafe { env::remove_var("TOKENS_CONFIG_DIR") },
         }
     }
 
@@ -1631,10 +1631,10 @@ mod tests {
     fn save_cached_data_does_not_delete_destination() {
         let temp_dir = TempDir::new().unwrap();
         let previous_home = env::var_os("HOME");
-        let previous_override = env::var_os("TOKSCALE_CONFIG_DIR");
+        let previous_override = env::var_os("TOKENS_CONFIG_DIR");
         unsafe {
             env::set_var("HOME", temp_dir.path());
-            env::remove_var("TOKSCALE_CONFIG_DIR");
+            env::remove_var("TOKENS_CONFIG_DIR");
         }
 
         let cache_path = cache_file().unwrap();
@@ -1682,8 +1682,8 @@ mod tests {
             None => unsafe { env::remove_var("HOME") },
         }
         match previous_override {
-            Some(value) => unsafe { env::set_var("TOKSCALE_CONFIG_DIR", value) },
-            None => unsafe { env::remove_var("TOKSCALE_CONFIG_DIR") },
+            Some(value) => unsafe { env::set_var("TOKENS_CONFIG_DIR", value) },
+            None => unsafe { env::remove_var("TOKENS_CONFIG_DIR") },
         }
     }
 
@@ -1699,12 +1699,12 @@ mod tests {
     ///
     /// Symptom: `npx tokscale@latest` (TUI launch) silently dropped the
     /// on-disk cache and showed an empty dashboard until the background
-    /// scan finished, even though `~/.config/tokscale/cache/tui-data-cache.json`
+    /// scan finished, even though `~/.config/tokens/cache/tui-data-cache.json`
     /// existed and was well-formed.
     ///
     /// Root cause: the warm-tui-cache writer (`run_warm_tui_cache` in
     /// `main.rs`, spawned as a detached subprocess after every successful
-    /// `tokscale submit`) saved the cache with `GroupBy::default()`
+    /// `tokens submit`) saved the cache with `GroupBy::default()`
     /// (= `ClientModel`, serialized as `"client,model"`), while the TUI
     /// reader (`tui::run`) loaded with the hard-coded `GroupBy::Model`
     /// (serialized as `"model"`). `cache.rs::load_cache` does a strict
@@ -1720,10 +1720,10 @@ mod tests {
     fn warm_cache_round_trip_under_canonical_key_is_fresh() {
         let temp_dir = TempDir::new().unwrap();
         let previous_home = env::var_os("HOME");
-        let previous_override = env::var_os("TOKSCALE_CONFIG_DIR");
+        let previous_override = env::var_os("TOKENS_CONFIG_DIR");
         unsafe {
             env::set_var("HOME", temp_dir.path());
-            env::remove_var("TOKSCALE_CONFIG_DIR");
+            env::remove_var("TOKENS_CONFIG_DIR");
         }
 
         let enabled = ClientFilter::default_set();
@@ -1748,8 +1748,8 @@ mod tests {
             None => unsafe { env::remove_var("HOME") },
         }
         match previous_override {
-            Some(value) => unsafe { env::set_var("TOKSCALE_CONFIG_DIR", value) },
-            None => unsafe { env::remove_var("TOKSCALE_CONFIG_DIR") },
+            Some(value) => unsafe { env::set_var("TOKENS_CONFIG_DIR", value) },
+            None => unsafe { env::remove_var("TOKENS_CONFIG_DIR") },
         }
     }
 
@@ -1763,10 +1763,10 @@ mod tests {
     fn pre_fix_writer_key_misses_under_canonical_reader_key() {
         let temp_dir = TempDir::new().unwrap();
         let previous_home = env::var_os("HOME");
-        let previous_override = env::var_os("TOKSCALE_CONFIG_DIR");
+        let previous_override = env::var_os("TOKENS_CONFIG_DIR");
         unsafe {
             env::set_var("HOME", temp_dir.path());
-            env::remove_var("TOKSCALE_CONFIG_DIR");
+            env::remove_var("TOKENS_CONFIG_DIR");
         }
 
         let enabled = ClientFilter::default_set();
@@ -1792,8 +1792,8 @@ mod tests {
             None => unsafe { env::remove_var("HOME") },
         }
         match previous_override {
-            Some(value) => unsafe { env::set_var("TOKSCALE_CONFIG_DIR", value) },
-            None => unsafe { env::remove_var("TOKSCALE_CONFIG_DIR") },
+            Some(value) => unsafe { env::set_var("TOKENS_CONFIG_DIR", value) },
+            None => unsafe { env::remove_var("TOKENS_CONFIG_DIR") },
         }
     }
 }

@@ -2,10 +2,9 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "nextjs-toploader/app";
-import styled from "styled-components";
-import { KeyIcon } from "@/components/ui/Icons";
-import { Navigation } from "@/components/layout/Navigation";
-import { Footer } from "@/components/layout/Footer";
+import { Button } from "@heroui/react";
+import { KeyIcon, CopyIcon, CheckIcon } from "@/components/ui/Icons";
+import { Panel, PageHeader } from "@/components/ui/primitives";
 
 interface User {
   id: string;
@@ -26,258 +25,17 @@ interface CreatedApiToken extends ApiToken {
   token: string;
 }
 
-const PageWrapper = styled.div`
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-`;
-
-const MainContent = styled.main`
-  flex: 1;
-  max-width: 768px;
-  margin: 0 auto;
-  padding: 40px 24px;
-  width: 100%;
-`;
-
-const LoadingMain = styled.main`
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-`;
-
-const Title = styled.h1`
-  font-size: 30px;
-  font-weight: bold;
-  margin-bottom: 32px;
-`;
-
-const Section = styled.section`
-  border-radius: 16px;
-  border: 1px solid;
-  padding: 24px;
-  margin-bottom: 24px;
-`;
-
-const SectionTitle = styled.h2`
-  font-size: 18px;
-  font-weight: 600;
-  margin-bottom: 16px;
-`;
-
-const ProfileWrapper = styled.div`
-  display: flex;
-  align-items: center;
-  gap: 16px;
-`;
-
-const ProfileText = styled.p`
-  font-weight: 500;
-`;
-
-const SmallText = styled.p`
-  font-size: 14px;
-`;
-
-const CodeText = styled.code`
-  padding: 2px 4px;
-  border-radius: 4px;
-  font-size: 12px;
-`;
-
-const Description = styled.p`
-  font-size: 14px;
-  margin-bottom: 16px;
-`;
-
-const FieldLabel = styled.label`
-  display: block;
-  font-size: 13px;
-  font-weight: 600;
-  margin-bottom: 8px;
-`;
-
-const ActionRow = styled.div`
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 12px;
-  margin-bottom: 16px;
-
-  @media (max-width: 560px) {
-    grid-template-columns: 1fr;
-  }
-`;
-
-const TextInput = styled.input`
-  height: 40px;
-  padding: 0 12px;
-  border-radius: 6px;
-  border: 1px solid var(--color-border-default);
-  background: var(--color-bg-default);
-  color: var(--color-fg-default);
-  font-size: 14px;
-`;
-
-const PrimaryButton = styled.button`
-  height: 40px;
-  padding: 0 14px;
-  border-radius: 6px;
-  border: 1px solid var(--color-accent-fg);
-  background: var(--color-accent-fg);
-  color: #ffffff;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: opacity 150ms;
-
-  &:disabled {
-    cursor: not-allowed;
-    opacity: 0.6;
-  }
-`;
-
-const TokenReveal = styled.div`
-  padding: 12px;
-  border-radius: 6px;
-  border: 1px solid var(--color-success-fg);
-  background: rgba(63, 185, 80, 0.08);
-  margin-bottom: 16px;
-`;
-
-const TokenCodeRow = styled.div`
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
-  margin-top: 8px;
-
-  @media (max-width: 560px) {
-    grid-template-columns: 1fr;
-  }
-`;
-
-const TokenCode = styled.code`
-  display: block;
-  overflow-x: auto;
-  white-space: nowrap;
-  padding: 10px 12px;
-  border-radius: 6px;
-  background: var(--color-bg-default);
-  font-size: 13px;
-`;
-
-const SecondaryButton = styled.button`
-  height: 38px;
-  padding: 0 12px;
-  border-radius: 6px;
-  border: 1px solid var(--color-border-default);
-  background: var(--color-bg-default);
-  color: var(--color-fg-default);
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-`;
-
-const ErrorText = styled.p`
-  color: #f85149;
-  font-size: 13px;
-  margin: -4px 0 16px;
-`;
-
-const EmptyState = styled.div`
-  padding: 32px 0;
-  text-align: center;
-`;
-
-const EmptyIcon = styled.div`
-  margin: 0 auto 12px;
-  opacity: 0.5;
-`;
-
-const EmptyText = styled.p`
-  font-size: 14px;
-  margin-top: 8px;
-`;
-
-const TokenList = styled.div`
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-`;
-
-const TokenItem = styled.div`
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 16px;
-  border-radius: 12px;
-`;
-
-const TokenInfo = styled.div`
-  display: flex;
-  align-items: center;
-  gap: 12px;
-`;
-
-const IconWrapper = styled.div`
-  color: #737373;
-`;
-
-
-const DangerButton = styled.button`
-  padding: 4px 12px;
-  font-size: 12px;
-  font-weight: 500;
-  border-radius: 6px;
-  border: 1px solid #F85149;
-  background: transparent;
-  color: #F85149;
-  cursor: pointer;
-  transition: all 150ms;
-  &:hover { background: #F85149; color: #FFFFFF; }
-`;
-
-const InfoBanner = styled.div`
-  padding: 12px 16px;
-  border-radius: 6px;
-  border: 1px solid var(--color-border-default);
-  background: var(--color-bg-subtle);
-  color: var(--color-fg-muted);
-  font-size: 14px;
-`;
-
-const AvatarImg = styled.img`
-  border-radius: 6px;
-  object-fit: cover;
-  flex-shrink: 0;
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.1);
-`;
-
-const TokenName = styled.p`
-  font-weight: 500;
-`;
-
 function apiTokenListItem(token: CreatedApiToken): ApiToken {
-  return {
-    id: token.id,
-    name: token.name,
-    createdAt: token.createdAt,
-    lastUsedAt: token.lastUsedAt,
-  };
+  return { id: token.id, name: token.name, createdAt: token.createdAt, lastUsedAt: token.lastUsedAt };
 }
 
 function prependApiToken(tokens: ApiToken[], token: ApiToken): ApiToken[] {
   return [token, ...tokens.filter((item) => item.id !== token.id)];
 }
 
-function mergeApiTokenList(
-  serverTokens: ApiToken[],
-  currentTokens: ApiToken[]
-): ApiToken[] {
+function mergeApiTokenList(serverTokens: ApiToken[], currentTokens: ApiToken[]): ApiToken[] {
   const serverTokenIds = new Set(serverTokens.map((token) => token.id));
-  const localTokens = currentTokens.filter(
-    (token) => !serverTokenIds.has(token.id)
-  );
+  const localTokens = currentTokens.filter((token) => !serverTokenIds.has(token.id));
   return [...localTokens, ...serverTokens];
 }
 
@@ -296,35 +54,29 @@ export default function SettingsClient() {
   const [createdToken, setCreatedToken] = useState<CreatedApiToken | null>(null);
   const [isCreatingToken, setIsCreatingToken] = useState(false);
   const [createTokenError, setCreateTokenError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
-
     async function loadSettings() {
       try {
         const sessionResponse = await fetch("/api/auth/session");
         const sessionData = await sessionResponse.json();
         if (cancelled) return;
-
         if (!sessionData.user) {
           router.push("/api/auth/github?returnTo=/settings");
           return;
         }
-
         const loadedTokens = await fetchApiTokens().catch(() => []);
-
         if (!cancelled) {
           setUser(sessionData.user);
           setTokens((current) => mergeApiTokenList(loadedTokens, current));
           setIsLoading(false);
         }
       } catch {
-        if (!cancelled) {
-          router.push("/leaderboard");
-        }
+        if (!cancelled) router.push("/leaderboard");
       }
     }
-
     loadSettings();
     return () => {
       cancelled = true;
@@ -333,15 +85,9 @@ export default function SettingsClient() {
 
   const handleRevokeToken = async (tokenId: string) => {
     if (!confirm("Are you sure you want to revoke this token?")) return;
-
     try {
-      const response = await fetch(`/api/settings/tokens/${tokenId}`, {
-        method: "DELETE",
-      });
-
-      if (response.ok) {
-        setTokens(tokens.filter((t) => t.id !== tokenId));
-      }
+      const response = await fetch(`/api/settings/tokens/${tokenId}`, { method: "DELETE" });
+      if (response.ok) setTokens(tokens.filter((t) => t.id !== tokenId));
     } catch {
       alert("Failed to revoke token");
     }
@@ -350,23 +96,16 @@ export default function SettingsClient() {
   const handleCreateToken = async () => {
     setIsCreatingToken(true);
     setCreateTokenError(null);
-
     try {
       const response = await fetch("/api/settings/tokens", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: tokenName }),
       });
-
       const data = await response.json();
-      if (!response.ok || !data.token) {
-        throw new Error(data.error || "Failed to create token");
-      }
-
+      if (!response.ok || !data.token) throw new Error(data.error || "Failed to create token");
       setCreatedToken(data.token);
-      setTokens((current) =>
-        prependApiToken(current, apiTokenListItem(data.token))
-      );
+      setTokens((current) => prependApiToken(current, apiTokenListItem(data.token)));
     } catch (error) {
       setCreateTokenError(error instanceof Error ? error.message : "Failed to create token");
     } finally {
@@ -377,181 +116,156 @@ export default function SettingsClient() {
   const handleCopyCreatedToken = async () => {
     if (!createdToken) return;
     await navigator.clipboard.writeText(createdToken.token);
-    // The raw token is shown once and only once. After the user has copied
-    // it we drop it from React state so it no longer lives in the component
-    // tree (and thus no longer in any DevTools / extension snapshot of it).
-    // Users who haven't copied yet still have the value in the reveal panel
-    // until they navigate away.
-    setCreatedToken(null);
+    setCopied(true);
+    // The raw token is shown once. Drop it from state shortly after copy so it
+    // no longer lives in the component tree / any devtools snapshot.
+    setTimeout(() => {
+      setCreatedToken(null);
+      setCopied(false);
+    }, 1200);
   };
 
   if (isLoading) {
     return (
-      <PageWrapper style={{ backgroundColor: "var(--color-bg-default)" }}>
-        <Navigation />
-        <LoadingMain>
-          <div style={{ color: "var(--color-fg-muted)" }}>Loading...</div>
-        </LoadingMain>
-        <Footer />
-      </PageWrapper>
+      <div className="flex min-h-screen flex-col bg-background">
+        <main className="flex flex-1 items-center justify-center">
+          <div className="text-sm text-muted">Loading...</div>
+        </main>
+      </div>
     );
   }
 
-  if (!user) {
-    return null;
-  }
+  if (!user) return null;
 
   return (
-    <PageWrapper style={{ backgroundColor: "var(--color-bg-default)" }}>
-      <Navigation />
+    <div className="flex min-h-screen flex-col bg-background">
+      <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-8 sm:px-6 sm:py-10">
+        <PageHeader title="Settings" subtitle="Manage your profile and personal API tokens." />
 
-      <MainContent>
-        <Title style={{ color: "var(--color-fg-default)" }}>
-          Settings
-        </Title>
-
-        <Section
-          style={{ backgroundColor: "var(--color-bg-default)", borderColor: "var(--color-border-default)" }}
-        >
-          <SectionTitle style={{ color: "var(--color-fg-default)" }}>
-            Profile
-          </SectionTitle>
-          <ProfileWrapper>
-            <AvatarImg
+        <Panel className="mt-6 p-4 sm:p-6">
+          <h2 className="text-base font-semibold text-foreground">Profile</h2>
+          <div className="mt-4 flex items-center gap-4">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
               src={user.avatarUrl || `https://github.com/${user.username}.png`}
               alt={user.username}
               width={64}
               height={64}
+              className="h-16 w-16 shrink-0 rounded-lg border border-line object-cover"
             />
-            <div>
-              <ProfileText style={{ color: "var(--color-fg-default)" }}>
-                {user.displayName || user.username}
-              </ProfileText>
-              <SmallText style={{ color: "var(--color-fg-muted)" }}>
-                @{user.username}
-              </SmallText>
-              {user.email && (
-                <SmallText style={{ color: "var(--color-fg-muted)" }}>
-                  {user.email}
-                </SmallText>
-              )}
+            <div className="min-w-0">
+              <p className="truncate font-semibold text-foreground">{user.displayName || user.username}</p>
+              <p className="truncate font-mono text-sm text-muted">@{user.username}</p>
+              {user.email && <p className="truncate font-mono text-sm text-muted">{user.email}</p>}
             </div>
-          </ProfileWrapper>
-          <InfoBanner style={{ marginTop: 16 }}>
+          </div>
+          <div className="mt-4 rounded-lg border border-line bg-surface-secondary px-4 py-3 text-sm text-muted">
             Profile information is synced from GitHub and cannot be edited here.
-          </InfoBanner>
-        </Section>
+          </div>
+        </Panel>
 
-        <Section
-          style={{ backgroundColor: "var(--color-bg-default)", borderColor: "var(--color-border-default)" }}
-        >
-          <SectionTitle style={{ color: "var(--color-fg-default)" }}>
-            API Tokens
-          </SectionTitle>
-          <Description style={{ color: "var(--color-fg-muted)" }}>
+        <Panel className="mt-6 p-4 sm:p-6">
+          <h2 className="text-base font-semibold text-foreground">API Tokens</h2>
+          <p className="mt-2 text-sm text-muted">
             Create a token for CI or use one generated by{" "}
-            <CodeText
-              style={{ backgroundColor: "var(--color-bg-subtle)" }}
-            >
-              tokscale login
-            </CodeText>{" "}
-            from the CLI.
-          </Description>
+            <code className="rounded-md bg-surface-secondary px-1.5 py-0.5 font-mono text-xs text-foreground">tokens login</code> from the CLI.
+          </p>
 
-          <FieldLabel
-            htmlFor="token-name"
-            style={{ color: "var(--color-fg-default)" }}
-          >
-            Token name
-          </FieldLabel>
-          <ActionRow>
-            <TextInput
-              id="token-name"
-              value={tokenName}
-              onChange={(event) => setTokenName(event.target.value)}
-              maxLength={100}
-            />
-            <PrimaryButton
-              type="button"
-              disabled={isCreatingToken}
-              onClick={handleCreateToken}
+          <div className="mt-5">
+            <label
+              htmlFor="token-name"
+              className="mb-2 block text-[11px] font-semibold tracking-wider text-muted uppercase"
             >
-              {isCreatingToken ? "Creating..." : "Create token"}
-            </PrimaryButton>
-          </ActionRow>
+              Token name
+            </label>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <input
+                id="token-name"
+                value={tokenName}
+                onChange={(e) => setTokenName(e.target.value)}
+                maxLength={100}
+                className="min-w-0 flex-1 rounded-lg border border-line bg-surface-secondary px-3 py-2 text-sm text-foreground outline-none transition focus:border-accent focus:ring-2 focus:ring-accent/25"
+              />
+              <Button
+                isDisabled={isCreatingToken}
+                onPress={handleCreateToken}
+                className="h-10 shrink-0 rounded-lg bg-accent px-4 text-sm font-semibold text-accent-foreground transition hover:opacity-90 disabled:opacity-60"
+              >
+                {isCreatingToken ? "Creating..." : "Create token"}
+              </Button>
+            </div>
+          </div>
 
-          {createTokenError && <ErrorText>{createTokenError}</ErrorText>}
+          {createTokenError && <p className="mt-2 text-[13px] text-danger">{createTokenError}</p>}
 
           {createdToken && (
-            <TokenReveal>
-              <SmallText style={{ color: "var(--color-fg-default)", fontWeight: 600 }}>
-                Copy this token now. It will not be shown again.
-              </SmallText>
-              <TokenCodeRow>
-                <TokenCode style={{ color: "var(--color-fg-default)" }}>
+            <div className="mt-4 rounded-lg border border-success/30 bg-success/10 p-3">
+              <p className="text-sm font-semibold text-foreground">Copy this token now. It will not be shown again.</p>
+              <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+                <code className="block min-w-0 flex-1 overflow-x-auto rounded-md border border-line bg-surface-secondary px-3 py-2.5 font-mono text-[13px] whitespace-nowrap text-foreground">
                   {createdToken.token}
-                </TokenCode>
-                <SecondaryButton type="button" onClick={handleCopyCreatedToken}>
-                  Copy
-                </SecondaryButton>
-              </TokenCodeRow>
-            </TokenReveal>
+                </code>
+                <Button
+                  onPress={handleCopyCreatedToken}
+                  variant="ghost"
+                  className="h-9 shrink-0 gap-1.5 rounded-lg border border-line bg-surface px-3 text-sm font-medium text-foreground transition hover:border-foreground/20 hover:bg-surface-secondary"
+                >
+                  {copied ? <CheckIcon size={16} /> : <CopyIcon size={16} />}
+                  <span>{copied ? "Copied" : "Copy"}</span>
+                </Button>
+              </div>
+            </div>
           )}
 
           {tokens.length === 0 ? (
-            <EmptyState style={{ color: "var(--color-fg-muted)" }}>
-              <EmptyIcon>
+            <div className="mt-5 rounded-lg border border-dashed border-line py-10 text-center text-muted">
+              <div className="mx-auto mb-3 w-fit opacity-50">
                 <KeyIcon size={32} />
-              </EmptyIcon>
-              <p>No API tokens yet.</p>
-              <EmptyText>
-                Create one here or run{" "}
-                <CodeText
-                  style={{ backgroundColor: "var(--color-bg-subtle)" }}
-                >
-                  tokscale login
-                </CodeText>{" "}
-                from the CLI.
-              </EmptyText>
-            </EmptyState>
+              </div>
+              <p className="text-sm font-medium text-foreground">No API tokens yet.</p>
+              <p className="mt-1 text-sm">
+                Create one here or run <code className="rounded-md bg-surface-secondary px-1.5 py-0.5 font-mono text-xs text-foreground">tokens login</code> from the CLI.
+              </p>
+            </div>
           ) : (
-            <TokenList>
+            <div className="mt-5 divide-y divide-line overflow-hidden rounded-lg border border-line">
               {tokens.map((token) => (
-                <TokenItem
+                <div
                   key={token.id}
-                  style={{ backgroundColor: "var(--color-bg-elevated)" }}
+                  className="flex flex-wrap items-center justify-between gap-3 bg-surface-secondary p-4"
                 >
-                  <TokenInfo>
-                    <IconWrapper>
+                  <div className="flex min-w-0 items-center gap-3">
+                    <span className="shrink-0 text-muted">
                       <KeyIcon size={20} />
-                    </IconWrapper>
-                    <div>
-                      <TokenName style={{ color: "var(--color-fg-default)" }}>
-                        {token.name}
-                      </TokenName>
-                      <SmallText style={{ color: "var(--color-fg-muted)" }}>
-                        Created {new Date(token.createdAt).toLocaleDateString()}
+                    </span>
+                    <div className="min-w-0">
+                      <p className="truncate font-medium text-foreground">{token.name}</p>
+                      <p className="text-xs text-muted">
+                        Created{" "}
+                        <span className="font-mono tabular-nums">{new Date(token.createdAt).toLocaleDateString()}</span>
                         {token.lastUsedAt && (
-                          <> - Last used {new Date(token.lastUsedAt).toLocaleDateString()}</>
+                          <>
+                            {" · "}Last used{" "}
+                            <span className="font-mono tabular-nums">{new Date(token.lastUsedAt).toLocaleDateString()}</span>
+                          </>
                         )}
-                      </SmallText>
+                      </p>
                     </div>
-                  </TokenInfo>
-                  <DangerButton
-                    onClick={() => handleRevokeToken(token.id)}
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onPress={() => handleRevokeToken(token.id)}
+                    className="h-9 shrink-0 rounded-lg border border-line bg-surface px-3 text-sm font-medium text-foreground transition hover:border-danger/40 hover:text-danger"
                   >
                     Revoke
-                  </DangerButton>
-                </TokenItem>
+                  </Button>
+                </div>
               ))}
-            </TokenList>
+            </div>
           )}
-        </Section>
-
-
-      </MainContent>
-
-      <Footer />
-    </PageWrapper>
+        </Panel>
+      </main>
+    </div>
   );
 }

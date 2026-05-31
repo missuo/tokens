@@ -27,7 +27,7 @@ describe("renderProfileBadgeSvg", () => {
 
     expect(svg).toContain("<svg");
     expect(svg).toContain("</svg>");
-    expect(svg).toContain("Tokscale Tokens");
+    expect(svg).toContain("Tokens Tokens");
     expect(svg).toContain("1,234,567");
     expect(svg).toContain('height="20"');
   });
@@ -35,7 +35,7 @@ describe("renderProfileBadgeSvg", () => {
   it("renders cost metric", () => {
     const svg = renderProfileBadgeSvg(mockStats, { metric: "cost" });
 
-    expect(svg).toContain("Tokscale Cost");
+    expect(svg).toContain("Tokens Cost");
     expect(svg).toContain("$42.42");
     expect(svg).toContain("#16804B");
   });
@@ -43,7 +43,7 @@ describe("renderProfileBadgeSvg", () => {
   it("renders rank metric", () => {
     const svg = renderProfileBadgeSvg(mockStats, { metric: "rank" });
 
-    expect(svg).toContain("Tokscale Rank");
+    expect(svg).toContain("Tokens Rank");
     expect(svg).toContain("#3");
     expect(svg).toContain("#D97706");
   });
@@ -92,7 +92,7 @@ describe("renderProfileBadgeSvg", () => {
     const svg = renderProfileBadgeSvg(mockStats, { label: "my tokens" });
 
     expect(svg).toContain("my tokens");
-    expect(svg).not.toContain("Tokscale Tokens");
+    expect(svg).not.toContain("Tokens Tokens");
   });
 
   it("accepts custom color (hex without #)", () => {
@@ -156,13 +156,13 @@ describe("renderProfileBadgeSvg", () => {
     const svg = renderProfileBadgeSvg(mockStats);
 
     expect(svg).toContain("<title>");
-    expect(svg).toContain("Tokscale Tokens: 1,234,567");
+    expect(svg).toContain("Tokens Tokens: 1,234,567");
   });
 
   it("includes aria-label attribute", () => {
     const svg = renderProfileBadgeSvg(mockStats);
 
-    expect(svg).toContain('aria-label="Tokscale Tokens: 1,234,567"');
+    expect(svg).toContain('aria-label="Tokens Tokens: 1,234,567"');
   });
 
   it("shows full numbers by default (compact off)", () => {
@@ -220,7 +220,7 @@ describe("renderProfileBadgeSvg", () => {
   it("defaults to tokens when metric is invalid", () => {
     const svg = renderProfileBadgeSvg(mockStats, { metric: "invalid" as never });
 
-    expect(svg).toContain("Tokscale Tokens");
+    expect(svg).toContain("Tokens Tokens");
     expect(svg).toContain("1,234,567");
   });
 
@@ -236,7 +236,7 @@ describe("renderBadgeErrorSvg", () => {
     const svg = renderBadgeErrorSvg("not found");
 
     expect(svg).toContain("<svg");
-    expect(svg).toContain("Tokscale");
+    expect(svg).toContain("Tokens");
     expect(svg).toContain("not found");
     expect(svg).toContain("#e05d44");
   });
@@ -252,7 +252,7 @@ describe("renderBadgeErrorSvg", () => {
     const svg = renderBadgeErrorSvg("timeout", { label: "my-badge" });
 
     expect(svg).toContain("my-badge");
-    expect(svg).not.toContain("Tokscale");
+    expect(svg).not.toContain("Tokens");
   });
 
   it("escapes XML in error message", () => {

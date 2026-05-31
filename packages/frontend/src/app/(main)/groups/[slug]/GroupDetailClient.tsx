@@ -3,8 +3,9 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "nextjs-toploader/app";
-import styled from "styled-components";
 import { CheckIcon, CopyIcon, SearchIcon, XIcon } from "@/components/ui/Icons";
+import { StatGrid, StatTile } from "@/components/ui/primitives";
+import { TabBar } from "@/components/TabBar";
 import { formatCurrency, formatNumber } from "@/lib/utils";
 import type { GroupLeaderboardData, GroupLeaderboardUser } from "@/lib/groups/getGroupLeaderboard";
 import type { Period, SortBy } from "@/lib/leaderboard/types";
@@ -35,319 +36,6 @@ interface GroupDetailClientProps {
   initialData: GroupLeaderboardData;
 }
 
-const Header = styled.section`
-  margin: 32px 0 24px;
-  display: grid;
-  gap: 18px;
-`;
-
-const HeaderTop = styled.div`
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  align-items: flex-start;
-
-  @media (max-width: 720px) {
-    flex-direction: column;
-  }
-`;
-
-const Identity = styled.div`
-  display: flex;
-  gap: 14px;
-  align-items: center;
-`;
-
-const Avatar = styled.div<{ $image?: string | null }>`
-  width: 58px;
-  height: 58px;
-  border-radius: 8px;
-  border: 1px solid var(--color-border-default);
-  background:
-    ${({ $image }) => $image ? `url(${$image}) center/cover` : "linear-gradient(135deg, #0073ff, #13a10e)"};
-  flex: 0 0 auto;
-`;
-
-const Title = styled.h1`
-  margin: 0;
-  color: var(--color-fg-default);
-  font-size: 30px;
-  font-weight: 700;
-`;
-
-const Meta = styled.div`
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 6px;
-  color: var(--color-fg-muted);
-  font-size: 13px;
-`;
-
-const Badge = styled.span`
-  display: inline-flex;
-  align-items: center;
-  min-height: 24px;
-  padding: 0 8px;
-  border: 1px solid var(--color-border-default);
-  border-radius: 999px;
-  color: var(--color-fg-muted);
-  background: var(--color-bg-subtle);
-`;
-
-const Description = styled.p`
-  margin: 0;
-  color: var(--color-fg-muted);
-  line-height: 1.6;
-`;
-
-const Actions = styled.div`
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-`;
-
-const Button = styled.button`
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  min-height: 38px;
-  padding: 0 14px;
-  border-radius: 8px;
-  border: 1px solid var(--color-border-default);
-  background: var(--color-bg-default);
-  color: var(--color-fg-default);
-  font-weight: 600;
-  cursor: pointer;
-
-  &:disabled {
-    opacity: 0.65;
-    cursor: not-allowed;
-  }
-`;
-
-const PrimaryLink = styled(Link)`
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 38px;
-  padding: 0 14px;
-  border-radius: 8px;
-  border: 1px solid var(--color-primary);
-  background: var(--color-primary);
-  color: #fff;
-  font-weight: 600;
-  text-decoration: none;
-`;
-
-const StatsGrid = styled.div`
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px;
-
-  @media (max-width: 760px) {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-`;
-
-const StatCard = styled.div`
-  padding: 12px;
-  border: 1px solid var(--color-border-default);
-  border-radius: 8px;
-  background: var(--color-bg-default);
-`;
-
-const StatLabel = styled.div`
-  color: var(--color-fg-muted);
-  font-size: 12px;
-`;
-
-const StatValue = styled.div`
-  margin-top: 4px;
-  color: var(--color-fg-default);
-  font-weight: 700;
-  font-size: 18px;
-`;
-
-const InvitePanel = styled.div`
-  display: grid;
-  gap: 12px;
-  padding: 14px;
-  border: 1px solid var(--color-border-default);
-  border-radius: 8px;
-  background: var(--color-bg-default);
-`;
-
-const InviteForm = styled.div`
-  display: grid;
-  grid-template-columns: minmax(180px, 1fr) 140px auto;
-  gap: 10px;
-
-  @media (max-width: 720px) {
-    grid-template-columns: 1fr;
-  }
-`;
-
-const Input = styled.input`
-  min-height: 38px;
-  padding: 0 12px;
-  border: 1px solid var(--color-border-default);
-  border-radius: 8px;
-  background: var(--color-bg-subtle);
-  color: var(--color-fg-default);
-  font: inherit;
-`;
-
-const Select = styled.select`
-  min-height: 38px;
-  padding: 0 12px;
-  border: 1px solid var(--color-border-default);
-  border-radius: 8px;
-  background: var(--color-bg-subtle);
-  color: var(--color-fg-default);
-  font: inherit;
-`;
-
-const LinkBox = styled.div`
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 10px 12px;
-  border: 1px solid var(--color-border-default);
-  border-radius: 8px;
-  background: var(--color-bg-subtle);
-  color: var(--color-fg-default);
-  overflow: hidden;
-`;
-
-const LinkText = styled.code`
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-`;
-
-const Toolbar = styled.div`
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
-  margin: 22px 0 14px;
-`;
-
-const Segmented = styled.div`
-  display: inline-flex;
-  padding: 4px;
-  border: 1px solid var(--color-border-default);
-  border-radius: 8px;
-  background: var(--color-bg-subtle);
-`;
-
-const SegmentButton = styled.button<{ $active: boolean }>`
-  min-height: 32px;
-  padding: 0 12px;
-  border: 0;
-  border-radius: 6px;
-  background: ${({ $active }) => ($active ? "var(--color-bg-default)" : "transparent")};
-  color: ${({ $active }) => ($active ? "var(--color-fg-default)" : "var(--color-fg-muted)")};
-  font-weight: 600;
-  cursor: pointer;
-`;
-
-const SearchWrapper = styled.div`
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 38px;
-  padding: 0 10px;
-  border: 1px solid var(--color-border-default);
-  border-radius: 8px;
-  background: var(--color-bg-subtle);
-`;
-
-const SearchInput = styled.input`
-  width: 180px;
-  border: 0;
-  outline: 0;
-  background: transparent;
-  color: var(--color-fg-default);
-  font: inherit;
-`;
-
-const TableContainer = styled.div`
-  border: 1px solid var(--color-border-default);
-  border-radius: 8px;
-  overflow: hidden;
-  background: var(--color-bg-default);
-`;
-
-const TableWrapper = styled.div`
-  overflow-x: auto;
-`;
-
-const Table = styled.table`
-  width: 100%;
-  min-width: 680px;
-`;
-
-const Th = styled.th`
-  padding: 12px 16px;
-  text-align: left;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--color-fg-muted);
-  background: var(--color-bg-elevated);
-  border-bottom: 1px solid var(--color-border-default);
-
-  &.right {
-    text-align: right;
-  }
-`;
-
-const Td = styled.td`
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--color-border-default);
-  color: var(--color-fg-default);
-
-  &.right {
-    text-align: right;
-  }
-`;
-
-const UserCell = styled(Link)`
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  color: inherit;
-  text-decoration: none;
-`;
-
-const UserAvatar = styled.img`
-  width: 34px;
-  height: 34px;
-  border-radius: 50%;
-  object-fit: cover;
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.1);
-`;
-
-const Muted = styled.span`
-  display: block;
-  color: var(--color-fg-muted);
-  font-size: 12px;
-`;
-
-const EmptyState = styled.div`
-  padding: 32px;
-  text-align: center;
-  color: var(--color-fg-muted);
-`;
-
-const ErrorText = styled.p`
-  margin: 0;
-  color: var(--color-danger-fg, #f85149);
-`;
-
 function isAdminRole(role: GroupRole | undefined): boolean {
   return role === "owner" || role === "admin";
 }
@@ -356,37 +44,39 @@ function roleLabel(role: string): string {
   return role.charAt(0).toUpperCase() + role.slice(1);
 }
 
-function GroupRow({
-  user,
-  showSubmissionCount,
-}: {
-  user: GroupLeaderboardUser;
-  showSubmissionCount: boolean;
-}) {
+const fieldClass = "h-[38px] rounded-lg border border-line bg-surface-secondary px-3 text-sm text-foreground outline-none transition focus:border-accent focus:ring-2 focus:ring-accent/25";
+const buttonClass = "inline-flex h-[38px] items-center justify-center gap-2 rounded-lg border border-line bg-surface px-3.5 text-sm font-medium text-foreground transition hover:border-foreground/20 hover:bg-surface-secondary disabled:cursor-not-allowed disabled:opacity-65";
+const badgeClass = "inline-flex items-center rounded-md bg-surface-tertiary px-2 py-0.5 text-xs font-medium text-muted";
+const thClass = "border-b border-line bg-surface-secondary px-4 py-3 text-left text-xs font-semibold tracking-wider text-muted uppercase";
+const tdClass = "border-b border-line px-4 py-3 text-foreground last:border-b-0";
+
+const rankColor: Record<number, string> = { 1: "text-[#EAB308]", 2: "text-[#9CA3AF]", 3: "text-[#D97706]" };
+
+function GroupRow({ user, showSubmissionCount }: { user: GroupLeaderboardUser; showSubmissionCount: boolean }) {
   return (
-    <tr>
-      <Td>#{user.rank}</Td>
-      <Td>
-        <UserCell href={`/u/${user.username}`}>
-          <UserAvatar src={user.avatarUrl || `https://github.com/${user.username}.png`} alt={user.username} />
-          <span>
-            {user.displayName || user.username}
-            <Muted>@{user.username}</Muted>
+    <tr className="transition-colors hover:bg-foreground/[0.03]">
+      <td className={tdClass}>
+        <span className={`font-mono text-sm font-bold tabular-nums ${rankColor[user.rank] ?? "text-muted"}`}>#{user.rank}</span>
+      </td>
+      <td className={tdClass}>
+        <Link href={`/u/${user.username}`} className="inline-flex items-center gap-2.5 text-inherit">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={user.avatarUrl || `https://github.com/${user.username}.png`} alt={user.username} className="h-9 w-9 rounded-full object-cover ring-1 ring-line" />
+          <span className="min-w-0">
+            <span className="block truncate text-sm font-medium">{user.displayName || user.username}</span>
+            <span className="block truncate font-mono text-xs text-muted">@{user.username}</span>
           </span>
-        </UserCell>
-      </Td>
-      <Td>{roleLabel(user.role)}</Td>
-      <Td className="right">{formatCurrency(user.totalCost)}</Td>
-      <Td className="right">{formatNumber(user.totalTokens)}</Td>
-      {showSubmissionCount && <Td className="right">{user.submissionCount ?? "-"}</Td>}
+        </Link>
+      </td>
+      <td className={tdClass}><span className="text-sm text-muted capitalize">{roleLabel(user.role)}</span></td>
+      <td className={`${tdClass} text-right`}><span className="font-mono text-sm font-medium tabular-nums">{formatCurrency(user.totalCost)}</span></td>
+      <td className={`${tdClass} text-right`}><span className="font-mono text-sm font-semibold text-accent tabular-nums">{formatNumber(user.totalTokens)}</span></td>
+      {showSubmissionCount && <td className={`${tdClass} text-right`}><span className="font-mono text-sm text-muted tabular-nums">{user.submissionCount ?? "—"}</span></td>}
     </tr>
   );
 }
 
-export default function GroupDetailClient({
-  group,
-  initialData,
-}: GroupDetailClientProps) {
+export default function GroupDetailClient({ group, initialData }: GroupDetailClientProps) {
   const router = useRouter();
   const [data, setData] = useState(initialData);
   const [period, setPeriod] = useState<Period>(initialData.period);
@@ -414,46 +104,35 @@ export default function GroupDetailClient({
     return () => clearTimeout(timer);
   }, [search]);
 
-  const loadLeaderboard = useCallback((signal?: AbortSignal) => {
-    const params = new URLSearchParams({
-      period,
-      sortBy,
-      page: String(page),
-      limit: "50",
-    });
-    if (debouncedSearch) {
-      params.set("search", debouncedSearch);
-    }
+  const loadLeaderboard = useCallback(
+    (signal?: AbortSignal) => {
+      const params = new URLSearchParams({ period, sortBy, page: String(page), limit: "50" });
+      if (debouncedSearch) params.set("search", debouncedSearch);
 
-    setIsLoading(true);
-    setError(null);
+      setIsLoading(true);
+      setError(null);
 
-    fetch(`/api/groups/${group.slug}/leaderboard?${params}`, { signal })
-      .then((response) => {
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        return response.json();
-      })
-      .then((payload) => {
-        setData(payload);
-      })
-      .catch((err) => {
-        if (err.name !== "AbortError") {
-          setError(err.message || "Failed to load leaderboard");
-        }
-      })
-      .finally(() => {
-        if (!signal?.aborted) {
-          setIsLoading(false);
-        }
-      });
-  }, [debouncedSearch, group.slug, page, period, sortBy]);
+      fetch(`/api/groups/${group.slug}/leaderboard?${params}`, { signal })
+        .then((response) => {
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          return response.json();
+        })
+        .then((payload) => setData(payload))
+        .catch((err) => {
+          if (err.name !== "AbortError") setError(err.message || "Failed to load leaderboard");
+        })
+        .finally(() => {
+          if (!signal?.aborted) setIsLoading(false);
+        });
+    },
+    [debouncedSearch, group.slug, page, period, sortBy],
+  );
 
   useEffect(() => {
     if (!didMountLeaderboard.current) {
       didMountLeaderboard.current = true;
       return;
     }
-
     const abortController = new AbortController();
     loadLeaderboard(abortController.signal);
     return () => abortController.abort();
@@ -462,24 +141,15 @@ export default function GroupDetailClient({
   async function createInvite() {
     setInviteError(null);
     setInviteUrl(null);
-
     try {
       const response = await fetch(`/api/groups/${group.slug}/invite`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          role: inviteRole,
-          invitedUsername: inviteUsername.trim() || null,
-        }),
+        body: JSON.stringify({ role: inviteRole, invitedUsername: inviteUsername.trim() || null }),
       });
       const payload = await response.json();
-
-      if (!response.ok) {
-        throw new Error(payload.error || "Failed to create invite");
-      }
-
-      const absoluteUrl = `${window.location.origin}${payload.joinUrl}`;
-      setInviteUrl(absoluteUrl);
+      if (!response.ok) throw new Error(payload.error || "Failed to create invite");
+      setInviteUrl(`${window.location.origin}${payload.joinUrl}`);
       setInviteUsername("");
     } catch (err) {
       setInviteError(err instanceof Error ? err.message : "Failed to create invite");
@@ -488,7 +158,6 @@ export default function GroupDetailClient({
 
   async function copyInvite() {
     if (!inviteUrl) return;
-
     try {
       setInviteError(null);
       await navigator.clipboard.writeText(inviteUrl);
@@ -502,152 +171,120 @@ export default function GroupDetailClient({
 
   async function leaveGroup() {
     const response = await fetch(`/api/groups/${group.slug}/leave`, { method: "POST" });
-    if (response.ok) {
-      router.push("/groups");
-    }
+    if (response.ok) router.push("/groups");
   }
 
   const sortedUsers = useMemo(() => data.users || [], [data.users]);
 
   return (
     <>
-      <Header>
-        <HeaderTop>
-          <Identity>
-            <Avatar $image={group.avatarUrl} />
-            <div>
-              <Title>{group.name}</Title>
-              <Meta>
-                <Badge>{group.isPublic ? "Public" : "Private"}</Badge>
-                <Badge>{group.memberCount} members</Badge>
-                {group.membership && <Badge>{roleLabel(group.membership.role)}</Badge>}
-              </Meta>
+      <section className="mt-6 mb-8 grid gap-5">
+        <div className="flex items-start justify-between gap-4 max-[720px]:flex-col">
+          <div className="flex items-center gap-3.5">
+            <div className="h-14 w-14 flex-none rounded-xl border border-line" style={{ background: group.avatarUrl ? `url(${group.avatarUrl}) center/cover` : "linear-gradient(135deg, var(--accent), #13a10e)" }} />
+            <div className="min-w-0">
+              <h1 className="truncate text-2xl font-bold tracking-tight text-foreground sm:text-[1.75rem]">{group.name}</h1>
+              <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                <span className={`${badgeClass} ${group.isPublic ? "" : "bg-warning/15 text-warning"}`}>{group.isPublic ? "Public" : "Private"}</span>
+                <span className={badgeClass}><span className="font-mono tabular-nums">{group.memberCount}</span>&nbsp;members</span>
+                {group.membership && <span className={`${badgeClass} capitalize`}>{roleLabel(group.membership.role)}</span>}
+              </div>
             </div>
-          </Identity>
-          <Actions>
-            <PrimaryLink href="/groups">All groups</PrimaryLink>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Link href="/leaderboard?view=groups" className={buttonClass}>All groups</Link>
             {group.membership && group.membership.role !== "owner" && (
-              <Button onClick={leaveGroup}>Leave</Button>
+              <button onClick={leaveGroup} className={`${buttonClass} hover:border-danger/40 hover:text-danger`}>Leave</button>
             )}
-          </Actions>
-        </HeaderTop>
-        {group.description && <Description>{group.description}</Description>}
+          </div>
+        </div>
+        {group.description && <p className="max-w-[680px] text-sm leading-relaxed text-muted">{group.description}</p>}
 
-        <StatsGrid>
-          <StatCard>
-            <StatLabel>Active users</StatLabel>
-            <StatValue>{data.stats.activeUsers}</StatValue>
-          </StatCard>
-          <StatCard>
-            <StatLabel>Members</StatLabel>
-            <StatValue>{data.stats.totalMembers || group.memberCount}</StatValue>
-          </StatCard>
-          <StatCard>
-            <StatLabel>Total tokens</StatLabel>
-            <StatValue>{formatNumber(data.stats.totalTokens)}</StatValue>
-          </StatCard>
-          <StatCard>
-            <StatLabel>Total cost</StatLabel>
-            <StatValue>{formatCurrency(data.stats.totalCost)}</StatValue>
-          </StatCard>
-        </StatsGrid>
+        <StatGrid cols={4}>
+          <StatTile label="Active users" value={data.stats.activeUsers} />
+          <StatTile label="Members" value={data.stats.totalMembers || group.memberCount} />
+          <StatTile label="Total tokens" value={formatNumber(data.stats.totalTokens)} accent />
+          <StatTile label="Total cost" value={formatCurrency(data.stats.totalCost)} />
+        </StatGrid>
 
         {canInvite && (
-          <InvitePanel>
-            <InviteForm>
-              <Input
-                value={inviteUsername}
-                onChange={(event) => setInviteUsername(event.target.value)}
-                placeholder="GitHub username (optional)"
-              />
-              <Select
-                value={inviteRole}
-                onChange={(event) => setInviteRole(event.target.value as Exclude<GroupRole, "owner">)}
-              >
+          <div className="grid gap-3 rounded-lg border border-line bg-surface p-3.5">
+            <div className="grid grid-cols-[minmax(180px,1fr)_140px_auto] gap-2.5 max-[720px]:grid-cols-1">
+              <input value={inviteUsername} onChange={(e) => setInviteUsername(e.target.value)} placeholder="GitHub username (optional)" className={fieldClass} />
+              <select value={inviteRole} onChange={(e) => setInviteRole(e.target.value as Exclude<GroupRole, "owner">)} className={fieldClass}>
                 <option value="member">Member</option>
                 <option value="admin">Admin</option>
-              </Select>
-              <Button onClick={createInvite}>Create invite</Button>
-            </InviteForm>
-            {inviteError && <ErrorText>{inviteError}</ErrorText>}
+              </select>
+              <button onClick={createInvite} className={buttonClass}>Create invite</button>
+            </div>
+            {inviteError && <p className="text-danger">{inviteError}</p>}
             {inviteUrl && (
-              <LinkBox>
-                <LinkText>{inviteUrl}</LinkText>
-                <Button onClick={copyInvite} aria-label="Copy invite link">
+              <div className="flex items-center justify-between gap-2 overflow-hidden rounded-lg border border-line bg-surface-secondary px-3 py-2.5 text-foreground">
+                <code className="truncate">{inviteUrl}</code>
+                <button onClick={copyInvite} aria-label="Copy invite link" className={buttonClass}>
                   {copied ? <CheckIcon size={16} /> : <CopyIcon size={16} />}
                   {copied ? "Copied" : "Copy"}
-                </Button>
-              </LinkBox>
+                </button>
+              </div>
             )}
-          </InvitePanel>
+          </div>
         )}
-      </Header>
+      </section>
 
-      <Toolbar>
-        <Segmented aria-label="Period">
-          {(["all", "month", "week"] as Period[]).map((value) => (
-            <SegmentButton
-              key={value}
-              $active={period === value}
-              onClick={() => {
-                setPeriod(value);
-                setPage(1);
-              }}
-            >
-              {value === "all" ? "All time" : value === "month" ? "Month" : "Week"}
-            </SegmentButton>
-          ))}
-        </Segmented>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <TabBar<Period>
+          aria-label="Period"
+          size="sm"
+          tabs={[
+            { id: "all", label: "All time" },
+            { id: "month", label: "Month" },
+            { id: "week", label: "Week" },
+          ]}
+          activeTab={period}
+          onTabChange={(value) => { setPeriod(value); setPage(1); }}
+        />
 
-        <Actions>
-          <SearchWrapper>
+        <div className="flex flex-wrap items-center gap-2 max-[560px]:w-full">
+          <div className="flex h-[38px] flex-1 items-center gap-2 rounded-lg border border-line bg-surface px-2.5 max-[560px]:w-full">
             <SearchIcon size={16} />
-            <SearchInput
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search members"
-            />
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search members" className="w-[160px] flex-1 border-0 bg-transparent text-sm text-foreground outline-none placeholder:text-muted" />
             {search && (
-              <Button onClick={() => setSearch("")} aria-label="Clear search">
+              <button onClick={() => setSearch("")} aria-label="Clear search" className="text-muted hover:text-foreground">
                 <XIcon size={16} />
-              </Button>
+              </button>
             )}
-          </SearchWrapper>
-          <Segmented aria-label="Sort">
-            {(["tokens", "cost"] as SortBy[]).map((value) => (
-              <SegmentButton
-                key={value}
-                $active={sortBy === value}
-                onClick={() => {
-                  setSortBy(value);
-                  setPage(1);
-                }}
-              >
-                {value === "tokens" ? "Tokens" : "Cost"}
-              </SegmentButton>
-            ))}
-          </Segmented>
-        </Actions>
-      </Toolbar>
+          </div>
+          <TabBar<SortBy>
+            aria-label="Sort"
+            size="sm"
+            tabs={[
+              { id: "tokens", label: "Tokens" },
+              { id: "cost", label: "Cost" },
+            ]}
+            activeTab={sortBy}
+            onTabChange={(value) => { setSortBy(value); setPage(1); }}
+          />
+        </div>
+      </div>
 
-      <TableContainer>
+      <div className="overflow-hidden rounded-xl border border-line bg-surface">
         {error ? (
-          <EmptyState>{error}</EmptyState>
+          <div className="p-8 text-center text-muted">{error}</div>
         ) : isLoading ? (
-          <EmptyState>Loading leaderboard...</EmptyState>
+          <div className="p-8 text-center text-muted">Loading leaderboard...</div>
         ) : sortedUsers.length === 0 ? (
-          <EmptyState>No submitted usage for this group yet.</EmptyState>
+          <div className="p-8 text-center text-muted">No submitted usage for this group yet.</div>
         ) : (
-          <TableWrapper>
-            <Table>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[680px]">
               <thead>
                 <tr>
-                  <Th>Rank</Th>
-                  <Th>User</Th>
-                  <Th>Role</Th>
-                  <Th className="right">Cost</Th>
-                  <Th className="right">Tokens</Th>
-                  {showSubmissionCount && <Th className="right">Submits</Th>}
+                  <th className={thClass}>Rank</th>
+                  <th className={thClass}>User</th>
+                  <th className={thClass}>Role</th>
+                  <th className={`${thClass} text-right`}>Cost</th>
+                  <th className={`${thClass} text-right`}>Tokens</th>
+                  {showSubmissionCount && <th className={`${thClass} text-right`}>Submits</th>}
                 </tr>
               </thead>
               <tbody>
@@ -655,10 +292,10 @@ export default function GroupDetailClient({
                   <GroupRow key={user.userId} user={user} showSubmissionCount={showSubmissionCount} />
                 ))}
               </tbody>
-            </Table>
-          </TableWrapper>
+            </table>
+          </div>
         )}
-      </TableContainer>
+      </div>
     </>
   );
 }

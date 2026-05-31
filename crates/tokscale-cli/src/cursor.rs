@@ -14,9 +14,9 @@ use std::time::{Duration, SystemTime};
 const CURSOR_HTTP_TIMEOUT: Duration = Duration::from_secs(8);
 
 /// Skip implicit pre-report sync when every expected Cursor account cache file
-/// was modified within this window. Prevents `tokscale models` (and its
+/// was modified within this window. Prevents `tokens models` (and its
 /// siblings) from issuing a Cursor API call on every invocation. The manual
-/// `tokscale cursor sync` command bypasses this — explicit user intent is
+/// `tokens cursor sync` command bypasses this — explicit user intent is
 /// always honored.
 pub const CURSOR_AUTO_SYNC_FRESHNESS: Duration = Duration::from_secs(5 * 60);
 
@@ -32,19 +32,19 @@ fn home_dir() -> Result<PathBuf> {
 }
 
 fn cursor_credentials_path(home_dir: &Path) -> PathBuf {
-    home_dir.join(".config/tokscale/cursor-credentials.json")
+    home_dir.join(".config/tokens/cursor-credentials.json")
 }
 
 fn old_cursor_credentials_path(home_dir: &Path) -> PathBuf {
-    home_dir.join(".tokscale/cursor-credentials.json")
+    home_dir.join(".tokens/cursor-credentials.json")
 }
 
 fn cursor_cache_dir(home_dir: &Path) -> PathBuf {
-    home_dir.join(".config/tokscale/cursor-cache")
+    home_dir.join(".config/tokens/cursor-cache")
 }
 
 fn old_cursor_cache_dir(home_dir: &Path) -> PathBuf {
-    home_dir.join(".tokscale/cursor-cache")
+    home_dir.join(".tokens/cursor-cache")
 }
 
 const USAGE_CSV_ENDPOINT: &str =
@@ -225,7 +225,7 @@ fn atomic_write_file(path: &std::path::Path, contents: &str) -> Result<()> {
 }
 
 fn ensure_config_dir_in_home(home_dir: &Path) -> Result<()> {
-    let config_dir = home_dir.join(".config/tokscale");
+    let config_dir = home_dir.join(".config/tokens");
 
     if !config_dir.exists() {
         fs::create_dir_all(&config_dir)?;
@@ -747,7 +747,7 @@ fn cursor_usage_cache_is_fresh_in(home_dir: &Path, max_age: Duration) -> bool {
 /// account, persistent API failure) the marker short-circuits the check so we
 /// don't force an implicit sync on every invocation. Used by the implicit
 /// pre-report sync path to avoid hitting the Cursor API on every invocation.
-/// The manual `tokscale cursor sync` CLI bypasses this — explicit user intent
+/// The manual `tokens cursor sync` CLI bypasses this — explicit user intent
 /// is always honored.
 pub fn cursor_usage_cache_is_fresh(max_age: Duration) -> bool {
     let Ok(home_dir) = home_dir() else {
@@ -869,7 +869,7 @@ pub async fn fetch_cursor_usage_csv(session_token: &str) -> Result<String> {
         || response.status() == reqwest::StatusCode::FORBIDDEN
     {
         anyhow::bail!(
-            "Cursor session expired. Please run 'bunx tokscale@latest cursor login' to re-authenticate."
+            "Cursor session expired. Please run 'tokens cursor login' to re-authenticate."
         );
     }
 
@@ -1068,7 +1068,7 @@ pub fn run_cursor_login(name: Option<String>) -> Result<()> {
             println!(
                 "  {}",
                 format!(
-                    "Account '{}' already exists. Use 'bunx tokscale@latest cursor logout --name {}' first.",
+                    "Account '{}' already exists. Use 'tokens cursor logout --name {}' first.",
                     label, label
                 )
                 .yellow()
@@ -1189,7 +1189,7 @@ pub fn run_cursor_status(name: Option<String>) -> Result<()> {
                 println!("\n  {}", "No saved Cursor accounts.".yellow());
                 println!(
                     "{}",
-                    "  Run 'bunx tokscale@latest cursor login' to authenticate.\n".bright_black()
+                    "  Run 'tokens cursor login' to authenticate.\n".bright_black()
                 );
             }
             return Ok(());

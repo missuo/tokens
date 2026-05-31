@@ -3,110 +3,6 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "nextjs-toploader/app";
-import styled from "styled-components";
-
-const Shell = styled.section`
-  max-width: 680px;
-  margin: 32px 0;
-`;
-
-const Title = styled.h1`
-  margin: 0 0 8px;
-  color: var(--color-fg-default);
-  font-size: 30px;
-  font-weight: 700;
-`;
-
-const Description = styled.p`
-  margin: 0 0 24px;
-  color: var(--color-fg-muted);
-  line-height: 1.6;
-`;
-
-const Form = styled.form`
-  display: grid;
-  gap: 16px;
-  padding: 20px;
-  border: 1px solid var(--color-border-default);
-  border-radius: 8px;
-  background: var(--color-bg-default);
-`;
-
-const Field = styled.label`
-  display: grid;
-  gap: 8px;
-  color: var(--color-fg-default);
-  font-size: 14px;
-  font-weight: 600;
-`;
-
-const Input = styled.input`
-  min-height: 40px;
-  padding: 0 12px;
-  border: 1px solid var(--color-border-default);
-  border-radius: 8px;
-  background: var(--color-bg-subtle);
-  color: var(--color-fg-default);
-  font: inherit;
-`;
-
-const Textarea = styled.textarea`
-  min-height: 96px;
-  padding: 10px 12px;
-  border: 1px solid var(--color-border-default);
-  border-radius: 8px;
-  background: var(--color-bg-subtle);
-  color: var(--color-fg-default);
-  font: inherit;
-  resize: vertical;
-`;
-
-const CheckboxLabel = styled.label`
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  color: var(--color-fg-default);
-  font-size: 14px;
-`;
-
-const Actions = styled.div`
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  flex-wrap: wrap;
-`;
-
-const Button = styled.button`
-  min-height: 40px;
-  padding: 0 16px;
-  border-radius: 8px;
-  border: 1px solid var(--color-primary);
-  background: var(--color-primary);
-  color: #fff;
-  font-weight: 600;
-  cursor: pointer;
-
-  &:disabled {
-    cursor: not-allowed;
-    opacity: 0.65;
-  }
-`;
-
-const SecondaryLink = styled(Link)`
-  display: inline-flex;
-  align-items: center;
-  min-height: 40px;
-  padding: 0 16px;
-  border-radius: 8px;
-  border: 1px solid var(--color-border-default);
-  color: var(--color-fg-default);
-  text-decoration: none;
-`;
-
-const ErrorText = styled.p`
-  margin: 0;
-  color: var(--color-danger-fg, #f85149);
-`;
 
 export default function CreateGroupClient() {
   const router = useRouter();
@@ -120,23 +16,14 @@ export default function CreateGroupClient() {
     event.preventDefault();
     setIsSubmitting(true);
     setError(null);
-
     try {
       const response = await fetch("/api/groups", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name,
-          description,
-          isPublic,
-        }),
+        body: JSON.stringify({ name, description, isPublic }),
       });
       const payload = await response.json();
-
-      if (!response.ok) {
-        throw new Error(payload.error || "Failed to create group");
-      }
-
+      if (!response.ok) throw new Error(payload.error || "Failed to create group");
       router.push(`/groups/${payload.slug}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create group");
@@ -144,48 +31,39 @@ export default function CreateGroupClient() {
     }
   }
 
-  return (
-    <Shell>
-      <Title>Create group</Title>
-      <Description>
-        Start a scoped leaderboard and invite people by link or GitHub username.
-      </Description>
+  const fieldClass = "min-h-10 rounded-lg border border-line bg-surface-secondary px-3 py-2 text-sm text-foreground outline-none transition focus:border-accent focus:ring-2 focus:ring-accent/25";
 
-      <Form onSubmit={handleSubmit}>
-        <Field>
+  return (
+    <section className="mx-auto max-w-[640px]">
+      <h1 className="text-2xl font-bold tracking-tight text-foreground sm:text-[1.75rem]">Create group</h1>
+      <p className="mt-1 mb-6 text-sm leading-relaxed text-muted">Start a scoped leaderboard and invite people by link or GitHub username.</p>
+
+      <form onSubmit={handleSubmit} className="grid gap-4 rounded-xl border border-line bg-surface p-5">
+        <label className="grid gap-2 text-sm font-semibold text-foreground">
           Group name
-          <Input
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-            maxLength={100}
-            required
-            autoFocus
-          />
-        </Field>
-        <Field>
-          Description
-          <Textarea
-            value={description}
-            onChange={(event) => setDescription(event.target.value)}
-            maxLength={500}
-          />
-        </Field>
-        <CheckboxLabel>
-          <input
-            type="checkbox"
-            checked={isPublic}
-            onChange={(event) => setIsPublic(event.target.checked)}
-          />
-          Make this group public
-        </CheckboxLabel>
-        {error && <ErrorText>{error}</ErrorText>}
-        <Actions>
-          <SecondaryLink href="/groups">Cancel</SecondaryLink>
-          <Button disabled={isSubmitting || !name.trim()} type="submit">
+          <input value={name} onChange={(e) => setName(e.target.value)} maxLength={100} required autoFocus placeholder="e.g. My Team" className={fieldClass} />
+        </label>
+        <label className="grid gap-2 text-sm font-semibold text-foreground">
+          Description <span className="font-normal text-muted">(optional)</span>
+          <textarea value={description} onChange={(e) => setDescription(e.target.value)} maxLength={500} className={`${fieldClass} min-h-24 resize-y`} />
+        </label>
+        <label className="flex items-start gap-2.5 text-sm text-foreground">
+          <input type="checkbox" checked={isPublic} onChange={(e) => setIsPublic(e.target.checked)} className="mt-0.5 accent-[var(--accent)]" />
+          <span>
+            Make this group public
+            <span className="mt-0.5 block text-xs font-normal text-muted">Anyone can discover and join. Private groups are invite-only.</span>
+          </span>
+        </label>
+        {error && <p className="text-sm text-danger">{error}</p>}
+        <div className="mt-1 flex flex-wrap justify-end gap-2">
+          <Link href="/leaderboard?view=groups" className="inline-flex h-10 items-center rounded-lg border border-line px-4 text-sm font-medium text-foreground transition hover:bg-surface-secondary">
+            Cancel
+          </Link>
+          <button disabled={isSubmitting || !name.trim()} type="submit" className="h-10 rounded-lg bg-accent px-4 text-sm font-semibold text-accent-foreground transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-65">
             {isSubmitting ? "Creating..." : "Create group"}
-          </Button>
-        </Actions>
-      </Form>
-    </Shell>
+          </button>
+        </div>
+      </form>
+    </section>
   );
 }

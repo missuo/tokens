@@ -1,6 +1,5 @@
 "use client";
 
-import styled from "styled-components";
 import type { ViewMode, ColorPaletteName, ClientType, GraphColorPalette } from "@/lib/types";
 import { getPaletteNames, colorPalettes } from "@/lib/themes";
 import { SOURCE_DISPLAY_NAMES, SOURCE_LOGOS } from "@/lib/constants";
@@ -20,232 +19,6 @@ interface GraphControlsProps {
   palette: GraphColorPalette;
   totalTokens: number;
 }
-
-const Container = styled.div`
-  position: relative;
-  margin-bottom: 16px;
-`;
-
-const ViewModeGroup = styled.div`
-  float: right;
-  margin-top: 4px;
-  margin-left: 16px;
-  position: relative;
-  top: 0;
-  display: flex;
-`;
-
-const ViewModeButton = styled.button<{ $isActive: boolean; $position: 'left' | 'right' }>`
-  padding: 6px 12px;
-  font-size: 12px;
-  font-weight: 600;
-  border: 1px solid;
-  transition: all 200ms;
-  
-  ${({ $position }) => $position === 'left' 
-    ? 'border-radius: 9999px 0 0 9999px;' 
-    : 'border-radius: 0 9999px 9999px 0; border-left: none;'
-  }
-  
-  &:focus-visible {
-    outline: none;
-    box-shadow: 0 0 0 2px #3b82f6;
-    position: relative;
-    z-index: 1;
-  }
-`;
-
-const PaletteSelectContainer = styled.div`
-  float: right;
-  margin-top: 4px;
-  margin-left: 12px;
-`;
-
-const PaletteSelect = styled.select`
-  font-size: 12px;
-  padding: 6px 8px;
-  border-radius: 8px;
-  border: 1px solid;
-  cursor: pointer;
-  font-weight: 500;
-  transition: all 200ms;
-  
-  &:hover {
-    border-color: #a3a3a3;
-  }
-  
-  &:focus-visible {
-    outline: none;
-    box-shadow: 0 0 0 2px #3b82f6;
-  }
-`;
-
-const Title = styled.h2`
-  font-size: 18px;
-  font-weight: 500;
-  margin-bottom: 12px;
-`;
-
-const TitleBold = styled.span`
-  font-weight: 700;
-`;
-
-const YearSelect = styled.select`
-  font-weight: 700;
-  border: none;
-  cursor: pointer;
-  text-decoration: underline;
-  text-decoration-style: dotted;
-  text-decoration-thickness: 2px;
-  text-underline-offset: 4px;
-  background-color: transparent;
-  
-  &:focus-visible {
-    outline: none;
-    box-shadow: 0 0 0 2px #3b82f6;
-  }
-`;
-
-const YearOption = styled.option``;
-
-const ClearBoth = styled.div`
-  clear: both;
-`;
-
-const FiltersWrapper = styled.div`
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-top: 12px;
-
-  @media (max-width: 560px) {
-    flex-direction: column;
-    align-items: stretch;
-    justify-content: flex-start;
-    gap: 8px;
-  }
-`;
-
-const SourceFilterGroup = styled.div`
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  max-width: 100%;
-  overflow-x: auto;
-  overflow-y: hidden;
-  -webkit-overflow-scrolling: touch;
-  scrollbar-width: none;
-  padding-bottom: 4px;
-
-  &::-webkit-scrollbar {
-    display: none;
-  }
-
-  @media (max-width: 560px) {
-    flex-wrap: nowrap;
-  }
-`;
-
-const FilterLabel = styled.span`
-  font-size: 12px;
-  font-weight: 600;
-  flex-shrink: 0;
-  white-space: nowrap;
-`;
-
-const SourceFilterButton = styled.button<{ $isSelected: boolean }>`
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 12px 4px 6px;
-  font-size: 12px;
-  border-radius: 9999px;
-  transition: all 200ms;
-  font-weight: ${({ $isSelected }) => $isSelected ? '600' : '400'};
-  opacity: ${({ $isSelected }) => $isSelected ? '1' : '0.5'};
-  border: 1.5px solid;
-  flex: 0 0 auto;
-  touch-action: manipulation;
-  
-  &:hover {
-    transform: scale(1.05);
-  }
-  
-  &:focus-visible {
-    outline: none;
-    box-shadow: 0 0 0 2px #3b82f6;
-  }
-
-  @media (max-width: 400px) {
-    padding: 4px 10px 4px 4px;
-  }
-`;
-
-const SourceLogo = styled.img`
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  object-fit: cover;
-  flex-shrink: 0;
-`;
-
-const ActionButton = styled.button`
-  padding: 4px 12px;
-  font-size: 12px;
-  font-weight: 500;
-  border-radius: 9999px;
-  transition: colors 200ms;
-  border: none;
-  background: transparent;
-  
-  &:hover {
-    background-color: rgba(0, 0, 0, 0.05);
-  }
-  
-  @media (prefers-color-scheme: dark) {
-    &:hover {
-      background-color: rgba(255, 255, 255, 0.1);
-    }
-  }
-  
-  &:focus-visible {
-    outline: none;
-    box-shadow: 0 0 0 2px #3b82f6;
-  }
-`;
-
-const LegendContainer = styled.div`
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-left: auto;
-
-  @media (max-width: 560px) {
-    margin-left: 0;
-    width: 100%;
-    justify-content: flex-end;
-    min-width: 0;
-  }
-`;
-
-const LegendText = styled.span`
-  font-size: 12px;
-  font-weight: 500;
-`;
-
-const LegendBox = styled.div`
-  width: 12px;
-  height: 12px;
-  border-radius: 6px;
-  transition: transform 200ms;
-  
-  &:hover {
-    transform: scale(1.1);
-  }
-`;
 
 export function GraphControls({
   view,
@@ -272,131 +45,122 @@ export function GraphControls({
   };
 
   return (
-    <Container>
-      <ViewModeGroup role="group" aria-label="View mode">
-        <ViewModeButton
-          $isActive={view === "2d"}
-          $position="left"
+    <div className="relative mb-4">
+      <div role="group" aria-label="View mode" className="float-right mt-1 ml-4 flex">
+        <button
           onClick={() => onViewChange("2d")}
           aria-pressed={view === "2d"}
           aria-label="2D view"
+          className="rounded-l-full border px-3 py-1.5 text-xs font-semibold transition"
           style={{
-            backgroundColor: view === "2d" ? palette.grade3 : "var(--color-bg-button)",
-            color: view === "2d" ? "#fff" : "var(--color-fg-default)",
-            borderColor: view === "2d" ? palette.grade3 : "var(--color-border-default)",
+            backgroundColor: view === "2d" ? palette.grade3 : "var(--surface-tertiary)",
+            color: view === "2d" ? "#fff" : "var(--foreground)",
+            borderColor: view === "2d" ? palette.grade3 : "var(--border)",
           }}
         >
           2D
-        </ViewModeButton>
-        <ViewModeButton
-          $isActive={view === "3d"}
-          $position="right"
+        </button>
+        <button
           onClick={() => onViewChange("3d")}
           aria-pressed={view === "3d"}
           aria-label="3D view"
+          className="rounded-r-full border border-l-0 px-3 py-1.5 text-xs font-semibold transition"
           style={{
-            backgroundColor: view === "3d" ? palette.grade3 : "var(--color-bg-button)",
-            color: view === "3d" ? "#fff" : "var(--color-fg-default)",
-            borderColor: view === "3d" ? palette.grade3 : "var(--color-border-default)",
+            backgroundColor: view === "3d" ? palette.grade3 : "var(--surface-tertiary)",
+            color: view === "3d" ? "#fff" : "var(--foreground)",
+            borderColor: view === "3d" ? palette.grade3 : "var(--border)",
           }}
         >
           3D
-        </ViewModeButton>
-      </ViewModeGroup>
+        </button>
+      </div>
 
-      <PaletteSelectContainer>
-        <PaletteSelect
+      <div className="float-right mt-1 ml-3">
+        <select
           value={paletteName}
           onChange={(e) => onPaletteChange(e.target.value as ColorPaletteName)}
           aria-label="Color palette"
-          style={{
-            borderColor: "var(--color-border-default)",
-            color: "var(--color-fg-default)",
-            backgroundColor: "var(--color-bg-button)",
-          }}
+          className="cursor-pointer rounded-lg border border-line bg-[var(--surface-tertiary)] px-2 py-1.5 text-xs font-medium text-foreground"
         >
           {paletteNames.map((name) => (
-            <option key={name} value={name}>{colorPalettes[name].name}</option>
+            <option key={name} value={name}>
+              {colorPalettes[name].name}
+            </option>
           ))}
-        </PaletteSelect>
-      </PaletteSelectContainer>
+        </select>
+      </div>
 
-      <Title style={{ color: "var(--color-fg-default)" }}>
-        <TitleBold style={{ color: palette.grade1 }}>{formatTokenCount(totalTokens)}</TitleBold>
-        {" "}tokens used
+      <h2 className="mb-3 text-lg font-medium text-foreground">
+        <span className="font-mono font-bold text-accent tabular-nums">
+          {formatTokenCount(totalTokens)}
+        </span>{" "}
+        tokens used
         {selectedYear && (
           <>
-            {" "}in{" "}
+            {" "}
+            in{" "}
             {availableYears.length > 1 ? (
-              <YearSelect
+              <select
                 value={selectedYear}
                 onChange={(e) => onYearChange(e.target.value)}
                 aria-label="Select year"
-                style={{ color: "var(--color-fg-default)" }}
+                className="cursor-pointer border-none bg-transparent font-bold text-foreground underline decoration-dotted decoration-2 underline-offset-4"
               >
                 {availableYears.map((year) => (
-                  <YearOption key={year} value={year} style={{ backgroundColor: "var(--color-canvas-default)" }}>{year}</YearOption>
+                  <option key={year} value={year} className="bg-surface">
+                    {year}
+                  </option>
                 ))}
-              </YearSelect>
+              </select>
             ) : (
-              <TitleBold>{selectedYear}</TitleBold>
+              <span className="font-bold">{selectedYear}</span>
             )}
           </>
         )}
-      </Title>
+      </h2>
 
-      <ClearBoth />
+      <div className="clear-both" />
 
-      <FiltersWrapper>
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-3 max-[560px]:flex-col max-[560px]:items-stretch max-[560px]:justify-start max-[560px]:gap-2">
         {availableClients.length > 1 && (
-          <SourceFilterGroup role="group" aria-label="Client filters">
-            <FilterLabel id="client-filter-label" style={{ color: "var(--color-fg-muted)" }}>Filter:</FilterLabel>
+          <div role="group" aria-label="Client filters" className="flex max-w-full flex-wrap items-center gap-2 overflow-x-auto pb-1 max-[560px]:flex-nowrap [&::-webkit-scrollbar]:hidden">
+            <span className="shrink-0 text-xs font-semibold whitespace-nowrap text-muted">Filter:</span>
             {availableClients.map((client) => {
               const isSelected = clientFilter.length === 0 || clientFilter.includes(client);
               return (
-                <SourceFilterButton
+                <button
                   key={client}
-                  $isSelected={isSelected}
                   onClick={() => handleClientToggle(client)}
                   aria-pressed={isSelected}
                   aria-label={`Filter by ${SOURCE_DISPLAY_NAMES[client] || client}`}
+                  className={`flex flex-none items-center gap-1.5 rounded-full border-[1.5px] py-1 pr-3 pl-1.5 text-xs transition hover:scale-105 ${isSelected ? "font-semibold opacity-100" : "font-normal opacity-50"}`}
                   style={{
                     backgroundColor: isSelected ? `${palette.grade3}30` : "transparent",
-                    color: "var(--color-fg-default)",
-                    borderColor: isSelected ? palette.grade3 : "var(--color-border-default)",
+                    color: "var(--foreground)",
+                    borderColor: isSelected ? palette.grade3 : "var(--border)",
                   }}
                 >
                   {SOURCE_LOGOS[client] && (
-                    <SourceLogo
-                      src={SOURCE_LOGOS[client]}
-                      alt={`${SOURCE_DISPLAY_NAMES[client] || client} logo`}
-                    />
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={SOURCE_LOGOS[client]} alt={`${SOURCE_DISPLAY_NAMES[client] || client} logo`} className="h-5 w-5 shrink-0 rounded-full object-cover" />
                   )}
                   {SOURCE_DISPLAY_NAMES[client] || client}
-                </SourceFilterButton>
+                </button>
               );
             })}
             {clientFilter.length > 0 && clientFilter.length < availableClients.length && (
-              <ActionButton
-                onClick={() => onClientFilterChange([...availableClients])}
-                aria-label="Show all clients"
-                style={{ color: "var(--color-fg-muted)" }}
-              >
+              <button onClick={() => onClientFilterChange([...availableClients])} aria-label="Show all clients" className="rounded-full px-3 py-1 text-xs font-medium text-muted transition hover:bg-foreground/10">
                 Show all
-              </ActionButton>
+              </button>
             )}
             {clientFilter.length === availableClients.length && (
-              <ActionButton
-                onClick={() => onClientFilterChange([])}
-                aria-label="Clear all client filters"
-                style={{ color: "var(--color-fg-muted)" }}
-              >
+              <button onClick={() => onClientFilterChange([])} aria-label="Clear all client filters" className="rounded-full px-3 py-1 text-xs font-medium text-muted transition hover:bg-foreground/10">
                 Clear
-              </ActionButton>
+              </button>
             )}
-          </SourceFilterGroup>
+          </div>
         )}
-      </FiltersWrapper>
-    </Container>
+      </div>
+    </div>
   );
 }

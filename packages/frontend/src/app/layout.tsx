@@ -4,6 +4,7 @@ import NextTopLoader from "nextjs-toploader";
 import { ToastContainer } from "react-toastify";
 import { Analytics } from "@vercel/analytics/next";
 import { Providers } from "@/lib/providers";
+import { Navigation } from "@/components/layout/Navigation";
 import "./globals.css";
 import "react-toastify/dist/ReactToastify.css";
 
@@ -14,15 +15,15 @@ const figtree = Figtree({
 });
 
 const jetbrainsMono = JetBrains_Mono({
-  variable: "--font-mono",
+  variable: "--font-jetbrains",
   subsets: ["latin"],
   display: "swap",
 });
 
 export const metadata: Metadata = {
-  title: "Tokscale - AI Token Usage Tracker & Leaderboard",
+  title: "Tokens - AI Token Usage Tracker & Leaderboard",
   description: "Track, visualize, and compete on AI coding assistant token usage across Claude Code, Cursor, OpenCode, Codex, Gemini, Kimi, and Qwen. The Kardashev Scale for AI Devs.",
-  metadataBase: new URL("https://tokscale.ai"),
+  metadataBase: new URL("https://tokens.ci"),
   icons: {
     icon: [
       { url: "/favicon-16x16.png", sizes: "16x16", type: "image/png" },
@@ -32,25 +33,25 @@ export const metadata: Metadata = {
   },
   manifest: "/site.webmanifest",
   openGraph: {
-    title: "Tokscale - AI Token Usage Tracker & Leaderboard",
+    title: "Tokens - AI Token Usage Tracker & Leaderboard",
     description: "Track, visualize, and compete on AI coding assistant token usage across Claude Code, Cursor, OpenCode, Codex, Gemini, Kimi, and Qwen. The Kardashev Scale for AI Devs.",
     type: "website",
-    url: "https://tokscale.ai",
-    siteName: "Tokscale",
+    url: "https://tokens.ci",
+    siteName: "Tokens",
     images: [
       {
-        url: "https://tokscale.ai/og-image.png",
+        url: "https://tokens.ci/og-image.png",
         width: 1200,
         height: 630,
-        alt: "Tokscale - AI Token Usage Tracker",
+        alt: "Tokens - AI Token Usage Tracker",
       },
     ],
   },
   twitter: {
     card: "summary_large_image",
-    title: "Tokscale - AI Token Usage Tracker & Leaderboard",
+    title: "Tokens - AI Token Usage Tracker & Leaderboard",
     description: "Track, visualize, and compete on AI coding assistant token usage across Claude Code, Cursor, OpenCode, Codex, Gemini, Kimi, and Qwen.",
-    images: ["https://tokscale.ai/og-image.png"],
+    images: ["https://tokens.ci/og-image.png"],
   },
 };
 
@@ -61,13 +62,21 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" className={`${figtree.variable} ${jetbrainsMono.variable}`}>
-      <body className={figtree.className}>
-        <NextTopLoader color="#3B82F6" showSpinner={false} />
+    <html
+      lang="en"
+      suppressHydrationWarning
+      className={`${figtree.variable} ${jetbrainsMono.variable}`}
+    >
+      <body className="font-sans">
+        <NextTopLoader color="#0073FF" showSpinner={false} />
         <Providers>
+          {/* Rendered once here so it persists across route changes (no remount
+              flicker) and switching Leaderboard <-> Profile is a seamless
+              client-side transition. */}
+          <Navigation />
           {children}
         </Providers>
-        <ToastContainer position="top-right" />
+        <ToastContainer position="top-right" theme="dark" />
         <Analytics />
       </body>
     </html>

@@ -82,7 +82,7 @@ export function renderVitalsEmbedSvg(
   const add = (s: string) => parts.push(s);
 
   add(`<?xml version="1.0" encoding="UTF-8"?>`);
-  add(`<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Tokscale activity rings for @${escapeXml(data.user.username)}">`);
+  add(`<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Tokens activity rings for @${escapeXml(data.user.username)}">`);
   add(`  <defs>`);
   add(`    <style>@import url('${FIGTREE_FONT_IMPORT}');</style>`);
   add(`    <linearGradient id="bg" x1="0" y1="0" x2="${W}" y2="${H}" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="${palette.bgStart}"/><stop offset="1" stop-color="${palette.bgEnd}"/></linearGradient>`);
@@ -121,7 +121,7 @@ export function renderVitalsEmbedSvg(
 
   // Footer.
   add(`  <text x="${PAD}" y="${H - 16}" fill="${palette.muted}" font-size="11" font-family="${FIGTREE_FONT_STACK}">${updated}</text>`);
-  add(`  <text x="${W - PAD}" y="${H - 16}" fill="${palette.muted}" font-size="11" text-anchor="end" font-family="${FIGTREE_FONT_STACK}">tokscale.ai/u/${escapeXml(data.user.username)}</text>`);
+  add(`  <text x="${W - PAD}" y="${H - 16}" fill="${palette.muted}" font-size="11" text-anchor="end" font-family="${FIGTREE_FONT_STACK}">tokens.ci/u/${escapeXml(data.user.username)}</text>`);
   add(`</svg>`);
 
   return parts.join("\n");

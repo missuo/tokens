@@ -1,18 +1,10 @@
 "use client";
 
-import styled from "styled-components";
-
 interface ProviderLogoProps {
   providerId: string;
   height?: number;
   className?: string;
 }
-
-const MonoLogoWrapper = styled.svg`
-  color: white;
-`;
-
-const DefaultProviderName = styled.span``;
 
 export function ProviderLogo({ providerId, height = 12, className = "" }: ProviderLogoProps) {
   const normalizedId = providerId.toLowerCase();
@@ -25,14 +17,14 @@ export function ProviderLogo({ providerId, height = 12, className = "" }: Provid
     case "openai":
       return <OpenAILogo height={height} className={className} />;
     default:
-      return <DefaultProviderName className={className}>{providerId}</DefaultProviderName>;
+      return <span className={className}>{providerId}</span>;
   }
 }
 
 function AnthropicLogo({ height, className }: { height: number; className: string }) {
   const width = (height * 1024.2) / 115;
   return (
-    <MonoLogoWrapper
+    <svg
       xmlns="http://www.w3.org/2000/svg"
       width={width}
       height={height}
@@ -49,16 +41,15 @@ function AnthropicLogo({ height, className }: { height: number; className: strin
       <path fill="currentColor" d="M846.934,1.9061,891.25,113.094h24.302L871.236,1.9061Z" />
       <path fill="currentColor" d="M796.74,1.9061H742.417V113.094h23.826V72.7486H796.74c25.256,0,40.663-13.3425,40.663-35.4213S821.996,1.9061,796.74,1.9061Zm-1.112,49.3991H766.243V23.3494h29.385c11.755,0,17.949,4.7652,17.949,13.9779S807.383,51.3052,795.628,51.3052Z" />
       <path fill="currentColor" d="M592.631,35.7389c0-20.9668-15.407-33.8328-40.663-33.8328H497.645V113.094h23.826V69.5718h26.525l23.827,43.5222h26.368L571.807,66.2568C585.05,61.166,592.631,50.4459,592.631,35.7389Zm-71.16-12.39h29.385c11.754,0,17.949,4.2887,17.949,12.39s-6.195,12.39-17.949,12.39H521.471Z" />
-    </MonoLogoWrapper>
+    </svg>
   );
 }
 
-const StyledSvg = styled.svg``;
 
 function GoogleLogo({ height, className }: { height: number; className: string }) {
   const width = (height * 74) / 24;
   return (
-    <StyledSvg
+    <svg
       xmlns="http://www.w3.org/2000/svg"
       width={width}
       height={height}
@@ -72,13 +63,13 @@ function GoogleLogo({ height, className }: { height: number; className: string }
       <path fill="#FBBC05" d="M38 6.19c-3.21 0-5.83 2.44-5.83 5.81 0 3.34 2.62 5.81 5.83 5.81s5.83-2.46 5.83-5.81c0-3.37-2.62-5.81-5.83-5.81zm0 9.33c-1.76 0-3.28-1.45-3.28-3.52 0-2.09 1.52-3.52 3.28-3.52s3.28 1.43 3.28 3.52c0 2.07-1.52 3.52-3.28 3.52z" />
       <path fill="#34A853" d="M58 .24h2.51v17.57H58z" />
       <path fill="#EA4335" d="M68.26 15.52c-1.3 0-2.22-.59-2.82-1.76l7.77-3.21-.26-.66c-.48-1.3-1.96-3.7-4.97-3.7-2.99 0-5.48 2.35-5.48 5.81 0 3.26 2.46 5.81 5.76 5.81 2.66 0 4.2-1.63 4.84-2.57l-1.98-1.32c-.66.96-1.56 1.6-2.86 1.6zm-.18-7.15c1.03 0 1.91.53 2.2 1.28l-5.25 2.17c0-2.44 1.73-3.45 3.05-3.45z" />
-    </StyledSvg>
+    </svg>
   );
 }
 
 function OpenAILogo({ height, className }: { height: number; className: string }) {
   return (
-    <MonoLogoWrapper
+    <svg
       xmlns="http://www.w3.org/2000/svg"
       width={height}
       height={height}
@@ -90,6 +81,6 @@ function OpenAILogo({ height, className }: { height: number; className: string }
         fill="currentColor"
         d="m297.06 130.97c7.26-21.79 4.76-45.66-6.85-65.48-17.46-30.4-52.56-46.04-86.84-38.68-15.25-17.18-37.16-26.95-60.13-26.81-35.04-.08-66.13 22.48-76.91 55.82-22.51 4.61-41.94 18.7-53.31 38.67-17.59 30.32-13.58 68.54 9.92 94.54-7.26 21.79-4.76 45.66 6.85 65.48 17.46 30.4 52.56 46.04 86.84 38.68 15.24 17.18 37.16 26.95 60.13 26.8 35.06.09 66.16-22.49 76.94-55.86 22.51-4.61 41.94-18.7 53.31-38.67 17.57-30.32 13.55-68.51-9.94-94.51zm-120.28 168.11c-14.03.02-27.62-4.89-38.39-13.88.49-.26 1.34-.73 1.89-1.07l63.72-36.8c3.26-1.85 5.26-5.32 5.24-9.07v-89.83l26.93 15.55c.29.14.48.42.52.74v74.39c-.04 33.08-26.83 59.9-59.91 59.97zm-128.84-55.03c-7.03-12.14-9.56-26.37-7.15-40.18.47.28 1.3.79 1.89 1.13l63.72 36.8c3.23 1.89 7.23 1.89 10.47 0l77.79-44.92v31.1c.02.32-.13.63-.38.83l-64.41 37.19c-28.69 16.52-65.33 6.7-81.92-21.95zm-16.77-139.09c7-12.16 18.05-21.46 31.21-26.29 0 .55-.03 1.52-.03 2.2v73.61c-.02 3.74 1.98 7.21 5.23 9.06l77.79 44.91-26.93 15.55c-.27.18-.61.21-.91.08l-64.42-37.22c-28.63-16.58-38.45-53.21-21.95-81.89zm221.26 51.49-77.79-44.92 26.93-15.54c.27-.18.61-.21.91-.08l64.42 37.19c28.68 16.57 38.51 53.26 21.94 81.94-7.01 12.14-18.05 21.44-31.20 26.28v-75.81c.03-3.74-1.96-7.2-5.2-9.06zm26.80-40.34c-.47-.29-1.3-.79-1.89-1.13l-63.72-36.8c-3.23-1.89-7.23-1.89-10.47 0l-77.79 44.92v-31.1c-.02-.32.13-.63.38-.83l64.41-37.16c28.69-16.55 65.37-6.7 81.91 22 6.99 12.12 9.52 26.31 7.15 40.1zm-168.51 55.43-26.94-15.55c-.29-.14-.48-.42-.52-.74v-74.39c.02-33.12 26.89-59.96 60.01-59.94 14.01 0 27.57 4.92 38.34 13.88-.49.26-1.33.73-1.89 1.07l-63.72 36.8c-3.26 1.85-5.26 5.31-5.24 9.06l-.04 89.79zm14.63-31.54 34.65-20.01 34.65 20v40.01l-34.65 20-34.65-20z"
       />
-    </MonoLogoWrapper>
+    </svg>
   );
 }

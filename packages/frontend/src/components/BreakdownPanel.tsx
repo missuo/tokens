@@ -1,6 +1,5 @@
 "use client";
 
-import styled from "styled-components";
 import type { DailyContribution, GraphColorPalette, ClientType } from "@/lib/types";
 import { formatCurrency, formatTokenCount, groupClientsByType, sortClientsByCost } from "@/lib/utils";
 import { formatContributionDateFull } from "@/lib/date-utils";
@@ -13,111 +12,6 @@ interface BreakdownPanelProps {
   palette: GraphColorPalette;
 }
 
-const PanelContainer = styled.div`
-  margin-top: 2rem;
-  border-radius: 1rem;
-  border: 1px solid;
-  overflow: hidden;
-  box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
-  transition: box-shadow 150ms;
-
-  &:hover {
-    box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
-  }
-`;
-
-const PanelHeader = styled.div`
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 1rem 1.5rem;
-  border-bottom: 1px solid;
-  gap: 12px;
-
-  @media (max-width: 480px) {
-    padding: 1rem;
-    align-items: flex-start;
-  }
-`;
-
-const PanelTitle = styled.h3`
-  font-weight: 700;
-  font-size: 1.125rem;
-  min-width: 0;
-  flex: 1 1 auto;
-
-  @media (max-width: 560px) {
-    font-size: 1rem;
-  }
-
-  @media (max-width: 400px) {
-    font-size: 0.9375rem;
-  }
-`;
-
-const CloseButton = styled.button`
-  padding: 0.5rem;
-  border-radius: 9999px;
-  transition: all 200ms;
-  flex: 0 0 auto;
-  min-height: 44px;
-  min-width: 44px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-
-  &:hover {
-    background-color: var(--color-btn-hover-bg);
-    transform: scale(1.1);
-  }
-
-  &:focus-visible {
-    outline: none;
-    box-shadow: 0 0 0 2px var(--color-bg-default, #fff), 0 0 0 4px #3b82f6;
-  }
-`;
-
-const PanelContent = styled.div`
-  padding: 1.5rem;
-`;
-
-const EmptyState = styled.p`
-  text-align: center;
-  padding-top: 2rem;
-  padding-bottom: 2rem;
-  font-size: 0.875rem;
-  font-weight: 500;
-`;
-
-const SourceList = styled.div`
-  display: flex;
-  flex-direction: column;
-  gap: 1.5rem;
-`;
-
-const SummaryFooter = styled.div`
-  margin-top: 1.5rem;
-  padding-top: 1.5rem;
-  border-top: 1px solid;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 1.5rem;
-  font-size: 0.875rem;
-`;
-
-const SummaryItem = styled.div`
-  font-weight: 500;
-`;
-
-const SummaryValue = styled.span`
-  font-weight: 600;
-`;
-
-const SummaryTotalValue = styled(SummaryValue)`
-  font-weight: 700;
-  font-size: 1rem;
-`;
-
 export function BreakdownPanel({ day, onClose, palette }: BreakdownPanelProps) {
   if (!day) return null;
 
@@ -125,61 +19,52 @@ export function BreakdownPanel({ day, onClose, palette }: BreakdownPanelProps) {
   const sortedClientTypes = Array.from(groupedClients.keys()).sort();
 
   return (
-    <PanelContainer
-      role="region"
-      aria-label="Day breakdown"
-      style={{ backgroundColor: "var(--color-card-bg)", borderColor: "var(--color-border-default)" }}
-    >
-      <PanelHeader style={{ borderColor: "var(--color-border-default)" }}>
-        <PanelTitle style={{ color: "var(--color-fg-default)" }}>
-          {formatContributionDateFull(day)} - Detailed Breakdown
-        </PanelTitle>
-        <CloseButton
+    <div role="region" aria-label="Day breakdown" className="mt-8 overflow-hidden rounded-2xl border border-line bg-surface shadow-sm transition-shadow hover:shadow-md">
+      <div className="flex items-center justify-between gap-3 border-b border-line px-6 py-4 max-[480px]:items-start max-[480px]:p-4">
+        <h3 className="min-w-0 flex-1 text-base font-semibold text-foreground">{formatContributionDateFull(day)} — Detailed Breakdown</h3>
+        <button
           onClick={onClose}
           aria-label="Close breakdown panel"
-          style={{ color: "var(--color-fg-muted)" }}
+          className="flex h-11 w-11 flex-none items-center justify-center rounded-full text-muted transition hover:scale-110 hover:bg-[var(--surface-tertiary)]"
         >
           <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <line x1="18" y1="6" x2="6" y2="18" />
             <line x1="6" y1="6" x2="18" y2="18" />
           </svg>
-        </CloseButton>
-      </PanelHeader>
+        </button>
+      </div>
 
-      <PanelContent>
+      <div className="p-6">
         {day.clients.length === 0 ? (
-          <EmptyState style={{ color: "var(--color-fg-muted)" }}>
-            No activity on this day
-          </EmptyState>
+          <p className="py-8 text-center text-sm font-medium text-muted">No activity on this day</p>
         ) : (
-          <SourceList>
+          <div className="flex flex-col gap-6">
             {sortedClientTypes.map((clientType) => {
               const clients = sortClientsByCost(groupedClients.get(clientType) || []);
               const clientTotalCost = clients.reduce((sum, c) => sum + c.cost, 0);
-              return (
-                <ClientSection key={clientType} clientType={clientType} clients={clients} totalCost={clientTotalCost} palette={palette} />
-              );
+              return <ClientSection key={clientType} clientType={clientType} clients={clients} totalCost={clientTotalCost} palette={palette} />;
             })}
-          </SourceList>
+          </div>
         )}
 
         {day.clients.length > 0 && (
-          <SummaryFooter style={{ borderColor: "var(--color-border-default)" }}>
-            <SummaryItem style={{ color: "var(--color-fg-muted)" }}>
-              Total: <SummaryTotalValue style={{ color: "var(--color-fg-default)" }}>{formatCurrency(day.totals.cost)}</SummaryTotalValue>
-            </SummaryItem>
-            <SummaryItem style={{ color: "var(--color-fg-muted)" }}>
-              across <SummaryValue style={{ color: "var(--color-fg-default)" }}>{sortedClientTypes.length} client{sortedClientTypes.length !== 1 ? "s" : ""}</SummaryValue>
-            </SummaryItem>
-            <SummaryItem style={{ color: "var(--color-fg-muted)" }}>
-              <SummaryValue style={{ color: "var(--color-fg-default)" }}>
+          <div className="mt-6 flex flex-wrap gap-6 border-t border-line pt-6 text-sm text-muted">
+            <div className="font-medium">
+              Total: <span className="font-mono text-base font-bold text-foreground tabular-nums">{formatCurrency(day.totals.cost)}</span>
+            </div>
+            <div className="font-medium">
+              across{" "}
+              <span className="font-semibold text-foreground">
+                {sortedClientTypes.length} client{sortedClientTypes.length !== 1 ? "s" : ""}
+              </span>
+            </div>
+            <div className="font-medium">
+              <span className="font-semibold text-foreground">
                 {(() => {
                   const allModels = new Set<string>();
                   for (const c of day.clients) {
                     if (c.models) {
-                      for (const modelId of Object.keys(c.models)) {
-                        allModels.add(modelId);
-                      }
+                      for (const modelId of Object.keys(c.models)) allModels.add(modelId);
                     } else if (c.modelId) {
                       allModels.add(c.modelId);
                     }
@@ -187,12 +72,12 @@ export function BreakdownPanel({ day, onClose, palette }: BreakdownPanelProps) {
                   const count = allModels.size;
                   return `${count} model${count !== 1 ? "s" : ""}`;
                 })()}
-              </SummaryValue>
-            </SummaryItem>
-          </SummaryFooter>
+              </span>
+            </div>
+          </div>
         )}
-      </PanelContent>
-    </PanelContainer>
+      </div>
+    </div>
   );
 }
 
@@ -202,40 +87,6 @@ interface ClientSectionProps {
   totalCost: number;
   palette: GraphColorPalette;
 }
-
-const SectionHeader = styled.div`
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  margin-bottom: 0.75rem;
-`;
-
-const SourceBadge = styled.span`
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.375rem 0.75rem;
-  border-radius: 9999px;
-  font-size: 0.75rem;
-  font-weight: 600;
-  transition: transform 150ms;
-
-  &:hover {
-    transform: scale(1.05);
-  }
-`;
-
-const SectionTotal = styled.span`
-  font-size: 0.875rem;
-  font-weight: 700;
-`;
-
-const ModelsList = styled.div`
-  margin-left: 1.25rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-`;
 
 function ClientSection({ clientType, clients, totalCost, palette }: ClientSectionProps) {
   const clientColor = SOURCE_COLORS[clientType] || palette.grade3;
@@ -271,173 +122,67 @@ function ClientSection({ clientType, clients, totalCost, palette }: ClientSectio
 
   return (
     <div>
-      <SectionHeader>
-        <SourceBadge
-          style={{ backgroundColor: `${clientColor}20`, color: clientColor }}
-        >
+      <div className="mb-3 flex items-center gap-3">
+        <span className="inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-semibold transition hover:scale-105" style={{ backgroundColor: `${clientColor}20`, color: clientColor }}>
           <SourceLogo sourceId={clientType} height={14} />
           {SOURCE_DISPLAY_NAMES[clientType] || clientType}
-        </SourceBadge>
-        <SectionTotal style={{ color: "var(--color-fg-default)" }}>{formatCurrency(totalCost)}</SectionTotal>
-      </SectionHeader>
+        </span>
+        <span className="text-sm font-bold text-foreground">{formatCurrency(totalCost)}</span>
+      </div>
 
-      <ModelsList>
+      <div className="ml-5 flex flex-col gap-3">
         {sortedModels.map((model, index) => (
-          <ModelRow key={`${model.modelId}-${index}`} model={model} isLast={index === sortedModels.length - 1} palette={palette} />
+          <ModelRow key={`${model.modelId}-${index}`} model={model} isLast={index === sortedModels.length - 1} />
         ))}
-      </ModelsList>
+      </div>
     </div>
   );
 }
 
 interface ModelRowProps {
-  model: {
-    modelId: string;
-    cost: number;
-    messages: number;
-    tokens: { input: number; output: number; cacheRead: number; cacheWrite: number; reasoning: number };
-  };
+  model: { modelId: string; cost: number; messages: number; tokens: { input: number; output: number; cacheRead: number; cacheWrite: number; reasoning: number } };
   isLast: boolean;
-  palette: GraphColorPalette;
 }
 
-const ModelRowContainer = styled.div`
-  position: relative;
-`;
-
-const TreeLineContainer = styled.div`
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: 1rem;
-  height: 100%;
-`;
-
-const TreeLineBranch = styled.span`
-  position: absolute;
-  left: 0;
-  top: 0.75rem;
-  width: 0.75rem;
-  border-top: 1px solid;
-`;
-
-const TreeLineVertical = styled.span`
-  position: absolute;
-  left: 0;
-  top: 0;
-  height: 100%;
-  border-left: 1px solid;
-`;
-
-const ModelContent = styled.div`
-  margin-left: 1.5rem;
-`;
-
-const ModelHeader = styled.div`
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  flex-wrap: wrap;
-  min-width: 0;
-`;
-
-const ModelName = styled.span`
-  font-family: var(--font-mono);
-  font-size: 0.875rem;
-  font-weight: 600;
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-`;
-
-const ModelCost = styled.span`
-  font-weight: 700;
-  font-size: 0.875rem;
-  flex: 0 0 auto;
-`;
-
-const TokenBadgesGrid = styled.div`
-  margin-top: 0.5rem;
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  column-gap: 1rem;
-  row-gap: 0.5rem;
-  font-size: 0.75rem;
-
-  @media (max-width: 400px) {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  @media (min-width: 640px) {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
-  @media (min-width: 768px) {
-    grid-template-columns: repeat(5, minmax(0, 1fr));
-  }
-`;
-
-const MessageCount = styled.div`
-  margin-top: 0.5rem;
-  font-size: 0.75rem;
-  font-weight: 500;
-`;
-
-function ModelRow({ model, isLast, palette }: ModelRowProps) {
+function ModelRow({ model, isLast }: ModelRowProps) {
   const { modelId, tokens, cost, messages } = model;
 
   return (
-    <ModelRowContainer>
-      <TreeLineContainer style={{ color: "var(--color-fg-muted)" }}>
-        <TreeLineBranch style={{ opacity: 0.2, borderColor: "var(--color-fg-muted)" }} />
-        {!isLast && <TreeLineVertical style={{ opacity: 0.2, borderColor: "var(--color-fg-muted)" }} />}
-      </TreeLineContainer>
+    <div className="relative">
+      <div className="absolute top-0 left-0 h-full w-4 text-muted">
+        <span className="absolute top-3 left-0 w-3 border-t border-current opacity-20" />
+        {!isLast && <span className="absolute top-0 left-0 h-full border-l border-current opacity-20" />}
+      </div>
 
-      <ModelContent>
-        <ModelHeader>
-          <ModelName style={{ color: "var(--color-fg-default)" }}>{modelId}</ModelName>
-          <ModelCost style={{ color: palette.grade1 }}>{formatCurrency(cost)}</ModelCost>
-        </ModelHeader>
+      <div className="ml-6">
+        <div className="flex min-w-0 flex-wrap items-center gap-3">
+          <span className="min-w-0 flex-1 truncate font-mono text-sm font-semibold text-foreground">{modelId}</span>
+          <span className="flex-none font-mono text-sm font-bold text-accent tabular-nums">
+            {formatCurrency(cost)}
+          </span>
+        </div>
 
-        <TokenBadgesGrid>
+        <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-2 text-xs max-[400px]:grid-cols-1 sm:grid-cols-3 md:grid-cols-5">
           {tokens.input > 0 && <TokenBadge label="Input" value={tokens.input} />}
           {tokens.output > 0 && <TokenBadge label="Output" value={tokens.output} />}
           {tokens.cacheRead > 0 && <TokenBadge label="Cache Read" value={tokens.cacheRead} />}
           {tokens.cacheWrite > 0 && <TokenBadge label="Cache Write" value={tokens.cacheWrite} />}
           {tokens.reasoning > 0 && <TokenBadge label="Reasoning" value={tokens.reasoning} />}
-        </TokenBadgesGrid>
+        </div>
 
-        <MessageCount style={{ color: "var(--color-fg-muted)" }}>
+        <div className="mt-2 font-mono text-xs font-medium text-muted tabular-nums">
           {messages.toLocaleString()} message{messages !== 1 ? "s" : ""}
-        </MessageCount>
-      </ModelContent>
-    </ModelRowContainer>
+        </div>
+      </div>
+    </div>
   );
 }
 
-const BadgeContainer = styled.div`
-  display: flex;
-  align-items: center;
-  gap: 0.375rem;
-  min-width: 0;
-`;
-
-const BadgeLabel = styled.span`
-  font-weight: 500;
-`;
-
-const BadgeValue = styled.span`
-  font-family: var(--font-mono);
-  font-weight: 600;
-`;
-
 function TokenBadge({ label, value }: { label: string; value: number }) {
   return (
-    <BadgeContainer>
-      <BadgeLabel style={{ color: "var(--color-fg-muted)" }}>{label}:</BadgeLabel>
-      <BadgeValue style={{ color: "var(--color-fg-default)" }}>{formatTokenCount(value)}</BadgeValue>
-    </BadgeContainer>
+    <div className="flex min-w-0 items-center gap-1.5">
+      <span className="font-medium text-muted">{label}:</span>
+      <span className="font-mono font-semibold text-foreground tabular-nums">{formatTokenCount(value)}</span>
+    </div>
   );
 }

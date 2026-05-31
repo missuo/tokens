@@ -20,12 +20,12 @@ fn home_dir() -> Result<PathBuf> {
 }
 
 pub fn get_antigravity_cache_dir() -> Result<PathBuf> {
-    // Route through `paths::get_config_dir()` so `TOKSCALE_CONFIG_DIR`
+    // Route through `paths::get_config_dir()` so `TOKENS_CONFIG_DIR`
     // covers the antigravity sync cache too — without this, an isolated
     // CI profile would still leak to the host's
-    // `~/.config/tokscale/antigravity-cache/`. On macOS and Linux without
+    // `~/.config/tokens/antigravity-cache/`. On macOS and Linux without
     // an override the resolved path is byte-identical to the historic
-    // hardcoded `~/.config/tokscale/antigravity-cache/`, so existing
+    // hardcoded `~/.config/tokens/antigravity-cache/`, so existing
     // users see no path change and no data migration is required.
     Ok(crate::paths::get_config_dir().join("antigravity-cache"))
 }
@@ -149,7 +149,7 @@ pub fn run_antigravity_sync() -> Result<()> {
 
     #[cfg(target_os = "windows")]
     anyhow::bail!(
-        "Antigravity sync is not supported on Windows yet. Use macOS or Linux for `tokscale antigravity sync`, or remove Antigravity from your release notes for Windows."
+        "Antigravity sync is not supported on Windows yet. Use macOS or Linux for `tokens antigravity sync`, or remove Antigravity from your release notes for Windows."
     );
 
     let cache_dir = get_antigravity_cache_dir()?;
@@ -268,7 +268,7 @@ pub fn run_antigravity_status(json: bool) -> Result<()> {
 
     #[cfg(target_os = "windows")]
     anyhow::bail!(
-        "Antigravity status is not supported on Windows yet because local language-server discovery is not implemented there. Use macOS or Linux for `tokscale antigravity status`."
+        "Antigravity status is not supported on Windows yet because local language-server discovery is not implemented there. Use macOS or Linux for `tokens antigravity status`."
     );
 
     let cache_dir = get_antigravity_cache_dir()?;
@@ -322,7 +322,7 @@ pub fn run_antigravity_status(json: bool) -> Result<()> {
     }
     println!(
         "  {}",
-        "Run `tokscale antigravity sync` to refresh the local cache before reporting."
+        "Run `tokens antigravity sync` to refresh the local cache before reporting."
             .bright_black()
     );
     println!();
@@ -1913,7 +1913,7 @@ mod tests {
     /// drop (including on panic). Setting `HOME` alone is not sufficient on
     /// Linux CI runners because `dirs::config_dir()` honors
     /// `$XDG_CONFIG_HOME` first; tokscale's own `paths::get_config_dir()`
-    /// short-circuits on `TOKSCALE_CONFIG_DIR`, which is the canonical
+    /// short-circuits on `TOKENS_CONFIG_DIR`, which is the canonical
     /// hermetic override for tests.
     struct TestEnvGuard {
         prev_home: Option<OsString>,
@@ -1923,9 +1923,9 @@ mod tests {
     impl TestEnvGuard {
         fn redirect_to(path: &Path) -> Self {
             let prev_home = std::env::var_os("HOME");
-            let prev_config_dir = std::env::var_os("TOKSCALE_CONFIG_DIR");
+            let prev_config_dir = std::env::var_os("TOKENS_CONFIG_DIR");
             std::env::set_var("HOME", path);
-            std::env::set_var("TOKSCALE_CONFIG_DIR", path);
+            std::env::set_var("TOKENS_CONFIG_DIR", path);
             Self {
                 prev_home,
                 prev_config_dir,
@@ -1940,8 +1940,8 @@ mod tests {
                 None => std::env::remove_var("HOME"),
             }
             match self.prev_config_dir.take() {
-                Some(dir) => std::env::set_var("TOKSCALE_CONFIG_DIR", dir),
-                None => std::env::remove_var("TOKSCALE_CONFIG_DIR"),
+                Some(dir) => std::env::set_var("TOKENS_CONFIG_DIR", dir),
+                None => std::env::remove_var("TOKENS_CONFIG_DIR"),
             }
         }
     }
