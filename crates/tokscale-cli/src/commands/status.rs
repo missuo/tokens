@@ -59,12 +59,14 @@ struct StatusPaths {
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct StatusService {
+    health: &'static str,
     serve_running: bool,
     serve_pids: Vec<u32>,
     warm_tui_cache_pids: Vec<u32>,
     interval_minutes: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     scheduler: Option<StatusScheduler>,
+    recommendations: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -360,6 +362,47 @@ fn format_interval_seconds(seconds: u64) -> String {
     }
 }
 
+fn status_service_health(serve_running: bool, scheduler: Option<&StatusScheduler>) -> &'static str {
+    if scheduler.is_some_and(|scheduler| scheduler.scheduled_submit) {
+        "scheduled-submit"
+    } else if scheduler.is_some_and(|scheduler| scheduler.legacy_keep_alive) {
+        "legacy-keep-alive"
+    } else if scheduler.is_some() {
+        "service-configured"
+    } else if serve_running {
+        "serve-running"
+    } else {
+        "not-configured"
+    }
+}
+
+fn status_service_recommendations(
+    serve_running: bool,
+    scheduler: Option<&StatusScheduler>,
+) -> Vec<String> {
+    match status_service_health(serve_running, scheduler) {
+        "legacy-keep-alive" => match scheduler.map(|scheduler| scheduler.kind) {
+            Some("homebrew-launchd") | Some("homebrew-systemd") => vec![
+                "Upgrade tokens, then run `brew services restart tokens` to replace the old keep-alive plist."
+                    .to_string(),
+            ],
+            Some("systemd-user") => vec![
+                "Install the updated tokens.service and tokens.timer, then run `systemctl --user disable --now tokens` and `systemctl --user enable --now tokens.timer`."
+                    .to_string(),
+            ],
+            _ => vec![
+                "Replace the old keep-alive service with scheduled `tokens --no-spinner submit` runs."
+                    .to_string(),
+            ],
+        },
+        "not-configured" => vec![
+            "Start scheduled background submission with `brew services start tokens` on macOS/Linuxbrew or `systemctl --user enable --now tokens.timer` on Linux."
+                .to_string(),
+        ],
+        _ => Vec::new(),
+    }
+}
+
 fn build_status_report() -> Result<StatusReport> {
     let auth_token = auth::resolve_api_token();
     let auth_source = auth_token.as_ref().map(|token| match token.source {
@@ -387,6 +430,9 @@ fn build_status_report() -> Result<StatusReport> {
         .filter(|process| process.kind == StatusProcessKind::WarmTuiCache.as_str())
         .map(|process| process.pid)
         .collect();
+    let serve_running = !serve_pids.is_empty();
+    let health = status_service_health(serve_running, scheduler.as_ref());
+    let recommendations = status_service_recommendations(serve_running, scheduler.as_ref());
 
     let mut notes = Vec::new();
     if auth_token.is_none() {
@@ -437,11 +483,13 @@ fn build_status_report() -> Result<StatusReport> {
             cache_dir: paths::get_cache_dir().display().to_string(),
         },
         service: StatusService {
-            serve_running: !serve_pids.is_empty(),
+            health,
+            serve_running,
             serve_pids,
             warm_tui_cache_pids,
             interval_minutes: resolve_serve_interval_minutes(None),
             scheduler,
+            recommendations,
         },
         processes,
         notes,
@@ -579,6 +627,13 @@ pub fn run(json: bool) -> Result<()> {
             println!("{}", format!("    - {note}").bright_black());
         }
     }
+    if !report.service.recommendations.is_empty() {
+        println!();
+        println!("{}", "  Suggested fixes:".white());
+        for recommendation in report.service.recommendations {
+            println!("{}", format!("    - {recommendation}").bright_black());
+        }
+    }
     println!();
 
     Ok(())
@@ -706,5 +761,57 @@ ExecStart=tokens --no-spinner submit
         assert_eq!(scheduler.interval_seconds, Some(1800));
         assert!(scheduler.scheduled_submit);
         assert!(!scheduler.legacy_keep_alive);
+    }
+
+    #[test]
+    fn service_health_prefers_scheduled_submit() {
+        let scheduler = StatusScheduler {
+            kind: "homebrew-launchd",
+            path: "/Users/example/Library/LaunchAgents/homebrew.mxcl.tokens.plist".to_string(),
+            interval_seconds: Some(1800),
+            command: Some("/opt/homebrew/opt/tokens/bin/tokens --no-spinner submit".to_string()),
+            scheduled_submit: true,
+            legacy_keep_alive: false,
+        };
+
+        assert_eq!(
+            status_service_health(false, Some(&scheduler)),
+            "scheduled-submit"
+        );
+        assert!(status_service_recommendations(false, Some(&scheduler)).is_empty());
+    }
+
+    #[test]
+    fn service_recommendations_include_homebrew_restart_for_legacy_keep_alive() {
+        let scheduler = StatusScheduler {
+            kind: "homebrew-launchd",
+            path: "/Users/example/Library/LaunchAgents/homebrew.mxcl.tokens.plist".to_string(),
+            interval_seconds: None,
+            command: Some("/opt/homebrew/opt/tokens/bin/tokens serve".to_string()),
+            scheduled_submit: false,
+            legacy_keep_alive: true,
+        };
+
+        assert_eq!(
+            status_service_health(false, Some(&scheduler)),
+            "legacy-keep-alive"
+        );
+        assert_eq!(
+            status_service_recommendations(false, Some(&scheduler)),
+            vec![
+                "Upgrade tokens, then run `brew services restart tokens` to replace the old keep-alive plist.".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn service_recommendations_include_start_commands_when_no_background_service_exists() {
+        assert_eq!(status_service_health(false, None), "not-configured");
+        assert_eq!(
+            status_service_recommendations(false, None),
+            vec![
+                "Start scheduled background submission with `brew services start tokens` on macOS/Linuxbrew or `systemctl --user enable --now tokens.timer` on Linux.".to_string()
+            ]
+        );
     }
 }
