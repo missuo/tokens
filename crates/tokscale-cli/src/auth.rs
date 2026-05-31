@@ -73,6 +73,10 @@ fn get_credentials_path() -> Result<PathBuf> {
     Ok(home_dir()?.join(".config/tokens/credentials.json"))
 }
 
+pub fn credentials_path() -> Result<PathBuf> {
+    get_credentials_path()
+}
+
 fn ensure_config_dir() -> Result<()> {
     let config_dir = home_dir()?.join(".config/tokens");
 

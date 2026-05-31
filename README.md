@@ -31,6 +31,7 @@ Sign in once, then let `tokens` submit your usage in the background on an interv
 ```sh
 tokens login                 # one-time sign in with GitHub
 brew services start tokens   # start the background submitter (and at login)
+tokens status                # verify auth, device, and background service state
 ```
 
 That's it — your usage now submits automatically. You can also submit once, manually, at any time:
@@ -48,7 +49,7 @@ systemctl --user enable tokens       # start automatically on boot …
 sudo loginctl enable-linger "$USER"  # … even without an active login session
 ```
 
-Logs: `journalctl --user -u tokens -f` · Status: `systemctl --user status tokens`
+Logs: `journalctl --user -u tokens -f` · Service status: `systemctl --user status tokens` · Local check: `tokens status`
 
 ## Usage
 
@@ -56,6 +57,7 @@ Logs: `journalctl --user -u tokens -f` · Status: `systemctl --user status token
 | --- | --- |
 | `tokens` | Interactive TUI dashboard of your token usage |
 | `tokens login` | Sign in with GitHub (one-time) |
+| `tokens status` | Check local auth, device, and background service state |
 | `tokens submit` | Submit your usage to [tokens.ci](https://tokens.ci) |
 | `tokens serve` | Run the background submitter (used by the service above) |
 | `tokens graph` | Export your contribution data as JSON |

@@ -16,6 +16,19 @@ pub struct SubmitDevice {
     pub name: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SubmitDeviceSource {
+    Environment,
+    ConfigFile,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubmitDeviceInspection {
+    pub device: Option<SubmitDevice>,
+    pub source: Option<SubmitDeviceSource>,
+    pub path: PathBuf,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct StoredDevice {
@@ -61,6 +74,48 @@ pub fn resolve_submit_device() -> Result<SubmitDevice> {
     Ok(SubmitDevice {
         id: stored.id,
         name: stored.name,
+    })
+}
+
+pub fn inspect_submit_device() -> Result<SubmitDeviceInspection> {
+    let path = device_file_path();
+
+    if let Some(id) = env_value(DEVICE_ID_ENV) {
+        return Ok(SubmitDeviceInspection {
+            device: Some(SubmitDevice {
+                id: validate_device_id(&id)?,
+                name: env_value(DEVICE_NAME_ENV)
+                    .map(|name| validate_device_name(&name))
+                    .transpose()?,
+            }),
+            source: Some(SubmitDeviceSource::Environment),
+            path,
+        });
+    }
+
+    if !path.exists() {
+        return Ok(SubmitDeviceInspection {
+            device: None,
+            source: None,
+            path,
+        });
+    }
+
+    let content = std::fs::read_to_string(&path)
+        .with_context(|| format!("failed to read {}", path.display()))?;
+    let stored: StoredDevice = serde_json::from_str(&content)
+        .with_context(|| format!("failed to parse {}", path.display()))?;
+    let name_override = env_value(DEVICE_NAME_ENV)
+        .map(|name| validate_device_name(&name))
+        .transpose()?;
+
+    Ok(SubmitDeviceInspection {
+        device: Some(SubmitDevice {
+            id: validate_device_id(&stored.id)?,
+            name: name_override.or(stored.name),
+        }),
+        source: Some(SubmitDeviceSource::ConfigFile),
+        path,
     })
 }
 
@@ -219,5 +274,46 @@ mod tests {
         assert!(first.id.starts_with("dev_"));
         assert_eq!(first, second);
         assert!(dir.path().join("device.json").exists());
+    }
+
+    #[test]
+    #[serial]
+    fn inspect_submit_device_does_not_create_config_file() {
+        let prev = save_env();
+        let _restore = EnvRestore(prev.0, prev.1, prev.2);
+        let dir = tempfile::tempdir().unwrap();
+        unsafe {
+            env::set_var("TOKENS_CONFIG_DIR", dir.path());
+            env::remove_var("TOKENS_DEVICE_ID");
+            env::remove_var("TOKENS_DEVICE_NAME");
+        }
+
+        let inspection = inspect_submit_device().unwrap();
+
+        assert!(inspection.device.is_none());
+        assert_eq!(inspection.source, None);
+        assert_eq!(inspection.path, dir.path().join("device.json"));
+        assert!(!inspection.path.exists());
+    }
+
+    #[test]
+    #[serial]
+    fn inspect_submit_device_reports_env_without_touching_config_file() {
+        let prev = save_env();
+        let _restore = EnvRestore(prev.0, prev.1, prev.2);
+        let dir = tempfile::tempdir().unwrap();
+        unsafe {
+            env::set_var("TOKENS_CONFIG_DIR", dir.path());
+            env::set_var("TOKENS_DEVICE_ID", "dev_status");
+            env::set_var("TOKENS_DEVICE_NAME", "Status device");
+        }
+
+        let inspection = inspect_submit_device().unwrap();
+
+        assert_eq!(inspection.source, Some(SubmitDeviceSource::Environment));
+        let device = inspection.device.unwrap();
+        assert_eq!(device.id, "dev_status");
+        assert_eq!(device.name.as_deref(), Some("Status device"));
+        assert!(!inspection.path.exists());
     }
 }

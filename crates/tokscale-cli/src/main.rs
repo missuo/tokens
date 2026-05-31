@@ -187,6 +187,11 @@ enum Commands {
     Logout,
     #[command(about = "Show current logged in user")]
     Whoami,
+    #[command(about = "Show local auth, device, and background service status")]
+    Status {
+        #[arg(long, help = "Output as JSON")]
+        json: bool,
+    },
     #[command(about = "Display saved API token as QR code")]
     Qr {
         #[arg(long, help = "Skip the on-screen warning + confirmation prompt")]
@@ -566,6 +571,10 @@ fn main() -> Result<()> {
         Some(Commands::Whoami) => {
             reject_unsupported_home_override(&cli.home, "whoami")?;
             run_whoami_command()
+        }
+        Some(Commands::Status { json }) => {
+            reject_unsupported_home_override(&cli.home, "status")?;
+            commands::status::run(json)
         }
         Some(Commands::Qr { yes }) => {
             reject_unsupported_home_override(&cli.home, "qr")?;
@@ -4763,14 +4772,7 @@ fn run_serve(interval_min: Option<u64>, clients: Option<Vec<String>>) -> Result<
     use std::time::Duration;
 
     // Resolve cadence: --interval flag > $TOKENS_SUBMIT_INTERVAL > 30 min (min 1).
-    let interval_min = interval_min
-        .or_else(|| {
-            std::env::var("TOKENS_SUBMIT_INTERVAL")
-                .ok()
-                .and_then(|v| v.trim().parse::<u64>().ok())
-        })
-        .filter(|m| *m >= 1)
-        .unwrap_or(30);
+    let interval_min = commands::status::resolve_serve_interval_minutes(interval_min);
     let interval = Duration::from_secs(interval_min * 60);
 
     // Fail fast if not authenticated so the supervisor surfaces a clear error
@@ -5650,6 +5652,26 @@ mod tests {
     #[test]
     fn test_parse_variant_arg_rejects_empty_string() {
         assert!(parse_variant_arg(Some("")).is_err());
+    }
+
+    #[test]
+    fn test_status_command_parses() {
+        let cli = Cli::try_parse_from(["tokens", "status"]).unwrap();
+
+        match cli.command {
+            Some(Commands::Status { json }) => assert!(!json),
+            _ => panic!("status command should parse"),
+        }
+    }
+
+    #[test]
+    fn test_status_command_parses_json_flag() {
+        let cli = Cli::try_parse_from(["tokens", "status", "--json"]).unwrap();
+
+        match cli.command {
+            Some(Commands::Status { json }) => assert!(json),
+            _ => panic!("status --json command should parse"),
+        }
     }
 
     fn token_breakdown(total_tokens: i64) -> TokenBreakdown {
