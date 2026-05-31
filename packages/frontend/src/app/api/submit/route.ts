@@ -248,7 +248,10 @@ export async function POST(request: Request) {
         .values({
           userId: tokenRecord.userId,
           deviceKey: submitDevice.key,
-          displayName: submitDevice.name,
+          // Fall back to the authenticating token's name (the hostname captured
+          // at `tokens login`) when the submit payload carries no device name —
+          // otherwise these rows render as "Unnamed device" in Settings.
+          displayName: submitDevice.name ?? tokenRecord.tokenName,
           lastSubmittedAt: submittedAt,
           updatedAt: submittedAt,
         })

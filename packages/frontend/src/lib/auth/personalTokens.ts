@@ -24,6 +24,8 @@ export interface IssuedPersonalToken extends PersonalTokenListItem {
 
 export interface AuthenticatedPersonalToken {
   tokenId: string;
+  /** The token's own name (e.g. the hostname captured at `tokens login`). */
+  tokenName: string;
   userId: string;
   username: string;
   displayName: string | null;
@@ -199,6 +201,7 @@ export async function authenticatePersonalToken(
   const result = await db
     .select({
       tokenId: apiTokens.id,
+      tokenName: apiTokens.name,
       userId: apiTokens.userId,
       username: users.username,
       displayName: users.displayName,
@@ -230,6 +233,7 @@ export async function authenticatePersonalToken(
   return {
     status: "valid",
     tokenId: record.tokenId,
+    tokenName: record.tokenName,
     userId: record.userId,
     username: record.username,
     displayName: record.displayName,
