@@ -24,13 +24,13 @@ curl -fsSL https://raw.githubusercontent.com/missuo/tokens/main/install.sh | bas
 
 ## Automatic submission
 
-Sign in once, then let `tokens` submit your usage in the background on an interval (default 30 min — override with `TOKENS_SUBMIT_INTERVAL`).
+Sign in once, then let `tokens` submit your usage in the background every 30 min without keeping a long-running process alive.
 
 **macOS:**
 
 ```sh
 tokens login                 # one-time sign in with GitHub
-brew services start tokens   # start the background submitter (and at login)
+brew services start tokens   # schedule background submits (and at login)
 tokens status                # verify auth, device, and background service state
 ```
 
@@ -44,12 +44,11 @@ tokens submit
 
 ```sh
 tokens login                         # one-time sign in
-systemctl --user start tokens        # start the background submitter
-systemctl --user enable tokens       # start automatically on boot …
+systemctl --user enable --now tokens.timer # schedule background submits
 sudo loginctl enable-linger "$USER"  # … even without an active login session
 ```
 
-Logs: `journalctl --user -u tokens -f` · Service status: `systemctl --user status tokens` · Local check: `tokens status`
+Logs: `journalctl --user -u tokens -f` · Service status: `systemctl --user status tokens.timer` · Local check: `tokens status`
 
 ## Usage
 
@@ -59,7 +58,7 @@ Logs: `journalctl --user -u tokens -f` · Service status: `systemctl --user stat
 | `tokens login` | Sign in with GitHub (one-time) |
 | `tokens status` | Check local auth, device, and background service state |
 | `tokens submit` | Submit your usage to [tokens.ci](https://tokens.ci) |
-| `tokens serve` | Run the background submitter (used by the service above) |
+| `tokens serve` | Run a long-lived submit loop manually |
 | `tokens graph` | Export your contribution data as JSON |
 | `tokens --help` | Full command reference |
 

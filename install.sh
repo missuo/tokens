@@ -3,8 +3,8 @@
 # One-click installer for the `tokens` CLI on Linux.
 #
 # Downloads the prebuilt release binary for your architecture, installs it, and
-# sets up a systemd *user* service that runs `tokens serve` in the background
-# (auto-submits your usage on an interval — default 30 min).
+# sets up a systemd *user* timer that runs `tokens --no-spinner submit` every
+# 30 minutes. The CLI exits between runs instead of staying resident.
 #
 #   curl -fsSL https://raw.githubusercontent.com/missuo/tokens/main/install.sh | bash
 #
@@ -101,30 +101,39 @@ case ":$PATH:" in
      printf "      %sexport PATH=\"%s:\$PATH\"%s\n" "$GREEN" "$INSTALL_DIR" "$NC" ;;
 esac
 
-# --- systemd user service -------------------------------------------------
+# --- systemd user service + timer ------------------------------------------
 SERVICE_READY=0
 if [ "${TOKENS_NO_SERVICE:-}" != "1" ] && have systemctl; then
   UNIT_DIR="$HOME/.config/systemd/user"
   mkdir -p "$UNIT_DIR"
   cat > "$UNIT_DIR/tokens.service" <<EOF
 [Unit]
-Description=tokens - periodic AI usage submitter
+Description=tokens - AI usage submitter
 After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=simple
-ExecStart=$BIN_PATH serve
-Restart=always
-RestartSec=30
-# Override the default 30-minute cadence if desired:
-# Environment=TOKENS_SUBMIT_INTERVAL=30
+Type=oneshot
+ExecStart=$BIN_PATH --no-spinner submit
 
 [Install]
 WantedBy=default.target
 EOF
+  cat > "$UNIT_DIR/tokens.timer" <<EOF
+[Unit]
+Description=tokens - scheduled AI usage submitter
+
+[Timer]
+OnActiveSec=2min
+OnUnitActiveSec=30min
+Persistent=true
+Unit=tokens.service
+
+[Install]
+WantedBy=timers.target
+EOF
   systemctl --user daemon-reload 2>/dev/null || true
-  ok "Installed systemd user service: $UNIT_DIR/tokens.service"
+  ok "Installed systemd user service + timer: $UNIT_DIR/tokens.service, $UNIT_DIR/tokens.timer"
   SERVICE_READY=1
 else
   [ "${TOKENS_NO_SERVICE:-}" = "1" ] || warn "systemctl not found — skipping background service setup."
@@ -134,10 +143,10 @@ fi
 printf "\n%sInstalled. Next steps:%s\n\n" "$BOLD" "$NC"
 printf "  %s1.%s Authenticate (one-time):\n       %stokens login%s\n\n" "$BOLD" "$NC" "$GREEN" "$NC"
 if [ "$SERVICE_READY" = "1" ]; then
-  printf "  %s2.%s Start the background submitter:\n       %ssystemctl --user start tokens%s\n\n" "$BOLD" "$NC" "$GREEN" "$NC"
-  printf "  %s3.%s Start it automatically on boot:\n       %ssystemctl --user enable tokens%s\n       %ssudo loginctl enable-linger \"\$USER\"%s   # keep it running without an active login\n\n" "$BOLD" "$NC" "$GREEN" "$NC" "$GREEN" "$NC"
+  printf "  %s2.%s Schedule background submits:\n       %ssystemctl --user enable --now tokens.timer%s\n\n" "$BOLD" "$NC" "$GREEN" "$NC"
+  printf "  %s3.%s Start it automatically on boot without an active login:\n       %ssudo loginctl enable-linger \"\$USER\"%s\n\n" "$BOLD" "$NC" "$GREEN" "$NC"
   printf "  Logs:   %sjournalctl --user -u tokens -f%s\n" "$BLUE" "$NC"
-  printf "  Status: %ssystemctl --user status tokens%s\n" "$BLUE" "$NC"
+  printf "  Status: %ssystemctl --user status tokens.timer%s\n" "$BLUE" "$NC"
 else
   printf "  %s2.%s Run it in the background with your own service manager:\n       %stokens serve%s\n" "$BOLD" "$NC" "$GREEN" "$NC"
 fi

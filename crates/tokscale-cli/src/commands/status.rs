@@ -190,7 +190,10 @@ fn build_status_report() -> Result<StatusReport> {
         notes.push("Run `tokens login` before starting background submission.".to_string());
     }
     if serve_pids.is_empty() {
-        notes.push("Start background submission with `brew services start tokens`.".to_string());
+        notes.push(
+            "No long-running `tokens serve` process detected. This is expected for scheduled services; use `brew services info tokens` or `systemctl --user list-timers tokens.timer` to verify the scheduler."
+                .to_string(),
+        );
     }
     if !warm_tui_cache_pids.is_empty() {
         notes.push("`warm-tui-cache` is a short-lived helper spawned after submit.".to_string());
@@ -278,7 +281,7 @@ pub fn run(json: bool) -> Result<()> {
         println!(
             "{}",
             format!(
-                "  Service: tokens serve running (pid {pids}, current-env interval {} min)",
+                "  Background: tokens serve running (pid {pids}, current-env interval {} min)",
                 report.service.interval_minutes
             )
             .green()
@@ -286,11 +289,7 @@ pub fn run(json: bool) -> Result<()> {
     } else {
         println!(
             "{}",
-            format!(
-                "  Service: tokens serve not detected (current-env interval {} min)",
-                report.service.interval_minutes
-            )
-            .yellow()
+            "  Background: no long-running tokens serve process detected".yellow()
         );
     }
 

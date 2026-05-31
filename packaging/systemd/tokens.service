@@ -2,30 +2,26 @@
 #
 # Install:
 #   mkdir -p ~/.config/systemd/user
-#   cp tokens.service ~/.config/systemd/user/tokens.service
+#   cp tokens.service tokens.timer ~/.config/systemd/user/
 #   # make sure `tokens` is on PATH for the user manager, or use an absolute
 #   # ExecStart path below.
 #   systemctl --user daemon-reload
-#   systemctl --user enable --now tokens
+#   systemctl --user enable --now tokens.timer
 #   # Start at boot without an active login session:
 #   sudo loginctl enable-linger "$USER"
 #
 # Logs:   journalctl --user -u tokens -f
-# Status: systemctl --user status tokens
+# Status: systemctl --user status tokens.timer
 [Unit]
-Description=tokens - periodic AI usage submitter
+Description=tokens - AI usage submitter
 After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=simple
+Type=oneshot
 # Use an absolute path if `tokens` is not on the user manager's PATH,
-# e.g. ExecStart=%h/.cargo/bin/tokens serve  or  /home/linuxbrew/.linuxbrew/bin/tokens serve
-ExecStart=tokens serve
-Restart=always
-RestartSec=30
-# Override the default 30-minute cadence if desired:
-# Environment=TOKENS_SUBMIT_INTERVAL=30
+# e.g. ExecStart=%h/.cargo/bin/tokens --no-spinner submit
+ExecStart=tokens --no-spinner submit
 
 [Install]
 WantedBy=default.target

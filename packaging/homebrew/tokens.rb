@@ -1,9 +1,9 @@
 # Homebrew formula for the `tokens` CLI + background submit service.
 #
-# This installs the `tokens` binary and registers a managed background service
-# (`tokens serve`) that auto-submits your usage on an interval. On macOS the
-# service runs via launchd; on Linuxbrew via systemd. In both cases Homebrew
-# keeps it alive and starts it at login/boot.
+# This installs the `tokens` binary and registers a scheduled background service
+# that runs `tokens --no-spinner submit` every 30 minutes. On macOS Homebrew
+# renders this to a launchd StartInterval job; on Linuxbrew it renders a systemd
+# timer. The CLI exits between runs instead of keeping a long-lived process.
 #
 # Build-from-source variant (simplest to get going on a personal tap — no
 # prebuilt bottles or per-platform sha256 to maintain). Swap to a bottle/
@@ -12,7 +12,7 @@
 # Usage once published to a tap (e.g. `<your-org>/homebrew-tap`):
 #   brew install <your-org>/tap/tokens
 #   tokens login
-#   brew services start tokens      # keep-alive + start at login/boot
+#   brew services start tokens      # scheduled submit at login/boot
 #   brew services info tokens
 #   brew services stop tokens
 class Tokens < Formula
@@ -32,13 +32,12 @@ class Tokens < Formula
   end
 
   service do
-    run [opt_bin/"tokens", "serve"]
-    keep_alive true        # restart if it ever exits
-    run_at_load true       # start at login / boot
+    run [opt_bin/"tokens", "--no-spinner", "submit"]
+    run_type :interval
+    interval 1800          # 30 minutes
+    run_at_load true       # submit once at login / boot, then on interval
     log_path var/"log/tokens.log"
     error_log_path var/"log/tokens.log"
-    # Override the 30-minute default cadence if you like:
-    # environment_variables TOKENS_SUBMIT_INTERVAL: "30"
   end
 
   test do

@@ -1,0 +1,15 @@
+# Linux systemd *user* timer for non-Homebrew installs.
+#
+# Runs tokens.service shortly after the timer starts and then every 30 minutes. The
+# service exits after each submit, so there is no long-lived background process.
+[Unit]
+Description=tokens - scheduled AI usage submitter
+
+[Timer]
+OnActiveSec=2min
+OnUnitActiveSec=30min
+Persistent=true
+Unit=tokens.service
+
+[Install]
+WantedBy=timers.target

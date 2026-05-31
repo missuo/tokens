@@ -4761,12 +4761,11 @@ fn report_excluded_tokenless_rows(excluded: &[ExcludedTokenlessRow]) {
     println!();
 }
 
-/// Long-running service loop: submit immediately, then every `interval` minutes.
+/// Long-running manual loop: submit immediately, then every `interval` minutes.
 ///
-/// Designed to be supervised by launchd (`brew services`) / systemd, which keep
-/// it alive and start it at login/boot. There is no durable state to flush, so
-/// the default SIGTERM disposition (terminate) is a perfectly clean shutdown —
-/// the next start just submits again.
+/// Packaged services prefer scheduled one-shot `tokens submit` runs so the CLI
+/// does not stay resident between submits. This command remains useful for
+/// custom supervisors or interactive debugging.
 fn run_serve(interval_min: Option<u64>, clients: Option<Vec<String>>) -> Result<()> {
     use colored::Colorize;
     use std::time::Duration;
@@ -5082,12 +5081,17 @@ fn run_submit_command(
         }
     }
 
-    // Warm the TUI cache so the next `tokens` launch is instant.
-    // Detached subprocess so submit returns to the shell immediately on large
-    // datasets — a full re-scan would otherwise block for tens of seconds.
-    spawn_warm_tui_cache_detached();
+    // Warm the TUI cache so the next interactive `tokens` launch is instant.
+    // Background services write to a log file, so skip the extra scan there.
+    if should_spawn_warm_tui_cache(std::io::stdout().is_terminal()) {
+        spawn_warm_tui_cache_detached();
+    }
 
     Ok(())
+}
+
+fn should_spawn_warm_tui_cache(stdout_is_terminal: bool) -> bool {
+    stdout_is_terminal
 }
 
 fn spawn_warm_tui_cache_detached() {
@@ -5672,6 +5676,12 @@ mod tests {
             Some(Commands::Status { json }) => assert!(json),
             _ => panic!("status --json command should parse"),
         }
+    }
+
+    #[test]
+    fn test_submit_warm_cache_only_for_interactive_output() {
+        assert!(should_spawn_warm_tui_cache(true));
+        assert!(!should_spawn_warm_tui_cache(false));
     }
 
     fn token_breakdown(total_tokens: i64) -> TokenBreakdown {
