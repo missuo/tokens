@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import SettingsClient from './SettingsClient';
 
 export const metadata: Metadata = {
-  title: 'Settings - Token Usage',
+  title: 'Settings - Tokens',
   description: 'Manage your account settings and API tokens',
 };
 

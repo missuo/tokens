@@ -26,6 +26,7 @@ export const metadata: Metadata = {
   metadataBase: new URL("https://tokens.ci"),
   icons: {
     icon: [
+      { url: "/favicon.ico?v=2", sizes: "48x48", type: "image/x-icon" },
       { url: "/favicon-16x16.png?v=2", sizes: "16x16", type: "image/png" },
       { url: "/favicon-32x32.png?v=2", sizes: "32x32", type: "image/png" },
     ],
