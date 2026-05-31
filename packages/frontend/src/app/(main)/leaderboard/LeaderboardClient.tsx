@@ -571,11 +571,29 @@ export default function LeaderboardClient({ initialData, currentUser, initialSor
 
       <Panel className="mt-8 p-6">
         <h2 className="text-base font-semibold text-foreground">Join the Leaderboard</h2>
-        <p className="mt-1 mb-4 text-sm text-muted">Install the CLI and submit your usage data:</p>
-        <div className="flex flex-col gap-2">
-          <CommandSnippet command="tokens login" />
-          <CommandSnippet command="tokens submit" />
+        <p className="mt-1 mb-5 text-sm text-muted">
+          Install the CLI, sign in once, and your usage submits automatically in the background.
+        </p>
+        <div className="flex flex-col gap-4">
+          <div>
+            <p className="mb-1.5 text-[11px] font-semibold tracking-wider text-muted uppercase">1 · Install (macOS)</p>
+            <CommandSnippet command="brew install owo-network/brew/tokens" />
+          </div>
+          <div>
+            <p className="mb-1.5 text-[11px] font-semibold tracking-wider text-muted uppercase">2 · Sign in</p>
+            <CommandSnippet command="tokens login" />
+          </div>
+          <div>
+            <p className="mb-1.5 text-[11px] font-semibold tracking-wider text-muted uppercase">3 · Auto-submit in the background</p>
+            <CommandSnippet command="brew services start tokens" />
+          </div>
         </div>
+        <p className="mt-4 text-xs leading-relaxed text-muted">
+          Prefer a one-off? Run{" "}
+          <code className="rounded bg-surface-secondary px-1.5 py-0.5 font-mono text-foreground">tokens submit</code>{" "}
+          anytime. On Linux:{" "}
+          <code className="rounded bg-surface-secondary px-1.5 py-0.5 font-mono text-foreground">curl -fsSL https://raw.githubusercontent.com/missuo/tokens/main/install.sh | bash</code>
+        </p>
       </Panel>
     </>
   );
