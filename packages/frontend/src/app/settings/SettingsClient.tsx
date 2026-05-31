@@ -4,7 +4,33 @@ import { useState, useEffect } from "react";
 import { useRouter } from "nextjs-toploader/app";
 import { Button } from "@heroui/react";
 import { KeyIcon, CopyIcon, CheckIcon } from "@/components/ui/Icons";
-import { Panel, PageHeader } from "@/components/ui/primitives";
+import { Panel, PageHeader, StatTile } from "@/components/ui/primitives";
+import { formatNumber, formatCurrency, formatDuration } from "@/lib/utils";
+
+interface SubmissionRecord {
+  totalTokens: number;
+  totalCost: number;
+  dateStart: string;
+  dateEnd: string;
+  sourcesUsed: string[];
+  modelsUsed: string[];
+  cliVersion: string | null;
+  submitCount: number;
+  sessionCount: number | null;
+  totalActiveTimeMs: number | null;
+  firstSubmittedAt: string;
+  lastSubmittedAt: string;
+}
+
+interface SubmissionDevice {
+  id: string;
+  displayName: string | null;
+  createdAt: string;
+  lastSubmittedAt: string | null;
+  tokens: number;
+  cost: number;
+  activeDays: number;
+}
 
 interface User {
   id: string;
@@ -55,6 +81,9 @@ export default function SettingsClient() {
   const [isCreatingToken, setIsCreatingToken] = useState(false);
   const [createTokenError, setCreateTokenError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [submission, setSubmission] = useState<SubmissionRecord | null>(null);
+  const [submissionDevices, setSubmissionDevices] = useState<SubmissionDevice[]>([]);
+  const [deletingData, setDeletingData] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -67,10 +96,17 @@ export default function SettingsClient() {
           router.push("/api/auth/github?returnTo=/settings");
           return;
         }
-        const loadedTokens = await fetchApiTokens().catch(() => []);
+        const [loadedTokens, submittedData] = await Promise.all([
+          fetchApiTokens().catch(() => []),
+          fetch("/api/settings/submitted-data")
+            .then((res) => (res.ok ? res.json() : null))
+            .catch(() => null),
+        ]);
         if (!cancelled) {
           setUser(sessionData.user);
           setTokens((current) => mergeApiTokenList(loadedTokens, current));
+          setSubmission(submittedData?.submission ?? null);
+          setSubmissionDevices(Array.isArray(submittedData?.devices) ? submittedData.devices : []);
           setIsLoading(false);
         }
       } catch {
@@ -113,6 +149,24 @@ export default function SettingsClient() {
     }
   };
 
+  const handleDeleteSubmittedData = async () => {
+    if (!confirm("Delete ALL your submitted usage data? This removes you from every leaderboard and cannot be undone.")) return;
+    setDeletingData(true);
+    try {
+      const response = await fetch("/api/settings/submitted-data", { method: "DELETE" });
+      if (response.ok) {
+        setSubmission(null);
+        setSubmissionDevices([]);
+      } else {
+        alert("Failed to delete submitted data");
+      }
+    } catch {
+      alert("Failed to delete submitted data");
+    } finally {
+      setDeletingData(false);
+    }
+  };
+
   const handleCopyCreatedToken = async () => {
     if (!createdToken) return;
     await navigator.clipboard.writeText(createdToken.token);
@@ -140,7 +194,7 @@ export default function SettingsClient() {
   return (
     <div className="flex min-h-screen flex-col bg-background">
       <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-8 sm:px-6 sm:py-10">
-        <PageHeader title="Settings" subtitle="Manage your profile and personal API tokens." />
+        <PageHeader title="Settings" subtitle="Manage your profile, API tokens, and submitted data." />
 
         <Panel className="mt-6 p-4 sm:p-6">
           <h2 className="text-base font-semibold text-foreground">Profile</h2>
@@ -263,6 +317,118 @@ export default function SettingsClient() {
                 </div>
               ))}
             </div>
+          )}
+        </Panel>
+
+        <Panel className="mt-6 p-4 sm:p-6">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h2 className="text-base font-semibold text-foreground">Submission History</h2>
+              <p className="mt-2 text-sm text-muted">
+                Usage you&apos;ve submitted with{" "}
+                <code className="rounded-md bg-surface-secondary px-1.5 py-0.5 font-mono text-xs text-foreground">tokens submit</code>, summarized by device.
+              </p>
+            </div>
+            {submission && (
+              <Button
+                onPress={handleDeleteSubmittedData}
+                isDisabled={deletingData}
+                variant="ghost"
+                className="h-9 shrink-0 rounded-lg border border-line bg-surface px-3 text-sm font-medium text-foreground transition hover:border-danger/40 hover:text-danger disabled:opacity-60"
+              >
+                {deletingData ? "Deleting…" : "Delete all"}
+              </Button>
+            )}
+          </div>
+
+          {!submission ? (
+            <div className="mt-5 rounded-lg border border-dashed border-line py-10 text-center text-muted">
+              <p className="text-sm font-medium text-foreground">No submissions yet.</p>
+              <p className="mt-1 text-sm">
+                Run <code className="rounded-md bg-surface-secondary px-1.5 py-0.5 font-mono text-xs text-foreground">tokens login</code> then{" "}
+                <code className="rounded-md bg-surface-secondary px-1.5 py-0.5 font-mono text-xs text-foreground">tokens submit</code> from the CLI.
+              </p>
+            </div>
+          ) : (
+            <>
+              <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <StatTile label="Submissions" value={submission.submitCount} />
+                <StatTile label="Total Tokens" value={formatNumber(submission.totalTokens)} accent title={submission.totalTokens.toLocaleString()} />
+                <StatTile label="Total Cost" value={formatCurrency(submission.totalCost)} />
+                <StatTile label="Devices" value={submissionDevices.length} />
+              </div>
+
+              <dl className="mt-4 grid grid-cols-1 gap-x-6 gap-y-2.5 rounded-lg border border-line bg-surface-secondary p-4 text-sm sm:grid-cols-2">
+                <div className="flex justify-between gap-3">
+                  <dt className="text-muted">Period</dt>
+                  <dd className="font-mono text-foreground tabular-nums">{submission.dateStart} → {submission.dateEnd}</dd>
+                </div>
+                <div className="flex justify-between gap-3">
+                  <dt className="text-muted">Last submitted</dt>
+                  <dd className="font-mono text-foreground tabular-nums">{new Date(submission.lastSubmittedAt).toLocaleString()}</dd>
+                </div>
+                <div className="flex justify-between gap-3">
+                  <dt className="text-muted">First submitted</dt>
+                  <dd className="font-mono text-foreground tabular-nums">{new Date(submission.firstSubmittedAt).toLocaleDateString()}</dd>
+                </div>
+                <div className="flex justify-between gap-3">
+                  <dt className="text-muted">CLI version</dt>
+                  <dd className="font-mono text-foreground">{submission.cliVersion ?? "—"}</dd>
+                </div>
+                {submission.totalActiveTimeMs ? (
+                  <div className="flex justify-between gap-3">
+                    <dt className="text-muted">Active time</dt>
+                    <dd className="font-mono text-foreground tabular-nums">{formatDuration(submission.totalActiveTimeMs)}</dd>
+                  </div>
+                ) : null}
+                {submission.sessionCount ? (
+                  <div className="flex justify-between gap-3">
+                    <dt className="text-muted">Sessions</dt>
+                    <dd className="font-mono text-foreground tabular-nums">{submission.sessionCount}</dd>
+                  </div>
+                ) : null}
+              </dl>
+
+              {submission.sourcesUsed.length > 0 && (
+                <div className="mt-3 flex flex-wrap items-center gap-1.5">
+                  <span className="mr-1 text-[11px] font-semibold tracking-wider text-muted uppercase">Sources</span>
+                  {submission.sourcesUsed.map((s) => (
+                    <span key={s} className="rounded-md bg-surface-tertiary px-2 py-0.5 text-xs font-medium text-foreground">{s}</span>
+                  ))}
+                </div>
+              )}
+
+              <h3 className="mt-6 mb-2 text-[11px] font-semibold tracking-wider text-muted uppercase">
+                Devices ({submissionDevices.length})
+              </h3>
+              <div className="divide-y divide-line overflow-hidden rounded-lg border border-line">
+                {submissionDevices.map((d) => (
+                  <div key={d.id} className="flex flex-wrap items-center justify-between gap-4 bg-surface-secondary p-4">
+                    <div className="min-w-0">
+                      <p className="truncate font-medium text-foreground">{d.displayName || "Unnamed device"}</p>
+                      <p className="text-xs text-muted">
+                        {d.lastSubmittedAt ? (
+                          <>Last submitted <span className="font-mono tabular-nums">{new Date(d.lastSubmittedAt).toLocaleDateString()}</span></>
+                        ) : (
+                          "No submissions yet"
+                        )}
+                        {" · "}<span className="font-mono tabular-nums">{d.activeDays}</span> active days
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-5">
+                      <div className="text-right">
+                        <p className="text-[11px] font-semibold tracking-wider text-muted uppercase">Tokens</p>
+                        <p className="font-mono text-sm font-semibold text-accent tabular-nums" title={d.tokens.toLocaleString()}>{formatNumber(d.tokens)}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-[11px] font-semibold tracking-wider text-muted uppercase">Cost</p>
+                        <p className="font-mono text-sm font-medium text-foreground tabular-nums">{formatCurrency(d.cost)}</p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
           )}
         </Panel>
       </main>
