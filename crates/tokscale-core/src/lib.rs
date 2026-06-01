@@ -1,5 +1,6 @@
 #![deny(clippy::all)]
 
+pub mod accuracy;
 mod aggregator;
 pub mod clients;
 pub mod fs_atomic;
@@ -12,6 +13,7 @@ pub mod scanner;
 pub mod sessionize;
 pub mod sessions;
 
+pub use accuracy::*;
 pub use aggregator::*;
 pub use clients::{ClientCounts, ClientDef, ClientId, PathRoot};
 pub use parser::*;

@@ -1710,10 +1710,12 @@ fn run_models_report(
             total_messages: i32,
             total_cost: f64,
             processing_time_ms: u32,
+            accuracy: tokscale_core::AccuracyReport,
             #[serde(skip_serializing_if = "Vec::is_empty")]
             warnings: Vec<String>,
         }
 
+        let accuracy = accuracy_report_for_model_entries(&report.entries);
         let output = ModelReportJson {
             group_by: group_by.to_string(),
             entries: report
@@ -1760,6 +1762,7 @@ fn run_models_report(
             total_messages: report.total_messages,
             total_cost: report.total_cost,
             processing_time_ms: report.processing_time_ms,
+            accuracy,
             warnings: cursor_setup_warnings,
         };
         println!("{}", serde_json::to_string_pretty(&output)?);
@@ -3324,6 +3327,38 @@ fn model_entry_total_tokens(entry: &tokscale_core::ModelUsage) -> i64 {
         + entry.reasoning.max(0)
 }
 
+fn accuracy_report_for_model_entries(
+    entries: &[tokscale_core::ModelUsage],
+) -> tokscale_core::AccuracyReport {
+    let clients = accuracy_clients_for_model_entries(entries);
+    let evidence = entries
+        .iter()
+        .map(|entry| tokscale_core::AccuracyModelEvidence {
+            client: entry.client.clone(),
+            model: entry.model.clone(),
+            provider: entry.provider.clone(),
+            tokens: model_entry_total_tokens(entry),
+            cost: entry.cost,
+        })
+        .collect::<Vec<_>>();
+
+    tokscale_core::accuracy_report_for_models(&clients, &evidence)
+}
+
+fn accuracy_clients_for_model_entries(entries: &[tokscale_core::ModelUsage]) -> Vec<String> {
+    let mut clients = std::collections::BTreeSet::new();
+    for entry in entries {
+        let source = entry.merged_clients.as_deref().unwrap_or(&entry.client);
+        for client in source.split(", ") {
+            let trimmed = client.trim();
+            if !trimmed.is_empty() {
+                clients.insert(trimmed.to_string());
+            }
+        }
+    }
+    clients.into_iter().collect()
+}
+
 fn aggregate_model_report_performance(
     entries: &[tokscale_core::ModelUsage],
 ) -> tokscale_core::ModelPerformance {
@@ -3909,6 +3944,7 @@ struct TsTokenContributionData {
     summary: TsDataSummary,
     years: Vec<TsYearSummary>,
     contributions: Vec<TsDailyContribution>,
+    accuracy: tokscale_core::AccuracyReport,
     #[serde(skip_serializing_if = "Option::is_none")]
     time_metrics: Option<TsTimeMetrics>,
 }
@@ -3996,6 +4032,7 @@ fn to_ts_token_contribution_data(
                 active_time_ms: d.active_time_ms,
             })
             .collect(),
+        accuracy: tokscale_core::accuracy_report_for_graph(graph),
         time_metrics: graph.time_metrics.as_ref().map(|tm| TsTimeMetrics {
             total_active_time_ms: tm.total_active_time_ms,
             longest_continuous_ms: tm.longest_continuous_ms,
@@ -7117,6 +7154,50 @@ mod tests {
             payload.device.as_ref().unwrap().name.as_deref(),
             Some("Test device")
         );
+    }
+
+    #[test]
+    fn test_model_report_accuracy_marks_unpriced_token_usage_low_confidence() {
+        let entries = vec![tokscale_core::ModelUsage {
+            client: "codex".to_string(),
+            merged_clients: None,
+            workspace_key: None,
+            workspace_label: None,
+            session_id: None,
+            model: "unknown-model".to_string(),
+            provider: "openai".to_string(),
+            input: 100,
+            output: 0,
+            cache_read: 0,
+            cache_write: 0,
+            reasoning: 0,
+            message_count: 1,
+            cost: 0.0,
+            performance: tokscale_core::ModelPerformance::default(),
+        }];
+
+        let accuracy = accuracy_report_for_model_entries(&entries);
+
+        assert_eq!(accuracy.confidence, tokscale_core::AccuracyConfidence::Low);
+        assert_eq!(accuracy.pricing.unpriced_models, 1);
+    }
+
+    #[test]
+    fn test_graph_payload_includes_accuracy_summary() {
+        let graph = graph_result_with_contributions(vec![daily_contribution(
+            "2026-12-31",
+            20,
+            2.50,
+            "codex",
+            "model-b",
+        )]);
+
+        let payload = to_ts_token_contribution_data(&graph, None);
+        let value = serde_json::to_value(payload).unwrap();
+
+        assert_eq!(value["accuracy"]["confidence"], "medium");
+        assert_eq!(value["accuracy"]["sources"][0]["kind"], "local-scan");
+        assert_eq!(value["accuracy"]["pricing"]["matchedModels"], 1);
     }
 
     #[test]
