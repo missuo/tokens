@@ -86,6 +86,14 @@ struct StatusScheduler {
     interval_seconds: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     command: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    log_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error_log_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    log_command: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    next_run_at: Option<String>,
     scheduled_submit: bool,
     legacy_keep_alive: bool,
 }
@@ -238,6 +246,23 @@ fn extract_launchd_start_interval(content: &str) -> Option<u64> {
     value.trim().parse().ok()
 }
 
+fn extract_launchd_string_value(content: &str, key: &str) -> Option<String> {
+    let needle = format!("<key>{key}</key>");
+    let (_, after_key) = content.split_once(needle.as_str())?;
+    let (_, after_string) = after_key.split_once("<string>")?;
+    let (value, _) = after_string.split_once("</string>")?;
+    let value = value.trim();
+    (!value.is_empty()).then(|| value.to_string())
+}
+
+fn infer_homebrew_log_path_from_command(command: &str) -> Option<String> {
+    command.split_whitespace().find_map(|part| {
+        let part = part.trim_matches('"');
+        let prefix = part.strip_suffix("/opt/tokens/bin/tokens")?;
+        Some(format!("{prefix}/var/log/tokens.log"))
+    })
+}
+
 fn parse_systemd_duration_seconds(raw: &str) -> Option<u64> {
     let value = raw.trim();
     if let Some(minutes) = value.strip_suffix("min") {
@@ -266,6 +291,10 @@ fn parse_homebrew_launchd_scheduler(path: &str, content: &str) -> Option<StatusS
         return None;
     }
     let interval_seconds = extract_launchd_start_interval(content);
+    let log_path = extract_launchd_string_value(content, "StandardOutPath")
+        .or_else(|| infer_homebrew_log_path_from_command(&command));
+    let error_log_path =
+        extract_launchd_string_value(content, "StandardErrorPath").or_else(|| log_path.clone());
     let legacy_keep_alive =
         content.contains("<key>KeepAlive</key>") || command_is_tokens_serve(&command);
     let scheduled_submit = interval_seconds.is_some() && command_is_tokens_submit(&command);
@@ -275,9 +304,46 @@ fn parse_homebrew_launchd_scheduler(path: &str, content: &str) -> Option<StatusS
         path: path.to_string(),
         interval_seconds,
         command: Some(command),
+        log_path,
+        error_log_path,
+        log_command: None,
+        next_run_at: None,
         scheduled_submit,
         legacy_keep_alive,
     })
+}
+
+fn systemd_service_unit_from_timer_path(path: &str) -> Option<String> {
+    let file_name = Path::new(path).file_name()?.to_str()?;
+    file_name
+        .strip_suffix(".timer")
+        .map(|stem| format!("{stem}.service"))
+}
+
+fn normalize_systemd_next_run_value(raw: &str) -> Option<String> {
+    let value = raw.trim();
+    if value.is_empty() || value.eq_ignore_ascii_case("n/a") || value == "0" {
+        None
+    } else {
+        Some(value.to_string())
+    }
+}
+
+fn detect_systemd_next_run_at(timer_name: &str) -> Option<String> {
+    let output = std::process::Command::new("systemctl")
+        .args([
+            "--user",
+            "show",
+            timer_name,
+            "--property=NextElapseUSecRealtime",
+            "--value",
+        ])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    normalize_systemd_next_run_value(&String::from_utf8_lossy(&output.stdout))
 }
 
 fn parse_systemd_scheduler(
@@ -301,12 +367,18 @@ fn parse_systemd_scheduler(
     }) || command.as_deref().is_some_and(command_is_tokens_serve);
     let scheduled_submit =
         interval_seconds.is_some() && command.as_deref().is_some_and(command_is_tokens_submit);
+    let log_command = systemd_service_unit_from_timer_path(path)
+        .map(|unit| format!("journalctl --user -u {unit} -f"));
 
     Some(StatusScheduler {
         kind,
         path: path.to_string(),
         interval_seconds,
         command,
+        log_path: None,
+        error_log_path: None,
+        log_command,
+        next_run_at: None,
         scheduled_submit,
         legacy_keep_alive,
     })
@@ -351,6 +423,8 @@ fn detect_status_scheduler() -> Option<StatusScheduler> {
             &timer_content,
             &service_content,
         ) {
+            let mut scheduler = scheduler;
+            scheduler.next_run_at = detect_systemd_next_run_at(timer_name);
             return Some(scheduler);
         }
     }
@@ -644,6 +718,23 @@ pub fn run(json: bool) -> Result<()> {
         }
     }
 
+    if let Some(scheduler) = &report.service.scheduler {
+        if let Some(next_run_at) = &scheduler.next_run_at {
+            println!("{}", format!("  Next run: {next_run_at}").bright_black());
+        }
+        if let Some(log_path) = &scheduler.log_path {
+            match scheduler.error_log_path.as_deref() {
+                Some(error_log_path) if error_log_path != log_path => println!(
+                    "{}",
+                    format!("  Logs: {log_path} (stderr: {error_log_path})").bright_black()
+                ),
+                _ => println!("{}", format!("  Logs: {log_path}").bright_black()),
+            }
+        } else if let Some(log_command) = &scheduler.log_command {
+            println!("{}", format!("  Logs: {log_command}").bright_black());
+        }
+    }
+
     if let Some(latest_submit) = &report.submit.latest {
         let line = format_latest_submit_line(latest_submit);
         match latest_submit.status {
@@ -749,6 +840,10 @@ mod tests {
   <true/>
   <key>StartInterval</key>
   <integer>1800</integer>
+  <key>StandardOutPath</key>
+  <string>/opt/homebrew/var/log/tokens.log</string>
+  <key>StandardErrorPath</key>
+  <string>/opt/homebrew/var/log/tokens.err.log</string>
 </dict>
 </plist>
 "#,
@@ -757,8 +852,49 @@ mod tests {
 
         assert_eq!(scheduler.kind, "homebrew-launchd");
         assert_eq!(scheduler.interval_seconds, Some(1800));
+        assert_eq!(
+            scheduler.log_path.as_deref(),
+            Some("/opt/homebrew/var/log/tokens.log")
+        );
+        assert_eq!(
+            scheduler.error_log_path.as_deref(),
+            Some("/opt/homebrew/var/log/tokens.err.log")
+        );
+        assert_eq!(scheduler.log_command, None);
+        assert_eq!(scheduler.next_run_at, None);
         assert!(scheduler.scheduled_submit);
         assert!(!scheduler.legacy_keep_alive);
+    }
+
+    #[test]
+    fn parse_homebrew_launchd_scheduler_infers_brew_log_path_from_command() {
+        let scheduler = parse_homebrew_launchd_scheduler(
+            "/Users/example/Library/LaunchAgents/homebrew.mxcl.tokens.plist",
+            r#"
+<plist version="1.0">
+<dict>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/opt/tokens/bin/tokens</string>
+    <string>--no-spinner</string>
+    <string>submit</string>
+  </array>
+  <key>StartInterval</key>
+  <integer>1800</integer>
+</dict>
+</plist>
+"#,
+        )
+        .expect("homebrew launchd plist should parse");
+
+        assert_eq!(
+            scheduler.log_path.as_deref(),
+            Some("/opt/homebrew/var/log/tokens.log")
+        );
+        assert_eq!(
+            scheduler.error_log_path.as_deref(),
+            Some("/opt/homebrew/var/log/tokens.log")
+        );
     }
 
     #[test]
@@ -783,6 +919,16 @@ mod tests {
 
         assert_eq!(scheduler.kind, "homebrew-launchd");
         assert_eq!(scheduler.interval_seconds, None);
+        assert_eq!(
+            scheduler.log_path.as_deref(),
+            Some("/opt/homebrew/var/log/tokens.log")
+        );
+        assert_eq!(
+            scheduler.error_log_path.as_deref(),
+            Some("/opt/homebrew/var/log/tokens.log")
+        );
+        assert_eq!(scheduler.log_command, None);
+        assert_eq!(scheduler.next_run_at, None);
         assert!(!scheduler.scheduled_submit);
         assert!(scheduler.legacy_keep_alive);
     }
@@ -809,8 +955,26 @@ ExecStart=tokens --no-spinner submit
 
         assert_eq!(scheduler.kind, "systemd-user");
         assert_eq!(scheduler.interval_seconds, Some(1800));
+        assert_eq!(scheduler.log_path, None);
+        assert_eq!(scheduler.error_log_path, None);
+        assert_eq!(
+            scheduler.log_command.as_deref(),
+            Some("journalctl --user -u tokens.service -f")
+        );
+        assert_eq!(scheduler.next_run_at, None);
         assert!(scheduler.scheduled_submit);
         assert!(!scheduler.legacy_keep_alive);
+    }
+
+    #[test]
+    fn normalize_systemd_next_run_value_ignores_empty_or_unset_values() {
+        assert_eq!(normalize_systemd_next_run_value(""), None);
+        assert_eq!(normalize_systemd_next_run_value("n/a"), None);
+        assert_eq!(normalize_systemd_next_run_value("0"), None);
+        assert_eq!(
+            normalize_systemd_next_run_value("Mon 2026-06-01 10:30:00 JST"),
+            Some("Mon 2026-06-01 10:30:00 JST".to_string())
+        );
     }
 
     #[test]
@@ -820,6 +984,10 @@ ExecStart=tokens --no-spinner submit
             path: "/Users/example/Library/LaunchAgents/homebrew.mxcl.tokens.plist".to_string(),
             interval_seconds: Some(1800),
             command: Some("/opt/homebrew/opt/tokens/bin/tokens --no-spinner submit".to_string()),
+            log_path: Some("/opt/homebrew/var/log/tokens.log".to_string()),
+            error_log_path: Some("/opt/homebrew/var/log/tokens.log".to_string()),
+            log_command: None,
+            next_run_at: None,
             scheduled_submit: true,
             legacy_keep_alive: false,
         };
@@ -838,6 +1006,10 @@ ExecStart=tokens --no-spinner submit
             path: "/Users/example/Library/LaunchAgents/homebrew.mxcl.tokens.plist".to_string(),
             interval_seconds: None,
             command: Some("/opt/homebrew/opt/tokens/bin/tokens serve".to_string()),
+            log_path: Some("/opt/homebrew/var/log/tokens.log".to_string()),
+            error_log_path: Some("/opt/homebrew/var/log/tokens.log".to_string()),
+            log_command: None,
+            next_run_at: None,
             scheduled_submit: false,
             legacy_keep_alive: true,
         };
