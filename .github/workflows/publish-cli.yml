@@ -258,6 +258,12 @@ jobs:
             ~/.cargo/git/db/
             target/
           key: cli-${{ matrix.settings.target }}-cargo-${{ matrix.settings.host }}-${{ hashFiles('Cargo.lock') }}
+          # Every release the bump step rewrites the workspace version in
+          # Cargo.lock, so the exact key never matches a prior run. Fall back
+          # to the newest cache for this target so cargo only recompiles the
+          # bumped workspace crates (a quick relink) instead of all deps.
+          restore-keys: |
+            cli-${{ matrix.settings.target }}-cargo-${{ matrix.settings.host }}-
 
       - uses: mlugg/setup-zig@v2
         if: ${{ contains(matrix.settings.target, 'linux') }}
