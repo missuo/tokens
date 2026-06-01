@@ -113,7 +113,7 @@ If two branches generate migrations with the same index, resolve the conflict by
 
 ## Agent Command Execution
 
-- When running `tokscale` CLI commands from an automated agent (tests, CI, or tool-driven shells), always pass `--no-spinner` unless spinner behavior is the thing being tested.
+- When running `tokens` CLI commands from an automated agent (tests, CI, or tool-driven shells), always pass `--no-spinner` unless spinner behavior is the thing being tested.
 - This avoids non-interactive terminal issues and keeps command output stable for assertions and logs.
 
 ## Release & Deployment
@@ -136,28 +136,28 @@ Releases are published to npm via a GitHub Actions `workflow_dispatch` pipeline,
 
 | # | Job | Description |
 |---|-----|-------------|
-| 1 | `bump-versions` | Reads current version from `packages/cli/package.json`, calculates new version, updates the Rust workspace version plus the CLI, wrapper, and platform package manifests, then uploads the bumped manifests as an artifact |
-| 2 | `build-cli-binary` | 8-target parallel native Rust builds (macOS x86/arm64, Linux glibc/musl x86/arm64, Windows x86/arm64) |
-| 3 | `publish-platform-packages` | Publishes platform-specific packages (`@tokscale/cli-darwin-arm64`, etc.) containing native binaries to npm |
-| 4 | `publish-cli` | Publishes `@tokscale/cli` to npm (binary dispatcher + optionalDependencies) |
-| 5 | `publish-alias` | Publishes `tokscale` wrapper package to npm |
-| 6 | `finalize` | Commits the bumped release manifests back to repo as `chore: bump version to X.Y.Z` (authored by `github-actions[bot]`) |
+| 1 | `bump-versions` | Reads current version from `packages/cli/package.json`, calculates new version, updates the Rust workspace version plus the CLI and platform package manifests, then uploads the bumped manifests as an artifact |
+| 2 | `build-cli-binary` | 8-target parallel native Rust builds (macOS x86/arm64, Linux glibc/musl x86/arm64, Windows x86/arm64); produces the `tokens` binary (and `tokens.exe` on Windows) per Cargo `[[bin]]` |
+| 3 | `prepare-release-provenance` | Pre-flight npm publish check via `scripts/check-npm-release-state.sh`, then commits the bumped manifests back to the release branch as `chore: bump version to X.Y.Z` (authored by `github-actions[bot]`); all subsequent jobs check out this commit |
+| 4 | `publish-platform-packages` | Publishes the 8 platform-specific packages (`@tokens/cli-darwin-arm64`, etc.) containing native binaries to npm |
+| 5 | `publish-cli` | Builds `packages/cli/` and publishes `@tokens/cli` to npm (binary dispatcher + 8 optionalDependencies) |
+| 6 | `finalize` | Creates the `vX.Y.Z` git tag, generates release notes via `scripts/generate-release-notes.ts`, opens/updates the GitHub Release, and (best-effort) posts to Discord via `scripts/post-discord-release.sh` |
 
 **Duration:** ~15-20 minutes end-to-end.
 
-**Package publish chain:** `@tokscale/cli` (with platform packages as optionalDependencies) → `tokscale` (depends on cli). Each waits for the previous to succeed.
+**Package publish chain:** 8 × `@tokens/cli-{triple}` (platform binaries) → `@tokens/cli` (dispatcher that picks the right platform package at install time). No wrapper is published — `bunx @tokens/cli` puts the `tokens` binary on `PATH` directly because the dispatcher's own `bin: { "tokens": "./bin.js" }` already exposes that command name. (npm has reserved the unscoped `tokens` name since 2014 for an unrelated OAuth library, so an unscoped wrapper would not be reachable anyway.)
 
-### Post-Pipeline: Git Tag & GitHub Release
+### Required Secrets
 
-The CI pipeline does **NOT** create the git tag or GitHub Release. After the workflow completes successfully:
+| Secret | Used by | Purpose |
+|---|---|---|
+| `NPM_TOKEN` | `check-npm-release-state`, `publish-platform-packages`, `publish-cli` | Publishes the packages and authenticates the pre-flight `npm view` lookups. Must be an automation token with publish rights on the `@tokens/*` scope. |
+| `GITHUB_TOKEN` | `prepare-release-provenance`, `finalize` | Default token; pushes the `chore: bump version` commit, creates the tag, and creates/updates the GitHub Release. |
+| `DISCORD_RELEASE_WEBHOOK_URL` (optional) | `finalize` | If set, the release notes are also posted to a Discord webhook. The step is `continue-on-error: true` and silently no-ops when the secret is missing, so a release never fails just because the webhook is unconfigured. |
 
-1. Verify the `chore: bump version to X.Y.Z` commit was pushed by CI
-2. Create a GitHub Release manually:
-   - **Tag:** `vX.Y.Z` (e.g., `v1.2.1`)
-   - **Target:** The `chore: bump version to X.Y.Z` commit
-   - **Title:** See [Release Notes Style](#release-notes-style) below
-   - **Body:** See [Release Notes Template](#release-notes-template) below
-3. Publish the release (not as draft, not as prerelease)
+### Post-Pipeline
+
+The `finalize` job handles tagging, GitHub Release, and Discord — there is no separate manual step. After the workflow finishes, verify on npm and in the GitHub Releases tab; smoke-test the install with `bunx @tokens/cli@latest --version`.
 
 ### Versioning Conventions
 
@@ -169,13 +169,12 @@ The CI pipeline does **NOT** create the git tag or GitHub Release. After the wor
 
 Release version is stored in the Rust workspace and the npm package manifests, and CI updates them together:
 - `Cargo.toml` (`[workspace.package].version`) — Rust binary and exported metadata version
-- `packages/cli/package.json` — CLI package version and platform optional dependency versions
+- `packages/cli/package.json` — dispatcher package version and platform optional dependency versions
 - Platform packages (`packages/cli-*/package.json`) — native package versions
-- `packages/tokscale/package.json` — wrapper version plus `@tokscale/cli` dependency version
 
-### CI-Only Workflow
+### CI-Only Workflows
 
-**`.github/workflows/build-native.yml`** — Runs on PRs touching `crates/tokscale-cli/**`. Builds all 8 native targets to verify compilation. Does not publish.
+- **`.github/workflows/release.yml`** — Triggered on every `v*` tag push. Cross-compiles the `tokens` binary for 4 targets (macOS aarch64/x86_64, Linux x86_64, Linux aarch64), tars + sha256s each artifact, and uploads them to the GitHub Release so `install.sh` can fetch a prebuilt binary. The remaining 4 targets (musl + Windows) are covered by the npm publish pipeline's build matrix, since they are only relevant to npm consumers.
 
 ---
 
@@ -185,33 +184,33 @@ Release version is stored in the Rust workspace and the npm package manifests, a
 
 | Release Type | Title Format |
 |-------------|--------------|
-| Standard patch/minor | `` `tokscale@vX.Y.Z` is here! `` |
-| Flagship feature | `` EMOJI `tokscale@vX.Y.Z` is here! (Short subtitle with [link](...)) `` |
+| Standard patch/minor | `` `tokens@vX.Y.Z` is here! `` |
+| Flagship feature | `` EMOJI `tokens@vX.Y.Z` is here! (Short subtitle with [link](...)) `` |
 | Feature spotlight | Custom banner image replacing the standard hero + call-to-action |
 
 **Examples from past releases:**
-- Standard: `` `tokscale@v1.1.2` is here! ``
-- Flagship: `` 🦞 `tokscale@v1.2.0` is here! (Now supports [OpenClaw](https://github.com/openclaw/openclaw)) ``
-- Spotlight: Custom Wrapped 2025 banner + `` Generate your Wrapped 2025 with `tokscale@v1.0.16` ``
+- Standard: `` `tokens@v3.0.0` is here! ``
+- Flagship: `` 🚀 `tokens@v3.1.0` is here! (Adds [Foo](https://github.com/foo/bar)) ``
+- Spotlight: Custom banner + `` Generate your Wrapped 2025 with `tokens@v1.0.16` ``
 
 #### Release Notes Template
 
 ```markdown
 <div align="center">
 
-[![Tokscale](https://github.com/junhoyeo/tokscale/raw/main/.github/assets/hero-v2.png)](https://github.com/junhoyeo/tokscale)
+[![Tokens](https://github.com/missuo/tokens/raw/main/.github/assets/hero-v2.png)](https://github.com/missuo/tokens)
 
-# `tokscale@vX.Y.Z` is here!
+# `tokens@vX.Y.Z` is here!
 </div>
 
 ## What's Changed
-* scope(area): description by @author in https://github.com/junhoyeo/tokscale/pull/NNN
-* scope(area): description by @author in https://github.com/junhoyeo/tokscale/pull/NNN
+* scope(area): description by @author in https://github.com/missuo/tokens/pull/NNN
+* scope(area): description by @author in https://github.com/missuo/tokens/pull/NNN
 
 ## New Contributors
-* @username made their first contribution in https://github.com/junhoyeo/tokscale/pull/NNN
+* @username made their first contribution in https://github.com/missuo/tokens/pull/NNN
 
-**Full Changelog**: https://github.com/junhoyeo/tokscale/compare/vPREVIOUS...vNEW
+**Full Changelog**: https://github.com/missuo/tokens/compare/vPREVIOUS...vNEW
 ```
 
 #### Style Rules
@@ -219,13 +218,13 @@ Release version is stored in the Rust workspace and the npm package manifests, a
 | Element | Rule |
 |---------|------|
 | **Header** | Always centered `<div align="center">` with hero banner image linked to the repo |
-| **Title** | Backtick-wrapped `tokscale@vX.Y.Z` — package name, not just version |
+| **Title** | Backtick-wrapped `tokens@vX.Y.Z` — package name, not just version |
 | **PR list** | `* scope(area): description by @author in URL` — mirrors the PR title exactly as merged |
-| **Optional summary** | For releases with many changes or when PR titles alone don't convey impact, add a brief bullet list between the title and "What's Changed" (see v1.0.18 as example) |
+| **Optional summary** | For releases with many changes or when PR titles alone don't convey impact, add a brief bullet list between the title and "What's Changed" |
 | **New Contributors** | Include section when there are first-time contributors |
 | **Full Changelog** | Always present at bottom as a GitHub compare link `vPREV...vNEW` |
 | **Tone** | Concise. No prose paragraphs. Let the PR list speak for itself. |
-| **No draft issues** | Never reference draft release issues (e.g., #121) in the notes |
+| **No draft issues** | Never reference draft release issues (e.g., #1) in the notes |
 
 #### When to Add a Summary Block
 
@@ -234,7 +233,7 @@ Add a short bullet list summary (before "What's Changed") when:
 - PR titles alone don't convey the user-facing impact
 - A new client/integration is the headline
 
-**Example (v1.0.18):**
+**Example:**
 ```markdown
 - Improved model price resolver (Rust)
 - Add support for Amp (AmpCode) and Droid (Factory Droid)
@@ -248,13 +247,10 @@ Add a short bullet list summary (before "What's Changed") when:
 2. [ ] `cargo test` passes in crates/tokscale-cli
 3. [ ] No open blocker bugs (regressions from changes being released)
 4. [ ] Run "Publish" workflow via GitHub Actions UI
-   - Select bump type (patch/minor/major)
+   - Select bump type (patch/minor/major) or set `version` to an override
    - Wait for all 6 stages to complete
-5. [ ] Verify `chore: bump version to X.Y.Z` commit was pushed
-6. [ ] Verify packages on npm: @tokscale/cli, tokscale
-7. [ ] Create GitHub Release
-   - Tag: vX.Y.Z targeting the bump commit
-   - Write release notes following the template above
-   - Publish (not draft, not prerelease)
-8. [ ] Smoke test: `bunx tokscale@latest --version`
+5. [ ] Verify `chore: bump version to X.Y.Z` commit was pushed by CI
+6. [ ] Verify packages on npm under the @tokens scope: @tokens/cli and the 8 @tokens/cli-{triple} packages
+7. [ ] Verify the GitHub Release was created/updated by the finalize job (tag vX.Y.Z)
+8. [ ] Smoke test: bunx @tokens/cli@latest --version
 ```

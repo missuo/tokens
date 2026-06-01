@@ -16,7 +16,7 @@ RAW_NOTES=$(bun scripts/generate-release-notes.ts "$VERSION")
 BODY=$(echo "$RAW_NOTES" | sed '1,/<\/div>/d' | sed '/^# /d' | sed '/^$/{ N; /^\n$/d; }')
 
 # Prepend our own Discord-friendly heading
-DISCORD_BODY="## \`tokscale@v${VERSION}\` is here!
+DISCORD_BODY="## \`tokens@v${VERSION}\` is here!
 ${BODY}"
 
 MAX_LEN=2000

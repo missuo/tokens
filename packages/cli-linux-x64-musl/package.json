@@ -1,7 +1,7 @@
 {
-  "name": "@tokscale/cli-linux-x64-musl",
+  "name": "@tokens/cli-linux-x64-musl",
   "version": "3.0.0",
-  "description": "tokscale CLI binary for linux x64 musl",
+  "description": "tokens CLI binary for linux x64 musl",
   "license": "MIT",
   "type": "module",
   "os": [
@@ -13,7 +13,7 @@
   "libc": [
     "musl"
   ],
-  "main": "bin/tokscale",
+  "main": "bin/tokens",
   "files": [
     "bin"
   ],
@@ -23,7 +23,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/junhoyeo/tokscale.git",
+    "url": "git+https://github.com/missuo/tokens.git",
     "directory": "packages/cli-linux-x64-musl"
   }
 }

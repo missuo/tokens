@@ -1,7 +1,7 @@
 {
-  "name": "@tokscale/cli-win32-arm64-msvc",
+  "name": "@tokens/cli-win32-arm64-msvc",
   "version": "3.0.0",
-  "description": "tokscale CLI binary for win32 arm64 msvc",
+  "description": "tokens CLI binary for win32 arm64 msvc",
   "license": "MIT",
   "type": "module",
   "os": [
@@ -10,7 +10,7 @@
   "cpu": [
     "arm64"
   ],
-  "main": "bin/tokscale.exe",
+  "main": "bin/tokens.exe",
   "files": [
     "bin"
   ],
@@ -20,7 +20,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/junhoyeo/tokscale.git",
+    "url": "git+https://github.com/missuo/tokens.git",
     "directory": "packages/cli-win32-arm64-msvc"
   }
 }

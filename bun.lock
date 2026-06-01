@@ -1,5 +1,6 @@
 {
   "lockfileVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "name": "tokscale-monorepo",
@@ -14,56 +15,56 @@
       "version": "0.1.0",
     },
     "packages/cli": {
-      "name": "@tokscale/cli",
+      "name": "@tokens/cli",
       "version": "3.0.0",
       "bin": {
-        "tokscale": "./dist/index.js",
+        "tokens": "./bin.js",
       },
       "devDependencies": {
         "@types/node": "^20.0.0",
         "typescript": "^5.0.0",
       },
       "optionalDependencies": {
-        "@tokscale/cli-darwin-arm64": "1.4.3",
-        "@tokscale/cli-darwin-x64": "1.4.3",
-        "@tokscale/cli-linux-arm64-gnu": "1.4.3",
-        "@tokscale/cli-linux-arm64-musl": "1.4.3",
-        "@tokscale/cli-linux-x64-gnu": "1.4.3",
-        "@tokscale/cli-linux-x64-musl": "1.4.3",
-        "@tokscale/cli-win32-arm64-msvc": "1.4.3",
-        "@tokscale/cli-win32-x64-msvc": "1.4.3",
+        "@tokens/cli-darwin-arm64": "3.0.0",
+        "@tokens/cli-darwin-x64": "3.0.0",
+        "@tokens/cli-linux-arm64-gnu": "3.0.0",
+        "@tokens/cli-linux-arm64-musl": "3.0.0",
+        "@tokens/cli-linux-x64-gnu": "3.0.0",
+        "@tokens/cli-linux-x64-musl": "3.0.0",
+        "@tokens/cli-win32-arm64-msvc": "3.0.0",
+        "@tokens/cli-win32-x64-msvc": "3.0.0",
       },
     },
     "packages/cli-darwin-arm64": {
-      "name": "@tokscale/cli-darwin-arm64",
+      "name": "@tokens/cli-darwin-arm64",
       "version": "3.0.0",
     },
     "packages/cli-darwin-x64": {
-      "name": "@tokscale/cli-darwin-x64",
+      "name": "@tokens/cli-darwin-x64",
       "version": "3.0.0",
     },
     "packages/cli-linux-arm64-gnu": {
-      "name": "@tokscale/cli-linux-arm64-gnu",
+      "name": "@tokens/cli-linux-arm64-gnu",
       "version": "3.0.0",
     },
     "packages/cli-linux-arm64-musl": {
-      "name": "@tokscale/cli-linux-arm64-musl",
+      "name": "@tokens/cli-linux-arm64-musl",
       "version": "3.0.0",
     },
     "packages/cli-linux-x64-gnu": {
-      "name": "@tokscale/cli-linux-x64-gnu",
+      "name": "@tokens/cli-linux-x64-gnu",
       "version": "3.0.0",
     },
     "packages/cli-linux-x64-musl": {
-      "name": "@tokscale/cli-linux-x64-musl",
+      "name": "@tokens/cli-linux-x64-musl",
       "version": "3.0.0",
     },
     "packages/cli-win32-arm64-msvc": {
-      "name": "@tokscale/cli-win32-arm64-msvc",
+      "name": "@tokens/cli-win32-arm64-msvc",
       "version": "3.0.0",
     },
     "packages/cli-win32-x64-msvc": {
-      "name": "@tokscale/cli-win32-x64-msvc",
+      "name": "@tokens/cli-win32-x64-msvc",
       "version": "3.0.0",
     },
     "packages/frontend": {
@@ -103,16 +104,6 @@
         "playwright": "^1.60.0",
         "typescript": "^5",
         "vitest": "^4.0.16",
-      },
-    },
-    "packages/tokscale": {
-      "name": "tokscale",
-      "version": "3.0.0",
-      "bin": {
-        "tokscale": "./bin.js",
-      },
-      "dependencies": {
-        "@tokscale/cli": "1.0.17",
       },
     },
   },
@@ -559,25 +550,25 @@
 
     "@tanstack/virtual-core": ["@tanstack/virtual-core@3.13.18", "", {}, "sha512-Mx86Hqu1k39icq2Zusq+Ey2J6dDWTjDvEv43PJtRCoEYTLyfaPnxIQ6iy7YAOK0NV/qOEmZQ/uCufrppZxTgcg=="],
 
+    "@tokens/cli": ["@tokens/cli@workspace:packages/cli"],
+
+    "@tokens/cli-darwin-arm64": ["@tokens/cli-darwin-arm64@workspace:packages/cli-darwin-arm64"],
+
+    "@tokens/cli-darwin-x64": ["@tokens/cli-darwin-x64@workspace:packages/cli-darwin-x64"],
+
+    "@tokens/cli-linux-arm64-gnu": ["@tokens/cli-linux-arm64-gnu@workspace:packages/cli-linux-arm64-gnu"],
+
+    "@tokens/cli-linux-arm64-musl": ["@tokens/cli-linux-arm64-musl@workspace:packages/cli-linux-arm64-musl"],
+
+    "@tokens/cli-linux-x64-gnu": ["@tokens/cli-linux-x64-gnu@workspace:packages/cli-linux-x64-gnu"],
+
+    "@tokens/cli-linux-x64-musl": ["@tokens/cli-linux-x64-musl@workspace:packages/cli-linux-x64-musl"],
+
+    "@tokens/cli-win32-arm64-msvc": ["@tokens/cli-win32-arm64-msvc@workspace:packages/cli-win32-arm64-msvc"],
+
+    "@tokens/cli-win32-x64-msvc": ["@tokens/cli-win32-x64-msvc@workspace:packages/cli-win32-x64-msvc"],
+
     "@tokscale/benchmarks": ["@tokscale/benchmarks@workspace:packages/benchmarks"],
-
-    "@tokscale/cli": ["@tokscale/cli@workspace:packages/cli"],
-
-    "@tokscale/cli-darwin-arm64": ["@tokscale/cli-darwin-arm64@workspace:packages/cli-darwin-arm64"],
-
-    "@tokscale/cli-darwin-x64": ["@tokscale/cli-darwin-x64@workspace:packages/cli-darwin-x64"],
-
-    "@tokscale/cli-linux-arm64-gnu": ["@tokscale/cli-linux-arm64-gnu@workspace:packages/cli-linux-arm64-gnu"],
-
-    "@tokscale/cli-linux-arm64-musl": ["@tokscale/cli-linux-arm64-musl@workspace:packages/cli-linux-arm64-musl"],
-
-    "@tokscale/cli-linux-x64-gnu": ["@tokscale/cli-linux-x64-gnu@workspace:packages/cli-linux-x64-gnu"],
-
-    "@tokscale/cli-linux-x64-musl": ["@tokscale/cli-linux-x64-musl@workspace:packages/cli-linux-x64-musl"],
-
-    "@tokscale/cli-win32-arm64-msvc": ["@tokscale/cli-win32-arm64-msvc@workspace:packages/cli-win32-arm64-msvc"],
-
-    "@tokscale/cli-win32-x64-msvc": ["@tokscale/cli-win32-x64-msvc@workspace:packages/cli-win32-x64-msvc"],
 
     "@tokscale/frontend": ["@tokscale/frontend@workspace:packages/frontend"],
 
@@ -1316,8 +1307,6 @@
     "tinyrainbow": ["tinyrainbow@3.1.0", "", {}, "sha512-Bf+ILmBgretUrdJxzXM0SgXLZ3XfiaUuOj/IKQHuTXip+05Xn+uyEYdVg0kYDipTBcLrCVyUzAPz7QmArb0mmw=="],
 
     "to-regex-range": ["to-regex-range@5.0.1", "", { "dependencies": { "is-number": "^7.0.0" } }, "sha512-65P7iz6X5yEr1cwcgvQxbbIw7Uk3gOy5dIdtZ4rDveLqhrdJP+Li/Hx6tyK0NEb+2GCyneCMJiGqrADCSNk8sQ=="],
-
-    "tokscale": ["tokscale@workspace:packages/tokscale"],
 
     "ts-api-utils": ["ts-api-utils@2.1.0", "", { "peerDependencies": { "typescript": ">=4.8.4" } }, "sha512-CUgTZL1irw8u29bzrOD/nH85jqyc74D6SshFgujOIA7osm2Rz7dYH77agkx7H4FBNxDq7Cjf+IjaX/8zwFW+ZQ=="],
 
