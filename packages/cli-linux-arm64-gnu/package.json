@@ -1,6 +1,6 @@
 {
   "name": "tokens-cli-linux-arm64-gnu",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "description": "tokens CLI binary for linux arm64 gnu",
   "license": "MIT",
   "type": "module",
