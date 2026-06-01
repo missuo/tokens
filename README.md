@@ -17,7 +17,14 @@ bunx tokens-cli --help            # or: npx tokens-cli --help
 bunx tokens-cli submit            # run a one-shot submit
 ```
 
-The `tokens-cli` package ships a `tokens` binary on `PATH`, so you get the CLI without any local install. Add `-g` to `bun add` / `npm install` if you'd rather have it persistent.
+**Persistent global install:**
+
+```sh
+bun add -g tokens-cli             # or: npm install -g tokens-cli
+tokens --help                     # the package exposes a `tokens` command on PATH
+```
+
+The `tokens-cli` package is a thin launcher that pulls in the matching native binary for your platform (`tokens-cli-<platform>`), so a single install works everywhere and exposes the `tokens` command.
 
 **macOS (Homebrew):**
 
