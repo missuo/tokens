@@ -76,24 +76,6 @@ npm_view_version_status() {
   return "${status}"
 }
 
-npm_view_required_version() {
-  local __result_var="$1"
-  local spec="$2"
-  local package_label="$3"
-  local status
-  npm_view_version_status "${__result_var}" "${spec}"
-  status=$?
-  if [[ ${status} -eq 0 ]]; then
-    return 0
-  fi
-  if [[ ${status} -eq 1 ]]; then
-    errors+=("${package_label}: package is not visible on npm")
-  else
-    errors+=("${package_label}: npm lookup failed")
-  fi
-  return "${status}"
-}
-
 npm_view_optional_version() {
   local __result_var="$1"
   local spec="$2"
@@ -181,10 +163,16 @@ while IFS=$'\t' read -r path package_name manifest_version; do
     errors+=("${path}: expected version ${NEW_VERSION}, found ${manifest_version}")
   fi
 
-  if ! npm_view_required_version current_version "${package_name}" "${package_name}"; then
+  # A 404 (package not yet on npm) is expected on a package's first publish.
+  # Treat it as publishable and skip the comparisons below that only make
+  # sense against an existing release. A genuine lookup failure (status 2)
+  # still records an error inside npm_view_optional_version.
+  if npm_view_optional_version current_version "${package_name}" "${package_name}"; then
+    echo "${package_name}: npm latest ${current_version}"
+  else
+    echo "${package_name}: not yet on npm — will be created by this publish"
     continue
   fi
-  echo "${package_name}: npm latest ${current_version}"
 
   if npm_view_optional_version target_version "${package_name}@${NEW_VERSION}" "${package_name}@${NEW_VERSION}"; then
     existing_targets=$((existing_targets + 1))
