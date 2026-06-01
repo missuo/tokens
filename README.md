@@ -10,6 +10,15 @@
 
 ## Install
 
+**One-off, any platform (no install — Bun or Node 18+):**
+
+```sh
+bunx @tokens/cli --help            # or: npx @tokens/cli --help
+bunx @tokens/cli submit            # run a one-shot submit
+```
+
+The `@tokens/cli` package ships a `tokens` binary on `PATH`, so you get the CLI without any local install. Add `-g` to `bun add` / `npm install` if you'd rather have it persistent.
+
 **macOS (Homebrew):**
 
 ```sh
