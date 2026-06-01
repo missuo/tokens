@@ -1,7 +1,7 @@
 {
-  "name": "@tokscale/cli-darwin-x64",
+  "name": "@tokens/cli-darwin-x64",
   "version": "3.0.0",
-  "description": "tokscale CLI binary for darwin x64",
+  "description": "tokens CLI binary for darwin x64",
   "license": "MIT",
   "type": "module",
   "os": [
@@ -20,7 +20,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/junhoyeo/tokscale.git",
+    "url": "git+https://github.com/missuo/tokens.git",
     "directory": "packages/cli-darwin-x64"
   }
 }
