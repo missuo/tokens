@@ -13,7 +13,7 @@
   "libc": [
     "glibc"
   ],
-  "main": "bin/tokscale",
+  "main": "bin/tokens",
   "files": [
     "bin"
   ],

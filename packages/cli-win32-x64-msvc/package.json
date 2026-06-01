@@ -10,7 +10,7 @@
   "cpu": [
     "x64"
   ],
-  "main": "bin/tokscale.exe",
+  "main": "bin/tokens.exe",
   "files": [
     "bin"
   ],

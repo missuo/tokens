@@ -13,7 +13,7 @@
   "libc": [
     "musl"
   ],
-  "main": "bin/tokscale",
+  "main": "bin/tokens",
   "files": [
     "bin"
   ],
