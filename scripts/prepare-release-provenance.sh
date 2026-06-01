@@ -21,7 +21,6 @@ MANIFEST_PATHS=(
   packages/cli-linux-arm64-musl/package.json
   packages/cli-win32-x64-msvc/package.json
   packages/cli-win32-arm64-msvc/package.json
-  packages/tokscale/package.json
 )
 
 fail() {

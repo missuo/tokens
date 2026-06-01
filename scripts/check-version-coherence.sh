@@ -45,7 +45,6 @@ def load_json(path: str) -> dict:
     return json.loads((root / path).read_text())
 
 cli_package = load_json("packages/cli/package.json")
-wrapper_package = load_json("packages/tokscale/package.json")
 
 platform_packages = sorted((root / "packages").glob("cli-*/package.json"))
 if not platform_packages:
@@ -58,12 +57,6 @@ def expect_equal(label: str, actual: str, expected: str) -> None:
         errors.append(f"{label}: expected {expected}, found {actual}")
 
 expect_equal("packages/cli/package.json version", cli_package["version"], workspace_version)
-expect_equal("packages/tokscale/package.json version", wrapper_package["version"], workspace_version)
-expect_equal(
-    "packages/tokscale dependency on @tokscale/cli",
-    wrapper_package["dependencies"]["@tokscale/cli"],
-    workspace_version,
-)
 
 platform_names = set()
 for path in platform_packages:
@@ -76,14 +69,14 @@ for path in platform_packages:
     expect_equal(f"{path} version", manifest["version"], workspace_version)
 
 expected_optional = {
-    "@tokscale/cli-darwin-arm64",
-    "@tokscale/cli-darwin-x64",
-    "@tokscale/cli-linux-x64-gnu",
-    "@tokscale/cli-linux-x64-musl",
-    "@tokscale/cli-linux-arm64-gnu",
-    "@tokscale/cli-linux-arm64-musl",
-    "@tokscale/cli-win32-x64-msvc",
-    "@tokscale/cli-win32-arm64-msvc",
+    "@tokens/cli-darwin-arm64",
+    "@tokens/cli-darwin-x64",
+    "@tokens/cli-linux-x64-gnu",
+    "@tokens/cli-linux-x64-musl",
+    "@tokens/cli-linux-arm64-gnu",
+    "@tokens/cli-linux-arm64-musl",
+    "@tokens/cli-win32-x64-msvc",
+    "@tokens/cli-win32-arm64-msvc",
 }
 actual_optional = set(cli_package["optionalDependencies"].keys())
 if actual_optional != expected_optional:

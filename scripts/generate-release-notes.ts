@@ -1,13 +1,13 @@
 #!/usr/bin/env bun
 /**
  * Usage: bun scripts/generate-release-notes.ts <version>
- * Env: GITHUB_REPOSITORY (default: junhoyeo/tokscale)
+ * Env: GITHUB_REPOSITORY (default: missuo/tokens)
  */
 export {};
 
 import { execFileSync } from "node:child_process";
 
-const REPO = process.env.GITHUB_REPOSITORY || "junhoyeo/tokscale";
+const REPO = process.env.GITHUB_REPOSITORY || "missuo/tokens";
 
 interface Commit {
   hash: string;
@@ -211,9 +211,9 @@ function generateReleaseNotes(version: string): string {
   const lines: string[] = [
     '<div align="center">',
     "",
-    `[![Tokscale](https://github.com/${REPO}/raw/main/.github/assets/hero-v2.png)](https://github.com/${REPO})`,
+    `[![Tokens](https://github.com/${REPO}/raw/main/.github/assets/hero-v2.png)](https://github.com/${REPO})`,
     "",
-    `# \`tokscale@v${version}\` is here!`,
+    `# \`tokens@v${version}\` is here!`,
     "</div>",
     "",
     "## What's Changed",
