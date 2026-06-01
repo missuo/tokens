@@ -1,5 +1,5 @@
 {
-  "name": "@tokens/cli-linux-arm64-gnu",
+  "name": "tokens-cli-linux-arm64-gnu",
   "version": "3.0.0",
   "description": "tokens CLI binary for linux arm64 gnu",
   "license": "MIT",

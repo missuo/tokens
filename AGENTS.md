@@ -139,25 +139,25 @@ Releases are published to npm via a GitHub Actions `workflow_dispatch` pipeline,
 | 1 | `bump-versions` | Reads current version from `packages/cli/package.json`, calculates new version, updates the Rust workspace version plus the CLI and platform package manifests, then uploads the bumped manifests as an artifact |
 | 2 | `build-cli-binary` | 8-target parallel native Rust builds (macOS x86/arm64, Linux glibc/musl x86/arm64, Windows x86/arm64); produces the `tokens` binary (and `tokens.exe` on Windows) per Cargo `[[bin]]` |
 | 3 | `prepare-release-provenance` | Pre-flight npm publish check via `scripts/check-npm-release-state.sh`, then commits the bumped manifests back to the release branch as `chore: bump version to X.Y.Z` (authored by `github-actions[bot]`); all subsequent jobs check out this commit |
-| 4 | `publish-platform-packages` | Publishes the 8 platform-specific packages (`@tokens/cli-darwin-arm64`, etc.) containing native binaries to npm |
-| 5 | `publish-cli` | Builds `packages/cli/` and publishes `@tokens/cli` to npm (binary dispatcher + 8 optionalDependencies) |
+| 4 | `publish-platform-packages` | Publishes the 8 platform-specific packages (`tokens-cli-darwin-arm64`, etc.) containing native binaries to npm |
+| 5 | `publish-cli` | Builds `packages/cli/` and publishes `tokens-cli` to npm (binary dispatcher + 8 optionalDependencies) |
 | 6 | `finalize` | Creates the `vX.Y.Z` git tag, generates release notes via `scripts/generate-release-notes.ts`, opens/updates the GitHub Release, and (best-effort) posts to Discord via `scripts/post-discord-release.sh` |
 
 **Duration:** ~15-20 minutes end-to-end.
 
-**Package publish chain:** 8 × `@tokens/cli-{triple}` (platform binaries) → `@tokens/cli` (dispatcher that picks the right platform package at install time). No wrapper is published — `bunx @tokens/cli` puts the `tokens` binary on `PATH` directly because the dispatcher's own `bin: { "tokens": "./bin.js" }` already exposes that command name. (npm has reserved the unscoped `tokens` name since 2014 for an unrelated OAuth library, so an unscoped wrapper would not be reachable anyway.)
+**Package publish chain:** 8 × `tokens-cli-{triple}` (platform binaries) → `tokens-cli` (dispatcher that picks the right platform package at install time). No wrapper is published — `bunx tokens-cli` puts the `tokens` binary on `PATH` directly because the dispatcher's own `bin: { "tokens": "./bin.js" }` already exposes that command name. (The bare `tokens` name has been held since 2014 by an unrelated OAuth library, so the package ships unscoped as `tokens-cli`; the on-PATH command is still `tokens`.)
 
 ### Required Secrets
 
 | Secret | Used by | Purpose |
 |---|---|---|
-| `NPM_TOKEN` | `check-npm-release-state`, `publish-platform-packages`, `publish-cli` | Publishes the packages and authenticates the pre-flight `npm view` lookups. Must be an automation token with publish rights on the `@tokens/*` scope. |
+| `NPM_TOKEN` | `check-npm-release-state`, `publish-platform-packages`, `publish-cli` | Publishes the packages and authenticates the pre-flight `npm view` lookups. Must be an automation token with publish rights on the unscoped `tokens-cli` and `tokens-cli-*` packages. |
 | `GITHUB_TOKEN` | `prepare-release-provenance`, `finalize` | Default token; pushes the `chore: bump version` commit, creates the tag, and creates/updates the GitHub Release. |
 | `DISCORD_RELEASE_WEBHOOK_URL` (optional) | `finalize` | If set, the release notes are also posted to a Discord webhook. The step is `continue-on-error: true` and silently no-ops when the secret is missing, so a release never fails just because the webhook is unconfigured. |
 
 ### Post-Pipeline
 
-The `finalize` job handles tagging, GitHub Release, and Discord — there is no separate manual step. After the workflow finishes, verify on npm and in the GitHub Releases tab; smoke-test the install with `bunx @tokens/cli@latest --version`.
+The `finalize` job handles tagging, GitHub Release, and Discord — there is no separate manual step. After the workflow finishes, verify on npm and in the GitHub Releases tab; smoke-test the install with `bunx tokens-cli@latest --version`.
 
 ### Versioning Conventions
 
@@ -250,7 +250,7 @@ Add a short bullet list summary (before "What's Changed") when:
    - Select bump type (patch/minor/major) or set `version` to an override
    - Wait for all 6 stages to complete
 5. [ ] Verify `chore: bump version to X.Y.Z` commit was pushed by CI
-6. [ ] Verify packages on npm under the @tokens scope: @tokens/cli and the 8 @tokens/cli-{triple} packages
+6. [ ] Verify packages on npm: tokens-cli and the 8 tokens-cli-{triple} packages
 7. [ ] Verify the GitHub Release was created/updated by the finalize job (tag vX.Y.Z)
-8. [ ] Smoke test: bunx @tokens/cli@latest --version
+8. [ ] Smoke test: bunx tokens-cli@latest --version
 ```

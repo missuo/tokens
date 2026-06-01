@@ -4,23 +4,25 @@ import { existsSync, realpathSync } from "node:fs";
 import { resolve, join, basename } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const binaryName = process.platform === "win32" ? "tokscale.exe" : "tokscale";
+const binaryName = process.platform === "win32" ? "tokens.exe" : "tokens";
 
 const currentDir = fileURLToPath(new URL(".", import.meta.url));
 const dirName = basename(currentDir);
-// In npm install: currentDir = .../node_modules/@tokscale/cli/dist/
-//   cliDir = .../node_modules/@tokscale/cli/
-//   scopeDir = .../node_modules/@tokscale/
+// The packages are unscoped, so the platform binaries are siblings of the
+// dispatcher under the same node_modules (no @scope/ directory level).
+// In npm install: currentDir = .../node_modules/tokens-cli/dist/
+//   cliDir = .../node_modules/tokens-cli/
+//   parentDir = .../node_modules/   (siblings: tokens-cli-<platform>/)
 // In monorepo dev (dist): currentDir = .../packages/cli/dist/
 //   cliDir = .../packages/cli/
-//   scopeDir = .../packages/
+//   parentDir = .../packages/
 // In monorepo dev (src): currentDir = .../packages/cli/src/
 //   cliDir = .../packages/cli/
-//   scopeDir = .../packages/
+//   parentDir = .../packages/
 const isSubDir = dirName === "dist" || dirName === "src";
 const cliDir = isSubDir ? resolve(currentDir, "..") : currentDir;
-const scopeDir = resolve(cliDir, "..");
-const workspaceRoot = resolve(scopeDir, "..");
+const parentDir = resolve(cliDir, "..");
+const workspaceRoot = resolve(parentDir, "..");
 
 type LibcKind = "gnu" | "musl";
 
@@ -116,20 +118,22 @@ function resolveRustTargetTriple(): string | null {
   return null;
 }
 
-const targetPackage = resolveTargetPackageName();
+// e.g. "cli-darwin-arm64" — the monorepo directory name and the suffix of the
+// unscoped npm package name `tokens-cli-darwin-arm64`.
+const targetDir = resolveTargetPackageName();
 const searchPaths: string[] = [];
 
-if (targetPackage) {
+if (targetDir) {
+  const targetPackage = `tokens-${targetDir}`;
   searchPaths.push(
-    // npm/bun install: sibling scoped package (node_modules/@tokscale/cli-<platform>/bin/...)
-    join(scopeDir, targetPackage, "bin", binaryName),
-    // Nested node_modules: non-hoisted / pnpm (node_modules/@tokscale/cli/node_modules/@tokscale/cli-<platform>/bin/...)
-    join(cliDir, "node_modules", "@tokscale", targetPackage, "bin", binaryName),
-    // Hoisted edge case (node_modules/@tokscale/node_modules/@tokscale/cli-<platform>/bin/...)
-    join(scopeDir, "node_modules", "@tokscale", targetPackage, "bin", binaryName),
-    join(workspaceRoot, "node_modules", "@tokscale", targetPackage, "bin", binaryName),
-    // Monorepo development
-    join(workspaceRoot, "packages", targetPackage, "bin", binaryName),
+    // npm/bun install: sibling package (node_modules/tokens-cli-<platform>/bin/...)
+    join(parentDir, targetPackage, "bin", binaryName),
+    // Nested node_modules: non-hoisted / pnpm (node_modules/tokens-cli/node_modules/tokens-cli-<platform>/bin/...)
+    join(cliDir, "node_modules", targetPackage, "bin", binaryName),
+    // Hoisted to the workspace-root node_modules
+    join(workspaceRoot, "node_modules", targetPackage, "bin", binaryName),
+    // Monorepo development (packages/cli-<platform>/bin/...)
+    join(workspaceRoot, "packages", targetDir, "bin", binaryName),
   );
 }
 
@@ -169,10 +173,10 @@ function isSelfReference(p: string): boolean {
 let binary = searchPaths.find((p) => existsSync(p) && !isSelfReference(p));
 
 if (!binary) {
-  console.error("Error: tokscale binary not found");
+  console.error("Error: tokens binary not found");
   console.error("Build from source: cargo build --release -p tokscale-cli");
-  if (targetPackage) {
-    console.error(`Expected optional package: @tokscale/${targetPackage}`);
+  if (targetDir) {
+    console.error(`Expected optional package: tokens-${targetDir}`);
   }
   process.exit(1);
 }

@@ -69,14 +69,14 @@ for path in platform_packages:
     expect_equal(f"{path} version", manifest["version"], workspace_version)
 
 expected_optional = {
-    "@tokens/cli-darwin-arm64",
-    "@tokens/cli-darwin-x64",
-    "@tokens/cli-linux-x64-gnu",
-    "@tokens/cli-linux-x64-musl",
-    "@tokens/cli-linux-arm64-gnu",
-    "@tokens/cli-linux-arm64-musl",
-    "@tokens/cli-win32-x64-msvc",
-    "@tokens/cli-win32-arm64-msvc",
+    "tokens-cli-darwin-arm64",
+    "tokens-cli-darwin-x64",
+    "tokens-cli-linux-x64-gnu",
+    "tokens-cli-linux-x64-musl",
+    "tokens-cli-linux-arm64-gnu",
+    "tokens-cli-linux-arm64-musl",
+    "tokens-cli-win32-x64-msvc",
+    "tokens-cli-win32-arm64-msvc",
 }
 actual_optional = set(cli_package["optionalDependencies"].keys())
 if actual_optional != expected_optional:

@@ -1,5 +1,5 @@
 {
-  "name": "@tokens/cli-win32-arm64-msvc",
+  "name": "tokens-cli-win32-arm64-msvc",
   "version": "3.0.0",
   "description": "tokens CLI binary for win32 arm64 msvc",
   "license": "MIT",

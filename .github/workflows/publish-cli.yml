@@ -75,14 +75,14 @@ jobs:
           echo "🚀 New version: $NEW_VERSION"
 
           jq --arg v "$NEW_VERSION" '.version = $v
-            | .optionalDependencies["@tokens/cli-darwin-arm64"] = $v
-            | .optionalDependencies["@tokens/cli-darwin-x64"] = $v
-            | .optionalDependencies["@tokens/cli-linux-x64-gnu"] = $v
-            | .optionalDependencies["@tokens/cli-linux-x64-musl"] = $v
-            | .optionalDependencies["@tokens/cli-linux-arm64-gnu"] = $v
-            | .optionalDependencies["@tokens/cli-linux-arm64-musl"] = $v
-            | .optionalDependencies["@tokens/cli-win32-x64-msvc"] = $v
-            | .optionalDependencies["@tokens/cli-win32-arm64-msvc"] = $v' packages/cli/package.json > tmp.json && mv tmp.json packages/cli/package.json
+            | .optionalDependencies["tokens-cli-darwin-arm64"] = $v
+            | .optionalDependencies["tokens-cli-darwin-x64"] = $v
+            | .optionalDependencies["tokens-cli-linux-x64-gnu"] = $v
+            | .optionalDependencies["tokens-cli-linux-x64-musl"] = $v
+            | .optionalDependencies["tokens-cli-linux-arm64-gnu"] = $v
+            | .optionalDependencies["tokens-cli-linux-arm64-musl"] = $v
+            | .optionalDependencies["tokens-cli-win32-x64-msvc"] = $v
+            | .optionalDependencies["tokens-cli-win32-arm64-msvc"] = $v' packages/cli/package.json > tmp.json && mv tmp.json packages/cli/package.json
           echo "✅ Updated packages/cli/package.json"
 
           for pkg in \
@@ -131,8 +131,8 @@ jobs:
           print(match.group(1) if match else 'missing')
           PY
           )"
-          echo "  @tokens/cli:   $(jq -r '.version' packages/cli/package.json)"
-          echo "  cli -> darwin arm64: $(jq -r '.optionalDependencies["@tokens/cli-darwin-arm64"]' packages/cli/package.json)"
+          echo "  tokens-cli:   $(jq -r '.version' packages/cli/package.json)"
+          echo "  cli -> darwin arm64: $(jq -r '.optionalDependencies["tokens-cli-darwin-arm64"]' packages/cli/package.json)"
           echo "  Platform packages:"
           for pkg in cli-darwin-arm64 cli-darwin-x64 cli-linux-x64-gnu cli-linux-x64-musl cli-linux-arm64-gnu cli-linux-arm64-musl cli-win32-x64-msvc cli-win32-arm64-msvc; do
             echo "    $pkg: $(jq -r '.version' "packages/$pkg/package.json")"
@@ -348,35 +348,35 @@ jobs:
       fail-fast: false
       matrix:
         settings:
-          - package_name: '@tokens/cli-darwin-x64'
+          - package_name: 'tokens-cli-darwin-x64'
             package_dir: cli-darwin-x64
             artifact_name: cli-binary-x86_64-apple-darwin
             binary_name: tokens
-          - package_name: '@tokens/cli-darwin-arm64'
+          - package_name: 'tokens-cli-darwin-arm64'
             package_dir: cli-darwin-arm64
             artifact_name: cli-binary-aarch64-apple-darwin
             binary_name: tokens
-          - package_name: '@tokens/cli-linux-x64-gnu'
+          - package_name: 'tokens-cli-linux-x64-gnu'
             package_dir: cli-linux-x64-gnu
             artifact_name: cli-binary-x86_64-unknown-linux-gnu
             binary_name: tokens
-          - package_name: '@tokens/cli-linux-x64-musl'
+          - package_name: 'tokens-cli-linux-x64-musl'
             package_dir: cli-linux-x64-musl
             artifact_name: cli-binary-x86_64-unknown-linux-musl
             binary_name: tokens
-          - package_name: '@tokens/cli-linux-arm64-gnu'
+          - package_name: 'tokens-cli-linux-arm64-gnu'
             package_dir: cli-linux-arm64-gnu
             artifact_name: cli-binary-aarch64-unknown-linux-gnu
             binary_name: tokens
-          - package_name: '@tokens/cli-linux-arm64-musl'
+          - package_name: 'tokens-cli-linux-arm64-musl'
             package_dir: cli-linux-arm64-musl
             artifact_name: cli-binary-aarch64-unknown-linux-musl
             binary_name: tokens
-          - package_name: '@tokens/cli-win32-x64-msvc'
+          - package_name: 'tokens-cli-win32-x64-msvc'
             package_dir: cli-win32-x64-msvc
             artifact_name: cli-binary-x86_64-pc-windows-msvc
             binary_name: tokens.exe
-          - package_name: '@tokens/cli-win32-arm64-msvc'
+          - package_name: 'tokens-cli-win32-arm64-msvc'
             package_dir: cli-win32-arm64-msvc
             artifact_name: cli-binary-aarch64-pc-windows-msvc
             binary_name: tokens.exe
@@ -422,7 +422,7 @@ jobs:
           RELEASE_RECOVERY: ${{ inputs.recovery }}
 
   publish-cli:
-    name: Publish @tokens/cli
+    name: Publish tokens-cli
     needs: [prepare-release-provenance, publish-platform-packages]
     runs-on: ubuntu-latest
 
@@ -450,7 +450,7 @@ jobs:
         working-directory: packages/cli
         run: bun run build
 
-      - name: Publish @tokens/cli
+      - name: Publish tokens-cli
         run: |
           echo "📦 Publishing version: $(jq -r '.version' packages/cli/package.json)"
           bash scripts/publish-npm-package.sh packages/cli

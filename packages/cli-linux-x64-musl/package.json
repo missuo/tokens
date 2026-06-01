@@ -1,5 +1,5 @@
 {
-  "name": "@tokens/cli-linux-x64-musl",
+  "name": "tokens-cli-linux-x64-musl",
   "version": "3.0.0",
   "description": "tokens CLI binary for linux x64 musl",
   "license": "MIT",

@@ -1,5 +1,5 @@
 {
-  "name": "@tokens/cli-darwin-arm64",
+  "name": "tokens-cli-darwin-arm64",
   "version": "3.0.0",
   "description": "tokens CLI binary for darwin arm64",
   "license": "MIT",
