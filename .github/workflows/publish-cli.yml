@@ -119,7 +119,10 @@ jobs:
           PY
           echo "✅ Updated Cargo.toml workspace version"
 
-          cargo update --workspace --offline
+          # Not --offline: a fresh runner has no crates.io index cached, and
+          # --workspace only re-pins the workspace members' own versions, so
+          # letting cargo read the index here does not touch other deps.
+          cargo update --workspace
           echo "✅ Updated Cargo.lock workspace package versions"
 
           echo ""
