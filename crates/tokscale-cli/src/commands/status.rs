@@ -1,4 +1,4 @@
-use crate::{auth, device, paths};
+use crate::{auth, commands::submit_history, device, paths};
 use anyhow::Result;
 use std::{fs, path::Path};
 
@@ -58,6 +58,14 @@ struct StatusPaths {
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
+struct StatusSubmit {
+    history_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    latest: Option<submit_history::SubmitHistoryEntry>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 struct StatusService {
     health: &'static str,
     serve_running: bool,
@@ -89,6 +97,7 @@ struct StatusReport {
     auth: StatusAuth,
     device: StatusDevice,
     paths: StatusPaths,
+    submit: StatusSubmit,
     service: StatusService,
     processes: Vec<StatusProcess>,
     notes: Vec<String>,
@@ -403,6 +412,32 @@ fn status_service_recommendations(
     }
 }
 
+fn format_status_cost(cost: f64) -> String {
+    format!("${cost:.2}")
+}
+
+fn format_latest_submit_line(entry: &submit_history::SubmitHistoryEntry) -> String {
+    let status = match entry.status {
+        submit_history::SubmitHistoryStatus::Success => "success",
+        submit_history::SubmitHistoryStatus::Failed => "failed",
+        submit_history::SubmitHistoryStatus::Partial => "partial",
+    };
+
+    if matches!(entry.status, submit_history::SubmitHistoryStatus::Failed) {
+        if let Some(error) = entry.error_summary.as_deref() {
+            return format!("  Last submit: {status} at {}: {error}", entry.finished_at);
+        }
+        return format!("  Last submit: {status} at {}", entry.finished_at);
+    }
+
+    format!(
+        "  Last submit: {status} at {} ({} tokens, {})",
+        entry.finished_at,
+        entry.tokens_submitted,
+        format_status_cost(entry.cost_submitted)
+    )
+}
+
 fn build_status_report() -> Result<StatusReport> {
     let auth_token = auth::resolve_api_token();
     let auth_source = auth_token.as_ref().map(|token| match token.source {
@@ -411,6 +446,8 @@ fn build_status_report() -> Result<StatusReport> {
     });
     let username = auth_token.as_ref().and_then(|token| token.username.clone());
     let device_inspection = device::inspect_submit_device()?;
+    let submit_history_path = submit_history::history_path();
+    let latest_submit = submit_history::latest_entry().unwrap_or(None);
     let device_source = device_inspection
         .source
         .as_ref()
@@ -481,6 +518,10 @@ fn build_status_report() -> Result<StatusReport> {
         paths: StatusPaths {
             config_dir: paths::get_config_dir().display().to_string(),
             cache_dir: paths::get_cache_dir().display().to_string(),
+        },
+        submit: StatusSubmit {
+            history_path: submit_history_path.display().to_string(),
+            latest: latest_submit,
         },
         service: StatusService {
             health,
@@ -600,6 +641,15 @@ pub fn run(json: bool) -> Result<()> {
                 )
                 .yellow()
             );
+        }
+    }
+
+    if let Some(latest_submit) = &report.submit.latest {
+        let line = format_latest_submit_line(latest_submit);
+        match latest_submit.status {
+            submit_history::SubmitHistoryStatus::Success => println!("{}", line.green()),
+            submit_history::SubmitHistoryStatus::Failed
+            | submit_history::SubmitHistoryStatus::Partial => println!("{}", line.yellow()),
         }
     }
 
@@ -812,6 +862,53 @@ ExecStart=tokens --no-spinner submit
             vec![
                 "Start scheduled background submission with `brew services start tokens` on macOS/Linuxbrew or `systemctl --user enable --now tokens.timer` on Linux.".to_string()
             ]
+        );
+    }
+
+    fn sample_submit_history_entry(
+        status: submit_history::SubmitHistoryStatus,
+        error_summary: Option<&str>,
+    ) -> submit_history::SubmitHistoryEntry {
+        submit_history::SubmitHistoryEntry {
+            id: "entry_1".to_string(),
+            started_at: "2026-06-01T00:00:00Z".to_string(),
+            finished_at: "2026-06-01T00:00:05Z".to_string(),
+            status,
+            clients: vec!["claude".to_string(), "codex".to_string()],
+            rows_submitted: 2,
+            tokens_submitted: 300,
+            cost_submitted: 1.75,
+            active_days: 2,
+            device_id: Some("dev_test".to_string()),
+            submission_id: Some("sub_test".to_string()),
+            error_summary: error_summary.map(str::to_string),
+            source_version: "3.0.0-test".to_string(),
+        }
+    }
+
+    #[test]
+    fn latest_submit_line_formats_success() {
+        let line = format_latest_submit_line(&sample_submit_history_entry(
+            submit_history::SubmitHistoryStatus::Success,
+            None,
+        ));
+
+        assert_eq!(
+            line,
+            "  Last submit: success at 2026-06-01T00:00:05Z (300 tokens, $1.75)"
+        );
+    }
+
+    #[test]
+    fn latest_submit_line_formats_failure_with_error_summary() {
+        let line = format_latest_submit_line(&sample_submit_history_entry(
+            submit_history::SubmitHistoryStatus::Failed,
+            Some("Server returned 500"),
+        ));
+
+        assert_eq!(
+            line,
+            "  Last submit: failed at 2026-06-01T00:00:05Z: Server returned 500"
         );
     }
 }

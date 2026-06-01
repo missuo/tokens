@@ -4805,6 +4805,65 @@ fn run_serve(interval_min: Option<u64>, clients: Option<Vec<String>>) -> Result<
     }
 }
 
+#[derive(Debug, Clone)]
+struct SubmitHistoryAttempt {
+    started_at: String,
+    clients: Vec<String>,
+    rows_submitted: usize,
+    tokens_submitted: i64,
+    cost_submitted: f64,
+    active_days: i32,
+    device_id: Option<String>,
+}
+
+fn submit_history_attempt_from_graph(
+    graph: &tokscale_core::GraphResult,
+    device: Option<&device::SubmitDevice>,
+    started_at: String,
+) -> SubmitHistoryAttempt {
+    SubmitHistoryAttempt {
+        started_at,
+        clients: graph.summary.clients.clone(),
+        rows_submitted: graph
+            .contributions
+            .iter()
+            .map(|day| day.clients.len())
+            .sum(),
+        tokens_submitted: graph.summary.total_tokens,
+        cost_submitted: graph.summary.total_cost,
+        active_days: graph.summary.active_days,
+        device_id: device.map(|device| device.id.clone()),
+    }
+}
+
+fn submit_history_entry_for_attempt(
+    attempt: &SubmitHistoryAttempt,
+    status: commands::submit_history::SubmitHistoryStatus,
+    submission_id: Option<String>,
+    error_summary: Option<String>,
+    finished_at: String,
+) -> commands::submit_history::SubmitHistoryEntry {
+    commands::submit_history::SubmitHistoryEntry {
+        id: uuid::Uuid::new_v4().to_string(),
+        started_at: attempt.started_at.clone(),
+        finished_at,
+        status,
+        clients: attempt.clients.clone(),
+        rows_submitted: attempt.rows_submitted,
+        tokens_submitted: attempt.tokens_submitted,
+        cost_submitted: attempt.cost_submitted,
+        active_days: attempt.active_days,
+        device_id: attempt.device_id.clone(),
+        submission_id,
+        error_summary,
+        source_version: env!("CARGO_PKG_VERSION").to_string(),
+    }
+}
+
+fn record_submit_history_entry(entry: &commands::submit_history::SubmitHistoryEntry) {
+    let _ = commands::submit_history::append_entry(entry);
+}
+
 /// A stable per-process delay in `0..=min(interval/10, 60s)` to stagger a fleet.
 fn serve_startup_jitter(interval: std::time::Duration) -> std::time::Duration {
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -4974,7 +5033,10 @@ fn run_submit_command(
 
     let api_url = auth::get_api_base_url();
 
+    let submit_started_at = chrono::Utc::now().to_rfc3339();
     let submit_device = device::resolve_submit_device()?;
+    let history_attempt =
+        submit_history_attempt_from_graph(&graph_result, Some(&submit_device), submit_started_at);
     let submit_payload = to_ts_token_contribution_data(&graph_result, Some(&submit_device));
 
     let response = rt.block_on(async {
@@ -5005,23 +5067,36 @@ fn run_submit_command(
                     });
 
             if !status.is_success() {
-                eprintln!(
-                    "\n  {}",
-                    format!(
-                        "Error: {}",
-                        body.error
-                            .unwrap_or_else(|| "Submission failed".to_string())
-                    )
-                    .red()
-                );
-                if let Some(details) = body.details {
+                let error_summary = body
+                    .error
+                    .clone()
+                    .unwrap_or_else(|| "Submission failed".to_string());
+                eprintln!("\n  {}", format!("Error: {}", error_summary).red());
+                if let Some(details) = &body.details {
                     for detail in details {
                         eprintln!("{}", format!("    - {}", detail).bright_black());
                     }
                 }
+                let entry = submit_history_entry_for_attempt(
+                    &history_attempt,
+                    commands::submit_history::SubmitHistoryStatus::Failed,
+                    body.submission_id.clone(),
+                    Some(error_summary),
+                    chrono::Utc::now().to_rfc3339(),
+                );
+                record_submit_history_entry(&entry);
                 println!();
                 std::process::exit(1);
             }
+
+            let entry = submit_history_entry_for_attempt(
+                &history_attempt,
+                commands::submit_history::SubmitHistoryStatus::Success,
+                body.submission_id.clone(),
+                None,
+                chrono::Utc::now().to_rfc3339(),
+            );
+            record_submit_history_entry(&entry);
 
             println!("\n  {}", "Successfully submitted!".green());
             println!();
@@ -5077,6 +5152,14 @@ fn run_submit_command(
         Err(err) => {
             eprintln!("\n  {}", "Error: Failed to connect to server.".red());
             eprintln!("{}\n", format!("  {}", err).bright_black());
+            let entry = submit_history_entry_for_attempt(
+                &history_attempt,
+                commands::submit_history::SubmitHistoryStatus::Failed,
+                None,
+                Some(format!("Failed to connect to server: {}", err)),
+                chrono::Utc::now().to_rfc3339(),
+            );
+            record_submit_history_entry(&entry);
             std::process::exit(1);
         }
     }
@@ -5682,6 +5765,81 @@ mod tests {
     fn test_submit_warm_cache_only_for_interactive_output() {
         assert!(should_spawn_warm_tui_cache(true));
         assert!(!should_spawn_warm_tui_cache(false));
+    }
+
+    #[test]
+    fn test_submit_history_entry_success_uses_graph_summary() {
+        let graph = graph_result_with_contributions(vec![
+            daily_contribution("2026-06-01", 100, 0.50, "claude", "model-a"),
+            daily_contribution("2026-06-02", 200, 1.25, "codex", "model-b"),
+        ]);
+        let device = device::SubmitDevice {
+            id: "dev_test".to_string(),
+            name: None,
+        };
+        let attempt = submit_history_attempt_from_graph(
+            &graph,
+            Some(&device),
+            "2026-06-01T00:00:00Z".to_string(),
+        );
+
+        let entry = submit_history_entry_for_attempt(
+            &attempt,
+            commands::submit_history::SubmitHistoryStatus::Success,
+            Some("sub_test".to_string()),
+            None,
+            "2026-06-01T00:00:05Z".to_string(),
+        );
+
+        assert!(!entry.id.is_empty());
+        assert_eq!(entry.started_at, "2026-06-01T00:00:00Z");
+        assert_eq!(entry.finished_at, "2026-06-01T00:00:05Z");
+        assert_eq!(
+            entry.status,
+            commands::submit_history::SubmitHistoryStatus::Success
+        );
+        assert_eq!(
+            entry.clients,
+            vec!["claude".to_string(), "codex".to_string()]
+        );
+        assert_eq!(entry.rows_submitted, 2);
+        assert_eq!(entry.tokens_submitted, 300);
+        assert!((entry.cost_submitted - 1.75).abs() < 1e-9);
+        assert_eq!(entry.active_days, 2);
+        assert_eq!(entry.device_id.as_deref(), Some("dev_test"));
+        assert_eq!(entry.submission_id.as_deref(), Some("sub_test"));
+        assert_eq!(entry.error_summary, None);
+    }
+
+    #[test]
+    fn test_submit_history_entry_failure_records_error_summary() {
+        let graph = graph_result_with_contributions(vec![daily_contribution(
+            "2026-06-01",
+            100,
+            0.50,
+            "claude",
+            "model-a",
+        )]);
+        let attempt =
+            submit_history_attempt_from_graph(&graph, None, "2026-06-01T00:00:00Z".to_string());
+
+        let entry = submit_history_entry_for_attempt(
+            &attempt,
+            commands::submit_history::SubmitHistoryStatus::Failed,
+            None,
+            Some("Server returned 500".to_string()),
+            "2026-06-01T00:00:05Z".to_string(),
+        );
+
+        assert_eq!(
+            entry.status,
+            commands::submit_history::SubmitHistoryStatus::Failed
+        );
+        assert_eq!(entry.rows_submitted, 1);
+        assert_eq!(entry.tokens_submitted, 100);
+        assert_eq!(entry.device_id, None);
+        assert_eq!(entry.submission_id, None);
+        assert_eq!(entry.error_summary.as_deref(), Some("Server returned 500"));
     }
 
     fn token_breakdown(total_tokens: i64) -> TokenBreakdown {
