@@ -4797,13 +4797,42 @@ fn run_serve(interval_min: Option<u64>, clients: Option<Vec<String>>) -> Result<
 
     loop {
         let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
-        match run_submit_command(clients.clone(), None, None, None, false) {
-            Ok(()) => println!("  {} [{ts}] submit complete", "•".green()),
+        // Each submission runs in a short-lived child process rather than
+        // in-process. A full scan parses every session into memory, and the
+        // system allocator keeps those freed pages inside this long-lived
+        // process instead of returning them to the OS — so RSS would plateau at
+        // the worst cycle's peak and creep up with heap fragmentation. Letting a
+        // child do the work and exit hands all of that memory back every cycle,
+        // keeping the resident daemon tiny regardless of how many sessions exist.
+        match run_submit_subprocess(clients.as_deref()) {
+            Ok(true) => println!("  {} [{ts}] submit complete", "•".green()),
+            Ok(false) => {
+                eprintln!("  {} [{ts}] submit exited with a non-zero status", "✗".yellow())
+            }
             // Never crash the daemon on a transient failure — log and retry next cycle.
             Err(error) => eprintln!("  {} [{ts}] submit failed: {error}", "✗".yellow()),
         }
         std::thread::sleep(interval + jitter);
     }
+}
+
+/// Run one submission as a child `tokens submit` process and wait for it.
+///
+/// Returns `Ok(true)` on a clean (zero-exit) submission. Spawning a child —
+/// instead of calling [`run_submit_command`] in-process — is what keeps the
+/// long-lived `serve` daemon's memory flat: the child holds the entire
+/// parsed-session working set, then exits and releases every page back to the
+/// OS. The client filter is forwarded verbatim as canonical `--client` ids.
+fn run_submit_subprocess(clients: Option<&[String]>) -> Result<bool> {
+    let exe = std::env::current_exe()?;
+    let mut cmd = std::process::Command::new(exe);
+    cmd.arg("submit");
+    if let Some(clients) = clients {
+        for client in clients {
+            cmd.arg("--client").arg(client);
+        }
+    }
+    Ok(cmd.status()?.success())
 }
 
 /// A stable per-process delay in `0..=min(interval/10, 60s)` to stagger a fleet.
