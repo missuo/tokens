@@ -1,6 +1,6 @@
 {
   "name": "tokens-cli-linux-x64-gnu",
-  "version": "3.0.1",
+  "version": "3.0.3",
   "description": "tokens CLI binary for linux x64 gnu",
   "license": "MIT",
   "type": "module",
