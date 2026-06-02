@@ -35,7 +35,7 @@ jobs:
       version: ${{ steps.bump.outputs.version }}
       base_version: ${{ steps.bump.outputs.base_version }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -147,7 +147,7 @@ jobs:
           echo "📝 Version bump prepared (will commit after successful publish)"
 
       - name: Upload bumped manifest files
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: bumped-manifests
           path: |
@@ -230,16 +230,16 @@ jobs:
             strip: ""
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Download bumped release files
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v8
         with:
           name: bumped-manifests
           path: .
 
       - name: Setup Node.js
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v6
         with:
           node-version: 20
 
@@ -292,7 +292,7 @@ jobs:
         run: ${{ matrix.settings.strip }}
 
       - name: Upload CLI binary artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.settings.artifact_name }}
           path: target/${{ matrix.settings.target }}/release/${{ matrix.settings.bin_name }}
@@ -306,7 +306,7 @@ jobs:
       release_commit: ${{ steps.prepare.outputs.release_commit }}
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         with:
           ref: ${{ github.sha }}
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -315,13 +315,13 @@ jobs:
           fetch-tags: true
 
       - name: Download bumped package.json files
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v8
         with:
           name: bumped-manifests
           path: .
 
       - name: Setup Node.js
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v6
         with:
           node-version: 20
           registry-url: https://registry.npmjs.org
@@ -391,7 +391,7 @@ jobs:
             binary_name: tokens.exe
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         with:
           ref: ${{ needs.prepare-release-provenance.outputs.release_commit }}
 
@@ -401,13 +401,13 @@ jobs:
           bun-version: 1.1.38
 
       - name: Setup Node.js
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v6
         with:
           node-version: 20
           registry-url: https://registry.npmjs.org
 
       - name: Download CLI binary artifact
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v8
         with:
           name: ${{ matrix.settings.artifact_name }}
           path: artifacts/${{ matrix.settings.package_dir }}
@@ -436,7 +436,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         with:
           ref: ${{ needs.prepare-release-provenance.outputs.release_commit }}
 
@@ -446,7 +446,7 @@ jobs:
           bun-version: 1.1.38
 
       - name: Setup Node.js
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v6
         with:
           node-version: 20
           registry-url: https://registry.npmjs.org
@@ -473,7 +473,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         with:
           ref: ${{ needs.prepare-release-provenance.outputs.release_commit }}
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -533,3 +533,55 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_RELEASE_WEBHOOK_URL }}
         run: bash scripts/post-discord-release.sh "${{ needs.bump-versions.outputs.version }}"
+
+  publish-release-archives:
+    name: Upload release archive - ${{ matrix.target }}
+    needs: [bump-versions, build-cli-binary, finalize]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            artifact_name: cli-binary-aarch64-apple-darwin
+          - target: x86_64-apple-darwin
+            artifact_name: cli-binary-x86_64-apple-darwin
+          - target: x86_64-unknown-linux-gnu
+            artifact_name: cli-binary-x86_64-unknown-linux-gnu
+          - target: aarch64-unknown-linux-gnu
+            artifact_name: cli-binary-aarch64-unknown-linux-gnu
+
+    steps:
+      - name: Download prebuilt CLI binary
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: dist
+
+      - name: Package and upload GitHub Release archive
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          VERSION: ${{ needs.bump-versions.outputs.version }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          TAG="v${VERSION}"
+          ARCHIVE="tokens-${TAG}-${TARGET}.tar.gz"
+          CHECKSUM="tokens-${TAG}-${TARGET}.sha256"
+
+          # Reuse the exact binary already built for the npm platform package
+          # (stripped, in the matching artifact) rather than recompiling — this
+          # is what the old, separate release.yml workflow did via
+          # upload-rust-binary-action, doubling the cross-compile work.
+          #
+          # The archive layout (a bare `tokens` at the root) and the sidecar
+          # checksum name/format are kept byte-for-byte compatible with the
+          # previous release assets, so install.sh and the Homebrew tap need no
+          # changes across this migration.
+          chmod +x dist/tokens
+          tar czf "${ARCHIVE}" -C dist tokens
+          sha256sum "${ARCHIVE}" > "${CHECKSUM}"
+
+          gh release upload "${TAG}" "${ARCHIVE}" "${CHECKSUM}" \
+            --repo "${GITHUB_REPOSITORY}" --clobber
