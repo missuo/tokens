@@ -91,7 +91,11 @@ arboard = "3"
 signal-hook = "0.3"
 
 [profile.release]
-lto = true
+# Thin LTO + parallel codegen units keep release builds fast in CI while
+# preserving nearly all of fat-LTO's runtime/size wins. tokens is a
+# file-scanning, network-bound CLI, so the marginal optimization given up here
+# is not measurable in practice — the compile-time savings are.
+lto = "thin"
 opt-level = 3
-codegen-units = 1
+codegen-units = 16
 strip = true
