@@ -126,9 +126,28 @@ fi
 BUN_ONLY_PATH="${BUN_ONLY_DIR}"
 NODE_ONLY_PATH="${NODE_ONLY_DIR}"
 
-CLI_TGZ="$(cd "${CLI_STAGE}" && NPM_CONFIG_CACHE="${NPM_CACHE}" npm pack --silent)"
-WRAPPER_TGZ="$(cd "${WRAPPER_STAGE}" && NPM_CONFIG_CACHE="${NPM_CACHE}" npm pack --silent)"
 PLATFORM_TGZ="$(cd "${PLATFORM_STAGE}" && NPM_CONFIG_CACHE="${NPM_CACHE}" npm pack --silent)"
+node --input-type=module - "${CLI_STAGE}/package.json" "@tokscale/${PLATFORM_PACKAGE}" "file:${PLATFORM_STAGE}/${PLATFORM_TGZ}" <<'NODE'
+import fs from "node:fs";
+
+const [manifestPath, packageName, packageSpec] = process.argv.slice(2);
+const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+manifest.optionalDependencies = { [packageName]: packageSpec };
+fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+NODE
+CLI_TGZ="$(cd "${CLI_STAGE}" && NPM_CONFIG_CACHE="${NPM_CACHE}" npm pack --silent)"
+node --input-type=module - "${WRAPPER_STAGE}/package.json" "file:${CLI_STAGE}/${CLI_TGZ}" <<'NODE'
+import fs from "node:fs";
+
+const [manifestPath, cliSpec] = process.argv.slice(2);
+const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+manifest.dependencies = {
+  ...manifest.dependencies,
+  "@tokscale/cli": cliSpec,
+};
+fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+NODE
+WRAPPER_TGZ="$(cd "${WRAPPER_STAGE}" && NPM_CONFIG_CACHE="${NPM_CACHE}" npm pack --silent)"
 
 echo "Installing local tarballs with Bun..."
 (

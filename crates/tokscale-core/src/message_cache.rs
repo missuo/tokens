@@ -10,7 +10,7 @@ use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
-const CACHE_SCHEMA_VERSION: u32 = 15;
+const CACHE_SCHEMA_VERSION: u32 = 16;
 const CACHE_FILENAME: &str = "source-message-cache.bin";
 const CACHE_LOCK_FILENAME: &str = "source-message-cache.lock";
 const MAX_CACHE_FILE_BYTES: u64 = 256 * 1024 * 1024;
@@ -133,12 +133,22 @@ impl SourceFingerprint {
     /// Fingerprint for a Claude Code JSONL file that may have a sibling `.meta.json`
     /// sidecar. When the sidecar appears or changes (e.g. after a Claude Code upgrade),
     /// the fingerprint changes and the cache invalidates.
-    pub(crate) fn from_claude_code_path(path: &Path) -> Option<Self> {
-        let related = path.file_stem().and_then(|s| s.to_str()).map(|stem| {
+    pub(crate) fn from_claude_code_path_with_home(
+        path: &Path,
+        home_dir: Option<&Path>,
+    ) -> Option<Self> {
+        let mut related = Vec::new();
+
+        if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
             let meta_filename = format!("{}.meta.json", stem);
-            let meta_path = path.with_file_name(meta_filename);
-            (".meta.json".to_string(), meta_path)
-        });
+            related.push((".meta.json".to_string(), path.with_file_name(meta_filename)));
+        }
+
+        if let Some(variant_path) = crate::cc_mirror::variant_file_for_session_path(path, home_dir)
+        {
+            related.push(("cc-mirror/variant.json".to_string(), variant_path));
+        }
+
         Self::from_path_with_related(path, related)
     }
 
@@ -834,12 +844,13 @@ mod tests {
         std::fs::write(&jsonl_path, b"jsonl-content").unwrap();
 
         // No meta sidecar → baseline fingerprint
-        let base = SourceFingerprint::from_claude_code_path(&jsonl_path).unwrap();
+        let base = SourceFingerprint::from_claude_code_path_with_home(&jsonl_path, None).unwrap();
 
         // Add meta sidecar → fingerprint changes
         let meta_path = dir.path().join("agent-abc123.meta.json");
         std::fs::write(&meta_path, br#"{"agentType":"explore"}"#).unwrap();
-        let with_meta = SourceFingerprint::from_claude_code_path(&jsonl_path).unwrap();
+        let with_meta =
+            SourceFingerprint::from_claude_code_path_with_home(&jsonl_path, None).unwrap();
         assert_ne!(
             base, with_meta,
             "Adding meta sidecar should change fingerprint"
@@ -847,7 +858,8 @@ mod tests {
 
         // Update meta sidecar → fingerprint changes again
         std::fs::write(&meta_path, br#"{"agentType":"executor"}"#).unwrap();
-        let updated_meta = SourceFingerprint::from_claude_code_path(&jsonl_path).unwrap();
+        let updated_meta =
+            SourceFingerprint::from_claude_code_path_with_home(&jsonl_path, None).unwrap();
         assert_ne!(
             with_meta, updated_meta,
             "Updating meta sidecar should change fingerprint"
@@ -856,14 +868,97 @@ mod tests {
         // Main session file (no agent- prefix) → unaffected by unrelated meta files
         let main_path = dir.path().join("session-uuid.jsonl");
         std::fs::write(&main_path, b"main-session").unwrap();
-        let main_fp1 = SourceFingerprint::from_claude_code_path(&main_path).unwrap();
+        let main_fp1 =
+            SourceFingerprint::from_claude_code_path_with_home(&main_path, None).unwrap();
         // Create a meta file with the main session stem (unlikely in practice)
         let main_meta = dir.path().join("session-uuid.meta.json");
         std::fs::write(&main_meta, br#"{"agentType":"x"}"#).unwrap();
-        let main_fp2 = SourceFingerprint::from_claude_code_path(&main_path).unwrap();
+        let main_fp2 =
+            SourceFingerprint::from_claude_code_path_with_home(&main_path, None).unwrap();
         assert_ne!(
             main_fp1, main_fp2,
-            "from_claude_code_path always tracks .meta.json if it exists"
+            "Claude Code fingerprints always track .meta.json if it exists"
+        );
+    }
+
+    #[test]
+    fn test_claude_code_fingerprint_tracks_cc_mirror_variant_metadata_changes() {
+        let dir = TempDir::new().unwrap();
+        let variant_dir = dir.path().join(".cc-mirror/kimi-code");
+        let config_dir = variant_dir.join("config");
+        let project_dir = config_dir.join("projects/project-one");
+        std::fs::create_dir_all(&project_dir).unwrap();
+        let jsonl_path = project_dir.join("session.jsonl");
+        std::fs::write(&jsonl_path, b"jsonl-content").unwrap();
+
+        let variant_path = variant_dir.join("variant.json");
+        std::fs::write(
+            &variant_path,
+            format!(
+                r#"{{"name":"kimi-code","provider":"kimi","configDir":"{}"}}"#,
+                config_dir.display()
+            ),
+        )
+        .unwrap();
+        let with_kimi =
+            SourceFingerprint::from_claude_code_path_with_home(&jsonl_path, None).unwrap();
+
+        std::fs::write(
+            &variant_path,
+            format!(
+                r#"{{"name":"kimi-code","provider":"minimax","configDir":"{}"}}"#,
+                config_dir.display()
+            ),
+        )
+        .unwrap();
+        let with_minimax =
+            SourceFingerprint::from_claude_code_path_with_home(&jsonl_path, None).unwrap();
+
+        assert_ne!(
+            with_kimi, with_minimax,
+            "Changing cc-mirror provider metadata should invalidate parsed Claude cache entries"
+        );
+    }
+
+    #[test]
+    fn test_claude_code_fingerprint_tracks_cc_mirror_custom_config_dir_metadata_changes() {
+        let dir = TempDir::new().unwrap();
+        let variant_dir = dir.path().join(".cc-mirror/kimi-code");
+        let config_dir = dir.path().join("mirror-configs/kimi-code");
+        let project_dir = config_dir.join("projects/project-one");
+        std::fs::create_dir_all(&project_dir).unwrap();
+        let jsonl_path = project_dir.join("session.jsonl");
+        std::fs::write(&jsonl_path, b"jsonl-content").unwrap();
+
+        std::fs::create_dir_all(&variant_dir).unwrap();
+        let variant_path = variant_dir.join("variant.json");
+        std::fs::write(
+            &variant_path,
+            format!(
+                r#"{{"name":"kimi-code","provider":"kimi","configDir":"{}"}}"#,
+                config_dir.display()
+            ),
+        )
+        .unwrap();
+        let with_kimi =
+            SourceFingerprint::from_claude_code_path_with_home(&jsonl_path, Some(dir.path()))
+                .unwrap();
+
+        std::fs::write(
+            &variant_path,
+            format!(
+                r#"{{"name":"kimi-code","provider":"minimax","configDir":"{}"}}"#,
+                config_dir.display()
+            ),
+        )
+        .unwrap();
+        let with_minimax =
+            SourceFingerprint::from_claude_code_path_with_home(&jsonl_path, Some(dir.path()))
+                .unwrap();
+
+        assert_ne!(
+            with_kimi, with_minimax,
+            "Changing cc-mirror metadata should invalidate cache entries for custom configDir layouts"
         );
     }
 

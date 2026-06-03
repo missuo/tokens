@@ -164,6 +164,29 @@ impl ScanResult {
 
         paths
     }
+
+    /// Return every Zed threads SQLite database that should be parsed.
+    pub fn zed_db_paths(&self) -> Vec<PathBuf> {
+        let mut paths = Vec::new();
+        let mut seen: HashSet<PathBuf> = HashSet::new();
+
+        let mut push = |path: &Path| {
+            let key = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+            if seen.insert(key) {
+                paths.push(path.to_path_buf());
+            }
+        };
+
+        if let Some(path) = &self.zed_db {
+            push(path);
+        }
+
+        for path in self.get(ClientId::Zed) {
+            push(path);
+        }
+
+        paths
+    }
 }
 
 pub fn headless_roots_with_env_strategy(home_dir: &str, use_env_roots: bool) -> Vec<PathBuf> {
@@ -278,6 +301,7 @@ pub fn scan_directory(root: &str, pattern: &str) -> Vec<PathBuf> {
                 "session-usage.json" => file_name == "session-usage.json",
                 "chat-messages.json" => file_name == "chat-messages.json",
                 "state.db" => file_name == "state.db",
+                "threads.db" => file_name == "threads.db",
                 _ => false,
             }
         })
@@ -356,6 +380,11 @@ pub fn built_in_extra_scan_paths_for(
             ClientId::Claude,
             PathBuf::from(format!("{}/.claude/transcripts", home_dir)),
         ));
+        paths.extend(
+            crate::cc_mirror::discover_claude_project_roots(Path::new(home_dir))
+                .into_iter()
+                .map(|path| (ClientId::Claude, path)),
+        );
     }
 
     paths
@@ -500,11 +529,11 @@ fn supports_extra_dir_scanning(client_id: ClientId) -> bool {
     // Kilo CLI currently loads a single SQLite DB via `scan_result.kilo_db`
     // Roo/KiloCode require local + remote and server task roots, and Crush
     // discovers SQLite DBs via the project registry rather than scanned file
-    // paths. Hermes profile databases are named `state.db`, so they can use
-    // `extraScanPaths` once `scan_directory` knows that exact filename.
+    // paths. Hermes/Zed profile databases are named consistently enough for
+    // `scan_directory` to find them from user-provided roots.
     !matches!(
         client_id,
-        ClientId::Kilo | ClientId::Crush | ClientId::Goose | ClientId::Zed
+        ClientId::Kilo | ClientId::Crush | ClientId::Goose
     )
 }
 
@@ -1818,6 +1847,33 @@ mod tests {
     }
 
     #[test]
+    fn test_scan_all_clients_with_scanner_settings_merges_zed_extra_threads_db() {
+        let dir = TempDir::new().unwrap();
+        let home = dir.path();
+
+        let windows_threads_dir = home.join("AppData/Local/Zed/threads");
+        fs::create_dir_all(&windows_threads_dir).unwrap();
+        let threads_db = windows_threads_dir.join("threads.db");
+        File::create(&threads_db).unwrap();
+
+        let settings: ScannerSettings = serde_json::from_value(serde_json::json!({
+            "extraScanPaths": {
+                "zed": [windows_threads_dir]
+            }
+        }))
+        .unwrap();
+
+        let result = scan_all_clients_with_scanner_settings(
+            home.to_str().unwrap(),
+            &["zed".to_string()],
+            false,
+            &settings,
+        );
+
+        assert_eq!(result.zed_db_paths(), vec![threads_db]);
+    }
+
+    #[test]
     #[serial]
     fn test_scan_all_clients_with_scanner_settings_respects_hermes_client_filter() {
         let dir = TempDir::new().unwrap();
@@ -2142,6 +2198,69 @@ mod tests {
 
         assert_eq!(result.get(ClientId::Claude), &vec![transcript]);
         assert!(result.get(ClientId::OpenCode).is_empty());
+    }
+
+    #[test]
+    fn test_scan_all_clients_claude_discovers_cc_mirror_variant_projects() {
+        let dir = TempDir::new().unwrap();
+        let home = dir.path();
+        setup_mock_claude_dir(home);
+
+        let variant_dir = home.join(".cc-mirror/kimi-code");
+        let config_dir = variant_dir.join("config");
+        let project_dir = config_dir.join("projects/project-one");
+        fs::create_dir_all(&project_dir).unwrap();
+        let variant_file = variant_dir.join("variant.json");
+        fs::write(
+            &variant_file,
+            format!(
+                r#"{{"name":"kimi-code","provider":"kimi","configDir":"{}"}}"#,
+                config_dir.display()
+            ),
+        )
+        .unwrap();
+        let variant_session = project_dir.join("variant-session.jsonl");
+        File::create(&variant_session).unwrap();
+
+        let result = scan_all_clients(home.to_str().unwrap(), &["claude".to_string()]);
+
+        assert_eq!(result.get(ClientId::Claude).len(), 2);
+        assert!(
+            result
+                .get(ClientId::Claude)
+                .iter()
+                .any(|path| path == &variant_session),
+            "expected cc-mirror session {} in {:?}",
+            variant_session.display(),
+            result.get(ClientId::Claude)
+        );
+    }
+
+    #[test]
+    fn test_scan_all_clients_claude_dedups_cc_mirror_config_dir_pointing_at_normal_claude() {
+        let dir = TempDir::new().unwrap();
+        let home = dir.path();
+        setup_mock_claude_dir(home);
+
+        let normal_claude_dir = home.join(".claude");
+        let variant_dir = home.join(".cc-mirror/plain-mirror");
+        fs::create_dir_all(&variant_dir).unwrap();
+        fs::write(
+            variant_dir.join("variant.json"),
+            format!(
+                r#"{{"name":"plain-mirror","provider":"mirror","configDir":"{}"}}"#,
+                normal_claude_dir.display()
+            ),
+        )
+        .unwrap();
+
+        let result = scan_all_clients(home.to_str().unwrap(), &["claude".to_string()]);
+
+        assert_eq!(
+            result.get(ClientId::Claude).len(),
+            1,
+            "cc-mirror variants pointing at ~/.claude must not duplicate normal Claude files"
+        );
     }
 
     #[test]

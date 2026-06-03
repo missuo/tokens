@@ -5,6 +5,7 @@ mod copilot;
 pub mod helpers;
 mod kimi;
 mod minimax;
+mod warp;
 mod zai;
 
 use anyhow::Result;
@@ -88,6 +89,7 @@ pub fn fetch_all() -> Vec<UsageOutput> {
         ("Copilot", copilot::has_credentials, copilot::fetch),
         ("Kimi", kimi::has_credentials, kimi::fetch),
         ("MiniMax", minimax::has_credentials, minimax::fetch),
+        ("Warp/Oz", warp::has_credentials, warp::fetch),
     ];
 
     let active: Vec<_> = providers.into_iter().filter(|(_, has, _)| has()).collect();

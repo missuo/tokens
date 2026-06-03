@@ -32,6 +32,9 @@ if tomllib is None:
 with (root / "Cargo.toml").open("rb") as cargo_file:
     cargo_data = tomllib.load(cargo_file)
 
+with (root / "Cargo.lock").open("rb") as cargo_lock_file:
+    cargo_lock_data = tomllib.load(cargo_lock_file)
+
 workspace_section = cargo_data.get("workspace", {}).get("package", {})
 workspace_version = workspace_section.get("version")
 if not workspace_version:
@@ -87,6 +90,19 @@ if actual_optional != expected_optional:
 
 for name, version in cli_package["optionalDependencies"].items():
     expect_equal(f"packages/cli optional dependency {name}", version, workspace_version)
+
+lock_workspace_packages = {"tokscale-cli", "tokscale-core"}
+lock_packages = {
+    package.get("name"): package.get("version")
+    for package in cargo_lock_data.get("package", [])
+    if package.get("name") in lock_workspace_packages and "source" not in package
+}
+for package_name in sorted(lock_workspace_packages):
+    lock_version = lock_packages.get(package_name)
+    if lock_version is None:
+        errors.append(f"Cargo.lock missing package {package_name}")
+    else:
+        expect_equal(f"Cargo.lock package {package_name}", lock_version, workspace_version)
 
 missing_manifests = actual_optional - platform_names
 extra_manifests = platform_names - actual_optional

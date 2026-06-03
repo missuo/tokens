@@ -396,6 +396,15 @@ define_clients!(
         headless: false,
         parse_local: true,
         submit_default: false
+    },
+    Warp = 24 => {
+        id: "warp",
+        root: PathRoot::Config,
+        relative: "warp-cache",
+        pattern: "usage*.json",
+        headless: false,
+        parse_local: false,
+        submit_default: false
     }
 );
 
@@ -448,7 +457,7 @@ mod tests {
 
     #[test]
     fn test_client_id_count() {
-        assert_eq!(ClientId::COUNT, 24);
+        assert_eq!(ClientId::COUNT, 25);
     }
 
     #[test]
@@ -462,6 +471,15 @@ mod tests {
             let id = client.as_str();
             assert_eq!(ClientId::from_str(id), Some(client));
         }
+    }
+
+    #[test]
+    fn test_warp_client_registered_as_aggregate_cache_source() {
+        let client = ClientId::from_str("warp").expect("warp client should be registered");
+        assert_eq!(client.data().relative_path, "warp-cache");
+        assert_eq!(client.data().pattern, "usage*.json");
+        assert!(!client.data().parse_local);
+        assert!(!client.data().submit_default);
     }
 
     #[test]

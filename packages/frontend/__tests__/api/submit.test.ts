@@ -307,6 +307,58 @@ describe('POST /api/submit - Client-Level Merge', () => {
       expect(data.contributions[0].clients[0].client).toBe('zed');
     });
 
+    it('should pass validation for cc-mirror variant submissions', () => {
+      const data = createMockSubmissionData({
+        clients: ['cc-mirror/zaicc'],
+        contributions: [
+          {
+            date: '2024-12-01',
+            clients: [
+              {
+                client: 'cc-mirror/zaicc',
+                modelId: 'glm-5.1',
+                cost: 1.5,
+                tokens: { input: 1000, output: 500, cacheRead: 0, cacheWrite: 0 },
+                messages: 5,
+              },
+            ],
+          },
+        ],
+      });
+
+      const result = validateSubmission(data);
+
+      expect(result.valid).toBe(true);
+      expect(result.errors).toHaveLength(0);
+      expect(result.data?.summary.clients).toEqual(['cc-mirror/zaicc']);
+      expect(result.data?.contributions[0].clients[0].client).toBe('cc-mirror/zaicc');
+    });
+
+    it('rejects malformed cc-mirror variant client ids', () => {
+      const data = createMockSubmissionData({
+        clients: ['cc-mirror/../zaicc' as ClientType],
+        contributions: [
+          {
+            date: '2024-12-01',
+            clients: [
+              {
+                client: 'cc-mirror/../zaicc' as ClientType,
+                modelId: 'glm-5.1',
+                cost: 1.5,
+                tokens: { input: 1000, output: 500, cacheRead: 0, cacheWrite: 0 },
+                messages: 5,
+              },
+            ],
+          },
+        ],
+      });
+
+      const result = validateSubmission(data);
+
+      expect(result.valid).toBe(false);
+      expect(result.errors.join("\n")).toContain("Invalid cc-mirror variant client id");
+    });
+
     it('should pass validation for kilo client submissions', () => {
       const payload = {
         meta: { generatedAt: new Date().toISOString(), version: '1.0.0', dateRange: { start: '2024-12-01', end: '2024-12-01' } },

@@ -265,6 +265,7 @@ pub fn get_client_color(client: &str) -> Color {
         "codebuff" => Color::Rgb(124, 58, 237),    // #7C3AED Codebuff brand purple
         "antigravity" => Color::Rgb(99, 102, 241), // #6366F1 Antigravity indigo
         "zed" => Color::Rgb(8, 76, 207),           // #084CCF Zed blue
+        "warp" => Color::Rgb(1, 155, 150),         // #019B96 Warp teal
         _ => Color::Rgb(136, 136, 136),            // #888888
     }
 }

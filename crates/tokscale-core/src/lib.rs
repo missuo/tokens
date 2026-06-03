@@ -1,6 +1,7 @@
 #![deny(clippy::all)]
 
 mod aggregator;
+mod cc_mirror;
 pub mod clients;
 pub mod fs_atomic;
 mod message_cache;
@@ -118,6 +119,7 @@ fn retain_for_requested_clients(
     requested: &HashSet<&str>,
 ) -> bool {
     requested.contains(client)
+        || (requested.contains("claude") && client.starts_with("cc-mirror/"))
         || (requested.contains("synthetic")
             && sessions::synthetic::matches_synthetic_filter(client, model_id, provider_id))
 }
@@ -627,15 +629,16 @@ fn parse_all_messages_with_pricing_with_env_strategy(
         ))
     }
 
-    fn load_or_parse_source_with_fingerprint_and_policy<F>(
+    fn load_or_parse_source_with_fingerprint_and_policy<F, FingerprintFn>(
         path: &Path,
         source_cache: &message_cache::SourceMessageCache,
         pricing: Option<&pricing::PricingService>,
-        fingerprint_from_path: fn(&Path) -> Option<message_cache::SourceFingerprint>,
+        fingerprint_from_path: FingerprintFn,
         parse: F,
     ) -> CachedParseOutcome
     where
         F: Fn(&Path) -> (Vec<UnifiedMessage>, bool),
+        FingerprintFn: Fn(&Path) -> Option<message_cache::SourceFingerprint>,
     {
         let Some(fingerprint) = fingerprint_from_path(path) else {
             let (mut messages, _) = parse(path);
@@ -678,15 +681,16 @@ fn parse_all_messages_with_pricing_with_env_strategy(
         }
     }
 
-    fn load_or_parse_source_with_fingerprint<F>(
+    fn load_or_parse_source_with_fingerprint<F, FingerprintFn>(
         path: &Path,
         source_cache: &message_cache::SourceMessageCache,
         pricing: Option<&pricing::PricingService>,
-        fingerprint_from_path: fn(&Path) -> Option<message_cache::SourceFingerprint>,
+        fingerprint_from_path: FingerprintFn,
         parse: F,
     ) -> CachedParseOutcome
     where
         F: Fn(&Path) -> Vec<UnifiedMessage>,
+        FingerprintFn: Fn(&Path) -> Option<message_cache::SourceFingerprint>,
     {
         load_or_parse_source_with_fingerprint_and_policy(
             path,
@@ -888,6 +892,7 @@ fn parse_all_messages_with_pricing_with_env_strategy(
         }
     }
 
+    let claude_home = PathBuf::from(home_dir);
     let claude_outcomes: Vec<CachedParseOutcome> = scan_result
         .get(ClientId::Claude)
         .par_iter()
@@ -896,8 +901,13 @@ fn parse_all_messages_with_pricing_with_env_strategy(
                 path,
                 &source_cache,
                 pricing,
-                message_cache::SourceFingerprint::from_claude_code_path,
-                sessions::claudecode::parse_claude_file,
+                |path| {
+                    message_cache::SourceFingerprint::from_claude_code_path_with_home(
+                        path,
+                        Some(&claude_home),
+                    )
+                },
+                |path| sessions::claudecode::parse_claude_file_with_home(path, Some(&claude_home)),
             )
         })
         .collect();
@@ -997,6 +1007,22 @@ fn parse_all_messages_with_pricing_with_env_strategy(
         })
         .collect();
     for outcome in cursor_outcomes {
+        all_messages.extend(outcome.messages);
+        if let Some(entry) = outcome.cache_entry {
+            source_cache.insert(entry);
+        }
+    }
+
+    let warp_outcomes: Vec<CachedParseOutcome> = scan_result
+        .get(ClientId::Warp)
+        .par_iter()
+        .map(|path| {
+            load_or_parse_source(path, &source_cache, pricing, |path| {
+                sessions::warp::parse_warp_file(path)
+            })
+        })
+        .collect();
+    for outcome in warp_outcomes {
         all_messages.extend(outcome.messages);
         if let Some(entry) = outcome.cache_entry {
             source_cache.insert(entry);
@@ -1197,8 +1223,8 @@ fn parse_all_messages_with_pricing_with_env_strategy(
         all_messages.extend(goose_messages);
     }
 
-    if let Some(db_path) = &scan_result.zed_db {
-        let outcome = load_or_parse_sqlite_source(db_path, &source_cache, pricing, |path| {
+    for db_path in scan_result.zed_db_paths() {
+        let outcome = load_or_parse_sqlite_source(&db_path, &source_cache, pricing, |path| {
             sessions::zed::parse_zed_sqlite(path)
         });
         all_messages.extend(outcome.messages);
@@ -2063,17 +2089,22 @@ pub fn parse_local_clients(options: LocalParseOptions) -> Result<ParsedMessages,
     };
     counts.set(ClientId::OpenCode, opencode_count);
 
+    let claude_home = PathBuf::from(&home_dir);
     let claude_msgs_raw: Vec<(String, ParsedMessage)> = scan_result
         .get(ClientId::Claude)
         .par_iter()
         .map_init(std::collections::HashMap::new, |parent_cache, path| {
-            sessions::claudecode::parse_claude_file_with_cache(path, parent_cache)
-                .into_iter()
-                .map(|msg| {
-                    let dedup_key = msg.dedup_key.clone().unwrap_or_default();
-                    (dedup_key, unified_to_parsed(&msg))
-                })
-                .collect::<Vec<_>>()
+            sessions::claudecode::parse_claude_file_with_cache_and_home(
+                path,
+                parent_cache,
+                Some(&claude_home),
+            )
+            .into_iter()
+            .map(|msg| {
+                let dedup_key = msg.dedup_key.clone().unwrap_or_default();
+                (dedup_key, unified_to_parsed(&msg))
+            })
+            .collect::<Vec<_>>()
         })
         .flatten()
         .collect();
@@ -2320,9 +2351,11 @@ pub fn parse_local_clients(options: LocalParseOptions) -> Result<ParsedMessages,
         messages.extend(goose_msgs);
     }
 
-    if let Some(db_path) = &scan_result.zed_db {
-        let zed_msgs: Vec<ParsedMessage> = sessions::zed::parse_zed_sqlite(db_path)
-            .into_iter()
+    let zed_db_paths = scan_result.zed_db_paths();
+    if !zed_db_paths.is_empty() {
+        let zed_msgs: Vec<ParsedMessage> = zed_db_paths
+            .iter()
+            .flat_map(|db_path| sessions::zed::parse_zed_sqlite(db_path))
             .map(|msg| unified_to_parsed(&msg))
             .collect();
         let count = summed_parsed_message_count(&zed_msgs);
@@ -2401,6 +2434,20 @@ pub fn parse_local_clients(options: LocalParseOptions) -> Result<ParsedMessages,
     let trae_count = trae_msgs.len() as i32;
     counts.set(ClientId::Trae, trae_count);
     messages.extend(trae_msgs);
+
+    let warp_msgs: Vec<ParsedMessage> = scan_result
+        .get(ClientId::Warp)
+        .par_iter()
+        .flat_map(|path| {
+            sessions::warp::parse_warp_file(path)
+                .into_iter()
+                .map(|msg| unified_to_parsed(&msg))
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    let warp_count = summed_parsed_message_count(&warp_msgs);
+    counts.set(ClientId::Warp, warp_count);
+    messages.extend(warp_msgs);
 
     if include_synthetic {
         if let Some(db_path) = &scan_result.synthetic_db {
@@ -2671,6 +2718,49 @@ mod tests {
         )
         .unwrap();
         conn
+    }
+
+    fn create_zed_sqlite_db(db_path: &std::path::Path) -> rusqlite::Connection {
+        let conn = rusqlite::Connection::open(db_path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE threads (
+                id TEXT PRIMARY KEY,
+                summary TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                data_type TEXT NOT NULL,
+                data BLOB NOT NULL
+            );",
+        )
+        .unwrap();
+        conn
+    }
+
+    fn insert_zed_thread(conn: &rusqlite::Connection, id: &str, model: &str) {
+        let payload = format!(
+            r#"{{
+                "version": "0.3.0",
+                "title": "Test thread",
+                "updated_at": "2026-05-01T12:30:00Z",
+                "request_token_usage": {{
+                    "turn-1": {{
+                        "input_tokens": 42,
+                        "output_tokens": 7,
+                        "cache_creation_input_tokens": 3,
+                        "cache_read_input_tokens": 5
+                    }}
+                }},
+                "model": {{
+                    "provider": "zed.dev",
+                    "model": "{model}"
+                }},
+                "imported": false
+            }}"#
+        );
+        conn.execute(
+            "INSERT INTO threads (id, summary, updated_at, data_type, data) VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![id, "Test thread", "2026-05-01T12:30:00Z", "json", payload.as_bytes()],
+        )
+        .unwrap();
     }
 
     fn insert_hermes_session(
@@ -4016,7 +4106,9 @@ mod tests {
                 "\n",
                 r#"{"timestamp":"2026-04-30T10:00:01Z","type":"turn_context","payload":{"model":"gpt-5.2"}}"#,
                 "\n",
-                r#"{"timestamp":"2026-04-30T10:00:02Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"cached_input_tokens":20,"output_tokens":30},"last_token_usage":{"input_tokens":100,"cached_input_tokens":20,"output_tokens":30}}}}"#,
+                r#"{"timestamp":"2026-04-30T10:00:02Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":50,"cached_input_tokens":10,"output_tokens":15,"total_tokens":65},"last_token_usage":{"input_tokens":50,"cached_input_tokens":10,"output_tokens":15,"total_tokens":65}}}}"#,
+                "\n",
+                r#"{"timestamp":"2026-04-30T10:00:03Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"cached_input_tokens":20,"output_tokens":30,"total_tokens":130},"last_token_usage":{"input_tokens":50,"cached_input_tokens":10,"output_tokens":15,"total_tokens":65}}}}"#,
                 "\n"
             ),
         )
@@ -4024,13 +4116,17 @@ mod tests {
         std::fs::write(
             codex_dir.join("fork.jsonl"),
             concat!(
-                r#"{"timestamp":"2026-04-30T10:01:00Z","type":"session_meta","payload":{"id":"fork-session","forked_from_id":"parent-session","source":{"subagent":{"thread_spawn":{"parent_thread_id":"parent-session","depth":1}}},"model_provider":"openai","cwd":"/Users/alice/root-worktree"}}"#,
+                r#"{"timestamp":"2026-04-30T10:01:00Z","type":"session_meta","payload":{"id":"fork-session","source":{"subagent":{"thread_spawn":{"parent_thread_id":"parent-session","depth":1}}},"model_provider":"openai","cwd":"/Users/alice/root-worktree"}}"#,
                 "\n",
-                r#"{"timestamp":"2026-04-30T10:01:01Z","type":"turn_context","payload":{"model":"gpt-5.2"}}"#,
+                r#"{"timestamp":"2026-04-30T10:01:01Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"cached_input_tokens":20,"output_tokens":30,"total_tokens":130},"last_token_usage":{"input_tokens":100,"cached_input_tokens":20,"output_tokens":30,"total_tokens":130}}}}"#,
                 "\n",
-                r#"{"timestamp":"2026-04-30T10:00:02Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"cached_input_tokens":20,"output_tokens":30},"last_token_usage":{"input_tokens":100,"cached_input_tokens":20,"output_tokens":30}}}}"#,
+                r#"{"timestamp":"2026-04-30T10:01:02Z","type":"turn_context","payload":{"model":"gpt-5.2"}}"#,
                 "\n",
-                r#"{"timestamp":"2026-04-30T10:01:03Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":110,"cached_input_tokens":22,"output_tokens":33},"last_token_usage":{"input_tokens":10,"cached_input_tokens":2,"output_tokens":3}}}}"#,
+                r#"{"timestamp":"2026-04-30T10:01:03Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":50,"cached_input_tokens":10,"output_tokens":15,"total_tokens":65},"last_token_usage":{"input_tokens":50,"cached_input_tokens":10,"output_tokens":15,"total_tokens":65}}}}"#,
+                "\n",
+                r#"{"timestamp":"2026-04-30T10:01:04Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"cached_input_tokens":20,"output_tokens":30,"total_tokens":130},"last_token_usage":{"input_tokens":50,"cached_input_tokens":10,"output_tokens":15,"total_tokens":65}}}}"#,
+                "\n",
+                r#"{"timestamp":"2026-04-30T10:01:05Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":110,"cached_input_tokens":22,"output_tokens":33,"total_tokens":143},"last_token_usage":{"input_tokens":10,"cached_input_tokens":2,"output_tokens":3,"total_tokens":13}}}}"#,
                 "\n"
             ),
         )
@@ -4054,7 +4150,7 @@ mod tests {
                 None,
             );
 
-            assert_eq!(messages.len(), 2);
+            assert_eq!(messages.len(), 3);
             assert_eq!(
                 messages
                     .iter()
@@ -4182,8 +4278,8 @@ mod tests {
             })
             .unwrap();
 
-            assert_eq!(parsed.counts.get(ClientId::Codex), 2);
-            assert_eq!(parsed.messages.len(), 2);
+            assert_eq!(parsed.counts.get(ClientId::Codex), 3);
+            assert_eq!(parsed.messages.len(), 3);
             assert_eq!(
                 parsed
                     .messages
@@ -5777,6 +5873,124 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_local_clients_honors_scanner_extra_scan_paths_for_zed_threads_db() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let windows_threads_dir = temp_dir.path().join("AppData/Local/Zed/threads");
+        std::fs::create_dir_all(&windows_threads_dir).unwrap();
+        let threads_db = windows_threads_dir.join("threads.db");
+        let conn = create_zed_sqlite_db(&threads_db);
+        insert_zed_thread(&conn, "zed-extra-thread", "claude-sonnet-4-5");
+        drop(conn);
+
+        let parsed_default = parse_local_clients(LocalParseOptions {
+            home_dir: Some(temp_dir.path().to_str().unwrap().to_string()),
+            use_env_roots: false,
+            clients: Some(vec!["zed".to_string()]),
+            since: None,
+            until: None,
+            year: None,
+            scanner_settings: scanner::ScannerSettings::default(),
+        })
+        .unwrap();
+        assert_eq!(parsed_default.counts.get(ClientId::Zed), 0);
+        assert!(parsed_default.messages.is_empty());
+
+        let mut extra_scan_paths = std::collections::BTreeMap::new();
+        extra_scan_paths.insert("zed".to_string(), vec![windows_threads_dir]);
+        let parsed_with_settings = parse_local_clients(LocalParseOptions {
+            home_dir: Some(temp_dir.path().to_str().unwrap().to_string()),
+            use_env_roots: false,
+            clients: Some(vec!["zed".to_string()]),
+            since: None,
+            until: None,
+            year: None,
+            scanner_settings: scanner::ScannerSettings {
+                extra_scan_paths,
+                ..Default::default()
+            },
+        })
+        .unwrap();
+
+        assert_eq!(parsed_with_settings.counts.get(ClientId::Zed), 1);
+        assert_eq!(parsed_with_settings.messages.len(), 1);
+        assert_eq!(parsed_with_settings.messages[0].client, "zed");
+        assert_eq!(
+            parsed_with_settings.messages[0].session_id,
+            "zed-extra-thread"
+        );
+        assert_eq!(
+            parsed_with_settings.messages[0].model_id,
+            "claude-sonnet-4-5"
+        );
+        assert_eq!(parsed_with_settings.messages[0].input, 42);
+        assert_eq!(parsed_with_settings.messages[0].output, 7);
+    }
+
+    #[test]
+    fn test_parse_local_clients_dedups_zed_threads_across_default_and_extra_dbs() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+
+        // Place threads.db at the default platform path so the scanner finds it
+        // as `zed_db` AND we also pass it via extraScanPaths.
+        let default_threads_dir = temp_dir.path().join(".local/share/zed/threads");
+        std::fs::create_dir_all(&default_threads_dir).unwrap();
+        let default_db = default_threads_dir.join("threads.db");
+        let conn = create_zed_sqlite_db(&default_db);
+        insert_zed_thread(&conn, "shared-zed-thread", "claude-sonnet-4-5");
+        drop(conn);
+
+        // Point extraScanPaths.zed at the same directory — dedup should prevent
+        // the thread from appearing twice.
+        let mut extra_scan_paths = std::collections::BTreeMap::new();
+        extra_scan_paths.insert("zed".to_string(), vec![default_threads_dir.clone()]);
+        let parsed = parse_local_clients(LocalParseOptions {
+            home_dir: Some(temp_dir.path().to_str().unwrap().to_string()),
+            use_env_roots: false,
+            clients: Some(vec!["zed".to_string()]),
+            since: None,
+            until: None,
+            year: None,
+            scanner_settings: scanner::ScannerSettings {
+                extra_scan_paths,
+                ..Default::default()
+            },
+        })
+        .unwrap();
+
+        // Should see exactly 1 message, not 2 (deduped by canonicalize).
+        assert_eq!(parsed.counts.get(ClientId::Zed), 1);
+        assert_eq!(parsed.messages.len(), 1);
+        assert_eq!(parsed.messages[0].session_id, "shared-zed-thread");
+    }
+
+    #[test]
+    fn test_parse_local_clients_zed_extra_scan_paths_nonexistent_dir_is_silent() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+
+        let mut extra_scan_paths = std::collections::BTreeMap::new();
+        extra_scan_paths.insert(
+            "zed".to_string(),
+            vec![temp_dir.path().join("does/not/exist")],
+        );
+        let parsed = parse_local_clients(LocalParseOptions {
+            home_dir: Some(temp_dir.path().to_str().unwrap().to_string()),
+            use_env_roots: false,
+            clients: Some(vec!["zed".to_string()]),
+            since: None,
+            until: None,
+            year: None,
+            scanner_settings: scanner::ScannerSettings {
+                extra_scan_paths,
+                ..Default::default()
+            },
+        })
+        .unwrap();
+
+        assert_eq!(parsed.counts.get(ClientId::Zed), 0);
+        assert!(parsed.messages.is_empty());
+    }
+
+    #[test]
     fn test_parse_local_clients_dedups_hermes_sessions_across_default_and_extra_dbs() {
         let temp_dir = tempfile::TempDir::new().unwrap();
 
@@ -5967,6 +6181,117 @@ mod tests {
         assert_eq!(parsed.messages[0].output, 45);
         assert_eq!(parsed.messages[0].cache_read, 67);
         assert_eq!(parsed.messages[0].cache_write, 8);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_parse_all_messages_refreshes_cc_mirror_provider_when_variant_metadata_changes() {
+        let cache_home = tempfile::TempDir::new().unwrap();
+        let source_home = tempfile::TempDir::new().unwrap();
+        let original_home = std::env::var("HOME").ok();
+        std::env::set_var("HOME", cache_home.path());
+
+        {
+            let variant_dir = source_home.path().join(".cc-mirror/kimi-code");
+            let config_dir = source_home.path().join("mirror-configs/kimi-code");
+            let project_dir = config_dir.join("projects/project-one");
+            std::fs::create_dir_all(&project_dir).unwrap();
+            std::fs::create_dir_all(&variant_dir).unwrap();
+            let variant_path = variant_dir.join("variant.json");
+            std::fs::write(
+                &variant_path,
+                format!(
+                    r#"{{"name":"kimi-code","provider":"kimi","configDir":"{}"}}"#,
+                    config_dir.display()
+                ),
+            )
+            .unwrap();
+            let session_path = project_dir.join("session.jsonl");
+            std::fs::write(
+                &session_path,
+                r#"{"type":"assistant","timestamp":"2024-12-01T10:00:00.000Z","requestId":"req_001","message":{"id":"msg_001","model":"claude-3-5-sonnet","usage":{"input_tokens":100,"output_tokens":50}}}
+"#,
+            )
+            .unwrap();
+
+            let first_messages = parse_all_messages_with_pricing(
+                source_home.path().to_str().unwrap(),
+                &["claude".to_string()],
+                None,
+            );
+            assert_eq!(first_messages.len(), 1);
+            assert_eq!(first_messages[0].client, "cc-mirror/kimi-code");
+            assert_eq!(first_messages[0].provider_id, "kimi");
+
+            std::fs::write(
+                &variant_path,
+                format!(
+                    r#"{{"name":"kimi-code","provider":"minimax","configDir":"{}"}}"#,
+                    config_dir.display()
+                ),
+            )
+            .unwrap();
+
+            let refreshed_messages = parse_all_messages_with_pricing(
+                source_home.path().to_str().unwrap(),
+                &["claude".to_string()],
+                None,
+            );
+            assert_eq!(refreshed_messages.len(), 1);
+            assert_eq!(refreshed_messages[0].client, "cc-mirror/kimi-code");
+            assert_eq!(refreshed_messages[0].provider_id, "minimax");
+        }
+
+        match original_home {
+            Some(home) => std::env::set_var("HOME", home),
+            None => std::env::remove_var("HOME"),
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_parse_all_messages_keeps_normal_claude_when_cc_mirror_points_at_claude_config() {
+        let cache_home = tempfile::TempDir::new().unwrap();
+        let source_home = tempfile::TempDir::new().unwrap();
+        let original_home = std::env::var("HOME").ok();
+        std::env::set_var("HOME", cache_home.path());
+
+        {
+            let claude_dir = source_home.path().join(".claude");
+            let project_dir = claude_dir.join("projects/project-one");
+            std::fs::create_dir_all(&project_dir).unwrap();
+            let session_path = project_dir.join("session.jsonl");
+            std::fs::write(
+                &session_path,
+                r#"{"type":"assistant","timestamp":"2024-12-01T10:00:00.000Z","requestId":"req_001","message":{"id":"msg_001","model":"claude-3-5-sonnet","usage":{"input_tokens":100,"output_tokens":50}}}
+"#,
+            )
+            .unwrap();
+
+            let variant_dir = source_home.path().join(".cc-mirror/plain-mirror");
+            std::fs::create_dir_all(&variant_dir).unwrap();
+            std::fs::write(
+                variant_dir.join("variant.json"),
+                format!(
+                    r#"{{"name":"plain-mirror","provider":"mirror","configDir":"{}"}}"#,
+                    claude_dir.display()
+                ),
+            )
+            .unwrap();
+
+            let messages = parse_all_messages_with_pricing(
+                source_home.path().to_str().unwrap(),
+                &["claude".to_string()],
+                None,
+            );
+            assert_eq!(messages.len(), 1);
+            assert_eq!(messages[0].client, "claude");
+        }
+
+        match original_home {
+            Some(home) => std::env::set_var("HOME", home),
+            None => std::env::remove_var("HOME"),
+        }
     }
 
     #[test]

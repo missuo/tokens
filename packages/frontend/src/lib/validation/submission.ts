@@ -51,7 +51,11 @@ const ClientContributionProvenanceSchema = z.object({
   modelCount: NonNegativeIntegerSchema,
 });
 
-const SourceSchema = z.enum(SUPPORTED_CLIENT_TYPES);
+const CcMirrorSourceSchema = z.string().regex(
+  /^cc-mirror\/[a-z0-9][a-z0-9._-]{0,95}$/,
+  "Invalid cc-mirror variant client id"
+);
+const SourceSchema = z.union([z.enum(SUPPORTED_CLIENT_TYPES), CcMirrorSourceSchema]);
 
 const ClientContributionSchema = z.object({
   client: SourceSchema,

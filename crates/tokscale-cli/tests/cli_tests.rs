@@ -325,7 +325,20 @@ fn cmd_with_home(tmp: &Path) -> Command {
         .env("XDG_CONFIG_HOME", tmp.join(".config"))
         .env("XDG_DATA_HOME", tmp.join(".local/share"))
         .env("XDG_CACHE_HOME", tmp.join(".cache"))
-        .env("TOKENS_PRICING_CACHE_ONLY", "1");
+        .env("TOKENS_PRICING_CACHE_ONLY", "1")
+        // Clear scan-path overrides inherited from the dev's shell, otherwise a
+        // developer who exports e.g. TOKENS_EXTRA_DIRS=~/.codex/sessions (for
+        // codefuse mirror tracking) makes the scanner read real session data
+        // and breaks fixture-count assertions. Hermetic on CI either way.
+        .env_remove("TOKENS_EXTRA_DIRS")
+        .env_remove("TOKENS_HEADLESS_DIR")
+        .env_remove("CODEX_HOME")
+        .env_remove("COPILOT_OTEL_FILE_EXPORTER_PATH")
+        .env_remove("GOOSE_PATH_ROOT")
+        .env_remove("CODEBUFF_DATA_DIR")
+        .env_remove("GEMINI_CLI_HOME")
+        .env_remove("HERMES_HOME")
+        .env_remove("TOKENS_CONFIG_DIR");
     cmd
 }
 
@@ -351,7 +364,17 @@ fn offline_cmd_with_home(tmp: &Path) -> Command {
         .env("XDG_CACHE_HOME", tmp.join(".cache"))
         .env("HTTP_PROXY", "http://127.0.0.1:9")
         .env("HTTPS_PROXY", "http://127.0.0.1:9")
-        .env("ALL_PROXY", "http://127.0.0.1:9");
+        .env("ALL_PROXY", "http://127.0.0.1:9")
+        // Clear scan-path overrides (mirrors cmd_with_home)
+        .env_remove("TOKSCALE_EXTRA_DIRS")
+        .env_remove("TOKSCALE_HEADLESS_DIR")
+        .env_remove("CODEX_HOME")
+        .env_remove("COPILOT_OTEL_FILE_EXPORTER_PATH")
+        .env_remove("GOOSE_PATH_ROOT")
+        .env_remove("CODEBUFF_DATA_DIR")
+        .env_remove("GEMINI_CLI_HOME")
+        .env_remove("HERMES_HOME")
+        .env_remove("TOKSCALE_CONFIG_DIR");
     cmd
 }
 

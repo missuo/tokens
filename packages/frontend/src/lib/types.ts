@@ -23,10 +23,12 @@ export const SUPPORTED_CLIENT_TYPES = [
   "kiro",
   "zed",
   "trae",
+  "warp",
   "synthetic",
 ] as const;
 
-export type ClientType = typeof SUPPORTED_CLIENT_TYPES[number];
+export type CcMirrorClientType = `cc-mirror/${string}`;
+export type ClientType = typeof SUPPORTED_CLIENT_TYPES[number] | CcMirrorClientType;
 
 export interface TokenBreakdown {
   input: number;

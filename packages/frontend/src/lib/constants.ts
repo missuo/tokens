@@ -51,6 +51,7 @@ export const SOURCE_DISPLAY_NAMES: Record<ClientType, string> = {
   antigravity: "Antigravity",
   zed: "Zed Agent",
   trae: "Trae",
+  warp: "Warp",
   synthetic: "Synthetic",
 };
 
@@ -81,6 +82,7 @@ export const SOURCE_LOGOS: Record<ClientType, string> = {
   antigravity: `${GITHUB_CDN_BASE}/client-antigravity.png`,
   zed: `${GITHUB_CDN_BASE}/client-zed.webp`,
   trae: `${GITHUB_CDN_BASE}/client-trae.png`,
+  warp: `${GITHUB_CDN_BASE}/client-warp.png`,
   synthetic: `${GITHUB_CDN_BASE}/client-synthetic.png`,
 };
 
@@ -109,6 +111,7 @@ export const SOURCE_COLORS: Record<ClientType, string> = {
   antigravity: "#6366F1",
   zed: "#084CCF",
   trae: "#00BFA5",
+  warp: "#01A4A4",
   synthetic: "#4ADE80",
 };
 
