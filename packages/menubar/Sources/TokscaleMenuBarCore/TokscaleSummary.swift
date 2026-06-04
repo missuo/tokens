@@ -256,8 +256,8 @@ public struct TokscaleDashboardModel: Equatable {
             let provider = window.provider.lowercased()
             return provider == details.title.lowercased() || provider == normalized
         }
-        let primary = quota.first { $0.title.lowercased() == "session" } ?? quota.first
-        let weekly = quota.first { $0.title.lowercased() == "weekly" }
+        let primary = quota.first { Self.isFiveHourQuotaTitle($0.title) } ?? quota.first
+        let weekly = quota.first { Self.isWeeklyQuotaTitle($0.title) }
 
         return ProviderFocus(
             id: details.id,
@@ -331,14 +331,35 @@ public struct TokscaleDashboardModel: Equatable {
                 return QuotaWindowSummary(
                     provider: provider.provider,
                     plan: provider.plan,
-                    title: window.label,
-                    value: "\(Int(usedPercent.rounded()))% used",
-                    detail: window.remainingLabel ?? "\(Int(remainingPercent.rounded()))% left",
+                    title: Self.displayQuotaTitle(window.label),
+                    value: window.remainingLabel ?? "\(Int(remainingPercent.rounded()))% left",
+                    detail: "\(Int(usedPercent.rounded()))% used",
                     reset: window.resetsAt,
                     progress: usedPercent / 100
                 )
             }
         }
+    }
+
+    private static func displayQuotaTitle(_ label: String) -> String {
+        switch label.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "session":
+            return "5h"
+        case "weekly":
+            return "Week"
+        default:
+            return label
+        }
+    }
+
+    private static func isFiveHourQuotaTitle(_ title: String) -> Bool {
+        let normalized = title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return normalized == "5h" || normalized == "session"
+    }
+
+    private static func isWeeklyQuotaTitle(_ title: String) -> Bool {
+        let normalized = title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return normalized == "week" || normalized == "weekly"
     }
 
     private static func historyRows(summary: TokscaleSummary) -> [HistoryPoint] {
