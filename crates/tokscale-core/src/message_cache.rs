@@ -11,7 +11,8 @@ use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 // Bumped to 17: UnifiedMessage gained `agent_run_id` (per-invocation key for the
-// opt-in subagent breakdown); re-scan so cached sidechain messages populate it.
+// opt-in subagent breakdown) and Codex fork logs now skip replayed parent usage
+// (#649); re-scan so cached sidechain/Codex messages reparse under the new rules.
 const CACHE_SCHEMA_VERSION: u32 = 17;
 const CACHE_FILENAME: &str = "source-message-cache.bin";
 const CACHE_LOCK_FILENAME: &str = "source-message-cache.lock";
