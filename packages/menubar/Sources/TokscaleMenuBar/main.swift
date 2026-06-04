@@ -152,20 +152,59 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
     }
 
     nonisolated private static func runCompanionRefresh() -> String {
-        let process = Process()
-        let error = Pipe()
-        let directCandidates = [
+        let arguments = ["--no-spinner", "companion-summary", "--refresh", "--json"]
+        var lastFailure: String?
+        for path in companionRefreshCandidates() where FileManager.default.isExecutableFile(atPath: path) {
+            let result = runCompanionRefreshProcess(
+                executableURL: URL(fileURLWithPath: path),
+                arguments: arguments
+            )
+            if result.success {
+                return "Refresh finished."
+            }
+            lastFailure = result.message
+        }
+        let result = runCompanionRefreshProcess(
+            executableURL: URL(fileURLWithPath: "/usr/bin/env"),
+            arguments: ["tokens"] + arguments
+        )
+        if result.success {
+            return "Refresh finished."
+        }
+        return "Refresh failed: \(result.message ?? lastFailure ?? "tokens command unavailable")"
+    }
+
+    nonisolated private static func companionRefreshCandidates() -> [String] {
+        let bundleURL = Bundle.main.bundleURL
+        let repoDebugTokens = bundleURL
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("target", isDirectory: true)
+            .appendingPathComponent("debug", isDirectory: true)
+            .appendingPathComponent("tokens", isDirectory: false)
+            .path
+        return dedupePaths([
+            repoDebugTokens,
             "/opt/homebrew/bin/tokens",
             "/usr/local/bin/tokens"
-        ]
+        ])
+    }
 
-        if let path = directCandidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) {
-            process.executableURL = URL(fileURLWithPath: path)
-            process.arguments = ["--no-spinner", "companion-summary", "--refresh", "--json"]
-        } else {
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-            process.arguments = ["tokens", "--no-spinner", "companion-summary", "--refresh", "--json"]
-        }
+    nonisolated private static func dedupePaths(_ paths: [String]) -> [String] {
+        var seen = Set<String>()
+        return paths.filter { seen.insert($0).inserted }
+    }
+
+    nonisolated private static func runCompanionRefreshProcess(
+        executableURL: URL,
+        arguments: [String]
+    ) -> (success: Bool, message: String?) {
+        let process = Process()
+        let error = Pipe()
+        process.executableURL = executableURL
+        process.arguments = arguments
         process.environment = ProcessInfo.processInfo.environment.merging(
             ["PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"],
             uniquingKeysWith: { _, new in new }
@@ -176,16 +215,16 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
             try process.run()
             process.waitUntilExit()
         } catch {
-            return "Refresh failed: \(error.localizedDescription)"
+            return (false, error.localizedDescription)
         }
 
         if process.terminationStatus == 0 {
-            return "Refresh finished."
+            return (true, nil)
         }
         let data = error.fileHandleForReading.readDataToEndOfFile()
         let message = String(data: data, encoding: .utf8)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        return "Refresh failed: \(message ?? "exit \(process.terminationStatus)")"
+        return (false, message ?? "exit \(process.terminationStatus)")
     }
 }
 

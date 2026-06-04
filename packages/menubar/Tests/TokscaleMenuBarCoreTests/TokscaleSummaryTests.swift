@@ -96,9 +96,52 @@ final class TokscaleSummaryTests: XCTestCase {
         try sampleSummaryData().write(to: summaryURL)
         let store = TokscaleSummaryStore(summaryURL: summaryURL)
 
-        let summary = try store.load()
+        let summary = try store.load(now: try isoDate("2026-06-04T03:00:00Z"))
 
         XCTAssertEqual(summary?.statusTitle, "$399")
+    }
+
+    func testStoreMarksOldSummaryStaleAtLoadTime() throws {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let summaryURL = directory.appendingPathComponent("companion-summary.json")
+        try sampleSummaryData().write(to: summaryURL)
+        let store = TokscaleSummaryStore(summaryURL: summaryURL)
+
+        let summary = try XCTUnwrap(store.load(now: try isoDate("2026-06-04T04:26:00Z")))
+
+        XCTAssertTrue(summary.stale)
+        XCTAssertEqual(summary.staleReason, "summary-older-than-2h")
+        XCTAssertEqual(summary.collapsed.state, "stale")
+        XCTAssertEqual(summary.statusTitle, "$399!")
+    }
+
+    func testStoreMarksPreviousLocalDaySummaryStaleAtLoadTime() throws {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let summaryURL = directory.appendingPathComponent("companion-summary.json")
+        let data = sampleSummaryJSON(
+            generatedAt: "2026-06-04T15:30:00Z",
+            topJSON: #""client":"codex","model":"gpt-5.5""#,
+            accuracyJSON: #""confidence":"medium","sourceKinds":["local-scan"],"warnings":[]"#
+        ).data(using: .utf8)!
+        try data.write(to: summaryURL)
+        let store = TokscaleSummaryStore(summaryURL: summaryURL)
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 9 * 60 * 60)!
+
+        let summary = try XCTUnwrap(
+            store.load(
+                now: try isoDate("2026-06-04T15:31:00Z"),
+                calendar: calendar
+            )
+        )
+
+        XCTAssertTrue(summary.stale)
+        XCTAssertEqual(summary.staleReason, "summary-date-mismatch")
+        XCTAssertEqual(summary.collapsed.state, "stale")
     }
 
     func testDashboardModelBuildsMultiClientDashboardSections() throws {
@@ -200,11 +243,15 @@ final class TokscaleSummaryTests: XCTestCase {
         ).data(using: .utf8)!
     }
 
-    private func sampleSummaryJSON(topJSON: String, accuracyJSON: String) -> String {
+    private func sampleSummaryJSON(
+        generatedAt: String = "2026-06-04T02:25:56.459117+00:00",
+        topJSON: String,
+        accuracyJSON: String
+    ) -> String {
         """
         {
           "version": 1,
-          "generatedAt": "2026-06-04T02:25:56.459117+00:00",
+          "generatedAt": "\(generatedAt)",
           "stale": false,
           "collapsed": {
             "metric": "todayCost",
@@ -308,5 +355,9 @@ final class TokscaleSummaryTests: XCTestCase {
           }
         }
         """
+    }
+
+    private func isoDate(_ value: String) throws -> Date {
+        try XCTUnwrap(ISO8601DateFormatter().date(from: value))
     }
 }

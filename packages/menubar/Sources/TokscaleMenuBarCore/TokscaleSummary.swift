@@ -3,9 +3,9 @@ import Foundation
 public struct TokscaleSummary: Decodable, Equatable {
     public let version: Int
     public let generatedAt: String
-    public let stale: Bool
-    public let staleReason: String?
-    public let collapsed: Collapsed
+    public var stale: Bool
+    public var staleReason: String?
+    public var collapsed: Collapsed
     public let today: Today
     public let totals: Totals
     public let providers: [Provider]
@@ -84,6 +84,33 @@ public struct TokscaleSummary: Decodable, Equatable {
         ]
     }
 
+    public mutating func refreshFreshness(
+        now: Date = Date(),
+        calendar: Calendar = .current
+    ) {
+        guard let generatedAtDate = parseISODate(generatedAt) else {
+            markStale(reason: "invalid-generated-at")
+            return
+        }
+        if now.timeIntervalSince(generatedAtDate) > 2 * 60 * 60 {
+            markStale(reason: "summary-older-than-2h")
+            return
+        }
+        if today.date != localDateString(now: now, calendar: calendar) {
+            markStale(reason: "summary-date-mismatch")
+        }
+    }
+
+    private mutating func markStale(reason: String) {
+        stale = true
+        staleReason = staleReason ?? reason
+        collapsed = Collapsed(
+            metric: collapsed.metric,
+            label: collapsed.label,
+            state: "stale"
+        )
+    }
+
     private var topLine: String {
         switch (top.client, top.model) {
         case let (client?, model?):
@@ -110,11 +137,16 @@ public struct TokscaleSummaryStore {
         self.summaryURL = summaryURL
     }
 
-    public func load() throws -> TokscaleSummary? {
+    public func load(
+        now: Date = Date(),
+        calendar: Calendar = .current
+    ) throws -> TokscaleSummary? {
         guard FileManager.default.fileExists(atPath: summaryURL.path) else {
             return nil
         }
-        return try TokscaleSummary.decode(Data(contentsOf: summaryURL))
+        var summary = try TokscaleSummary.decode(Data(contentsOf: summaryURL))
+        summary.refreshFreshness(now: now, calendar: calendar)
+        return summary
     }
 }
 
@@ -603,4 +635,21 @@ private func formatDuration(milliseconds: Int) -> String {
         return "\(minutes)m \(remainingSeconds)s"
     }
     return "\(remainingSeconds)s"
+}
+
+private func parseISODate(_ value: String) -> Date? {
+    let fractional = ISO8601DateFormatter()
+    fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    if let date = fractional.date(from: value) {
+        return date
+    }
+    return ISO8601DateFormatter().date(from: value)
+}
+
+private func localDateString(now: Date, calendar: Calendar) -> String {
+    let components = calendar.dateComponents([.year, .month, .day], from: now)
+    guard let year = components.year, let month = components.month, let day = components.day else {
+        return ""
+    }
+    return String(format: "%04d-%02d-%02d", year, month, day)
 }
