@@ -1,4 +1,4 @@
-use crate::{auth, commands::submit_history, device, paths};
+use crate::{auth, commands::companion_summary, commands::submit_history, device, paths};
 use anyhow::Result;
 use std::{fs, path::Path};
 
@@ -66,6 +66,14 @@ struct StatusSubmit {
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
+struct StatusCompanion {
+    summary_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    latest: Option<companion_summary::CompanionSummary>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 struct StatusService {
     health: &'static str,
     serve_running: bool,
@@ -106,6 +114,7 @@ struct StatusReport {
     device: StatusDevice,
     paths: StatusPaths,
     submit: StatusSubmit,
+    companion: StatusCompanion,
     service: StatusService,
     processes: Vec<StatusProcess>,
     notes: Vec<String>,
@@ -512,6 +521,16 @@ fn format_latest_submit_line(entry: &submit_history::SubmitHistoryEntry) -> Stri
     )
 }
 
+fn build_status_companion(
+    summary_path: String,
+    latest: Option<companion_summary::CompanionSummary>,
+) -> StatusCompanion {
+    StatusCompanion {
+        summary_path,
+        latest,
+    }
+}
+
 fn build_status_report() -> Result<StatusReport> {
     let auth_token = auth::resolve_api_token();
     let auth_source = auth_token.as_ref().map(|token| match token.source {
@@ -522,6 +541,8 @@ fn build_status_report() -> Result<StatusReport> {
     let device_inspection = device::inspect_submit_device()?;
     let submit_history_path = submit_history::history_path();
     let latest_submit = submit_history::latest_entry().unwrap_or(None);
+    let companion_summary_path = companion_summary::summary_path();
+    let companion_latest = companion_summary::read_latest().unwrap_or(None);
     let device_source = device_inspection
         .source
         .as_ref()
@@ -597,6 +618,10 @@ fn build_status_report() -> Result<StatusReport> {
             history_path: submit_history_path.display().to_string(),
             latest: latest_submit,
         },
+        companion: build_status_companion(
+            companion_summary_path.display().to_string(),
+            companion_latest,
+        ),
         service: StatusService {
             health,
             serve_running,
@@ -742,6 +767,21 @@ pub fn run(json: bool) -> Result<()> {
             submit_history::SubmitHistoryStatus::Failed
             | submit_history::SubmitHistoryStatus::Partial => println!("{}", line.yellow()),
         }
+    }
+
+    if let Some(companion) = &report.companion.latest {
+        let stale = if companion.stale { " stale" } else { "" };
+        println!(
+            "{}",
+            format!(
+                "  Companion: {} today ({}, generated {}{})",
+                companion.collapsed.label,
+                companion.collapsed.metric,
+                companion.generated_at,
+                stale
+            )
+            .bright_black()
+        );
     }
 
     println!(
@@ -1082,5 +1122,13 @@ ExecStart=tokens --no-spinner submit
             line,
             "  Last submit: failed at 2026-06-01T00:00:05Z: Server returned 500"
         );
+    }
+
+    #[test]
+    fn status_companion_report_keeps_missing_summary_non_fatal() {
+        let companion = build_status_companion("/tmp/companion-summary.json".to_string(), None);
+
+        assert_eq!(companion.summary_path, "/tmp/companion-summary.json");
+        assert!(companion.latest.is_none());
     }
 }

@@ -1,6 +1,7 @@
 #![deny(clippy::all)]
 
 pub mod accuracy;
+pub mod aggregate_cache;
 mod aggregator;
 pub mod clients;
 pub mod fs_atomic;
@@ -319,7 +320,7 @@ pub struct ClientContribution {
     pub messages: i32,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DailyContribution {
     pub date: String,
     pub totals: DailyTotals,

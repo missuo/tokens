@@ -57,6 +57,26 @@ pub fn aggregate_by_date(messages: Vec<UnifiedMessage>) -> Vec<DailyContribution
     contributions
 }
 
+pub fn merge_daily_contributions(contributions: Vec<DailyContribution>) -> Vec<DailyContribution> {
+    if contributions.is_empty() {
+        return Vec::new();
+    }
+
+    let mut daily_map: HashMap<String, DayAccumulator> = HashMap::new();
+    for contribution in contributions {
+        let entry = daily_map.entry(contribution.date.clone()).or_default();
+        entry.add_daily_contribution(contribution);
+    }
+
+    let mut merged: Vec<DailyContribution> = daily_map
+        .into_iter()
+        .map(|(date, acc)| acc.into_contribution(date))
+        .collect();
+    merged.sort_by(|a, b| a.date.cmp(&b.date));
+    calculate_intensities(&mut merged);
+    merged
+}
+
 /// Aggregate messages into per-session contributions, keyed on `session_id`.
 ///
 /// Each returned [`SessionContribution`] sums all token buckets and cost for a
@@ -236,6 +256,102 @@ impl Default for DayAccumulator {
 }
 
 impl DayAccumulator {
+    fn add_daily_contribution(&mut self, contribution: DailyContribution) {
+        for client_contribution in contribution.clients {
+            self.add_client_contribution(client_contribution);
+        }
+    }
+
+    fn add_client_contribution(&mut self, client_contribution: ClientContribution) {
+        let total_tokens = client_contribution.tokens.total();
+
+        self.totals.tokens = self.totals.tokens.saturating_add(total_tokens);
+        self.totals.cost += client_contribution.cost;
+        self.totals.messages = self
+            .totals
+            .messages
+            .saturating_add(client_contribution.messages.max(0));
+
+        self.token_breakdown.input = self
+            .token_breakdown
+            .input
+            .saturating_add(client_contribution.tokens.input);
+        self.token_breakdown.output = self
+            .token_breakdown
+            .output
+            .saturating_add(client_contribution.tokens.output);
+        self.token_breakdown.cache_read = self
+            .token_breakdown
+            .cache_read
+            .saturating_add(client_contribution.tokens.cache_read);
+        self.token_breakdown.cache_write = self
+            .token_breakdown
+            .cache_write
+            .saturating_add(client_contribution.tokens.cache_write);
+        self.token_breakdown.reasoning = self
+            .token_breakdown
+            .reasoning
+            .saturating_add(client_contribution.tokens.reasoning);
+
+        let normalized_model = crate::normalize_model_for_grouping(&client_contribution.model_id);
+        let key = format!("{}:{}", client_contribution.client, normalized_model);
+        let entry = self
+            .clients
+            .entry(key)
+            .or_insert_with(|| ClientContribution {
+                client: client_contribution.client.clone(),
+                model_id: normalized_model,
+                provider_id: client_contribution.provider_id.clone(),
+                tokens: TokenBreakdown::default(),
+                cost: 0.0,
+                messages: 0,
+            });
+
+        for provider in client_contribution
+            .provider_id
+            .split(", ")
+            .filter(|provider| !provider.is_empty())
+        {
+            if !entry.provider_id.split(", ").any(|p| p == provider) {
+                entry.provider_id = if entry.provider_id.is_empty() {
+                    provider.to_string()
+                } else {
+                    format!("{}, {}", entry.provider_id, provider)
+                };
+            }
+        }
+
+        entry.tokens.input = entry
+            .tokens
+            .input
+            .saturating_add(client_contribution.tokens.input);
+        entry.tokens.output = entry
+            .tokens
+            .output
+            .saturating_add(client_contribution.tokens.output);
+        entry.tokens.cache_read = entry
+            .tokens
+            .cache_read
+            .saturating_add(client_contribution.tokens.cache_read);
+        entry.tokens.cache_write = entry
+            .tokens
+            .cache_write
+            .saturating_add(client_contribution.tokens.cache_write);
+        entry.tokens.reasoning = entry
+            .tokens
+            .reasoning
+            .saturating_add(client_contribution.tokens.reasoning);
+        entry.cost += client_contribution.cost;
+        entry.messages = entry
+            .messages
+            .saturating_add(client_contribution.messages.max(0));
+
+        let mut providers: Vec<&str> = entry.provider_id.split(", ").collect();
+        providers.sort_unstable();
+        providers.dedup();
+        entry.provider_id = providers.join(", ");
+    }
+
     fn add_message(&mut self, msg: &UnifiedMessage) {
         let total_tokens = msg
             .tokens

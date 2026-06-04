@@ -1,0 +1,464 @@
+import Foundation
+
+public struct TokscaleSummary: Decodable, Equatable {
+    public let version: Int
+    public let generatedAt: String
+    public let stale: Bool
+    public let staleReason: String?
+    public let collapsed: Collapsed
+    public let today: Today
+    public let totals: Totals
+    public let providers: [Provider]
+    public let top: Top
+    public let latestSubmit: LatestSubmit?
+    public let health: Health
+    public let accuracy: Accuracy
+
+    private enum CodingKeys: String, CodingKey {
+        case version
+        case generatedAt
+        case stale
+        case staleReason
+        case collapsed
+        case today
+        case totals
+        case providers
+        case top
+        case latestSubmit
+        case health
+        case accuracy
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        version = try container.decode(Int.self, forKey: .version)
+        generatedAt = try container.decode(String.self, forKey: .generatedAt)
+        stale = try container.decode(Bool.self, forKey: .stale)
+        staleReason = try container.decodeIfPresent(String.self, forKey: .staleReason)
+        collapsed = try container.decode(Collapsed.self, forKey: .collapsed)
+        today = try container.decode(Today.self, forKey: .today)
+        totals = try container.decode(Totals.self, forKey: .totals)
+        providers = try container.decodeIfPresent([Provider].self, forKey: .providers) ?? []
+        top = try container.decode(Top.self, forKey: .top)
+        latestSubmit = try container.decodeIfPresent(LatestSubmit.self, forKey: .latestSubmit)
+        health = try container.decode(Health.self, forKey: .health)
+        accuracy = try container.decode(Accuracy.self, forKey: .accuracy)
+    }
+
+    public static func decode(_ data: Data) throws -> TokscaleSummary {
+        try JSONDecoder().decode(TokscaleSummary.self, from: data)
+    }
+
+    public static func defaultSummaryURL(
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
+    ) -> URL {
+        homeDirectory
+            .appendingPathComponent(".config", isDirectory: true)
+            .appendingPathComponent("tokens", isDirectory: true)
+            .appendingPathComponent("cache", isDirectory: true)
+            .appendingPathComponent("companion-summary.json", isDirectory: false)
+    }
+
+    public var statusTitle: String {
+        let label = collapsed.label.isEmpty ? "Tokens" : collapsed.label
+        return stale ? "\(label)!" : label
+    }
+
+    public var menuBarTitle: String {
+        "AI \(statusTitle)"
+    }
+
+    public var menuLines: [String] {
+        [
+            "Today: \(formatUSD(today.costUsd)) - \(formatTokens(today.tokens)) tokens - \(today.messages) messages",
+            "Total: \(formatUSD(totals.costUsd)) - \(formatTokens(totals.tokens)) tokens - \(totals.activeDays) active days",
+            topLine,
+            accuracyLine,
+            "Last scan: \(formatDuration(milliseconds: health.lastScanDurationMs))"
+        ]
+    }
+
+    private var topLine: String {
+        switch (top.client, top.model) {
+        case let (client?, model?):
+            return "Top: \(client) - \(model)"
+        case let (client?, nil):
+            return "Top: \(client)"
+        case let (nil, model?):
+            return "Top: \(model)"
+        default:
+            return "Top: none"
+        }
+    }
+
+    private var accuracyLine: String {
+        let source = accuracy.sourceKinds.first ?? (accuracy.warnings.isEmpty ? "unknown" : "warning")
+        return "Accuracy: \(accuracy.confidence) - \(source)"
+    }
+}
+
+public struct TokscaleSummaryStore {
+    public let summaryURL: URL
+
+    public init(summaryURL: URL = TokscaleSummary.defaultSummaryURL()) {
+        self.summaryURL = summaryURL
+    }
+
+    public func load() throws -> TokscaleSummary? {
+        guard FileManager.default.fileExists(atPath: summaryURL.path) else {
+            return nil
+        }
+        return try TokscaleSummary.decode(Data(contentsOf: summaryURL))
+    }
+}
+
+public struct TokscaleDashboardModel: Equatable {
+    public let hero: Hero
+    public let clientLabels: [String]
+    public let providers: [ProviderSummary]
+    public let metrics: [Panel]
+    public let insights: [Panel]
+    public let health: HealthStatus
+    private let providerDetailsById: [String: ProviderDetails]
+
+    public init(summary: TokscaleSummary) {
+        let providerRows = Self.providerRows(summary: summary)
+        clientLabels = providerRows.map { clientDisplayName($0.client) }
+        providers = Self.providerSummaries(rows: providerRows, totalCost: summary.totals.costUsd)
+        providerDetailsById = Dictionary(
+            uniqueKeysWithValues: providerRows.map { row in
+                (
+                    row.client,
+                    ProviderDetails(
+                        id: row.client,
+                        title: clientDisplayName(row.client),
+                        model: row.topModel ?? "No model data",
+                        today: "\(formatUSD(row.todayCostUsd)) today",
+                        total: "\(formatUSD(row.costUsd)) total",
+                        tokens: formatTokens(row.tokens),
+                        messages: "\(row.messages) messages",
+                        share: Self.providerShare(row.costUsd, totalCost: summary.totals.costUsd)
+                    )
+                )
+            }
+        )
+        hero = Hero(
+            title: summary.statusTitle,
+            subtitle: "\(clientLabels.count) AI clients - local cache",
+            state: summary.collapsed.state,
+            progress: Self.progressAgainstDailyAverage(summary: summary),
+            progressLabel: Self.progressLabelAgainstDailyAverage(summary: summary)
+        )
+        metrics = [
+            Panel(
+                title: "Today",
+                value: formatUSD(summary.today.costUsd),
+                detail: "\(formatTokens(summary.today.tokens)) tokens - \(summary.today.messages) messages"
+            ),
+            Panel(
+                title: "Total",
+                value: formatUSD(summary.totals.costUsd),
+                detail: "\(formatTokens(summary.totals.tokens)) tokens - \(summary.totals.activeDays) active days"
+            )
+        ]
+        insights = [
+            Panel(
+                title: "Top driver",
+                value: summary.top.client ?? summary.top.model ?? "none",
+                detail: summary.top.model ?? "No model data"
+            ),
+            Panel(
+                title: "Accuracy",
+                value: summary.accuracy.confidence,
+                detail: summary.accuracy.sourceKinds.first ?? (summary.accuracy.warnings.isEmpty ? "unknown" : "warning")
+            )
+        ]
+        health = HealthStatus(
+            title: summary.stale ? "Stale" : "Fresh",
+            detail: "Last scan \(formatDuration(milliseconds: summary.health.lastScanDurationMs))",
+            warning: summary.staleReason ?? summary.health.warnings.first
+        )
+    }
+
+    public func providerDetails(for id: String?) -> ProviderDetails {
+        if let id, let details = providerDetailsById[id] {
+            return details
+        }
+        if let first = providers.first, let details = providerDetailsById[first.id] {
+            return details
+        }
+        return ProviderDetails(
+            id: "none",
+            title: "No provider",
+            model: "No model data",
+            today: "$0.00 today",
+            total: "$0.00 total",
+            tokens: "0",
+            messages: "0 messages",
+            share: 0
+        )
+    }
+
+    private static func providerRows(summary: TokscaleSummary) -> [TokscaleSummary.Provider] {
+        if !summary.providers.isEmpty {
+            return summary.providers.sorted { left, right in
+                if left.costUsd == right.costUsd {
+                    return left.client < right.client
+                }
+                return left.costUsd > right.costUsd
+            }
+        }
+        return summary.totals.clients.map { client in
+            TokscaleSummary.Provider(
+                client: client,
+                costUsd: 0,
+                tokens: 0,
+                messages: 0,
+                todayCostUsd: 0,
+                todayTokens: 0,
+                todayMessages: 0,
+                topModel: nil
+            )
+        }
+    }
+
+    private static func providerSummaries(
+        rows: [TokscaleSummary.Provider],
+        totalCost: Double
+    ) -> [ProviderSummary] {
+        rows.map { row in
+            let share = providerShare(row.costUsd, totalCost: totalCost)
+            return ProviderSummary(
+                id: row.client,
+                label: clientDisplayName(row.client),
+                value: formatUSD(row.costUsd),
+                detail: "\(formatTokens(row.tokens)) tokens - \(Int((share * 100).rounded()))%",
+                share: share
+            )
+        }
+    }
+
+    private static func providerShare(_ cost: Double, totalCost: Double) -> Double {
+        guard totalCost > 0 else {
+            return 0
+        }
+        return min(max(cost / totalCost, 0), 1)
+    }
+
+    private static func progressAgainstDailyAverage(summary: TokscaleSummary) -> Double {
+        guard summary.totals.activeDays > 0, summary.totals.costUsd > 0 else {
+            return 0
+        }
+        let dailyAverage = summary.totals.costUsd / Double(summary.totals.activeDays)
+        guard dailyAverage > 0 else {
+            return 0
+        }
+        return min(summary.today.costUsd / dailyAverage / 2, 1)
+    }
+
+    private static func progressLabelAgainstDailyAverage(summary: TokscaleSummary) -> String {
+        guard summary.totals.activeDays > 0, summary.totals.costUsd > 0 else {
+            return "No daily average yet"
+        }
+        let dailyAverage = summary.totals.costUsd / Double(summary.totals.activeDays)
+        guard dailyAverage > 0 else {
+            return "No daily average yet"
+        }
+        let percent = Int((summary.today.costUsd / dailyAverage * 100).rounded())
+        return "\(percent)% of daily average"
+    }
+}
+
+public extension TokscaleDashboardModel {
+    struct Hero: Equatable {
+        public let title: String
+        public let subtitle: String
+        public let state: String
+        public let progress: Double
+        public let progressLabel: String
+    }
+
+    struct Panel: Equatable {
+        public let title: String
+        public let value: String
+        public let detail: String
+
+        public init(title: String, value: String, detail: String) {
+            self.title = title
+            self.value = value
+            self.detail = detail
+        }
+    }
+
+    struct HealthStatus: Equatable {
+        public let title: String
+        public let detail: String
+        public let warning: String?
+    }
+
+    struct ProviderSummary: Equatable {
+        public let id: String
+        public let label: String
+        public let value: String
+        public let detail: String
+        public let share: Double
+    }
+
+    struct ProviderDetails: Equatable {
+        public let id: String
+        public let title: String
+        public let model: String
+        public let today: String
+        public let total: String
+        public let tokens: String
+        public let messages: String
+        public let share: Double
+    }
+}
+
+public extension TokscaleSummary {
+    struct Collapsed: Decodable, Equatable {
+        public let metric: String
+        public let label: String
+        public let state: String
+    }
+
+    struct Today: Decodable, Equatable {
+        public let date: String
+        public let costUsd: Double
+        public let tokens: Int64
+        public let messages: Int
+    }
+
+    struct Totals: Decodable, Equatable {
+        public let costUsd: Double
+        public let tokens: Int64
+        public let activeDays: Int
+        public let clients: [String]
+        public let models: Int
+    }
+
+    struct Provider: Decodable, Equatable {
+        public let client: String
+        public let costUsd: Double
+        public let tokens: Int64
+        public let messages: Int
+        public let todayCostUsd: Double
+        public let todayTokens: Int64
+        public let todayMessages: Int
+        public let topModel: String?
+
+        public init(
+            client: String,
+            costUsd: Double,
+            tokens: Int64,
+            messages: Int,
+            todayCostUsd: Double,
+            todayTokens: Int64,
+            todayMessages: Int,
+            topModel: String?
+        ) {
+            self.client = client
+            self.costUsd = costUsd
+            self.tokens = tokens
+            self.messages = messages
+            self.todayCostUsd = todayCostUsd
+            self.todayTokens = todayTokens
+            self.todayMessages = todayMessages
+            self.topModel = topModel
+        }
+    }
+
+    struct Top: Decodable, Equatable {
+        public let client: String?
+        public let model: String?
+    }
+
+    struct LatestSubmit: Decodable, Equatable {
+        public let status: String
+        public let finishedAt: String
+        public let submissionId: String?
+    }
+
+    struct Health: Decodable, Equatable {
+        public let summaryPath: String
+        public let lastScanDurationMs: Int
+        public let warnings: [String]
+    }
+
+    struct Accuracy: Decodable, Equatable {
+        public let confidence: String
+        public let sourceKinds: [String]
+        public let warnings: [String]
+    }
+}
+
+private extension String {
+    var displayName: String {
+        switch self {
+        case "todayCost":
+            return "Today cost"
+        case "todayTokens":
+            return "Today tokens"
+        default:
+            return self
+        }
+    }
+}
+
+private func clientDisplayName(_ value: String) -> String {
+    switch value.lowercased() {
+    case "claude":
+        return "Claude"
+    case "codex":
+        return "Codex"
+    case "gemini":
+        return "Gemini"
+    case "openclaw":
+        return "OpenClaw"
+    case "copilot":
+        return "Copilot"
+    case "antigravity":
+        return "Antigravity"
+    default:
+        return value.prefix(1).uppercased() + value.dropFirst()
+    }
+}
+
+private func formatUSD(_ value: Double) -> String {
+    if abs(value) >= 1_000 {
+        return String(format: "$%.1fK", value / 1_000)
+    }
+    return String(format: "$%.2f", value)
+}
+
+private func formatTokens(_ value: Int64) -> String {
+    if value >= 1_000_000_000 {
+        return compact(Double(value) / 1_000_000_000, suffix: "B")
+    }
+    if value >= 1_000_000 {
+        return compact(Double(value) / 1_000_000, suffix: "M")
+    }
+    if value >= 1_000 {
+        return compact(Double(value) / 1_000, suffix: "K")
+    }
+    return "\(value)"
+}
+
+private func compact(_ value: Double, suffix: String) -> String {
+    let formatted = String(format: "%.1f", value)
+    if formatted.hasSuffix(".0") {
+        return "\(formatted.dropLast(2))\(suffix)"
+    }
+    return "\(formatted)\(suffix)"
+}
+
+private func formatDuration(milliseconds: Int) -> String {
+    let seconds = max(0, (milliseconds + 500) / 1_000)
+    let minutes = seconds / 60
+    let remainingSeconds = seconds % 60
+    if minutes > 0 {
+        return "\(minutes)m \(remainingSeconds)s"
+    }
+    return "\(remainingSeconds)s"
+}

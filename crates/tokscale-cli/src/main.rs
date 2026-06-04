@@ -192,6 +192,13 @@ enum Commands {
         #[arg(long, help = "Output as JSON")]
         json: bool,
     },
+    #[command(about = "Read compact local summary for menu bar and companion apps")]
+    CompanionSummary {
+        #[arg(long, help = "Output as JSON")]
+        json: bool,
+        #[arg(long, help = "Refresh the local summary with an explicit scan")]
+        refresh: bool,
+    },
     #[command(about = "Display saved API token as QR code")]
     Qr {
         #[arg(long, help = "Skip the on-screen warning + confirmation prompt")]
@@ -575,6 +582,10 @@ fn main() -> Result<()> {
         Some(Commands::Status { json }) => {
             reject_unsupported_home_override(&cli.home, "status")?;
             commands::status::run(json)
+        }
+        Some(Commands::CompanionSummary { json, refresh }) => {
+            reject_unsupported_home_override(&cli.home, "companion-summary")?;
+            run_companion_summary_command(json, refresh)
         }
         Some(Commands::Qr { yes }) => {
             reject_unsupported_home_override(&cli.home, "qr")?;
@@ -3949,6 +3960,12 @@ struct TsTokenContributionData {
     time_metrics: Option<TsTimeMetrics>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SubmitPayloadMode {
+    Full,
+    Partial,
+}
+
 fn to_ts_token_contribution_data(
     graph: &tokscale_core::GraphResult,
     device: Option<&device::SubmitDevice>,
@@ -4040,6 +4057,86 @@ fn to_ts_token_contribution_data(
             session_count: tm.session_count,
         }),
     }
+}
+
+fn to_ts_token_contribution_data_for_submit(
+    graph: &tokscale_core::GraphResult,
+    device: Option<&device::SubmitDevice>,
+    mode: SubmitPayloadMode,
+) -> TsTokenContributionData {
+    let mut payload = to_ts_token_contribution_data(graph, device);
+    if mode == SubmitPayloadMode::Partial {
+        payload.time_metrics = None;
+        for contribution in &mut payload.contributions {
+            contribution.active_time_ms = None;
+        }
+    }
+    payload
+}
+
+fn run_companion_summary_command(json: bool, refresh: bool) -> Result<()> {
+    let summary = if refresh {
+        refresh_companion_summary()?
+    } else {
+        commands::companion_summary::read_latest()?
+    };
+    if json {
+        println!("{}", serde_json::to_string_pretty(&summary)?);
+        return Ok(());
+    }
+
+    match summary {
+        Some(summary) => {
+            println!("{}", summary.collapsed.label);
+            if summary.stale {
+                eprintln!(
+                    "stale: {}",
+                    summary.stale_reason.as_deref().unwrap_or("summary-stale")
+                );
+            }
+        }
+        None => {
+            println!("No companion summary yet. Run `tokens submit` once to generate it.");
+        }
+    }
+
+    Ok(())
+}
+
+fn refresh_companion_summary() -> Result<Option<commands::companion_summary::CompanionSummary>> {
+    use tokio::runtime::Runtime;
+    use tokscale_core::{generate_graph, GroupBy, ReportOptions};
+
+    let rt = Runtime::new()?;
+    let graph = rt
+        .block_on(async {
+            generate_graph(ReportOptions {
+                home_dir: None,
+                use_env_roots: true,
+                clients: None,
+                since: None,
+                until: None,
+                year: None,
+                group_by: GroupBy::default(),
+                scanner_settings: tui::settings::load_scanner_settings(),
+            })
+            .await
+        })
+        .map_err(|e| anyhow::anyhow!(e))?;
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+    let path = commands::companion_summary::summary_path();
+    let latest_submit = commands::submit_history::latest_entry()
+        .unwrap_or(None)
+        .as_ref()
+        .map(companion_latest_submit_from_history_entry);
+    let summary = commands::companion_summary::from_graph(
+        &graph,
+        latest_submit,
+        &today,
+        &path.display().to_string(),
+    );
+    commands::companion_summary::write_latest(&summary)?;
+    Ok(Some(summary))
 }
 
 fn run_login_command(token: Option<String>) -> Result<()> {
@@ -4901,6 +4998,38 @@ fn record_submit_history_entry(entry: &commands::submit_history::SubmitHistoryEn
     let _ = commands::submit_history::append_entry(entry);
 }
 
+fn companion_latest_submit_from_history_entry(
+    entry: &commands::submit_history::SubmitHistoryEntry,
+) -> commands::companion_summary::CompanionLatestSubmit {
+    let status = match entry.status {
+        commands::submit_history::SubmitHistoryStatus::Success => "success",
+        commands::submit_history::SubmitHistoryStatus::Failed => "failed",
+        commands::submit_history::SubmitHistoryStatus::Partial => "partial",
+    };
+
+    commands::companion_summary::CompanionLatestSubmit {
+        status: status.to_string(),
+        finished_at: entry.finished_at.clone(),
+        submission_id: entry.submission_id.clone(),
+    }
+}
+
+fn record_companion_summary_from_graph(
+    graph: &tokscale_core::GraphResult,
+    latest_submit: Option<&commands::submit_history::SubmitHistoryEntry>,
+) {
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+    let path = commands::companion_summary::summary_path();
+    let latest_submit = latest_submit.map(companion_latest_submit_from_history_entry);
+    let summary = commands::companion_summary::from_graph(
+        graph,
+        latest_submit,
+        &today,
+        &path.display().to_string(),
+    );
+    let _ = commands::companion_summary::write_latest(&summary);
+}
+
 /// A stable per-process delay in `0..=min(interval/10, 60s)` to stagger a fleet.
 fn serve_startup_jitter(interval: std::time::Duration) -> std::time::Duration {
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -5074,7 +5203,11 @@ fn run_submit_command(
     let submit_device = device::resolve_submit_device()?;
     let history_attempt =
         submit_history_attempt_from_graph(&graph_result, Some(&submit_device), submit_started_at);
-    let submit_payload = to_ts_token_contribution_data(&graph_result, Some(&submit_device));
+    let submit_payload = to_ts_token_contribution_data_for_submit(
+        &graph_result,
+        Some(&submit_device),
+        SubmitPayloadMode::Full,
+    );
 
     let response = rt.block_on(async {
         reqwest::Client::new()
@@ -5122,6 +5255,7 @@ fn run_submit_command(
                     chrono::Utc::now().to_rfc3339(),
                 );
                 record_submit_history_entry(&entry);
+                record_companion_summary_from_graph(&graph_result, Some(&entry));
                 println!();
                 std::process::exit(1);
             }
@@ -5134,6 +5268,7 @@ fn run_submit_command(
                 chrono::Utc::now().to_rfc3339(),
             );
             record_submit_history_entry(&entry);
+            record_companion_summary_from_graph(&graph_result, Some(&entry));
 
             println!("\n  {}", "Successfully submitted!".green());
             println!();
@@ -5197,6 +5332,7 @@ fn run_submit_command(
                 chrono::Utc::now().to_rfc3339(),
             );
             record_submit_history_entry(&entry);
+            record_companion_summary_from_graph(&graph_result, Some(&entry));
             std::process::exit(1);
         }
     }
@@ -5799,6 +5935,33 @@ mod tests {
     }
 
     #[test]
+    fn test_companion_summary_command_parses_json_flag() {
+        let cli = Cli::try_parse_from(["tokens", "companion-summary", "--json"]).unwrap();
+
+        match cli.command {
+            Some(Commands::CompanionSummary { json, refresh }) => {
+                assert!(json);
+                assert!(!refresh);
+            }
+            _ => panic!("companion-summary --json command should parse"),
+        }
+    }
+
+    #[test]
+    fn test_companion_summary_command_parses_refresh_json_flags() {
+        let cli =
+            Cli::try_parse_from(["tokens", "companion-summary", "--refresh", "--json"]).unwrap();
+
+        match cli.command {
+            Some(Commands::CompanionSummary { json, refresh }) => {
+                assert!(json);
+                assert!(refresh);
+            }
+            _ => panic!("companion-summary --refresh --json command should parse"),
+        }
+    }
+
+    #[test]
     fn test_submit_warm_cache_only_for_interactive_output() {
         assert!(should_spawn_warm_tui_cache(true));
         assert!(!should_spawn_warm_tui_cache(false));
@@ -5877,6 +6040,31 @@ mod tests {
         assert_eq!(entry.device_id, None);
         assert_eq!(entry.submission_id, None);
         assert_eq!(entry.error_summary.as_deref(), Some("Server returned 500"));
+    }
+
+    #[test]
+    fn companion_latest_submit_from_history_entry_keeps_public_fields_only() {
+        let entry = commands::submit_history::SubmitHistoryEntry {
+            id: "entry_1".to_string(),
+            started_at: "2026-06-04T00:00:00Z".to_string(),
+            finished_at: "2026-06-04T00:00:05Z".to_string(),
+            status: commands::submit_history::SubmitHistoryStatus::Success,
+            clients: vec!["codex".to_string()],
+            rows_submitted: 1,
+            tokens_submitted: 100,
+            cost_submitted: 1.24,
+            active_days: 1,
+            device_id: Some("dev_test".to_string()),
+            submission_id: Some("sub_test".to_string()),
+            error_summary: None,
+            source_version: "3.0.3-test".to_string(),
+        };
+
+        let latest = companion_latest_submit_from_history_entry(&entry);
+
+        assert_eq!(latest.status, "success");
+        assert_eq!(latest.finished_at, "2026-06-04T00:00:05Z");
+        assert_eq!(latest.submission_id.as_deref(), Some("sub_test"));
     }
 
     fn token_breakdown(total_tokens: i64) -> TokenBreakdown {
@@ -7154,6 +7342,32 @@ mod tests {
             payload.device.as_ref().unwrap().name.as_deref(),
             Some("Test device")
         );
+    }
+
+    #[test]
+    fn test_partial_submit_payload_omits_time_metrics() {
+        let mut graph = graph_result_with_contributions(vec![daily_contribution(
+            "2026-06-02",
+            42,
+            0.12,
+            "codex",
+            "model-b",
+        )]);
+        graph.contributions[0].active_time_ms = Some(60_000);
+        graph.time_metrics = Some(tokscale_core::TimeMetrics {
+            total_active_time_ms: 60_000,
+            total_wall_time_ms: 60_000,
+            longest_continuous_ms: 60_000,
+            max_concurrent_sessions: 1,
+            session_count: 1,
+        });
+
+        let payload =
+            to_ts_token_contribution_data_for_submit(&graph, None, SubmitPayloadMode::Partial);
+
+        assert_eq!(payload.contributions.len(), 1);
+        assert!(payload.time_metrics.is_none());
+        assert!(payload.contributions[0].active_time_ms.is_none());
     }
 
     #[test]
