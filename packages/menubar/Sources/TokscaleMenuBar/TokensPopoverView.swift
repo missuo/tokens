@@ -31,7 +31,7 @@ struct TokensPopoverView: View {
             }
             .padding(12)
         }
-        .frame(width: 500, height: 580, alignment: .top)
+        .frame(width: 500, height: 680, alignment: .top)
     }
 
     private var summary: TokscaleSummary? {
@@ -114,28 +114,37 @@ private struct SummaryContent: View {
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
 
-            ProviderChipRow(
-                providers: model.providers,
-                selectedProviderId: selectedFocus.id,
-                onSelect: { providerId in
-                    withAnimation(.spring(response: 0.26, dampingFraction: 0.86)) {
-                        selectedProviderId = providerId
-                    }
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(spacing: 8) {
+                    ProviderChipRow(
+                        providers: model.providers,
+                        selectedProviderId: selectedFocus.id,
+                        onSelect: { providerId in
+                            withAnimation(.spring(response: 0.26, dampingFraction: 0.86)) {
+                                selectedProviderId = providerId
+                            }
+                        }
+                    )
+
+                    FocusHeroCard(
+                        summary: summary,
+                        model: model,
+                        focus: selectedFocus,
+                        isRefreshing: isRefreshing
+                    )
+
+                    DashboardSections(
+                        summary: summary,
+                        model: model,
+                        focus: selectedFocus
+                    )
+                    .padding(.bottom, 2)
                 }
-            )
-
-            FocusHeroCard(
-                summary: summary,
-                model: model,
-                focus: selectedFocus,
-                isRefreshing: isRefreshing
-            )
-
-            DashboardSections(
-                summary: summary,
-                model: model,
-                focus: selectedFocus
-            )
+                .frame(maxWidth: .infinity, alignment: .top)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .clipped()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .onAppear {
@@ -347,7 +356,7 @@ private struct ProviderChipRow: View {
                 }
             }
         }
-        .frame(height: 54)
+        .frame(height: 64)
     }
 }
 
@@ -629,6 +638,7 @@ private struct HeaderIconButton: View {
                 .frame(width: 26, height: 26)
                 .foregroundStyle(disabled ? .secondary.opacity(0.5) : tint)
                 .background(Circle().fill(tint.opacity(active ? 0.18 : 0.1)))
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .disabled(disabled)
@@ -652,6 +662,7 @@ private struct ToolbarIconButton: View {
                     RoundedRectangle(cornerRadius: 9, style: .continuous)
                         .fill(tint.opacity(0.11))
                 )
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .help(help)

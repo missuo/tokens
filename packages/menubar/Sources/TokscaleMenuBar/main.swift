@@ -14,7 +14,7 @@ final class TokensMenuBarState: ObservableObject {
 final class MenuBarController: NSObject, NSApplicationDelegate {
     private let store = TokscaleSummaryStore()
     private let viewState = TokensMenuBarState()
-    private let popoverContentSize = NSSize(width: 500, height: 580)
+    private let popoverContentSize = NSSize(width: 500, height: 680)
     private var statusItem: NSStatusItem?
     private let popover = NSPopover()
     private var hostingController: NSHostingController<TokensPopoverView>?
