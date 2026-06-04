@@ -4129,11 +4129,16 @@ fn refresh_companion_summary() -> Result<Option<commands::companion_summary::Com
         .unwrap_or(None)
         .as_ref()
         .map(companion_latest_submit_from_history_entry);
-    let summary = commands::companion_summary::from_graph(
+    let usage_outputs = commands::usage::fetch_all();
+    if !usage_outputs.is_empty() {
+        commands::usage::save_cache(&usage_outputs);
+    }
+    let summary = commands::companion_summary::from_graph_with_usage(
         &graph,
         latest_submit,
         &today,
         &path.display().to_string(),
+        &usage_outputs,
     );
     commands::companion_summary::write_latest(&summary)?;
     Ok(Some(summary))
@@ -5021,11 +5026,13 @@ fn record_companion_summary_from_graph(
     let today = chrono::Local::now().format("%Y-%m-%d").to_string();
     let path = commands::companion_summary::summary_path();
     let latest_submit = latest_submit.map(companion_latest_submit_from_history_entry);
-    let summary = commands::companion_summary::from_graph(
+    let usage_outputs = commands::usage::load_cache().unwrap_or_default();
+    let summary = commands::companion_summary::from_graph_with_usage(
         graph,
         latest_submit,
         &today,
         &path.display().to_string(),
+        &usage_outputs,
     );
     let _ = commands::companion_summary::write_latest(&summary);
 }

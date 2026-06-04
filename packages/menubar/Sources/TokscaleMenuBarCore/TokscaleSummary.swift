@@ -9,6 +9,8 @@ public struct TokscaleSummary: Decodable, Equatable {
     public let today: Today
     public let totals: Totals
     public let providers: [Provider]
+    public let quota: [QuotaProvider]
+    public let history: [HistoryDay]
     public let top: Top
     public let latestSubmit: LatestSubmit?
     public let health: Health
@@ -23,6 +25,8 @@ public struct TokscaleSummary: Decodable, Equatable {
         case today
         case totals
         case providers
+        case quota
+        case history
         case top
         case latestSubmit
         case health
@@ -39,6 +43,8 @@ public struct TokscaleSummary: Decodable, Equatable {
         today = try container.decode(Today.self, forKey: .today)
         totals = try container.decode(Totals.self, forKey: .totals)
         providers = try container.decodeIfPresent([Provider].self, forKey: .providers) ?? []
+        quota = try container.decodeIfPresent([QuotaProvider].self, forKey: .quota) ?? []
+        history = try container.decodeIfPresent([HistoryDay].self, forKey: .history) ?? []
         top = try container.decode(Top.self, forKey: .top)
         latestSubmit = try container.decodeIfPresent(LatestSubmit.self, forKey: .latestSubmit)
         health = try container.decode(Health.self, forKey: .health)
@@ -118,11 +124,15 @@ public struct TokscaleDashboardModel: Equatable {
     public let providers: [ProviderSummary]
     public let metrics: [Panel]
     public let insights: [Panel]
+    public let quotaWindows: [QuotaWindowSummary]
+    public let historyTrend: [HistoryPoint]
+    public let historyPeak: HistoryPoint?
     public let health: HealthStatus
     private let providerDetailsById: [String: ProviderDetails]
 
     public init(summary: TokscaleSummary) {
         let providerRows = Self.providerRows(summary: summary)
+        let historyRows = Self.historyRows(summary: summary)
         clientLabels = providerRows.map { clientDisplayName($0.client) }
         providers = Self.providerSummaries(rows: providerRows, totalCost: summary.totals.costUsd)
         providerDetailsById = Dictionary(
@@ -173,6 +183,14 @@ public struct TokscaleDashboardModel: Equatable {
                 detail: summary.accuracy.sourceKinds.first ?? (summary.accuracy.warnings.isEmpty ? "unknown" : "warning")
             )
         ]
+        quotaWindows = Self.quotaWindows(summary: summary)
+        historyTrend = historyRows
+        historyPeak = historyRows.max { left, right in
+            if left.costUsd == right.costUsd {
+                return left.date < right.date
+            }
+            return left.costUsd < right.costUsd
+        }
         health = HealthStatus(
             title: summary.stale ? "Stale" : "Fresh",
             detail: "Last scan \(formatDuration(milliseconds: summary.health.lastScanDurationMs))",
@@ -245,6 +263,38 @@ public struct TokscaleDashboardModel: Equatable {
         return min(max(cost / totalCost, 0), 1)
     }
 
+    private static func quotaWindows(summary: TokscaleSummary) -> [QuotaWindowSummary] {
+        summary.quota.flatMap { provider in
+            provider.windows.map { window in
+                let usedPercent = min(max(window.usedPercent, 0), 100)
+                let remainingPercent = min(max(window.remainingPercent, 0), 100)
+                return QuotaWindowSummary(
+                    provider: provider.provider,
+                    plan: provider.plan,
+                    title: window.label,
+                    value: "\(Int(usedPercent.rounded()))% used",
+                    detail: window.remainingLabel ?? "\(Int(remainingPercent.rounded()))% left",
+                    reset: window.resetsAt,
+                    progress: usedPercent / 100
+                )
+            }
+        }
+    }
+
+    private static func historyRows(summary: TokscaleSummary) -> [HistoryPoint] {
+        let maxCost = summary.history.map(\.costUsd).max() ?? 0
+        return summary.history.map { day in
+            HistoryPoint(
+                date: day.date,
+                value: formatUSD(day.costUsd),
+                costUsd: day.costUsd,
+                tokens: formatTokens(day.tokens),
+                messages: "\(day.messages) messages",
+                progress: maxCost > 0 ? min(max(day.costUsd / maxCost, 0), 1) : 0
+            )
+        }
+    }
+
     private static func progressAgainstDailyAverage(summary: TokscaleSummary) -> Double {
         guard summary.totals.activeDays > 0, summary.totals.costUsd > 0 else {
             return 0
@@ -294,6 +344,25 @@ public extension TokscaleDashboardModel {
         public let title: String
         public let detail: String
         public let warning: String?
+    }
+
+    struct QuotaWindowSummary: Equatable {
+        public let provider: String
+        public let plan: String?
+        public let title: String
+        public let value: String
+        public let detail: String
+        public let reset: String?
+        public let progress: Double
+    }
+
+    struct HistoryPoint: Equatable {
+        public let date: String
+        public let value: String
+        public let costUsd: Double
+        public let tokens: String
+        public let messages: String
+        public let progress: Double
     }
 
     struct ProviderSummary: Equatable {
@@ -367,6 +436,27 @@ public extension TokscaleSummary {
             self.todayMessages = todayMessages
             self.topModel = topModel
         }
+    }
+
+    struct QuotaProvider: Decodable, Equatable {
+        public let provider: String
+        public let plan: String?
+        public let windows: [QuotaWindow]
+    }
+
+    struct QuotaWindow: Decodable, Equatable {
+        public let label: String
+        public let usedPercent: Double
+        public let remainingPercent: Double
+        public let remainingLabel: String?
+        public let resetsAt: String?
+    }
+
+    struct HistoryDay: Decodable, Equatable {
+        public let date: String
+        public let costUsd: Double
+        public let tokens: Int64
+        public let messages: Int
     }
 
     struct Top: Decodable, Equatable {

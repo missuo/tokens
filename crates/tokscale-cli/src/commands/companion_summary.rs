@@ -21,6 +21,10 @@ pub struct CompanionSummary {
     pub totals: CompanionTotals,
     #[serde(default)]
     pub providers: Vec<CompanionProvider>,
+    #[serde(default)]
+    pub quota: Vec<CompanionQuotaProvider>,
+    #[serde(default)]
+    pub history: Vec<CompanionHistoryDay>,
     pub top: CompanionTop,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub latest_submit: Option<CompanionLatestSubmit>,
@@ -67,6 +71,36 @@ pub struct CompanionProvider {
     pub today_messages: i32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub top_model: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompanionQuotaProvider {
+    pub provider: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plan: Option<String>,
+    pub windows: Vec<CompanionQuotaWindow>,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompanionQuotaWindow {
+    pub label: String,
+    pub used_percent: f64,
+    pub remaining_percent: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remaining_label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resets_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompanionHistoryDay {
+    pub date: String,
+    pub cost_usd: f64,
+    pub tokens: i64,
+    pub messages: i32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -203,6 +237,16 @@ pub fn from_graph(
     today_date: &str,
     summary_path: &str,
 ) -> CompanionSummary {
+    from_graph_with_usage(graph, latest_submit, today_date, summary_path, &[])
+}
+
+pub fn from_graph_with_usage(
+    graph: &tokscale_core::GraphResult,
+    latest_submit: Option<CompanionLatestSubmit>,
+    today_date: &str,
+    summary_path: &str,
+    usage_outputs: &[crate::commands::usage::UsageOutput],
+) -> CompanionSummary {
     let today = graph
         .contributions
         .iter()
@@ -242,6 +286,8 @@ pub fn from_graph(
             models: graph.summary.models.len(),
         },
         providers: provider_breakdown(graph, today_date),
+        quota: quota_breakdown(usage_outputs),
+        history: history_breakdown(graph, today_date),
         top: CompanionTop {
             client: top_client(graph),
             model: top_model(graph),
@@ -334,7 +380,10 @@ fn provider_breakdown(
             entry.cost_usd += client.cost;
             entry.tokens += token_count;
             entry.messages += client.messages;
-            *entry.model_costs.entry(client.model_id.clone()).or_default() += client.cost;
+            *entry
+                .model_costs
+                .entry(client.model_id.clone())
+                .or_default() += client.cost;
             if is_today {
                 entry.today_cost_usd += client.cost;
                 entry.today_tokens += token_count;
@@ -370,6 +419,86 @@ fn provider_breakdown(
             .then_with(|| a.client.cmp(&b.client))
     });
     providers
+}
+
+fn quota_breakdown(
+    usage_outputs: &[crate::commands::usage::UsageOutput],
+) -> Vec<CompanionQuotaProvider> {
+    let mut providers: Vec<CompanionQuotaProvider> = usage_outputs
+        .iter()
+        .filter_map(|output| {
+            let windows: Vec<CompanionQuotaWindow> = output
+                .metrics
+                .iter()
+                .map(|metric| CompanionQuotaWindow {
+                    label: metric.label.clone(),
+                    used_percent: metric.used_percent.clamp(0.0, 100.0),
+                    remaining_percent: metric.remaining_percent.clamp(0.0, 100.0),
+                    remaining_label: metric.remaining_label.clone(),
+                    resets_at: metric.resets_at.clone(),
+                })
+                .collect();
+            if windows.is_empty() {
+                return None;
+            }
+            Some(CompanionQuotaProvider {
+                provider: output.provider.clone(),
+                plan: output.plan.clone(),
+                windows,
+            })
+        })
+        .collect();
+    providers.sort_by(|a, b| a.provider.cmp(&b.provider));
+    providers
+}
+
+fn history_breakdown(
+    graph: &tokscale_core::GraphResult,
+    today_date: &str,
+) -> Vec<CompanionHistoryDay> {
+    let mut totals_by_date = std::collections::HashMap::<String, CompanionHistoryDay>::new();
+    for day in &graph.contributions {
+        let entry = totals_by_date
+            .entry(day.date.clone())
+            .or_insert_with(|| CompanionHistoryDay {
+                date: day.date.clone(),
+                cost_usd: 0.0,
+                tokens: 0,
+                messages: 0,
+            });
+        entry.cost_usd += day.totals.cost;
+        entry.tokens += day.totals.tokens;
+        entry.messages += day.totals.messages;
+    }
+
+    let Ok(today) = chrono::NaiveDate::parse_from_str(today_date, "%Y-%m-%d") else {
+        let mut values: Vec<CompanionHistoryDay> = totals_by_date.into_values().collect();
+        values.sort_by(|a, b| a.date.cmp(&b.date));
+        return values
+            .into_iter()
+            .rev()
+            .take(7)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+    };
+
+    (0..7)
+        .rev()
+        .map(|days_ago| {
+            let date = today - chrono::Duration::days(days_ago);
+            let date_key = date.format("%Y-%m-%d").to_string();
+            totals_by_date
+                .remove(&date_key)
+                .unwrap_or(CompanionHistoryDay {
+                    date: date_key,
+                    cost_usd: 0.0,
+                    tokens: 0,
+                    messages: 0,
+                })
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -410,6 +539,8 @@ mod tests {
                 today_messages: 42,
                 top_model: Some("gpt-5".to_string()),
             }],
+            quota: Vec::new(),
+            history: Vec::new(),
             top: CompanionTop {
                 client: Some("codex".to_string()),
                 model: Some("gpt-5".to_string()),
@@ -607,6 +738,78 @@ mod tests {
         let summary = from_graph(&graph, None, "2026-06-04", "/tmp/companion-summary.json");
 
         assert_eq!(summary.accuracy.source_kinds, vec!["local-scan"]);
+    }
+
+    #[test]
+    fn summary_from_graph_includes_recent_history_days() {
+        let graph = graph_result_for_test(vec![
+            daily_contribution_for_test("2026-05-29", "claude", "claude-sonnet", 100, 0.10, 1),
+            daily_contribution_for_test("2026-06-01", "codex", "gpt-5", 200, 0.20, 2),
+            daily_contribution_for_test("2026-06-04", "gemini", "gemini-pro", 300, 0.30, 3),
+        ]);
+
+        let summary = from_graph(&graph, None, "2026-06-04", "/tmp/companion-summary.json");
+
+        assert_eq!(summary.history.len(), 7);
+        assert_eq!(summary.history[0].date, "2026-05-29");
+        assert_eq!(summary.history[0].cost_usd, 0.10);
+        assert_eq!(summary.history[3].date, "2026-06-01");
+        assert_eq!(summary.history[3].messages, 2);
+        assert_eq!(summary.history[6].date, "2026-06-04");
+        assert_eq!(summary.history[6].tokens, 300);
+    }
+
+    #[test]
+    fn summary_from_graph_with_usage_includes_claude_quota_windows() {
+        let graph = graph_result_for_test(vec![daily_contribution_for_test(
+            "2026-06-04",
+            "claude",
+            "claude-sonnet",
+            300,
+            0.30,
+            3,
+        )]);
+        let usage = vec![crate::commands::usage::UsageOutput {
+            provider: "Claude".to_string(),
+            plan: Some("Pro 5x".to_string()),
+            email: None,
+            metrics: vec![
+                crate::commands::usage::UsageMetric {
+                    label: "Session".to_string(),
+                    used_percent: 72.0,
+                    remaining_percent: 28.0,
+                    remaining_label: None,
+                    resets_at: Some("2026-06-04T10:00:00Z".to_string()),
+                },
+                crate::commands::usage::UsageMetric {
+                    label: "Weekly".to_string(),
+                    used_percent: 41.0,
+                    remaining_percent: 59.0,
+                    remaining_label: None,
+                    resets_at: Some("2026-06-08T00:00:00Z".to_string()),
+                },
+            ],
+        }];
+
+        let summary = from_graph_with_usage(
+            &graph,
+            None,
+            "2026-06-04",
+            "/tmp/companion-summary.json",
+            &usage,
+        );
+
+        assert_eq!(summary.quota.len(), 1);
+        assert_eq!(summary.quota[0].provider, "Claude");
+        assert_eq!(summary.quota[0].plan.as_deref(), Some("Pro 5x"));
+        assert_eq!(summary.quota[0].windows.len(), 2);
+        assert_eq!(summary.quota[0].windows[0].label, "Session");
+        assert_eq!(summary.quota[0].windows[0].used_percent, 72.0);
+        assert_eq!(summary.quota[0].windows[1].label, "Weekly");
+        assert_eq!(
+            summary.quota[0].windows[1].resets_at.as_deref(),
+            Some("2026-06-08T00:00:00Z")
+        );
     }
 
     fn daily_contribution_for_test(

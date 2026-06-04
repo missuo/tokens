@@ -135,6 +135,40 @@ final class TokscaleSummaryTests: XCTestCase {
         XCTAssertEqual(dashboard.providerDetails(for: "claude").title, "Claude")
     }
 
+    func testDecodesQuotaAndHistoryModules() throws {
+        let summary = try TokscaleSummary.decode(sampleSummaryData())
+
+        XCTAssertEqual(summary.quota.count, 1)
+        XCTAssertEqual(summary.quota[0].provider, "Claude")
+        XCTAssertEqual(summary.quota[0].plan, "Pro 5x")
+        XCTAssertEqual(summary.quota[0].windows.count, 2)
+        XCTAssertEqual(summary.quota[0].windows[0].label, "Session")
+        XCTAssertEqual(summary.quota[0].windows[0].usedPercent, 72.0)
+        XCTAssertEqual(summary.quota[0].windows[0].resetsAt, "2026-06-04T10:00:00Z")
+        XCTAssertEqual(summary.history.count, 7)
+        XCTAssertEqual(summary.history[0].date, "2026-05-29")
+        XCTAssertEqual(summary.history[6].date, "2026-06-04")
+        XCTAssertEqual(summary.history[6].costUsd, 398.56475810000006)
+    }
+
+    func testDashboardModelBuildsQuotaAndHistorySections() throws {
+        let summary = try TokscaleSummary.decode(sampleSummaryData())
+
+        let dashboard = TokscaleDashboardModel(summary: summary)
+
+        XCTAssertEqual(dashboard.quotaWindows.count, 2)
+        XCTAssertEqual(dashboard.quotaWindows[0].provider, "Claude")
+        XCTAssertEqual(dashboard.quotaWindows[0].title, "Session")
+        XCTAssertEqual(dashboard.quotaWindows[0].value, "72% used")
+        XCTAssertEqual(dashboard.quotaWindows[0].detail, "28% left")
+        XCTAssertEqual(dashboard.quotaWindows[0].progress, 0.72, accuracy: 0.01)
+        XCTAssertEqual(dashboard.quotaWindows[1].title, "Weekly")
+        XCTAssertEqual(dashboard.historyTrend.count, 7)
+        XCTAssertEqual(dashboard.historyTrend[0].value, "$10.00")
+        XCTAssertEqual(dashboard.historyTrend[6].value, "$398.56")
+        XCTAssertEqual(dashboard.historyPeak?.date, "2026-06-04")
+    }
+
     private func sampleSummaryData() -> Data {
         sampleSummaryJSON(
             topJSON: #""client":"codex","model":"gpt-5.5""#,
@@ -207,6 +241,35 @@ final class TokscaleSummaryTests: XCTestCase {
               "todayMessages": 3,
               "topModel": "openclaw"
             }
+          ],
+          "quota": [
+            {
+              "provider": "Claude",
+              "plan": "Pro 5x",
+              "windows": [
+                {
+                  "label": "Session",
+                  "usedPercent": 72.0,
+                  "remainingPercent": 28.0,
+                  "resetsAt": "2026-06-04T10:00:00Z"
+                },
+                {
+                  "label": "Weekly",
+                  "usedPercent": 41.0,
+                  "remainingPercent": 59.0,
+                  "resetsAt": "2026-06-08T00:00:00Z"
+                }
+              ]
+            }
+          ],
+          "history": [
+            {"date": "2026-05-29", "costUsd": 10.0, "tokens": 1000000, "messages": 10},
+            {"date": "2026-05-30", "costUsd": 20.0, "tokens": 2000000, "messages": 20},
+            {"date": "2026-05-31", "costUsd": 30.0, "tokens": 3000000, "messages": 30},
+            {"date": "2026-06-01", "costUsd": 40.0, "tokens": 4000000, "messages": 40},
+            {"date": "2026-06-02", "costUsd": 50.0, "tokens": 5000000, "messages": 50},
+            {"date": "2026-06-03", "costUsd": 60.0, "tokens": 6000000, "messages": 60},
+            {"date": "2026-06-04", "costUsd": 398.56475810000006, "tokens": 522596373, "messages": 2501}
           ],
           "top": {
             \(topJSON)
