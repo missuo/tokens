@@ -254,6 +254,13 @@ private struct FocusHeroCard: View {
                         .monospacedDigit()
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
+                        .foregroundStyle(
+                            LinearGradient(
+                                colors: [.primary, .primary.opacity(0.85)],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                        )
 
                     Text(heroSubtitle)
                         .font(.system(size: 12, weight: .medium))
@@ -289,20 +296,28 @@ private struct FocusHeroCard: View {
         .padding(16)
         .frame(height: 142)
         .background(
-            panelBackground(color: accent, intensity: 0.03)
-                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            LinearGradient(
+                colors: [
+                    companionPanelColor,
+                    accent.opacity(0.055)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .stroke(
                     LinearGradient(
-                        colors: [accent.opacity(0.15), Color.primary.opacity(0.04)],
+                        colors: [accent.opacity(0.25), Color.primary.opacity(0.05)],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
                     ),
                     lineWidth: 1
                 )
         )
+        .shadow(color: Color.black.opacity(0.08), radius: 12, x: 0, y: 6)
     }
 
     private var heroTitle: String {
@@ -1115,8 +1130,8 @@ private struct CompanionBackdrop: View {
 
             LinearGradient(
                 colors: [
-                    accent.opacity(0.055),
-                    companionPanelColor.opacity(0.80),
+                    accent.opacity(0.075),
+                    companionPanelColor.opacity(0.50),
                     companionSurfaceColor
                 ],
                 startPoint: .topLeading,
@@ -1129,16 +1144,16 @@ private struct CompanionBackdrop: View {
 private let companionSurfaceColor = Color(
     nsColor: NSColor(name: nil) { appearance in
         if appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua {
-            return NSColor(calibratedWhite: 0.10, alpha: 1.0)
+            return NSColor(calibratedRed: 0.11, green: 0.11, blue: 0.12, alpha: 1.0)
         }
-        return NSColor(calibratedWhite: 0.96, alpha: 1.0)
+        return NSColor(calibratedRed: 0.97, green: 0.97, blue: 0.99, alpha: 1.0)
     }
 )
 
 private let companionPanelColor = Color(
     nsColor: NSColor(name: nil) { appearance in
         if appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua {
-            return NSColor(calibratedWhite: 0.15, alpha: 1.0)
+            return NSColor(calibratedRed: 0.15, green: 0.15, blue: 0.16, alpha: 1.0)
         }
         return NSColor(calibratedWhite: 1.0, alpha: 1.0)
     }
@@ -1147,9 +1162,9 @@ private let companionPanelColor = Color(
 private let companionSelectedSurfaceColor = Color(
     nsColor: NSColor(name: nil) { appearance in
         if appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua {
-            return NSColor(calibratedWhite: 0.20, alpha: 1.0)
+            return NSColor(calibratedRed: 0.19, green: 0.19, blue: 0.20, alpha: 1.0)
         }
-        return NSColor(calibratedWhite: 0.92, alpha: 1.0)
+        return NSColor(calibratedRed: 0.93, green: 0.93, blue: 0.95, alpha: 1.0)
     }
 )
 
@@ -1224,17 +1239,17 @@ private func parseISODate(_ value: String) -> Date? {
 private func providerColor(_ id: String) -> Color {
     switch id.lowercased() {
     case "claude":
-        return Color(red: 0.82, green: 0.52, blue: 0.44)
+        return Color(red: 0.78, green: 0.42, blue: 0.36)
     case "codex":
-        return Color(red: 0.40, green: 0.65, blue: 0.55)
+        return Color(red: 0.44, green: 0.64, blue: 0.58)
     case "gemini":
-        return Color(red: 0.35, green: 0.55, blue: 0.90)
+        return Color(red: 0.34, green: 0.46, blue: 0.86)
     case "openclaw":
-        return Color(red: 0.60, green: 0.50, blue: 0.85)
+        return Color(red: 0.58, green: 0.42, blue: 0.82)
     case "copilot":
-        return Color(red: 0.35, green: 0.55, blue: 0.75)
+        return Color(red: 0.36, green: 0.56, blue: 0.66)
     case "antigravity":
-        return Color(red: 0.80, green: 0.65, blue: 0.30)
+        return Color(red: 0.86, green: 0.62, blue: 0.26)
     default:
         return .accentColor
     }
