@@ -65,28 +65,6 @@ struct TokensPopoverView: View {
     }
 }
 
-private enum CompanionPanel: String, CaseIterable, Identifiable {
-    case overview = "Overview"
-    case limits = "Limits"
-    case history = "History"
-    case settings = "Settings"
-
-    var id: String { rawValue }
-
-    var icon: String {
-        switch self {
-        case .overview:
-            return "chart.pie"
-        case .limits:
-            return "gauge.with.dots.needle.67percent"
-        case .history:
-            return "chart.bar"
-        case .settings:
-            return "gearshape"
-        }
-    }
-}
-
 private struct SummaryContent: View {
     let summary: TokscaleSummary
     let isRefreshing: Bool
@@ -96,9 +74,8 @@ private struct SummaryContent: View {
     let onRevealCache: () -> Void
     let onQuit: () -> Void
 
-    @Namespace private var panelNamespace
-    @State private var selectedPanel = CompanionPanel.overview
     @State private var selectedProviderId: String?
+    @State private var settingsVisible = false
 
     private var model: TokscaleDashboardModel {
         TokscaleDashboardModel(summary: summary)
@@ -115,8 +92,27 @@ private struct SummaryContent: View {
                 model: model,
                 focus: selectedFocus,
                 isRefreshing: isRefreshing,
-                onRefresh: onRefreshScan
+                settingsVisible: settingsVisible,
+                onRefresh: onRefreshScan,
+                onToggleSettings: {
+                    withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
+                        settingsVisible.toggle()
+                    }
+                }
             )
+
+            if settingsVisible {
+                CompactSettingsPanel(
+                    summary: summary,
+                    model: model,
+                    focus: selectedFocus,
+                    refreshStatus: refreshStatus,
+                    onOpenTokensCI: onOpenTokensCI,
+                    onRevealCache: onRevealCache,
+                    onQuit: onQuit
+                )
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
 
             ProviderChipRow(
                 providers: model.providers,
@@ -135,24 +131,11 @@ private struct SummaryContent: View {
                 isRefreshing: isRefreshing
             )
 
-            PanelSwitcher(
-                selectedPanel: $selectedPanel,
-                namespace: panelNamespace
-            )
-
-            DynamicDetailPane(
-                panel: selectedPanel,
+            DashboardSections(
                 summary: summary,
                 model: model,
-                focus: selectedFocus,
-                refreshStatus: refreshStatus,
-                isRefreshing: isRefreshing,
-                onRefreshScan: onRefreshScan,
-                onOpenTokensCI: onOpenTokensCI,
-                onRevealCache: onRevealCache,
-                onQuit: onQuit
+                focus: selectedFocus
             )
-            .transition(.opacity.combined(with: .scale(scale: 0.985)))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .onAppear {
@@ -176,7 +159,9 @@ private struct CompanionHeader: View {
     let model: TokscaleDashboardModel
     let focus: TokscaleDashboardModel.ProviderFocus
     let isRefreshing: Bool
+    let settingsVisible: Bool
     let onRefresh: () -> Void
+    let onToggleSettings: () -> Void
 
     var body: some View {
         HStack(spacing: 10) {
@@ -190,24 +175,28 @@ private struct CompanionHeader: View {
                     .lineLimit(1)
             }
             Spacer()
-            Button(action: onRefresh) {
-                Image(systemName: isRefreshing ? "hourglass" : "arrow.clockwise")
-                    .font(.system(size: 12, weight: .bold))
-                    .frame(width: 26, height: 26)
-                    .foregroundStyle(isRefreshing ? .orange : providerColor(focus.id))
-                    .background(
-                        Circle()
-                            .fill(providerColor(focus.id).opacity(isRefreshing ? 0.06 : 0.12))
-                    )
-            }
-            .buttonStyle(.plain)
-            .disabled(isRefreshing)
-            .help(isRefreshing ? "Scanning" : "Refresh scan")
             StatusCapsule(
                 title: isRefreshing ? "Scanning" : model.health.title,
                 color: isRefreshing ? .orange : (summary.stale ? .orange : .green),
                 icon: isRefreshing ? "dot.radiowaves.left.and.right" : "bolt.fill"
             )
+            HStack(spacing: 5) {
+                HeaderIconButton(
+                    systemName: isRefreshing ? "hourglass" : "arrow.clockwise",
+                    tint: isRefreshing ? .orange : providerColor(focus.id),
+                    active: isRefreshing,
+                    disabled: isRefreshing,
+                    help: isRefreshing ? "Scanning" : "Refresh scan",
+                    action: onRefresh
+                )
+                HeaderIconButton(
+                    systemName: "gearshape",
+                    tint: providerColor(focus.id),
+                    active: settingsVisible,
+                    help: "Settings",
+                    action: onToggleSettings
+                )
+            }
         }
         .frame(height: 30)
     }
@@ -386,6 +375,7 @@ private struct ProviderChip: View {
                     .monospacedDigit()
                     .lineLimit(1)
                     .minimumScaleFactor(0.76)
+                ProgressBar(progress: provider.share, color: color)
                 Text(provider.detail)
                     .font(.system(size: 9, weight: .medium))
                     .foregroundStyle(.secondary)
@@ -431,134 +421,57 @@ private struct ProviderChipPlaceholder: View {
     }
 }
 
-private struct PanelSwitcher: View {
-    @Binding var selectedPanel: CompanionPanel
-    let namespace: Namespace.ID
+private struct DashboardSections: View {
+    let summary: TokscaleSummary
+    let model: TokscaleDashboardModel
+    let focus: TokscaleDashboardModel.ProviderFocus
 
     var body: some View {
-        HStack(spacing: 4) {
-            ForEach(CompanionPanel.allCases) { panel in
-                Button {
-                    withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
-                        selectedPanel = panel
-                    }
-                } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: panel.icon)
-                            .font(.system(size: 10, weight: .semibold))
-                        Text(panel.rawValue)
-                            .font(.system(size: 10, weight: .semibold))
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 7)
-                    .foregroundStyle(selectedPanel == panel ? Color.primary : Color.secondary)
-                    .background {
-                        if selectedPanel == panel {
-                            Capsule()
-                                .fill(companionSelectedSurfaceColor)
-                                .matchedGeometryEffect(id: "panel-pill", in: namespace)
-                                .shadow(color: .black.opacity(0.08), radius: 7, y: 2)
-                        }
-                    }
+        VStack(spacing: 7) {
+            OverviewSection(summary: summary, model: model, focus: focus)
+            LimitsSection(focus: focus)
+            HistorySection(model: model)
+        }
+        .frame(maxWidth: .infinity, alignment: .top)
+    }
+}
+
+private struct OverviewSection: View {
+    let summary: TokscaleSummary
+    let model: TokscaleDashboardModel
+    let focus: TokscaleDashboardModel.ProviderFocus
+
+    var body: some View {
+        DashboardCard(icon: "chart.pie", title: "Overview", color: providerColor(focus.id)) {
+            VStack(spacing: 7) {
+                HStack(spacing: 7) {
+                    VisualMetricPill(
+                        title: "Today",
+                        value: formatToday(summary),
+                        detail: model.hero.progressLabel,
+                        progress: model.hero.progress,
+                        color: .blue
+                    )
+                    VisualMetricPill(
+                        title: focus.title,
+                        value: focus.today.replacingOccurrences(of: " today", with: ""),
+                        detail: focus.topModel,
+                        progress: focus.share,
+                        color: providerColor(focus.id)
+                    )
+                    VisualMetricPill(
+                        title: "Tokens",
+                        value: focus.tokens,
+                        detail: focus.messages,
+                        progress: focus.share,
+                        color: .green
+                    )
                 }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(4)
-        .background(
-            Capsule()
-                .fill(companionPanelColor.opacity(0.96))
-        )
-        .frame(height: 34)
-    }
-}
 
-private struct DynamicDetailPane: View {
-    let panel: CompanionPanel
-    let summary: TokscaleSummary
-    let model: TokscaleDashboardModel
-    let focus: TokscaleDashboardModel.ProviderFocus
-    let refreshStatus: String?
-    let isRefreshing: Bool
-    let onRefreshScan: () -> Void
-    let onOpenTokensCI: () -> Void
-    let onRevealCache: () -> Void
-    let onQuit: () -> Void
-
-    var body: some View {
-        ZStack {
-            switch panel {
-            case .overview:
-                OverviewPane(summary: summary, model: model, focus: focus)
-            case .limits:
-                LimitsPane(focus: focus)
-            case .history:
-                HistoryPane(model: model)
-            case .settings:
-                SettingsPane(
-                    summary: summary,
-                    model: model,
-                    focus: focus,
-                    refreshStatus: refreshStatus,
-                    isRefreshing: isRefreshing,
-                    onRefreshScan: onRefreshScan,
-                    onOpenTokensCI: onOpenTokensCI,
-                    onRevealCache: onRevealCache,
-                    onQuit: onQuit
-                )
-            }
-        }
-        .frame(maxWidth: .infinity, minHeight: 220, maxHeight: 240, alignment: .top)
-        .animation(.spring(response: 0.28, dampingFraction: 0.86), value: panel)
-    }
-}
-
-private struct OverviewPane: View {
-    let summary: TokscaleSummary
-    let model: TokscaleDashboardModel
-    let focus: TokscaleDashboardModel.ProviderFocus
-
-    var body: some View {
-        VStack(spacing: 8) {
-            HStack(spacing: 8) {
-                CompactStatTile(
-                    title: "Today",
-                    value: formatToday(summary),
-                    detail: model.hero.progressLabel,
-                    color: .blue
-                )
-                CompactStatTile(
-                    title: focus.title,
-                    value: focus.today.replacingOccurrences(of: " today", with: ""),
-                    detail: focus.topModel,
-                    color: providerColor(focus.id)
-                )
-            }
-
-            HStack(spacing: 8) {
-                CompactStatTile(
-                    title: "Tokens",
-                    value: focus.tokens,
-                    detail: focus.messages,
-                    color: .green
-                )
-                CompactStatTile(
-                    title: "Total",
-                    value: focus.total.replacingOccurrences(of: " total", with: ""),
-                    detail: "\(Int((focus.share * 100).rounded()))% of all spend",
-                    color: providerColor(focus.id)
-                )
-            }
-
-            HStack(spacing: 8) {
-                SignalChip(
-                    title: "Work time",
-                    value: focus.workTime,
-                    color: .blue
-                )
-                SignalChip(
-                    title: focus.id.lowercased() == "claude" ? "Sonnet only" : "Model time",
-                    value: focus.focusedModelTime,
+                ProviderShareMeter(
+                    title: "Provider share",
+                    value: "\(Int((focus.share * 100).rounded()))%",
+                    progress: focus.share,
                     color: providerColor(focus.id)
                 )
             }
@@ -566,61 +479,43 @@ private struct OverviewPane: View {
     }
 }
 
-private struct LimitsPane: View {
+private struct LimitsSection: View {
     let focus: TokscaleDashboardModel.ProviderFocus
 
     var body: some View {
-        VStack(spacing: 8) {
+        DashboardCard(icon: "gauge.with.dots.needle.67percent", title: "Limits", color: providerColor(focus.id)) {
             if focus.quotaWindows.isEmpty {
-                EmptyPaneMessage(
+                CompactEmptyMessage(
                     title: "No official quota",
-                    detail: "\(focus.title) has local usage data, but no official 5h or weekly limit window in the current cache.",
+                    detail: "\(focus.title) has local usage data, but no 5h or weekly limit in cache.",
                     icon: "gauge.with.dots.needle.67percent"
                 )
             } else {
-                ForEach(Array(focus.quotaWindows.prefix(3).enumerated()), id: \.offset) { _, quota in
-                    QuotaWindowRow(quota: quota)
+                HStack(spacing: 7) {
+                    ForEach(Array(focus.quotaWindows.prefix(2).enumerated()), id: \.offset) { _, quota in
+                        LimitMiniCard(quota: quota)
+                    }
                 }
             }
         }
     }
 }
 
-private struct HistoryPane: View {
+private struct HistorySection: View {
     let model: TokscaleDashboardModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
+        DashboardCard(icon: "chart.bar", title: "History", color: .blue) {
+            VStack(alignment: .leading, spacing: 7) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Last 7 days")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.secondary)
                     Text(model.historyPeak.map { "Peak \($0.value) on \($0.date)" } ?? "No history yet")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.system(size: 11, weight: .semibold))
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
                 }
-                Spacer()
-            }
-
-            HStack(alignment: .bottom, spacing: 7) {
-                ForEach(model.historyTrend, id: \.date) { day in
-                    VStack(spacing: 5) {
-                        RoundedRectangle(cornerRadius: 4, style: .continuous)
-                            .fill(Color.blue.opacity(day.progress > 0 ? 0.72 : 0.16))
-                            .frame(height: max(8, 74 * day.progress))
-                        Text(String(day.date.suffix(2)))
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: 92, alignment: .bottom)
-                    .help("\(day.date) · \(day.value) · \(day.messages)")
-                }
+                HistoryBars(days: model.historyTrend)
             }
         }
-        .padding(11)
-        .background(panelBackground(color: .blue, intensity: 0.06))
     }
 }
 
@@ -657,91 +552,221 @@ private struct QuotaWindowRow: View {
     }
 }
 
-private struct SettingsPane: View {
+private struct CompactSettingsPanel: View {
     let summary: TokscaleSummary
     let model: TokscaleDashboardModel
     let focus: TokscaleDashboardModel.ProviderFocus
     let refreshStatus: String?
-    let isRefreshing: Bool
-    let onRefreshScan: () -> Void
     let onOpenTokensCI: () -> Void
     let onRevealCache: () -> Void
     let onQuit: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            HStack(spacing: 7) {
-                DockButton(
-                    title: isRefreshing ? "Scanning" : "Refresh",
-                    systemName: isRefreshing ? "hourglass" : "arrow.clockwise",
-                    tint: .orange,
-                    disabled: isRefreshing,
-                    action: onRefreshScan
-                )
-                DockButton(title: "Web", systemName: "safari", tint: .green, action: onOpenTokensCI)
-                DockButton(title: "Cache", systemName: "folder", tint: .purple, action: onRevealCache)
-                Spacer(minLength: 4)
-                DockButton(title: "Quit", systemName: "power", tint: .red, action: onQuit)
-            }
-
-            VStack(spacing: 7) {
-                SettingsInfoRow(
-                    icon: "menubar.rectangle",
-                    title: "Menu title",
-                    value: summary.menuBarTitle,
-                    color: .blue
-                )
-                SettingsInfoRow(
-                    icon: "square.grid.2x2",
-                    title: "Provider order",
-                    value: providerOrderLabel,
-                    color: providerColor(focus.id)
-                )
-                SettingsInfoRow(
-                    icon: "clock.arrow.circlepath",
-                    title: "Refresh status",
-                    value: refreshStatus ?? model.health.detail,
-                    color: isRefreshing ? .orange : .green
-                )
-            }
+        HStack(spacing: 7) {
+            SettingsStatusPill(
+                title: summary.menuBarTitle,
+                value: refreshStatus ?? model.health.detail,
+                color: providerColor(focus.id)
+            )
+            ToolbarIconButton(systemName: "safari", tint: .green, help: "Open tokens.ci", action: onOpenTokensCI)
+            ToolbarIconButton(systemName: "folder", tint: .purple, help: "Reveal cache", action: onRevealCache)
+            ToolbarIconButton(systemName: "power", tint: .red, help: "Quit", action: onQuit)
         }
-        .padding(11)
-        .background(panelBackground(color: providerColor(focus.id), intensity: 0.045))
-    }
-
-    private var providerOrderLabel: String {
-        let labels = model.providers.prefix(4).map(\.label)
-        if labels.isEmpty {
-            return "No providers yet"
-        }
-        return labels.joined(separator: " · ")
+        .padding(.horizontal, 8)
+        .padding(.vertical, 7)
+        .background(
+            RoundedRectangle(cornerRadius: 13, style: .continuous)
+                .fill(companionPanelColor.opacity(0.98))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 13, style: .continuous)
+                .stroke(providerColor(focus.id).opacity(0.2), lineWidth: 1)
+        )
     }
 }
 
-private struct SettingsInfoRow: View {
-    let icon: String
+private struct SettingsStatusPill: View {
     let title: String
     let value: String
     let color: Color
 
     var body: some View {
+        HStack(spacing: 7) {
+            ProviderDot(color: color)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .font(.system(size: 10, weight: .bold))
+                    .lineLimit(1)
+                Text(value)
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 9)
+        .padding(.vertical, 5)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(color.opacity(0.08))
+        )
+    }
+}
+
+private struct HeaderIconButton: View {
+    let systemName: String
+    let tint: Color
+    var active = false
+    var disabled = false
+    let help: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 12, weight: .bold))
+                .frame(width: 26, height: 26)
+                .foregroundStyle(disabled ? .secondary.opacity(0.5) : tint)
+                .background(Circle().fill(tint.opacity(active ? 0.18 : 0.1)))
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled)
+        .help(help)
+    }
+}
+
+private struct ToolbarIconButton: View {
+    let systemName: String
+    let tint: Color
+    let help: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 12, weight: .bold))
+                .frame(width: 28, height: 28)
+                .foregroundStyle(tint)
+                .background(
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .fill(tint.opacity(0.11))
+                )
+        }
+        .buttonStyle(.plain)
+        .help(help)
+    }
+}
+
+private struct DashboardCard<Content: View>: View {
+    let icon: String
+    let title: String
+    let color: Color
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 6) {
+                Image(systemName: icon)
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(color)
+                Text(title)
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 0)
+            }
+            content
+        }
+        .padding(9)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(panelBackground(color: color, intensity: 0.04))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(color.opacity(0.11), lineWidth: 1)
+        )
+    }
+}
+
+private struct VisualMetricPill: View {
+    let title: String
+    let value: String
+    let detail: String
+    let progress: Double
+    let color: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.system(size: 14, weight: .bold, design: .rounded))
+                .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.68)
+            ProgressBar(progress: progress, color: color)
+            Text(detail)
+                .font(.system(size: 8, weight: .medium))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.65)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .fill(color.opacity(0.075))
+        )
+    }
+}
+
+private struct ProviderShareMeter: View {
+    let title: String
+    let value: String
+    let progress: Double
+    let color: Color
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(title)
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(.secondary)
+            ProgressBar(progress: progress, color: color)
+            Text(value)
+                .font(.system(size: 10, weight: .bold, design: .rounded))
+                .monospacedDigit()
+                .frame(width: 34, alignment: .trailing)
+        }
+        .frame(height: 12)
+    }
+}
+
+private struct CompactEmptyMessage: View {
+    let title: String
+    let detail: String
+    let icon: String
+
+    var body: some View {
         HStack(spacing: 8) {
             Image(systemName: icon)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(color)
-                .frame(width: 18)
-            Text(title)
-                .font(.system(size: 10, weight: .semibold))
+                .font(.system(size: 13, weight: .bold))
                 .foregroundStyle(.secondary)
-                .frame(width: 78, alignment: .leading)
-            Text(value)
-                .font(.system(size: 11, weight: .semibold))
-                .lineLimit(1)
-                .minimumScaleFactor(0.72)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .font(.system(size: 10, weight: .bold))
+                Text(detail)
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
+            }
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 9)
-        .padding(.vertical, 7)
+        .padding(.vertical, 8)
         .background(
             RoundedRectangle(cornerRadius: 11, style: .continuous)
                 .fill(Color(nsColor: .separatorColor).opacity(0.07))
@@ -749,54 +774,63 @@ private struct SettingsInfoRow: View {
     }
 }
 
-private struct DockButton: View {
-    let title: String
-    let systemName: String
-    let tint: Color
-    var disabled = false
-    let action: () -> Void
+private struct LimitMiniCard: View {
+    let quota: TokscaleDashboardModel.QuotaWindowSummary
 
-    @State private var isHovering = false
+    private var color: Color {
+        providerColor(quota.provider)
+    }
 
     var body: some View {
-        Button(action: action) {
-            VStack(spacing: 3) {
-                Image(systemName: systemName)
-                    .font(.system(size: 13, weight: .bold))
-                Text(title)
-                    .font(.system(size: 9, weight: .semibold))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
+        VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                Text(quota.title)
+                    .font(.system(size: 10, weight: .bold))
+                Spacer()
+                Text(quota.value)
+                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                    .monospacedDigit()
             }
-            .frame(width: 48, height: 35)
-            .foregroundStyle(buttonForeground)
-            .background(
-                RoundedRectangle(cornerRadius: 11, style: .continuous)
-                    .fill(buttonBackground)
-            )
-            .scaleEffect(isHovering && !disabled ? 1.05 : 1)
-            .animation(.spring(response: 0.18, dampingFraction: 0.78), value: isHovering)
+            ProgressBar(progress: quota.progress, color: color)
+            Text(resetLabel(quota.reset) ?? quota.detail)
+                .font(.system(size: 9, weight: .medium))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
         }
-        .buttonStyle(.plain)
-        .disabled(disabled)
-        .help(title)
-        .onHover { hovering in
-            isHovering = hovering
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 7)
+        .background(
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .fill(color.opacity(0.075))
+        )
+    }
+}
+
+private struct HistoryBars: View {
+    let days: [TokscaleDashboardModel.HistoryPoint]
+
+    var body: some View {
+        HStack(alignment: .bottom, spacing: 7) {
+            ForEach(days, id: \.date) { day in
+                VStack(spacing: 4) {
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .fill(historyColor(day.progress))
+                        .frame(height: max(7, 48 * day.progress))
+                    Text(String(day.date.suffix(2)))
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: 62, alignment: .bottom)
+                .help("\(day.date) · \(day.value) · \(day.messages)")
+            }
         }
+        .frame(height: 62)
     }
 
-    private var buttonForeground: Color {
-        if disabled {
-            return .secondary.opacity(0.45)
-        }
-        return isHovering ? tint : .secondary
-    }
-
-    private var buttonBackground: Color {
-        if disabled {
-            return Color(nsColor: .separatorColor).opacity(0.08)
-        }
-        return isHovering ? tint.opacity(0.13) : Color(nsColor: .separatorColor).opacity(0.08)
+    private func historyColor(_ progress: Double) -> Color {
+        Color.blue.opacity(progress > 0 ? 0.32 + 0.48 * progress : 0.14)
     }
 }
 
