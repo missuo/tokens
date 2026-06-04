@@ -1244,17 +1244,17 @@ private func parseISODate(_ value: String) -> Date? {
 private func providerColor(_ id: String) -> Color {
     switch id.lowercased() {
     case "claude":
-        return Color(hue: 0.94, saturation: 0.72, brightness: 0.93)
+        return Color(red: 0.88, green: 0.45, blue: 0.22)
     case "codex":
-        return Color(hue: 0.55, saturation: 0.82, brightness: 0.92)
+        return Color(red: 0.06, green: 0.64, blue: 0.50)
     case "gemini":
-        return Color(hue: 0.66, saturation: 0.84, brightness: 0.98)
+        return Color(red: 0.26, green: 0.52, blue: 0.96)
     case "openclaw":
-        return Color(hue: 0.75, saturation: 0.78, brightness: 0.95)
+        return Color(red: 0.62, green: 0.28, blue: 0.96)
     case "copilot":
-        return Color(hue: 0.58, saturation: 0.72, brightness: 0.88)
+        return Color(red: 0.12, green: 0.72, blue: 0.58)
     case "antigravity":
-        return Color(hue: 0.83, saturation: 0.74, brightness: 0.92)
+        return Color(red: 0.84, green: 0.24, blue: 0.78)
     default:
         return .accentColor
     }
