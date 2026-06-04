@@ -3,16 +3,22 @@ import SwiftUI
 import TokscaleMenuBarCore
 
 @MainActor
+final class TokensMenuBarState: ObservableObject {
+    @Published var summary: TokscaleSummary?
+    @Published var errorMessage: String?
+    @Published var isRefreshing = false
+    @Published var refreshStatus: String?
+}
+
+@MainActor
 final class MenuBarController: NSObject, NSApplicationDelegate {
     private let store = TokscaleSummaryStore()
-    private let popoverContentSize = NSSize(width: 420, height: 460)
+    private let viewState = TokensMenuBarState()
+    private let popoverContentSize = NSSize(width: 500, height: 580)
     private var statusItem: NSStatusItem?
     private let popover = NSPopover()
+    private var hostingController: NSHostingController<TokensPopoverView>?
     private var refreshTimer: Timer?
-    private var currentSummary: TokscaleSummary?
-    private var currentError: Error?
-    private var isRefreshing = false
-    private var refreshStatus: String?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -36,6 +42,21 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
             button.target = self
             button.action = #selector(togglePopover)
         }
+
+        let controller = NSHostingController(
+            rootView: TokensPopoverView(
+                state: viewState,
+                onReload: { [weak self] in self?.reload() },
+                onRefreshScan: { [weak self] in self?.refreshScan() },
+                onOpenTokensCI: { [weak self] in self?.openTokensCI() },
+                onRevealCache: { [weak self] in self?.revealCache() },
+                onQuit: { [weak self] in self?.quit() }
+            )
+        )
+        controller.sizingOptions = []
+        controller.view.frame = NSRect(origin: .zero, size: popoverContentSize)
+        hostingController = controller
+        popover.contentViewController = controller
 
         reload()
         refreshTimer = Timer.scheduledTimer(
@@ -84,11 +105,11 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
     }
 
     private func refreshScan() {
-        guard !isRefreshing else {
+        guard !viewState.isRefreshing else {
             return
         }
-        isRefreshing = true
-        refreshStatus = "Scanning local AI sessions..."
+        viewState.isRefreshing = true
+        viewState.refreshStatus = "Scanning local AI sessions..."
         render()
 
         DispatchQueue.global(qos: .utility).async { [weak self] in
@@ -97,8 +118,8 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
                 guard let self else {
                     return
                 }
-                self.isRefreshing = false
-                self.refreshStatus = result
+                self.viewState.isRefreshing = false
+                self.viewState.refreshStatus = result
                 self.reload()
             }
         }
@@ -110,34 +131,19 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
 
     private func reload() {
         do {
-            currentSummary = try store.load()
-            currentError = nil
+            viewState.summary = try store.load()
+            viewState.errorMessage = nil
         } catch {
-            currentSummary = nil
-            currentError = error
+            viewState.summary = nil
+            viewState.errorMessage = error.localizedDescription
         }
         render()
     }
 
     private func render() {
-        statusItem?.button?.title = currentSummary?.menuBarTitle ?? "AI Tokens"
-        let controller = NSHostingController(
-            rootView: TokensPopoverView(
-                summary: currentSummary,
-                errorMessage: currentError?.localizedDescription,
-                isRefreshing: isRefreshing,
-                refreshStatus: refreshStatus,
-                onReload: { [weak self] in self?.reload() },
-                onRefreshScan: { [weak self] in self?.refreshScan() },
-                onOpenTokensCI: { [weak self] in self?.openTokensCI() },
-                onRevealCache: { [weak self] in self?.revealCache() },
-                onQuit: { [weak self] in self?.quit() }
-            )
-        )
-        controller.sizingOptions = []
-        controller.view.frame = NSRect(origin: .zero, size: popoverContentSize)
+        statusItem?.button?.title = viewState.summary?.menuBarTitle ?? "AI Tokens"
         popover.contentSize = popoverContentSize
-        popover.contentViewController = controller
+        hostingController?.view.frame = NSRect(origin: .zero, size: popoverContentSize)
     }
 
     nonisolated private static func runCompanionRefresh() -> String {

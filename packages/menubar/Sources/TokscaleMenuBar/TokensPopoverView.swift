@@ -3,10 +3,7 @@ import SwiftUI
 import TokscaleMenuBarCore
 
 struct TokensPopoverView: View {
-    let summary: TokscaleSummary?
-    let errorMessage: String?
-    let isRefreshing: Bool
-    let refreshStatus: String?
+    @ObservedObject var state: TokensMenuBarState
     let onReload: () -> Void
     let onRefreshScan: () -> Void
     let onOpenTokensCI: () -> Void
@@ -39,7 +36,23 @@ struct TokensPopoverView: View {
             }
             .padding(12)
         }
-        .frame(width: 420, height: 460, alignment: .top)
+        .frame(width: 500, height: 580, alignment: .top)
+    }
+
+    private var summary: TokscaleSummary? {
+        state.summary
+    }
+
+    private var errorMessage: String? {
+        state.errorMessage
+    }
+
+    private var isRefreshing: Bool {
+        state.isRefreshing
+    }
+
+    private var refreshStatus: String? {
+        state.refreshStatus
     }
 
     private var accent: Color {
