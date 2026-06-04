@@ -19,20 +19,15 @@ struct TokensPopoverView: View {
                     SummaryContent(
                         summary: summary,
                         isRefreshing: isRefreshing,
-                        refreshStatus: refreshStatus
+                        refreshStatus: refreshStatus,
+                        onRefreshScan: onRefreshScan,
+                        onOpenTokensCI: onOpenTokensCI,
+                        onRevealCache: onRevealCache,
+                        onQuit: onQuit
                     )
                 } else {
                     EmptyContent(errorMessage: errorMessage)
                 }
-
-                ActionDock(
-                    isRefreshing: isRefreshing,
-                    onReload: onReload,
-                    onRefreshScan: onRefreshScan,
-                    onOpenTokensCI: onOpenTokensCI,
-                    onRevealCache: onRevealCache,
-                    onQuit: onQuit
-                )
             }
             .padding(12)
         }
@@ -71,23 +66,23 @@ struct TokensPopoverView: View {
 }
 
 private enum CompanionPanel: String, CaseIterable, Identifiable {
-    case quota = "Quota"
-    case today = "Today"
+    case overview = "Overview"
+    case limits = "Limits"
     case history = "History"
-    case clients = "Clients"
+    case settings = "Settings"
 
     var id: String { rawValue }
 
     var icon: String {
         switch self {
-        case .quota:
+        case .overview:
+            return "chart.pie"
+        case .limits:
             return "gauge.with.dots.needle.67percent"
-        case .today:
-            return "calendar"
         case .history:
             return "chart.bar"
-        case .clients:
-            return "square.grid.2x2"
+        case .settings:
+            return "gearshape"
         }
     }
 }
@@ -96,12 +91,21 @@ private struct SummaryContent: View {
     let summary: TokscaleSummary
     let isRefreshing: Bool
     let refreshStatus: String?
+    let onRefreshScan: () -> Void
+    let onOpenTokensCI: () -> Void
+    let onRevealCache: () -> Void
+    let onQuit: () -> Void
 
     @Namespace private var panelNamespace
-    @State private var selectedPanel = CompanionPanel.quota
+    @State private var selectedPanel = CompanionPanel.overview
+    @State private var selectedProviderId: String?
 
     private var model: TokscaleDashboardModel {
         TokscaleDashboardModel(summary: summary)
+    }
+
+    private var selectedFocus: TokscaleDashboardModel.ProviderFocus {
+        model.providerFocus(for: selectedProviderId)
     }
 
     var body: some View {
@@ -109,47 +113,70 @@ private struct SummaryContent: View {
             CompanionHeader(
                 summary: summary,
                 model: model,
-                isRefreshing: isRefreshing
+                focus: selectedFocus,
+                isRefreshing: isRefreshing,
+                onRefresh: onRefreshScan
+            )
+
+            ProviderChipRow(
+                providers: model.providers,
+                selectedProviderId: selectedFocus.id,
+                onSelect: { providerId in
+                    withAnimation(.spring(response: 0.26, dampingFraction: 0.86)) {
+                        selectedProviderId = providerId
+                    }
+                }
             )
 
             FocusHeroCard(
                 summary: summary,
                 model: model,
+                focus: selectedFocus,
                 isRefreshing: isRefreshing
             )
 
             PanelSwitcher(
                 selectedPanel: $selectedPanel,
-                namespace: panelNamespace,
-                quotaAvailable: !model.quotaWindows.isEmpty
+                namespace: panelNamespace
             )
 
             DynamicDetailPane(
                 panel: selectedPanel,
                 summary: summary,
                 model: model,
-                refreshStatus: refreshStatus
+                focus: selectedFocus,
+                refreshStatus: refreshStatus,
+                isRefreshing: isRefreshing,
+                onRefreshScan: onRefreshScan,
+                onOpenTokensCI: onOpenTokensCI,
+                onRevealCache: onRevealCache,
+                onQuit: onQuit
             )
             .transition(.opacity.combined(with: .scale(scale: 0.985)))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .onAppear {
-            if model.quotaWindows.isEmpty {
-                selectedPanel = .today
-            }
+            syncSelectedProvider()
         }
-        .onChange(of: model.quotaWindows) { quotaWindows in
-            if quotaWindows.isEmpty, selectedPanel == .quota {
-                selectedPanel = .today
-            }
+        .onChange(of: model.providers) { _ in
+            syncSelectedProvider()
         }
+    }
+
+    private func syncSelectedProvider() {
+        if let selectedProviderId, model.providers.contains(where: { $0.id == selectedProviderId }) {
+            return
+        }
+        selectedProviderId = model.providers.first?.id
     }
 }
 
 private struct CompanionHeader: View {
     let summary: TokscaleSummary
     let model: TokscaleDashboardModel
+    let focus: TokscaleDashboardModel.ProviderFocus
     let isRefreshing: Bool
+    let onRefresh: () -> Void
 
     var body: some View {
         HStack(spacing: 10) {
@@ -163,6 +190,19 @@ private struct CompanionHeader: View {
                     .lineLimit(1)
             }
             Spacer()
+            Button(action: onRefresh) {
+                Image(systemName: isRefreshing ? "hourglass" : "arrow.clockwise")
+                    .font(.system(size: 12, weight: .bold))
+                    .frame(width: 26, height: 26)
+                    .foregroundStyle(isRefreshing ? .orange : providerColor(focus.id))
+                    .background(
+                        Circle()
+                            .fill(providerColor(focus.id).opacity(isRefreshing ? 0.06 : 0.12))
+                    )
+            }
+            .buttonStyle(.plain)
+            .disabled(isRefreshing)
+            .help(isRefreshing ? "Scanning" : "Refresh scan")
             StatusCapsule(
                 title: isRefreshing ? "Scanning" : model.health.title,
                 color: isRefreshing ? .orange : (summary.stale ? .orange : .green),
@@ -173,32 +213,30 @@ private struct CompanionHeader: View {
     }
 
     private var headerSubtitle: String {
-        if let quota = model.quotaWindows.first {
+        if let quota = focus.primaryQuota {
             let plan = quota.plan.map { " · \($0)" } ?? ""
             return "\(quota.provider) quota\(plan)"
         }
-        return "\(model.clientLabels.count) AI clients · local cache"
+        return "\(focus.title) · \(focus.quotaStatus)"
     }
 }
 
 private struct FocusHeroCard: View {
     let summary: TokscaleSummary
     let model: TokscaleDashboardModel
+    let focus: TokscaleDashboardModel.ProviderFocus
     let isRefreshing: Bool
 
     private var primaryQuota: TokscaleDashboardModel.QuotaWindowSummary? {
-        model.quotaWindows.first { $0.title.lowercased() == "session" } ?? model.quotaWindows.first
+        focus.primaryQuota
     }
 
     private var weeklyQuota: TokscaleDashboardModel.QuotaWindowSummary? {
-        model.quotaWindows.first { $0.title.lowercased() == "weekly" }
+        focus.weeklyQuota
     }
 
     private var accent: Color {
-        if let primaryQuota {
-            return providerColor(primaryQuota.provider)
-        }
-        return .blue
+        providerColor(focus.id)
     }
 
     var body: some View {
@@ -206,10 +244,10 @@ private struct FocusHeroCard: View {
             VStack(alignment: .leading, spacing: 7) {
                 HStack(spacing: 6) {
                     ProviderDot(color: accent)
-                    Text(primaryQuota?.provider ?? "Today")
+                    Text(focus.title)
                         .font(.system(size: 12, weight: .semibold))
                     Spacer(minLength: 0)
-                    Text(primaryQuota?.title ?? "Local usage")
+                    Text(primaryQuota?.title ?? focus.quotaStatus)
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(.secondary)
                 }
@@ -234,23 +272,23 @@ private struct FocusHeroCard: View {
                     )
                     MiniMetric(
                         title: weeklyQuota?.title ?? "Messages",
-                        value: weeklyQuota?.value ?? "\(summary.today.messages)",
+                        value: weeklyQuota?.value ?? focus.messages,
                         color: weeklyQuota.map { providerColor($0.provider) } ?? .orange
                     )
                 }
             }
 
             UsageArcGauge(
-                progress: primaryQuota?.progress ?? model.hero.progress,
+                progress: primaryQuota?.progress ?? focus.share,
                 color: accent,
                 centerTitle: gaugeTitle,
-                centerSubtitle: primaryQuota == nil ? "daily avg" : "quota",
+                centerSubtitle: primaryQuota == nil ? "share" : "quota",
                 active: isRefreshing
             )
             .frame(width: 102, height: 102)
         }
         .padding(14)
-        .frame(height: 122)
+        .frame(height: 136)
         .background(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .fill(companionPanelColor)
@@ -270,7 +308,7 @@ private struct FocusHeroCard: View {
     }
 
     private var heroTitle: String {
-        primaryQuota?.value ?? formatToday(summary)
+        primaryQuota?.value ?? focus.today
     }
 
     private var heroSubtitle: String {
@@ -278,14 +316,14 @@ private struct FocusHeroCard: View {
             let reset = resetLabel(primaryQuota.reset).map { " · reset \($0)" } ?? ""
             return "\(primaryQuota.detail)\(reset)"
         }
-        return "\(formatTokens(summary.today.tokens)) tokens · \(summary.today.messages) messages"
+        return focus.topModel
     }
 
     private var gaugeTitle: String {
         if let primaryQuota {
             return "\(Int((primaryQuota.progress * 100).rounded()))%"
         }
-        return "\(Int((model.hero.progress * 100).rounded()))%"
+        return "\(Int((focus.share * 100).rounded()))%"
     }
 
     private var heroBorder: LinearGradient {
@@ -301,18 +339,105 @@ private struct FocusHeroCard: View {
     }
 }
 
-private struct PanelSwitcher: View {
-    @Binding var selectedPanel: CompanionPanel
-    let namespace: Namespace.ID
-    let quotaAvailable: Bool
+private struct ProviderChipRow: View {
+    let providers: [TokscaleDashboardModel.ProviderSummary]
+    let selectedProviderId: String?
+    let onSelect: (String) -> Void
 
-    private var panels: [CompanionPanel] {
-        quotaAvailable ? CompanionPanel.allCases : [.today, .history, .clients]
+    var body: some View {
+        HStack(spacing: 7) {
+            if providers.isEmpty {
+                ProviderChipPlaceholder()
+            } else {
+                ForEach(providers.prefix(5), id: \.id) { provider in
+                    ProviderChip(
+                        provider: provider,
+                        selected: provider.id == selectedProviderId,
+                        onSelect: { onSelect(provider.id) }
+                    )
+                }
+            }
+        }
+        .frame(height: 54)
+    }
+}
+
+private struct ProviderChip: View {
+    let provider: TokscaleDashboardModel.ProviderSummary
+    let selected: Bool
+    let onSelect: () -> Void
+
+    private var color: Color {
+        providerColor(provider.id)
     }
 
     var body: some View {
+        Button(action: onSelect) {
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 5) {
+                    ProviderDot(color: color)
+                    Text(provider.label)
+                        .font(.system(size: 11, weight: .semibold))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.74)
+                }
+                Text(provider.value)
+                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.76)
+                Text(provider.detail)
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 7)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(color.opacity(selected ? 0.18 : 0.075))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(color.opacity(selected ? 0.55 : 0.14), lineWidth: 1)
+            )
+            .scaleEffect(selected ? 1.015 : 1)
+            .animation(.spring(response: 0.2, dampingFraction: 0.86), value: selected)
+        }
+        .buttonStyle(.plain)
+        .help(provider.label)
+    }
+}
+
+private struct ProviderChipPlaceholder: View {
+    var body: some View {
+        HStack(spacing: 8) {
+            ProviderDot(color: .secondary)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("No provider data")
+                    .font(.system(size: 11, weight: .semibold))
+                Text("Run a refresh scan to populate clients")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(panelBackground(color: .secondary, intensity: 0.04))
+    }
+}
+
+private struct PanelSwitcher: View {
+    @Binding var selectedPanel: CompanionPanel
+    let namespace: Namespace.ID
+
+    var body: some View {
         HStack(spacing: 4) {
-            ForEach(panels) { panel in
+            ForEach(CompanionPanel.allCases) { panel in
                 Button {
                     withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
                         selectedPanel = panel
@@ -352,78 +477,110 @@ private struct DynamicDetailPane: View {
     let panel: CompanionPanel
     let summary: TokscaleSummary
     let model: TokscaleDashboardModel
+    let focus: TokscaleDashboardModel.ProviderFocus
     let refreshStatus: String?
+    let isRefreshing: Bool
+    let onRefreshScan: () -> Void
+    let onOpenTokensCI: () -> Void
+    let onRevealCache: () -> Void
+    let onQuit: () -> Void
 
     var body: some View {
         ZStack {
             switch panel {
-            case .quota:
-                QuotaPane(model: model)
-            case .today:
-                TodayPane(summary: summary, model: model)
+            case .overview:
+                OverviewPane(summary: summary, model: model, focus: focus)
+            case .limits:
+                LimitsPane(focus: focus)
             case .history:
                 HistoryPane(model: model)
-            case .clients:
-                ClientsPane(model: model)
+            case .settings:
+                SettingsPane(
+                    summary: summary,
+                    model: model,
+                    focus: focus,
+                    refreshStatus: refreshStatus,
+                    isRefreshing: isRefreshing,
+                    onRefreshScan: onRefreshScan,
+                    onOpenTokensCI: onOpenTokensCI,
+                    onRevealCache: onRevealCache,
+                    onQuit: onQuit
+                )
             }
         }
-        .frame(maxWidth: .infinity, minHeight: 150, maxHeight: 160, alignment: .top)
+        .frame(maxWidth: .infinity, minHeight: 220, maxHeight: 240, alignment: .top)
         .animation(.spring(response: 0.28, dampingFraction: 0.86), value: panel)
     }
 }
 
-private struct QuotaPane: View {
-    let model: TokscaleDashboardModel
-
-    var body: some View {
-        VStack(spacing: 8) {
-            if model.quotaWindows.isEmpty {
-                EmptyPaneMessage(
-                    title: "No quota data",
-                    detail: "Run Scan after Claude login to fetch 5h and weekly limits.",
-                    icon: "gauge.with.dots.needle.67percent"
-                )
-            } else {
-                ForEach(Array(model.quotaWindows.prefix(2).enumerated()), id: \.offset) { _, quota in
-                    QuotaWindowRow(quota: quota)
-                }
-            }
-        }
-    }
-}
-
-private struct TodayPane: View {
+private struct OverviewPane: View {
     let summary: TokscaleSummary
     let model: TokscaleDashboardModel
+    let focus: TokscaleDashboardModel.ProviderFocus
 
     var body: some View {
         VStack(spacing: 8) {
             HStack(spacing: 8) {
                 CompactStatTile(
-                    title: "Cost",
+                    title: "Today",
                     value: formatToday(summary),
                     detail: model.hero.progressLabel,
                     color: .blue
                 )
                 CompactStatTile(
+                    title: focus.title,
+                    value: focus.today.replacingOccurrences(of: " today", with: ""),
+                    detail: focus.topModel,
+                    color: providerColor(focus.id)
+                )
+            }
+
+            HStack(spacing: 8) {
+                CompactStatTile(
                     title: "Tokens",
-                    value: formatTokens(summary.today.tokens),
-                    detail: "\(summary.today.messages) messages",
+                    value: focus.tokens,
+                    detail: focus.messages,
                     color: .green
+                )
+                CompactStatTile(
+                    title: "Total",
+                    value: focus.total.replacingOccurrences(of: " total", with: ""),
+                    detail: "\(Int((focus.share * 100).rounded()))% of all spend",
+                    color: providerColor(focus.id)
                 )
             }
 
             HStack(spacing: 8) {
                 SignalChip(
-                    title: "Top client",
-                    value: summary.top.client ?? "none",
-                    color: providerColor(summary.top.client ?? "")
+                    title: "Work time",
+                    value: focus.workTime,
+                    color: .blue
                 )
                 SignalChip(
-                    title: "Top model",
-                    value: summary.top.model ?? "No model",
-                    color: .orange
+                    title: focus.id.lowercased() == "claude" ? "Sonnet only" : "Model time",
+                    value: focus.focusedModelTime,
+                    color: providerColor(focus.id)
                 )
+            }
+        }
+    }
+}
+
+private struct LimitsPane: View {
+    let focus: TokscaleDashboardModel.ProviderFocus
+
+    var body: some View {
+        VStack(spacing: 8) {
+            if focus.quotaWindows.isEmpty {
+                EmptyPaneMessage(
+                    title: "No official quota",
+                    detail: "\(focus.title) has local usage data, but no official 5h or weekly limit window in the current cache.",
+                    icon: "gauge.with.dots.needle.67percent"
+                )
+            } else {
+                ForEach(Array(focus.quotaWindows.prefix(3).enumerated()), id: \.offset) { _, quota in
+                    QuotaWindowRow(quota: quota)
+                }
             }
         }
     }
@@ -467,18 +624,6 @@ private struct HistoryPane: View {
     }
 }
 
-private struct ClientsPane: View {
-    let model: TokscaleDashboardModel
-
-    var body: some View {
-        VStack(spacing: 7) {
-            ForEach(model.providers.prefix(4), id: \.id) { provider in
-                ClientUsageRow(provider: provider)
-            }
-        }
-    }
-}
-
 private struct QuotaWindowRow: View {
     let quota: TokscaleDashboardModel.QuotaWindowSummary
 
@@ -512,67 +657,94 @@ private struct QuotaWindowRow: View {
     }
 }
 
-private struct ClientUsageRow: View {
-    let provider: TokscaleDashboardModel.ProviderSummary
-
-    private var color: Color {
-        providerColor(provider.id)
-    }
-
-    var body: some View {
-        VStack(spacing: 5) {
-            HStack(spacing: 8) {
-                ProviderDot(color: color)
-                Text(provider.label)
-                    .font(.system(size: 12, weight: .semibold))
-                Spacer()
-                Text(provider.value)
-                    .font(.system(size: 12, weight: .bold, design: .rounded))
-                    .monospacedDigit()
-                Text("\(Int((provider.share * 100).rounded()))%")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 34, alignment: .trailing)
-            }
-            ProgressBar(progress: provider.share, color: color)
-        }
-        .padding(9)
-        .background(panelBackground(color: color, intensity: 0.045))
-    }
-}
-
-private struct ActionDock: View {
+private struct SettingsPane: View {
+    let summary: TokscaleSummary
+    let model: TokscaleDashboardModel
+    let focus: TokscaleDashboardModel.ProviderFocus
+    let refreshStatus: String?
     let isRefreshing: Bool
-    let onReload: () -> Void
     let onRefreshScan: () -> Void
     let onOpenTokensCI: () -> Void
     let onRevealCache: () -> Void
     let onQuit: () -> Void
 
     var body: some View {
-        HStack(spacing: 7) {
-            DockButton(title: "Reload", systemName: "arrow.clockwise", tint: .blue, action: onReload)
-            DockButton(
-                title: isRefreshing ? "Scanning" : "Scan",
-                systemName: isRefreshing ? "hourglass" : "bolt.horizontal",
-                tint: .orange,
-                disabled: isRefreshing,
-                action: onRefreshScan
-            )
-            DockButton(title: "Web", systemName: "safari", tint: .green, action: onOpenTokensCI)
-            DockButton(title: "Cache", systemName: "folder", tint: .purple, action: onRevealCache)
-            Spacer(minLength: 4)
-            DockButton(title: "Quit", systemName: "power", tint: .red, action: onQuit)
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(spacing: 7) {
+                DockButton(
+                    title: isRefreshing ? "Scanning" : "Refresh",
+                    systemName: isRefreshing ? "hourglass" : "arrow.clockwise",
+                    tint: .orange,
+                    disabled: isRefreshing,
+                    action: onRefreshScan
+                )
+                DockButton(title: "Web", systemName: "safari", tint: .green, action: onOpenTokensCI)
+                DockButton(title: "Cache", systemName: "folder", tint: .purple, action: onRevealCache)
+                Spacer(minLength: 4)
+                DockButton(title: "Quit", systemName: "power", tint: .red, action: onQuit)
+            }
+
+            VStack(spacing: 7) {
+                SettingsInfoRow(
+                    icon: "menubar.rectangle",
+                    title: "Menu title",
+                    value: summary.menuBarTitle,
+                    color: .blue
+                )
+                SettingsInfoRow(
+                    icon: "square.grid.2x2",
+                    title: "Provider order",
+                    value: providerOrderLabel,
+                    color: providerColor(focus.id)
+                )
+                SettingsInfoRow(
+                    icon: "clock.arrow.circlepath",
+                    title: "Refresh status",
+                    value: refreshStatus ?? model.health.detail,
+                    color: isRefreshing ? .orange : .green
+                )
+            }
         }
-        .padding(7)
-        .frame(height: 50)
+        .padding(11)
+        .background(panelBackground(color: providerColor(focus.id), intensity: 0.045))
+    }
+
+    private var providerOrderLabel: String {
+        let labels = model.providers.prefix(4).map(\.label)
+        if labels.isEmpty {
+            return "No providers yet"
+        }
+        return labels.joined(separator: " · ")
+    }
+}
+
+private struct SettingsInfoRow: View {
+    let icon: String
+    let title: String
+    let value: String
+    let color: Color
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(color)
+                .frame(width: 18)
+            Text(title)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 78, alignment: .leading)
+            Text(value)
+                .font(.system(size: 11, weight: .semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 7)
         .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(companionPanelColor.opacity(0.98))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(Color.white.opacity(0.1), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .fill(Color(nsColor: .separatorColor).opacity(0.07))
         )
     }
 }
