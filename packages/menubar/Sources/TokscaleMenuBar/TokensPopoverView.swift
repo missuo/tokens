@@ -297,9 +297,9 @@ private struct FocusHeroCard: View {
         )
         .overlay(alignment: .topTrailing) {
             Circle()
-                .fill(accent.opacity(0.16))
+                .fill(accent.opacity(0.08))
                 .frame(width: 92, height: 92)
-                .blur(radius: 28)
+                .blur(radius: 30)
                 .offset(x: 20, y: -32)
         }
         .clipped()
@@ -327,9 +327,9 @@ private struct FocusHeroCard: View {
     private var heroBorder: LinearGradient {
         LinearGradient(
             colors: [
-                accent.opacity(0.55),
-                Color.white.opacity(0.08),
-                Color(nsColor: .separatorColor).opacity(0.2)
+                accent.opacity(0.34),
+                Color.white.opacity(0.06),
+                Color.primary.opacity(0.06)
             ],
             startPoint: .topLeading,
             endPoint: .bottomTrailing
@@ -396,11 +396,11 @@ private struct ProviderChip: View {
             .padding(.vertical, 7)
             .background(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(color.opacity(selected ? 0.18 : 0.075))
+                    .fill(color.opacity(selected ? 0.14 : 0.055))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(color.opacity(selected ? 0.55 : 0.14), lineWidth: 1)
+                    .stroke(color.opacity(selected ? 0.34 : 0.10), lineWidth: 1)
             )
             .scaleEffect(selected ? 1.015 : 1)
             .animation(.spring(response: 0.2, dampingFraction: 0.86), value: selected)
@@ -589,7 +589,7 @@ private struct CompactSettingsPanel: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: 13, style: .continuous)
-                .stroke(providerColor(focus.id).opacity(0.2), lineWidth: 1)
+                .stroke(providerColor(focus.id).opacity(0.14), lineWidth: 1)
         )
     }
 }
@@ -618,7 +618,7 @@ private struct SettingsStatusPill: View {
         .padding(.vertical, 5)
         .background(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(color.opacity(0.08))
+                .fill(color.opacity(0.055))
         )
     }
 }
@@ -637,7 +637,7 @@ private struct HeaderIconButton: View {
                 .font(.system(size: 12, weight: .bold))
                 .frame(width: 26, height: 26)
                 .foregroundStyle(disabled ? .secondary.opacity(0.5) : tint)
-                .background(Circle().fill(tint.opacity(active ? 0.18 : 0.1)))
+                .background(Circle().fill(tint.opacity(active ? 0.14 : 0.075)))
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -660,7 +660,7 @@ private struct ToolbarIconButton: View {
                 .foregroundStyle(tint)
                 .background(
                     RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .fill(tint.opacity(0.11))
+                        .fill(tint.opacity(0.075))
                 )
                 .contentShape(Rectangle())
         }
@@ -691,12 +691,13 @@ private struct DashboardCard<Content: View>: View {
         .padding(9)
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(panelBackground(color: color, intensity: 0.04))
+                .fill(panelBackground(color: color, intensity: 0.028))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(color.opacity(0.11), lineWidth: 1)
+                .stroke(Color.primary.opacity(0.055), lineWidth: 1)
         )
+        .shadow(color: Color.black.opacity(0.035), radius: 8, x: 0, y: 3)
     }
 }
 
@@ -729,7 +730,7 @@ private struct VisualMetricPill: View {
         .padding(.vertical, 6)
         .background(
             RoundedRectangle(cornerRadius: 11, style: .continuous)
-                .fill(color.opacity(0.075))
+                .fill(color.opacity(0.045))
         )
     }
 }
@@ -814,7 +815,7 @@ private struct LimitMiniCard: View {
         .padding(.vertical, 7)
         .background(
             RoundedRectangle(cornerRadius: 11, style: .continuous)
-                .fill(color.opacity(0.075))
+                .fill(color.opacity(0.045))
         )
     }
 }
@@ -841,7 +842,7 @@ private struct HistoryBars: View {
     }
 
     private func historyColor(_ progress: Double) -> Color {
-        Color.blue.opacity(progress > 0 ? 0.32 + 0.48 * progress : 0.14)
+        providerColor("codex").opacity(progress > 0 ? 0.20 + 0.42 * progress : 0.10)
     }
 }
 
@@ -859,17 +860,17 @@ private struct UsageArcGauge: View {
         ZStack {
             Circle()
                 .trim(from: 0.08, to: 0.92)
-                .stroke(Color(nsColor: .separatorColor).opacity(0.28), style: StrokeStyle(lineWidth: 9, lineCap: .round))
+                .stroke(color.opacity(0.12), style: StrokeStyle(lineWidth: 9, lineCap: .round))
                 .rotationEffect(.degrees(90))
 
             Circle()
                 .trim(from: 0.08, to: 0.08 + 0.84 * visibleProgress)
                 .stroke(color, style: StrokeStyle(lineWidth: 9, lineCap: .round))
                 .rotationEffect(.degrees(90))
-                .shadow(color: color.opacity(0.25), radius: active ? 10 : 5)
+                .shadow(color: color.opacity(active ? 0.18 : 0.10), radius: active ? 10 : 5)
 
             Circle()
-                .fill(color.opacity(active ? 0.13 : 0.07))
+                .fill(color.opacity(active ? 0.09 : 0.045))
                 .frame(width: pulse && active ? 82 : 64, height: pulse && active ? 82 : 64)
                 .animation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true), value: pulse)
 
@@ -1127,8 +1128,8 @@ private struct CompanionBackdrop: View {
 
             LinearGradient(
                 colors: [
-                    accent.opacity(0.13),
-                    companionPanelColor.opacity(0.62),
+                    accent.opacity(0.055),
+                    companionPanelColor.opacity(0.80),
                     companionSurfaceColor
                 ],
                 startPoint: .topLeading,
@@ -1141,27 +1142,27 @@ private struct CompanionBackdrop: View {
 private let companionSurfaceColor = Color(
     nsColor: NSColor(name: nil) { appearance in
         if appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua {
-            return NSColor(calibratedRed: 0.095, green: 0.095, blue: 0.10, alpha: 1)
+            return NSColor(calibratedRed: 0.110, green: 0.110, blue: 0.118, alpha: 1)
         }
-        return NSColor(calibratedRed: 0.965, green: 0.965, blue: 0.955, alpha: 1)
+        return NSColor(calibratedRed: 0.960, green: 0.960, blue: 0.968, alpha: 1)
     }
 )
 
 private let companionPanelColor = Color(
     nsColor: NSColor(name: nil) { appearance in
         if appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua {
-            return NSColor(calibratedRed: 0.135, green: 0.132, blue: 0.128, alpha: 1)
+            return NSColor(calibratedRed: 0.173, green: 0.173, blue: 0.180, alpha: 1)
         }
-        return NSColor(calibratedRed: 0.995, green: 0.995, blue: 0.985, alpha: 1)
+        return NSColor(calibratedRed: 1.000, green: 1.000, blue: 1.000, alpha: 1)
     }
 )
 
 private let companionSelectedSurfaceColor = Color(
     nsColor: NSColor(name: nil) { appearance in
         if appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua {
-            return NSColor(calibratedRed: 0.19, green: 0.185, blue: 0.18, alpha: 1)
+            return NSColor(calibratedRed: 0.228, green: 0.228, blue: 0.236, alpha: 1)
         }
-        return NSColor(calibratedRed: 1, green: 1, blue: 0.995, alpha: 1)
+        return NSColor(calibratedRed: 0.910, green: 0.910, blue: 0.930, alpha: 1)
     }
 )
 
@@ -1240,17 +1241,17 @@ private func parseISODate(_ value: String) -> Date? {
 private func providerColor(_ id: String) -> Color {
     switch id.lowercased() {
     case "claude":
-        return Color(red: 0.86, green: 0.43, blue: 0.17)
+        return Color(red: 0.85, green: 0.47, blue: 0.34)
     case "codex":
-        return Color(red: 0.20, green: 0.43, blue: 0.92)
+        return Color(red: 0.31, green: 0.64, blue: 0.51)
     case "gemini":
-        return Color(red: 0.16, green: 0.62, blue: 0.40)
+        return Color(red: 0.29, green: 0.47, blue: 0.91)
     case "openclaw":
-        return Color(red: 0.50, green: 0.32, blue: 0.82)
+        return Color(red: 0.58, green: 0.44, blue: 0.86)
     case "copilot":
-        return Color(red: 0.06, green: 0.52, blue: 0.56)
+        return Color(red: 0.27, green: 0.51, blue: 0.71)
     case "antigravity":
-        return Color(red: 0.76, green: 0.28, blue: 0.48)
+        return Color(red: 0.83, green: 0.69, blue: 0.22)
     default:
         return .accentColor
     }
