@@ -5,6 +5,7 @@ import TokscaleMenuBarCore
 @MainActor
 final class MenuBarController: NSObject, NSApplicationDelegate {
     private let store = TokscaleSummaryStore()
+    private let popoverContentSize = NSSize(width: 420, height: 460)
     private var statusItem: NSStatusItem?
     private let popover = NSPopover()
     private var refreshTimer: Timer?
@@ -17,7 +18,7 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.accessory)
         popover.behavior = .transient
         popover.animates = false
-        popover.contentSize = NSSize(width: 420, height: 460)
+        popover.contentSize = popoverContentSize
 
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem = item
@@ -63,7 +64,7 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
             return
         }
         NSApp.activate(ignoringOtherApps: true)
-        popover.contentSize = NSSize(width: 420, height: 460)
+        popover.contentSize = popoverContentSize
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         popover.contentViewController?.view.window?.makeKey()
     }
@@ -120,7 +121,7 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
 
     private func render() {
         statusItem?.button?.title = currentSummary?.menuBarTitle ?? "AI Tokens"
-        popover.contentViewController = NSHostingController(
+        let controller = NSHostingController(
             rootView: TokensPopoverView(
                 summary: currentSummary,
                 errorMessage: currentError?.localizedDescription,
@@ -133,6 +134,10 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
                 onQuit: { [weak self] in self?.quit() }
             )
         )
+        controller.sizingOptions = []
+        controller.view.frame = NSRect(origin: .zero, size: popoverContentSize)
+        popover.contentSize = popoverContentSize
+        popover.contentViewController = controller
     }
 
     nonisolated private static func runCompanionRefresh() -> String {

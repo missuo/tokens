@@ -240,7 +240,7 @@ private struct FocusHeroCard: View {
         .frame(height: 122)
         .background(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(Color(nsColor: .controlBackgroundColor).opacity(0.9))
+                .fill(companionPanelColor)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
@@ -317,7 +317,7 @@ private struct PanelSwitcher: View {
                     .background {
                         if selectedPanel == panel {
                             Capsule()
-                                .fill(Color(nsColor: .windowBackgroundColor).opacity(0.94))
+                                .fill(companionSelectedSurfaceColor)
                                 .matchedGeometryEffect(id: "panel-pill", in: namespace)
                                 .shadow(color: .black.opacity(0.08), radius: 7, y: 2)
                         }
@@ -329,7 +329,7 @@ private struct PanelSwitcher: View {
         .padding(4)
         .background(
             Capsule()
-                .fill(Color(nsColor: .controlBackgroundColor).opacity(0.72))
+                .fill(companionPanelColor.opacity(0.96))
         )
         .frame(height: 34)
     }
@@ -555,7 +555,7 @@ private struct ActionDock: View {
         .frame(height: 50)
         .background(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(Color(nsColor: .controlBackgroundColor).opacity(0.88))
+                .fill(companionPanelColor.opacity(0.98))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
@@ -893,13 +893,13 @@ private struct CompanionBackdrop: View {
 
     var body: some View {
         ZStack {
-            Color(nsColor: .windowBackgroundColor)
+            companionSurfaceColor
 
             LinearGradient(
                 colors: [
                     accent.opacity(0.13),
-                    Color(nsColor: .controlBackgroundColor).opacity(0.52),
-                    Color(nsColor: .windowBackgroundColor).opacity(0.96)
+                    companionPanelColor.opacity(0.62),
+                    companionSurfaceColor
                 ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
@@ -908,10 +908,37 @@ private struct CompanionBackdrop: View {
     }
 }
 
+private let companionSurfaceColor = Color(
+    nsColor: NSColor(name: nil) { appearance in
+        if appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua {
+            return NSColor(calibratedRed: 0.095, green: 0.095, blue: 0.10, alpha: 1)
+        }
+        return NSColor(calibratedRed: 0.965, green: 0.965, blue: 0.955, alpha: 1)
+    }
+)
+
+private let companionPanelColor = Color(
+    nsColor: NSColor(name: nil) { appearance in
+        if appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua {
+            return NSColor(calibratedRed: 0.135, green: 0.132, blue: 0.128, alpha: 1)
+        }
+        return NSColor(calibratedRed: 0.995, green: 0.995, blue: 0.985, alpha: 1)
+    }
+)
+
+private let companionSelectedSurfaceColor = Color(
+    nsColor: NSColor(name: nil) { appearance in
+        if appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua {
+            return NSColor(calibratedRed: 0.19, green: 0.185, blue: 0.18, alpha: 1)
+        }
+        return NSColor(calibratedRed: 1, green: 1, blue: 0.995, alpha: 1)
+    }
+)
+
 private func panelBackground(color: Color, intensity: Double) -> some ShapeStyle {
     LinearGradient(
         colors: [
-            Color(nsColor: .controlBackgroundColor).opacity(0.9),
+            companionPanelColor,
             color.opacity(intensity)
         ],
         startPoint: .topLeading,
