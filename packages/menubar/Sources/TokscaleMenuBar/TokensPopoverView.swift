@@ -238,31 +238,32 @@ private struct FocusHeroCard: View {
     }
 
     var body: some View {
-        HStack(spacing: 14) {
-            VStack(alignment: .leading, spacing: 7) {
+        HStack(spacing: 16) {
+            VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 6) {
                     ProviderDot(color: accent)
                     Text(focus.title)
-                        .font(.system(size: 12, weight: .semibold))
-                    Spacer(minLength: 0)
-                    Text(primaryQuota?.title ?? focus.quotaStatus)
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.system(size: 11, weight: .bold))
                         .foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
                 }
 
-                Text(heroTitle)
-                    .font(.system(size: 38, weight: .bold, design: .rounded))
-                    .monospacedDigit()
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.72)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(heroTitle)
+                        .font(.system(size: 40, weight: .bold, design: .rounded))
+                        .monospacedDigit()
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
 
-                Text(heroSubtitle)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.78)
+                    Text(heroSubtitle)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
 
-                HStack(spacing: 8) {
+                Spacer(minLength: 2)
+
+                HStack(spacing: 12) {
                     MiniMetric(
                         title: "Today",
                         value: formatToday(summary),
@@ -280,29 +281,28 @@ private struct FocusHeroCard: View {
                 progress: primaryQuota?.progress ?? focus.share,
                 color: accent,
                 centerTitle: gaugeTitle,
-                centerSubtitle: primaryQuota == nil ? "share" : "quota",
+                centerSubtitle: primaryQuota == nil ? "SHARE" : "QUOTA",
                 active: isRefreshing
             )
-            .frame(width: 102, height: 102)
+            .frame(width: 104, height: 104)
         }
-        .padding(14)
-        .frame(height: 136)
+        .padding(16)
+        .frame(height: 142)
         .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(companionPanelColor)
+            panelBackground(color: accent, intensity: 0.03)
+                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(heroBorder, lineWidth: 1)
+                .stroke(
+                    LinearGradient(
+                        colors: [accent.opacity(0.15), Color.primary.opacity(0.04)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 1
+                )
         )
-        .overlay(alignment: .topTrailing) {
-            Circle()
-                .fill(accent.opacity(0.08))
-                .frame(width: 92, height: 92)
-                .blur(radius: 30)
-                .offset(x: 20, y: -32)
-        }
-        .clipped()
     }
 
     private var heroTitle: String {
@@ -322,18 +322,6 @@ private struct FocusHeroCard: View {
             return "\(Int((primaryQuota.progress * 100).rounded()))%"
         }
         return "\(Int((focus.share * 100).rounded()))%"
-    }
-
-    private var heroBorder: LinearGradient {
-        LinearGradient(
-            colors: [
-                accent.opacity(0.34),
-                Color.white.opacity(0.06),
-                Color.primary.opacity(0.06)
-            ],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
     }
 }
 
@@ -676,28 +664,27 @@ private struct DashboardCard<Content: View>: View {
     @ViewBuilder let content: Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 6) {
                 Image(systemName: icon)
                     .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(color)
-                Text(title)
+                Text(title.uppercased())
                     .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 0)
             }
             content
         }
-        .padding(9)
+        .padding(12)
         .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(panelBackground(color: color, intensity: 0.028))
+            panelBackground(color: color, intensity: 0.02)
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(Color.primary.opacity(0.055), lineWidth: 1)
+                .stroke(Color.primary.opacity(0.04), lineWidth: 1)
         )
-        .shadow(color: Color.black.opacity(0.035), radius: 8, x: 0, y: 3)
     }
 }
 
@@ -1142,39 +1129,35 @@ private struct CompanionBackdrop: View {
 private let companionSurfaceColor = Color(
     nsColor: NSColor(name: nil) { appearance in
         if appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua {
-            return NSColor(calibratedRed: 0.110, green: 0.110, blue: 0.118, alpha: 1)
+            return NSColor(calibratedWhite: 0.10, alpha: 1.0)
         }
-        return NSColor(calibratedRed: 0.960, green: 0.960, blue: 0.968, alpha: 1)
+        return NSColor(calibratedWhite: 0.96, alpha: 1.0)
     }
 )
 
 private let companionPanelColor = Color(
     nsColor: NSColor(name: nil) { appearance in
         if appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua {
-            return NSColor(calibratedRed: 0.173, green: 0.173, blue: 0.180, alpha: 1)
+            return NSColor(calibratedWhite: 0.15, alpha: 1.0)
         }
-        return NSColor(calibratedRed: 1.000, green: 1.000, blue: 1.000, alpha: 1)
+        return NSColor(calibratedWhite: 1.0, alpha: 1.0)
     }
 )
 
 private let companionSelectedSurfaceColor = Color(
     nsColor: NSColor(name: nil) { appearance in
         if appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua {
-            return NSColor(calibratedRed: 0.228, green: 0.228, blue: 0.236, alpha: 1)
+            return NSColor(calibratedWhite: 0.20, alpha: 1.0)
         }
-        return NSColor(calibratedRed: 0.910, green: 0.910, blue: 0.930, alpha: 1)
+        return NSColor(calibratedWhite: 0.92, alpha: 1.0)
     }
 )
 
-private func panelBackground(color: Color, intensity: Double) -> some ShapeStyle {
-    LinearGradient(
-        colors: [
-            companionPanelColor,
-            color.opacity(intensity)
-        ],
-        startPoint: .topLeading,
-        endPoint: .bottomTrailing
-    )
+private func panelBackground(color: Color, intensity: Double) -> some View {
+    ZStack {
+        companionPanelColor
+        color.opacity(intensity)
+    }
 }
 
 private func formatToday(_ summary: TokscaleSummary) -> String {
@@ -1241,17 +1224,17 @@ private func parseISODate(_ value: String) -> Date? {
 private func providerColor(_ id: String) -> Color {
     switch id.lowercased() {
     case "claude":
-        return Color(red: 0.85, green: 0.47, blue: 0.34)
+        return Color(red: 0.82, green: 0.52, blue: 0.44)
     case "codex":
-        return Color(red: 0.31, green: 0.64, blue: 0.51)
+        return Color(red: 0.40, green: 0.65, blue: 0.55)
     case "gemini":
-        return Color(red: 0.29, green: 0.47, blue: 0.91)
+        return Color(red: 0.35, green: 0.55, blue: 0.90)
     case "openclaw":
-        return Color(red: 0.58, green: 0.44, blue: 0.86)
+        return Color(red: 0.60, green: 0.50, blue: 0.85)
     case "copilot":
-        return Color(red: 0.27, green: 0.51, blue: 0.71)
+        return Color(red: 0.35, green: 0.55, blue: 0.75)
     case "antigravity":
-        return Color(red: 0.83, green: 0.69, blue: 0.22)
+        return Color(red: 0.80, green: 0.65, blue: 0.30)
     default:
         return .accentColor
     }
