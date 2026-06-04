@@ -217,6 +217,34 @@ public struct TokscaleDashboardModel: Equatable {
         )
     }
 
+    public func providerFocus(for id: String?) -> ProviderFocus {
+        let details = providerDetails(for: id)
+        let normalized = details.id.lowercased()
+        let quota = quotaWindows.filter { window in
+            let provider = window.provider.lowercased()
+            return provider == details.title.lowercased() || provider == normalized
+        }
+        let primary = quota.first { $0.title.lowercased() == "session" } ?? quota.first
+        let weekly = quota.first { $0.title.lowercased() == "weekly" }
+
+        return ProviderFocus(
+            id: details.id,
+            title: details.title,
+            topModel: details.model,
+            today: details.today,
+            total: details.total,
+            tokens: details.tokens,
+            messages: details.messages,
+            share: details.share,
+            quotaWindows: quota,
+            primaryQuota: primary,
+            weeklyQuota: weekly,
+            quotaStatus: quota.isEmpty ? "No official quota" : "Quota fresh",
+            workTime: "Work time unavailable",
+            focusedModelTime: Self.focusedModelTimeLabel(providerId: details.id, model: details.model)
+        )
+    }
+
     private static func providerRows(summary: TokscaleSummary) -> [TokscaleSummary.Provider] {
         if !summary.providers.isEmpty {
             return summary.providers.sorted { left, right in
@@ -317,6 +345,13 @@ public struct TokscaleDashboardModel: Equatable {
         let percent = Int((summary.today.costUsd / dailyAverage * 100).rounded())
         return "\(percent)% of daily average"
     }
+
+    private static func focusedModelTimeLabel(providerId: String, model: String) -> String {
+        if providerId.lowercased() == "claude", model.lowercased().contains("sonnet") {
+            return "Sonnet-only unavailable"
+        }
+        return "Model time unavailable"
+    }
 }
 
 public extension TokscaleDashboardModel {
@@ -382,6 +417,23 @@ public extension TokscaleDashboardModel {
         public let tokens: String
         public let messages: String
         public let share: Double
+    }
+
+    struct ProviderFocus: Equatable {
+        public let id: String
+        public let title: String
+        public let topModel: String
+        public let today: String
+        public let total: String
+        public let tokens: String
+        public let messages: String
+        public let share: Double
+        public let quotaWindows: [QuotaWindowSummary]
+        public let primaryQuota: QuotaWindowSummary?
+        public let weeklyQuota: QuotaWindowSummary?
+        public let quotaStatus: String
+        public let workTime: String
+        public let focusedModelTime: String
     }
 }
 

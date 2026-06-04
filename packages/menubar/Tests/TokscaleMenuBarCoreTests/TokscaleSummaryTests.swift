@@ -135,6 +135,30 @@ final class TokscaleSummaryTests: XCTestCase {
         XCTAssertEqual(dashboard.providerDetails(for: "claude").title, "Claude")
     }
 
+    func testDashboardModelBuildsSelectedProviderFocus() throws {
+        let summary = try TokscaleSummary.decode(sampleSummaryData())
+
+        let dashboard = TokscaleDashboardModel(summary: summary)
+
+        let claude = dashboard.providerFocus(for: "claude")
+        XCTAssertEqual(claude.id, "claude")
+        XCTAssertEqual(claude.title, "Claude")
+        XCTAssertEqual(claude.topModel, "claude-sonnet")
+        XCTAssertEqual(claude.today, "$30.00 today")
+        XCTAssertEqual(claude.quotaWindows.map(\.title), ["Session", "Weekly"])
+        XCTAssertEqual(claude.primaryQuota?.title, "Session")
+        XCTAssertEqual(claude.weeklyQuota?.title, "Weekly")
+        XCTAssertEqual(claude.quotaStatus, "Quota fresh")
+        XCTAssertEqual(claude.focusedModelTime, "Sonnet-only unavailable")
+
+        let gemini = dashboard.providerFocus(for: "gemini")
+        XCTAssertEqual(gemini.id, "gemini")
+        XCTAssertEqual(gemini.title, "Gemini")
+        XCTAssertNil(gemini.primaryQuota)
+        XCTAssertTrue(gemini.quotaWindows.isEmpty)
+        XCTAssertEqual(gemini.quotaStatus, "No official quota")
+    }
+
     func testDecodesQuotaAndHistoryModules() throws {
         let summary = try TokscaleSummary.decode(sampleSummaryData())
 
