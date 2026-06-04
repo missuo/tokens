@@ -52,7 +52,7 @@ struct TokensPopoverView: View {
 
     private var accent: Color {
         guard let summary else {
-            return .blue
+            return providerColor("gemini")
         }
         let model = TokscaleDashboardModel(summary: summary)
         if let quota = model.quotaWindows.first {
@@ -61,7 +61,7 @@ struct TokensPopoverView: View {
         if let provider = model.providers.first {
             return providerColor(provider.id)
         }
-        return .blue
+        return providerColor("gemini")
     }
 }
 
@@ -186,13 +186,13 @@ private struct CompanionHeader: View {
             Spacer()
             StatusCapsule(
                 title: isRefreshing ? "Scanning" : model.health.title,
-                color: isRefreshing ? .orange : (summary.stale ? .orange : .green),
+                color: isRefreshing ? providerColor("openclaw") : (summary.stale ? providerColor("claude") : providerColor("codex")),
                 icon: isRefreshing ? "dot.radiowaves.left.and.right" : "bolt.fill"
             )
             HStack(spacing: 5) {
                 HeaderIconButton(
                     systemName: isRefreshing ? "hourglass" : "arrow.clockwise",
-                    tint: isRefreshing ? .orange : providerColor(focus.id),
+                    tint: isRefreshing ? providerColor("openclaw") : providerColor(focus.id),
                     active: isRefreshing,
                     disabled: isRefreshing,
                     help: isRefreshing ? "Scanning" : "Refresh scan",
@@ -274,12 +274,12 @@ private struct FocusHeroCard: View {
                     MiniMetric(
                         title: "Today",
                         value: formatToday(summary),
-                        color: .blue
+                        color: providerColor("gemini")
                     )
                     MiniMetric(
                         title: weeklyQuota?.title ?? "Messages",
                         value: weeklyQuota?.value ?? focus.messages,
-                        color: weeklyQuota.map { providerColor($0.provider) } ?? .orange
+                        color: weeklyQuota.map { providerColor($0.provider) } ?? providerColor("openclaw")
                     )
                 }
             }
@@ -462,7 +462,7 @@ private struct OverviewSection: View {
                         value: formatToday(summary),
                         detail: model.hero.progressLabel,
                         progress: model.hero.progress,
-                        color: .blue
+                        color: providerColor("gemini")
                     )
                     VisualMetricPill(
                         title: focus.title,
@@ -476,7 +476,7 @@ private struct OverviewSection: View {
                         value: focus.tokens,
                         detail: focus.messages,
                         progress: focus.share,
-                        color: .green
+                        color: providerColor("codex")
                     )
                 }
 
@@ -517,7 +517,7 @@ private struct HistorySection: View {
     let model: TokscaleDashboardModel
 
     var body: some View {
-        DashboardCard(icon: "chart.bar", title: "History", color: .blue) {
+        DashboardCard(icon: "chart.bar", title: "History", color: providerColor("gemini")) {
             VStack(alignment: .leading, spacing: 7) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(model.historyPeak.map { "Peak \($0.value) on \($0.date)" } ?? "No history yet")
@@ -580,9 +580,9 @@ private struct CompactSettingsPanel: View {
                 value: refreshStatus ?? model.health.detail,
                 color: providerColor(focus.id)
             )
-            ToolbarIconButton(systemName: "safari", tint: .green, help: "Open tokens.ci", action: onOpenTokensCI)
-            ToolbarIconButton(systemName: "folder", tint: .purple, help: "Reveal cache", action: onRevealCache)
-            ToolbarIconButton(systemName: "power", tint: .red, help: "Quit", action: onQuit)
+            ToolbarIconButton(systemName: "safari", tint: providerColor("codex"), help: "Open tokens.ci", action: onOpenTokensCI)
+            ToolbarIconButton(systemName: "folder", tint: providerColor("openclaw"), help: "Reveal cache", action: onRevealCache)
+            ToolbarIconButton(systemName: "power", tint: providerColor("claude"), help: "Quit", action: onQuit)
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 7)
@@ -1047,7 +1047,7 @@ private struct LiveDot: View {
     }
 
     private var dotColor: Color {
-        active ? .orange : (stale ? .orange : .green)
+        active ? providerColor("openclaw") : (stale ? providerColor("claude") : providerColor("codex"))
     }
 }
 
@@ -1082,7 +1082,7 @@ private struct EmptyPaneMessage: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(12)
-        .background(panelBackground(color: .blue, intensity: 0.04))
+        .background(panelBackground(color: providerColor("gemini"), intensity: 0.04))
     }
 }
 
@@ -1113,7 +1113,7 @@ private struct EmptyContent: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             .padding(16)
-            .background(panelBackground(color: .orange, intensity: 0.06))
+            .background(panelBackground(color: providerColor("claude"), intensity: 0.06))
 
             Spacer()
         }
@@ -1239,17 +1239,17 @@ private func parseISODate(_ value: String) -> Date? {
 private func providerColor(_ id: String) -> Color {
     switch id.lowercased() {
     case "claude":
-        return Color(red: 0.78, green: 0.42, blue: 0.36)
+        return Color(red: 0.78, green: 0.34, blue: 0.50)
     case "codex":
-        return Color(red: 0.44, green: 0.64, blue: 0.58)
+        return Color(red: 0.18, green: 0.58, blue: 0.82)
     case "gemini":
-        return Color(red: 0.34, green: 0.46, blue: 0.86)
+        return Color(red: 0.34, green: 0.42, blue: 0.92)
     case "openclaw":
-        return Color(red: 0.58, green: 0.42, blue: 0.82)
+        return Color(red: 0.62, green: 0.40, blue: 0.88)
     case "copilot":
-        return Color(red: 0.36, green: 0.56, blue: 0.66)
+        return Color(red: 0.32, green: 0.52, blue: 0.74)
     case "antigravity":
-        return Color(red: 0.86, green: 0.62, blue: 0.26)
+        return Color(red: 0.72, green: 0.36, blue: 0.72)
     default:
         return .accentColor
     }
