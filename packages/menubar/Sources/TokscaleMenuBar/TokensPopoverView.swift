@@ -32,6 +32,11 @@ struct TokensPopoverView: View {
             .padding(12)
         }
         .frame(width: 500, height: 680, alignment: .top)
+        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+        )
     }
 
     private var summary: TokscaleSummary? {
