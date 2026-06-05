@@ -177,10 +177,7 @@ enum Commands {
     },
     #[command(about = "Login to Tokens (opens browser for GitHub auth)")]
     Login {
-        #[arg(
-            long,
-            help = "Save an existing Tokens API token without browser auth"
-        )]
+        #[arg(long, help = "Save an existing Tokens API token without browser auth")]
         token: Option<String>,
     },
     #[command(about = "Logout from Tokens")]
@@ -4129,17 +4126,18 @@ fn refresh_companion_summary() -> Result<Option<commands::companion_summary::Com
         .unwrap_or(None)
         .as_ref()
         .map(companion_latest_submit_from_history_entry);
-    let usage_outputs = commands::usage::fetch_all();
+    let (usage_outputs, usage_warnings) = commands::usage::fetch_all_with_warnings();
     if !usage_outputs.is_empty() {
         commands::usage::save_cache(&usage_outputs);
     }
-    let summary = commands::companion_summary::from_graph_with_usage(
+    let mut summary = commands::companion_summary::from_graph_with_usage(
         &graph,
         latest_submit,
         &today,
         &path.display().to_string(),
         &usage_outputs,
     );
+    summary.health.warnings.extend(usage_warnings);
     commands::companion_summary::write_latest(&summary)?;
     Ok(Some(summary))
 }
@@ -6585,8 +6583,7 @@ mod tests {
     fn test_client_flags_parses_canonical_form() {
         // End-to-end smoke test: ensure clap derives accept the new
         // `--client a,b` and `-c a -c b` shapes through the CLI parser.
-        let cli =
-            Cli::try_parse_from(["tokens", "--client", "opencode,claude"]).expect("parse ok");
+        let cli = Cli::try_parse_from(["tokens", "--client", "opencode,claude"]).expect("parse ok");
         assert_eq!(
             cli.clients.clients,
             vec![ClientFilter::Opencode, ClientFilter::Claude]

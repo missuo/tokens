@@ -29,14 +29,17 @@ struct TokensPopoverView: View {
                     EmptyContent(errorMessage: errorMessage)
                 }
             }
-            .padding(12)
+            .padding(.horizontal, 16)
+            .padding(.top, 18)
+            .padding(.bottom, 14)
         }
-        .frame(width: 500, height: 680, alignment: .top)
-        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .frame(width: 560, height: 760, alignment: .top)
+        .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 26, style: .continuous)
+                .stroke(companionOrange.opacity(0.28), lineWidth: 1)
         )
+        .shadow(color: companionOrange.opacity(0.16), radius: 24, x: 0, y: 10)
     }
 
     private var summary: TokscaleSummary? {
@@ -133,11 +136,7 @@ private struct SummaryContent: View {
                         }
                     )
 
-                    CompactOverviewStrip(
-                        summary: summary,
-                        model: model,
-                        focus: selectedFocus
-                    )
+                    CompactOverviewStrip(model: model)
 
                     HistorySection(model: model)
                     .padding(.bottom, 2)
@@ -179,7 +178,7 @@ private struct CompanionHeader: View {
             LiveDot(stale: summary.stale, active: isRefreshing)
             VStack(alignment: .leading, spacing: 1) {
                 Text("Tokens")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 14, weight: .bold, design: .rounded))
                 Text(headerSubtitle)
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(.secondary)
@@ -188,13 +187,13 @@ private struct CompanionHeader: View {
             Spacer()
             StatusCapsule(
                 title: isRefreshing ? "Scanning" : model.health.title,
-                color: isRefreshing ? providerColor("openclaw") : (summary.stale ? providerColor("claude") : providerColor("codex")),
+                color: isRefreshing ? companionOrange : (summary.stale ? companionOrange : providerColor("codex")),
                 icon: isRefreshing ? "dot.radiowaves.left.and.right" : "bolt.fill"
             )
             HStack(spacing: 5) {
                 HeaderIconButton(
                     systemName: isRefreshing ? "hourglass" : "arrow.clockwise",
-                    tint: isRefreshing ? providerColor("openclaw") : providerColor(focus.id),
+                    tint: isRefreshing ? companionOrange : companionOrange,
                     active: isRefreshing,
                     disabled: isRefreshing,
                     help: isRefreshing ? "Scanning" : "Refresh scan",
@@ -202,22 +201,21 @@ private struct CompanionHeader: View {
                 )
                 HeaderIconButton(
                     systemName: "gearshape",
-                    tint: providerColor(focus.id),
+                    tint: companionOrange,
                     active: settingsVisible,
                     help: "Settings",
                     action: onToggleSettings
                 )
             }
         }
-        .frame(height: 30)
+        .frame(height: 32)
     }
 
     private var headerSubtitle: String {
-        if let quota = focus.primaryQuota {
-            let plan = quota.plan.map { " · \($0)" } ?? ""
-            return "\(quota.provider) quota\(plan)"
+        if summary.stale {
+            return "Cached quota monitor"
         }
-        return "\(focus.title) · \(focus.quotaStatus)"
+        return "Quota monitor · history"
     }
 }
 
@@ -228,11 +226,18 @@ private struct QuotaBoardSection: View {
     let onModeChange: (TokscaleDashboardModel.QuotaDisplayMode) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 11) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Quota")
-                        .font(.system(size: 18, weight: .bold, design: .rounded))
+                        .font(.system(size: 22, weight: .bold, design: .rounded))
+                        .foregroundStyle(
+                            LinearGradient(
+                                colors: [companionOrange, Color.primary],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
                     Text(boardSubtitle)
                         .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(.secondary)
@@ -242,7 +247,7 @@ private struct QuotaBoardSection: View {
                 QuotaModeToggle(mode: displayMode, onChange: onModeChange)
             }
 
-            VStack(spacing: 8) {
+            VStack(spacing: 9) {
                 if model.quotaBoardProviders.isEmpty {
                     CompactEmptyMessage(
                         title: "No live quota",
@@ -256,21 +261,25 @@ private struct QuotaBoardSection: View {
                 }
             }
         }
-        .padding(13)
+        .padding(15)
         .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(companionPanelColor.opacity(0.98))
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(companionGlassPanelColor)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(Color.primary.opacity(0.06), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(companionOrange.opacity(0.18), lineWidth: 1)
         )
-        .shadow(color: Color.black.opacity(0.07), radius: 10, x: 0, y: 5)
+        .shadow(color: companionOrange.opacity(0.09), radius: 18, x: 0, y: 8)
     }
 
     private var boardSubtitle: String {
         if summary.stale {
             return "Cached data - refresh before trusting limits"
+        }
+        if model.quotaBoardProviders.allSatisfy({ $0.quotaWindows.isEmpty }),
+           let warning = summary.health.warnings.first {
+            return warning
         }
         return "Live quota windows - 5h and weekly"
     }
@@ -287,7 +296,7 @@ private struct QuotaModeToggle: View {
                     Text(option.title)
                         .font(.system(size: 10, weight: .bold))
                         .lineLimit(1)
-                        .frame(width: 42, height: 24)
+                        .frame(width: 46, height: 26)
                         .foregroundStyle(option == mode ? Color.primary : Color.secondary)
                         .background(
                             RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -300,8 +309,8 @@ private struct QuotaModeToggle: View {
         }
         .padding(3)
         .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color(nsColor: .separatorColor).opacity(0.10))
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .fill(companionWarmGlassColor)
         )
     }
 }
@@ -315,7 +324,7 @@ private struct ProviderQuotaRow: View {
     }
 
     var body: some View {
-        HStack(spacing: 11) {
+        HStack(spacing: 13) {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
                     ProviderDot(color: color)
@@ -324,21 +333,36 @@ private struct ProviderQuotaRow: View {
                         .lineLimit(1)
                     Spacer(minLength: 0)
                 }
-                Text(focus.topModel)
+                Text(focus.today)
                     .font(.system(size: 9, weight: .medium))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.72)
+                Text("\(focus.total) · \(focus.tokens)")
+                    .font(.system(size: 8, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.64)
                 QuotaSourceBadge(status: focus.quotaStatus, color: color)
             }
-            .frame(width: 92, alignment: .leading)
+            .frame(width: 116, alignment: .leading)
 
-            VStack(spacing: 7) {
+            VStack(spacing: 8) {
                 if focus.quotaWindows.isEmpty {
                     QuotaUnavailableLine(providerColor: color)
                 } else {
-                    QuotaBarLine(quota: focus.primaryQuota, fallbackTitle: "5h", displayMode: displayMode)
-                    QuotaBarLine(quota: focus.weeklyQuota, fallbackTitle: "Week", displayMode: displayMode)
+                    QuotaBarLine(
+                        quota: focus.primaryQuota,
+                        fallbackTitle: "5h",
+                        displayMode: displayMode,
+                        isCached: focus.quotaStatus == "Cached"
+                    )
+                    QuotaBarLine(
+                        quota: focus.weeklyQuota,
+                        fallbackTitle: "Week",
+                        displayMode: displayMode,
+                        isCached: focus.quotaStatus == "Cached"
+                    )
                 }
             }
         }
@@ -346,11 +370,11 @@ private struct ProviderQuotaRow: View {
         .padding(.vertical, 9)
         .background(
             RoundedRectangle(cornerRadius: 13, style: .continuous)
-                .fill(color.opacity(0.050))
+                .fill(companionWarmGlassColor)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 13, style: .continuous)
-                .stroke(color.opacity(0.16), lineWidth: 1)
+                .stroke(color.opacity(0.22), lineWidth: 1)
         )
     }
 }
@@ -359,45 +383,81 @@ private struct QuotaBarLine: View {
     let quota: TokscaleDashboardModel.QuotaWindowSummary?
     let fallbackTitle: String
     let displayMode: TokscaleDashboardModel.QuotaDisplayMode
+    let isCached: Bool
 
     var body: some View {
         if let quota {
+            let expired = resetIsExpired(quota.reset)
+            let unavailable = isCached || expired
             HStack(spacing: 8) {
                 Text(quota.title)
                     .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(.secondary)
-                    .frame(width: 32, alignment: .leading)
-                QuotaProgressBar(progress: quota.progress(for: displayMode), color: quotaHealthColor(quota))
+                    .frame(width: 38, alignment: .leading)
+                QuotaProgressBar(
+                    progress: unavailable ? 0 : quota.progress(for: displayMode),
+                    color: unavailable ? companionOrange : quotaHealthColor(quota)
+                )
                 VStack(alignment: .trailing, spacing: 1) {
-                    Text(quota.value(for: displayMode))
-                        .font(.system(size: 14, weight: .bold, design: .rounded))
+                    Text(quotaValueText(quota: quota, displayMode: displayMode, isCached: isCached, expired: expired))
+                        .font(.system(size: 15, weight: .bold, design: .rounded))
                         .monospacedDigit()
                         .lineLimit(1)
                         .minimumScaleFactor(0.72)
-                    Text(resetLabel(quota.reset) ?? quota.detail(for: displayMode))
+                    Text(quotaDetailText(quota: quota, displayMode: displayMode, isCached: isCached, expired: expired))
                         .font(.system(size: 8, weight: .medium))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.70)
                 }
-                .frame(width: 78, alignment: .trailing)
+                .frame(width: 92, alignment: .trailing)
             }
-            .frame(height: 26)
+            .frame(height: 28)
         } else {
             HStack(spacing: 8) {
                 Text(fallbackTitle)
                     .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(.secondary)
-                    .frame(width: 32, alignment: .leading)
+                    .frame(width: 38, alignment: .leading)
                 QuotaProgressBar(progress: 0, color: .secondary)
                 Text("N/A")
                     .font(.system(size: 12, weight: .bold, design: .rounded))
                     .foregroundStyle(.secondary)
-                    .frame(width: 78, alignment: .trailing)
+                    .frame(width: 92, alignment: .trailing)
             }
-            .frame(height: 26)
+            .frame(height: 28)
         }
     }
+}
+
+private func quotaValueText(
+    quota: TokscaleDashboardModel.QuotaWindowSummary,
+    displayMode: TokscaleDashboardModel.QuotaDisplayMode,
+    isCached: Bool,
+    expired: Bool
+) -> String {
+    if expired {
+        return "Expired"
+    }
+    if isCached {
+        return "Cached"
+    }
+    return quota.value(for: displayMode)
+}
+
+private func quotaDetailText(
+    quota: TokscaleDashboardModel.QuotaWindowSummary,
+    displayMode: TokscaleDashboardModel.QuotaDisplayMode,
+    isCached: Bool,
+    expired: Bool
+) -> String {
+    if expired {
+        return "refresh needed"
+    }
+    if isCached {
+        return "refresh for live"
+    }
+    return resetLabel(quota.reset) ?? quota.detail(for: displayMode)
 }
 
 private struct QuotaUnavailableLine: View {
@@ -444,7 +504,7 @@ private struct QuotaProgressBar: View {
                     .shadow(color: color.opacity(0.16), radius: 5, x: 0, y: 0)
             }
         }
-        .frame(height: 9)
+        .frame(height: 11)
         .onAppear {
             withAnimation(.spring(response: 0.48, dampingFraction: 0.82)) {
                 visibleProgress = min(max(progress, 0), 1)
@@ -477,33 +537,46 @@ private struct QuotaSourceBadge: View {
 }
 
 private struct CompactOverviewStrip: View {
-    let summary: TokscaleSummary
     let model: TokscaleDashboardModel
-    let focus: TokscaleDashboardModel.ProviderFocus
 
     var body: some View {
         HStack(spacing: 7) {
-            VisualMetricPill(
-                title: "Today",
-                value: formatToday(summary),
-                detail: "\(summary.today.messages) messages",
-                progress: model.hero.progress,
-                color: providerColor("gemini")
-            )
-            VisualMetricPill(
-                title: "Top",
-                value: model.insights.first?.detail ?? "none",
-                detail: model.insights.first?.value ?? "No provider data",
-                progress: focus.share,
-                color: providerColor(focus.id)
-            )
-            VisualMetricPill(
-                title: "Accuracy",
-                value: model.health.title,
-                detail: summary.accuracy.confidence,
-                progress: summary.stale ? 0.25 : 1,
-                color: summary.stale ? providerColor("claude") : providerColor("codex")
-            )
+            ForEach(Array(model.spendHighlights.enumerated()), id: \.offset) { index, item in
+                VisualMetricPill(
+                    title: item.title,
+                    value: item.value,
+                    detail: item.detail,
+                    progress: spendProgress(index: index),
+                    color: spendColor(index: index)
+                )
+            }
+        }
+    }
+
+    private func spendProgress(index: Int) -> Double {
+        switch index {
+        case 0:
+            return model.hero.progress
+        case 1:
+            return 1
+        default:
+            let current = model.currentWeekTrend.reduce(0) { $0 + $1.costUsd }
+            let previous = model.previousWeekTrend.reduce(0) { $0 + $1.costUsd }
+            guard max(current, previous) > 0 else {
+                return 0
+            }
+            return min(current / max(current, previous), 1)
+        }
+    }
+
+    private func spendColor(index: Int) -> Color {
+        switch index {
+        case 0:
+            return providerColor("gemini")
+        case 1:
+            return companionOrange
+        default:
+            return providerColor("codex")
         }
     }
 }
@@ -806,17 +879,80 @@ private struct HistorySection: View {
     let model: TokscaleDashboardModel
 
     var body: some View {
-        DashboardCard(icon: "chart.bar", title: "History", color: providerColor("gemini")) {
-            VStack(alignment: .leading, spacing: 7) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(model.historyPeak.map { "Peak \($0.value) on \($0.date)" } ?? "No history yet")
-                        .font(.system(size: 11, weight: .semibold))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
-                }
-                HistoryBars(days: model.historyTrend)
+        VStack(alignment: .leading, spacing: 11) {
+            HStack(spacing: 7) {
+                Image(systemName: "chart.bar.fill")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(companionOrange)
+                Text("History")
+                    .font(.system(size: 13, weight: .bold))
+                Spacer(minLength: 0)
+                Text("14d local estimate")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.secondary)
             }
+
+            HStack(spacing: 8) {
+                HistoryStatPill(
+                    title: "All-time",
+                    value: model.spendHighlights[safe: 1]?.value ?? "$0.00",
+                    detail: model.spendHighlights[safe: 1]?.detail ?? "0 tokens"
+                )
+                HistoryStatPill(
+                    title: "7d",
+                    value: model.spendHighlights[safe: 2]?.value ?? "$0.00",
+                    detail: model.spendHighlights[safe: 2]?.detail ?? "No prior data"
+                )
+                HistoryStatPill(
+                    title: "Peak",
+                    value: model.historyPeak?.value ?? "$0.00",
+                    detail: model.historyPeak?.date ?? "No history"
+                )
+            }
+
+            HistoryBars(previousDays: model.previousWeekTrend, currentDays: model.currentWeekTrend)
         }
+        .padding(15)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(companionGlassPanelColor)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(companionOrange.opacity(0.16), lineWidth: 1)
+        )
+    }
+
+}
+
+private struct HistoryStatPill: View {
+    let title: String
+    let value: String
+    let detail: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.system(size: 16, weight: .bold, design: .rounded))
+                .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.70)
+            Text(detail)
+                .font(.system(size: 8, weight: .medium))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 9)
+        .padding(.vertical, 7)
+        .background(
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .fill(companionWarmGlassColor)
+        )
     }
 }
 
@@ -866,7 +1002,7 @@ private struct CompactSettingsPanel: View {
         HStack(spacing: 7) {
             SettingsStatusPill(
                 title: summary.menuBarTitle,
-                value: refreshStatus ?? model.health.detail,
+                value: refreshStatus ?? model.health.warning ?? model.health.detail,
                 color: providerColor(focus.id)
             )
             ToolbarIconButton(systemName: "safari", tint: providerColor("codex"), help: "Open tokens.ci", action: onOpenTokensCI)
@@ -1112,28 +1248,62 @@ private struct LimitMiniCard: View {
 }
 
 private struct HistoryBars: View {
-    let days: [TokscaleDashboardModel.HistoryPoint]
+    let previousDays: [TokscaleDashboardModel.HistoryPoint]
+    let currentDays: [TokscaleDashboardModel.HistoryPoint]
 
     var body: some View {
-        HStack(alignment: .bottom, spacing: 7) {
-            ForEach(days, id: \.date) { day in
+        let maxCost = max((previousDays + currentDays).map(\.costUsd).max() ?? 0, 1)
+        HStack(alignment: .bottom, spacing: 8) {
+            ForEach(Array(currentDays.enumerated()), id: \.element.date) { index, day in
+                let previous = previousDays[safe: index]
                 VStack(spacing: 4) {
-                    RoundedRectangle(cornerRadius: 4, style: .continuous)
-                        .fill(historyColor(day.progress))
-                        .frame(height: max(7, 48 * day.progress))
+                    ZStack(alignment: .bottom) {
+                        if let previous {
+                            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                .fill(companionOrange.opacity(0.18))
+                                .frame(width: 12, height: barHeight(previous.costUsd, maxCost: maxCost))
+                        }
+                        RoundedRectangle(cornerRadius: 4, style: .continuous)
+                            .fill(historyColor(day.costUsd / maxCost))
+                            .frame(height: barHeight(day.costUsd, maxCost: maxCost))
+                    }
+                    .frame(maxHeight: 78, alignment: .bottom)
                     Text(String(day.date.suffix(2)))
                         .font(.system(size: 8, weight: .bold))
                         .foregroundStyle(.secondary)
                 }
-                .frame(maxWidth: .infinity, maxHeight: 62, alignment: .bottom)
-                .help("\(day.date) · \(day.value) · \(day.messages)")
+                .frame(maxWidth: .infinity, maxHeight: 95, alignment: .bottom)
+                .help(historyHelp(day: day, previous: previous))
             }
         }
-        .frame(height: 62)
+        .frame(height: 96)
+    }
+
+    private func barHeight(_ cost: Double, maxCost: Double) -> CGFloat {
+        max(8, 78 * min(max(cost / maxCost, 0), 1))
     }
 
     private func historyColor(_ progress: Double) -> Color {
-        providerColor("codex").opacity(progress > 0 ? 0.20 + 0.42 * progress : 0.10)
+        companionOrange.opacity(progress > 0 ? 0.28 + 0.58 * progress : 0.14)
+    }
+
+    private func historyHelp(
+        day: TokscaleDashboardModel.HistoryPoint,
+        previous: TokscaleDashboardModel.HistoryPoint?
+    ) -> String {
+        guard let previous else {
+            return "\(day.date) · \(day.value) · \(day.messages)"
+        }
+        return "\(day.date) · \(day.value) · prior \(previous.value)"
+    }
+}
+
+private extension Array {
+    subscript(safe index: Int) -> Element? {
+        guard indices.contains(index) else {
+            return nil
+        }
+        return self[index]
     }
 }
 
@@ -1419,8 +1589,9 @@ private struct CompanionBackdrop: View {
 
             LinearGradient(
                 colors: [
-                    accent.opacity(0.075),
-                    companionPanelColor.opacity(0.50),
+                    companionOrange.opacity(0.18),
+                    accent.opacity(0.06),
+                    companionPanelColor.opacity(0.44),
                     companionSurfaceColor
                 ],
                 startPoint: .topLeading,
@@ -1430,30 +1601,50 @@ private struct CompanionBackdrop: View {
     }
 }
 
+private let companionOrange = Color(hue: 0.065, saturation: 0.96, brightness: 0.98)
+
 private let companionSurfaceColor = Color(
     nsColor: NSColor(name: nil) { appearance in
         if appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua {
-            return NSColor(calibratedRed: 0.11, green: 0.11, blue: 0.12, alpha: 1.0)
+            return NSColor(calibratedRed: 0.075, green: 0.062, blue: 0.052, alpha: 1.0)
         }
-        return NSColor(calibratedRed: 0.97, green: 0.97, blue: 0.99, alpha: 1.0)
+        return NSColor(calibratedRed: 0.985, green: 0.955, blue: 0.920, alpha: 1.0)
     }
 )
 
 private let companionPanelColor = Color(
     nsColor: NSColor(name: nil) { appearance in
         if appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua {
-            return NSColor(calibratedRed: 0.15, green: 0.15, blue: 0.16, alpha: 1.0)
+            return NSColor(calibratedRed: 0.135, green: 0.112, blue: 0.095, alpha: 1.0)
         }
-        return NSColor(calibratedWhite: 1.0, alpha: 1.0)
+        return NSColor(calibratedRed: 1.0, green: 0.975, blue: 0.945, alpha: 1.0)
     }
 )
 
 private let companionSelectedSurfaceColor = Color(
     nsColor: NSColor(name: nil) { appearance in
         if appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua {
-            return NSColor(calibratedRed: 0.19, green: 0.19, blue: 0.20, alpha: 1.0)
+            return NSColor(calibratedRed: 0.245, green: 0.158, blue: 0.110, alpha: 1.0)
         }
-        return NSColor(calibratedRed: 0.93, green: 0.93, blue: 0.95, alpha: 1.0)
+        return NSColor(calibratedRed: 1.0, green: 0.895, blue: 0.800, alpha: 1.0)
+    }
+)
+
+private let companionGlassPanelColor = Color(
+    nsColor: NSColor(name: nil) { appearance in
+        if appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua {
+            return NSColor(calibratedRed: 0.155, green: 0.130, blue: 0.112, alpha: 0.92)
+        }
+        return NSColor(calibratedRed: 1.0, green: 0.972, blue: 0.938, alpha: 0.92)
+    }
+)
+
+private let companionWarmGlassColor = Color(
+    nsColor: NSColor(name: nil) { appearance in
+        if appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua {
+            return NSColor(calibratedRed: 0.235, green: 0.172, blue: 0.125, alpha: 0.58)
+        }
+        return NSColor(calibratedRed: 1.0, green: 0.910, blue: 0.830, alpha: 0.58)
     }
 )
 
@@ -1516,6 +1707,13 @@ private func resetLabel(_ value: String?) -> String? {
     return "in \(max(minutes, 1))m"
 }
 
+private func resetIsExpired(_ value: String?) -> Bool {
+    guard let value, let date = parseISODate(value) else {
+        return false
+    }
+    return date.timeIntervalSinceNow <= 0
+}
+
 private func parseISODate(_ value: String) -> Date? {
     let fractional = ISO8601DateFormatter()
     fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -1529,8 +1727,11 @@ private func quotaHealthColor(_ quota: TokscaleDashboardModel.QuotaWindowSummary
     if quota.remainingPercent <= 0 {
         return .secondary
     }
-    if quota.remainingPercent < 20 {
+    if quota.remainingPercent < 10 {
         return Color(hue: 0.01, saturation: 0.92, brightness: 0.96)
+    }
+    if quota.remainingPercent < 20 {
+        return companionOrange
     }
     if quota.remainingPercent < 50 {
         return Color(hue: 0.12, saturation: 0.96, brightness: 0.98)
@@ -1541,11 +1742,11 @@ private func quotaHealthColor(_ quota: TokscaleDashboardModel.QuotaWindowSummary
 private func providerColor(_ id: String) -> Color {
     switch id.lowercased() {
     case "claude":
-        return Color(hue: 0.06, saturation: 0.92, brightness: 0.96)
+        return companionOrange
     case "codex":
-        return Color(hue: 0.43, saturation: 0.92, brightness: 0.84)
+        return Color(hue: 0.40, saturation: 0.76, brightness: 0.84)
     case "gemini":
-        return Color(hue: 0.63, saturation: 0.92, brightness: 0.98)
+        return Color(hue: 0.60, saturation: 0.76, brightness: 0.96)
     case "openclaw":
         return Color(hue: 0.74, saturation: 0.90, brightness: 0.96)
     case "copilot":

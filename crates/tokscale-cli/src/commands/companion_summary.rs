@@ -477,14 +477,14 @@ fn history_breakdown(
         return values
             .into_iter()
             .rev()
-            .take(7)
+            .take(14)
             .collect::<Vec<_>>()
             .into_iter()
             .rev()
             .collect();
     };
 
-    (0..7)
+    (0..14)
         .rev()
         .map(|days_ago| {
             let date = today - chrono::Duration::days(days_ago);
@@ -743,6 +743,7 @@ mod tests {
     #[test]
     fn summary_from_graph_includes_recent_history_days() {
         let graph = graph_result_for_test(vec![
+            daily_contribution_for_test("2026-05-22", "claude", "claude-sonnet", 50, 0.05, 1),
             daily_contribution_for_test("2026-05-29", "claude", "claude-sonnet", 100, 0.10, 1),
             daily_contribution_for_test("2026-06-01", "codex", "gpt-5", 200, 0.20, 2),
             daily_contribution_for_test("2026-06-04", "gemini", "gemini-pro", 300, 0.30, 3),
@@ -750,13 +751,15 @@ mod tests {
 
         let summary = from_graph(&graph, None, "2026-06-04", "/tmp/companion-summary.json");
 
-        assert_eq!(summary.history.len(), 7);
-        assert_eq!(summary.history[0].date, "2026-05-29");
-        assert_eq!(summary.history[0].cost_usd, 0.10);
-        assert_eq!(summary.history[3].date, "2026-06-01");
-        assert_eq!(summary.history[3].messages, 2);
-        assert_eq!(summary.history[6].date, "2026-06-04");
-        assert_eq!(summary.history[6].tokens, 300);
+        assert_eq!(summary.history.len(), 14);
+        assert_eq!(summary.history[0].date, "2026-05-22");
+        assert_eq!(summary.history[0].cost_usd, 0.05);
+        assert_eq!(summary.history[7].date, "2026-05-29");
+        assert_eq!(summary.history[7].cost_usd, 0.10);
+        assert_eq!(summary.history[10].date, "2026-06-01");
+        assert_eq!(summary.history[10].messages, 2);
+        assert_eq!(summary.history[13].date, "2026-06-04");
+        assert_eq!(summary.history[13].tokens, 300);
     }
 
     #[test]

@@ -14,7 +14,7 @@ final class TokensMenuBarState: ObservableObject {
 final class MenuBarController: NSObject, NSApplicationDelegate {
     private let store = TokscaleSummaryStore()
     private let viewState = TokensMenuBarState()
-    private let popoverContentSize = NSSize(width: 500, height: 680)
+    private let popoverContentSize = NSSize(width: 560, height: 760)
     private let statusItemLength: CGFloat = 76
     private var statusItem: NSStatusItem?
     private let popover = NSPopover()
@@ -35,6 +35,7 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
                 weight: .regular
             )
             button.toolTip = "Tokens"
+            button.setAccessibilityLabel("Tokens")
             button.alignment = .center
             button.lineBreakMode = .byTruncatingTail
             if let image = NSImage(systemSymbolName: "chart.bar.xaxis", accessibilityDescription: "Tokens") {
@@ -90,7 +91,8 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
         popover.contentSize = popoverContentSize
         hostingController?.view.frame = NSRect(origin: .zero, size: popoverContentSize)
-        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        let anchorRect = NSRect(x: button.bounds.midX - 0.5, y: button.bounds.minY, width: 1, height: button.bounds.height)
+        popover.show(relativeTo: anchorRect, of: button, preferredEdge: .minY)
         popover.contentViewController?.view.window?.makeKey()
     }
 
@@ -145,7 +147,8 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
     }
 
     private func render() {
-        statusItem?.button?.title = viewState.summary?.menuBarTitle ?? "AI Tokens"
+        statusItem?.button?.title = viewState.summary?.menuBarTitle ?? "Tokens"
+        statusItem?.button?.toolTip = viewState.summary?.menuBarTitle ?? "Tokens"
         statusItem?.length = statusItemLength
         popover.contentSize = popoverContentSize
         hostingController?.view.frame = NSRect(origin: .zero, size: popoverContentSize)

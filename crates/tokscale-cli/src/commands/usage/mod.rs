@@ -80,6 +80,10 @@ pub fn load_cache() -> Option<Vec<UsageOutput>> {
 type UsageProvider = (&'static str, fn() -> bool, fn() -> Result<UsageOutput>);
 
 pub fn fetch_all() -> Vec<UsageOutput> {
+    fetch_all_with_warnings().0
+}
+
+pub fn fetch_all_with_warnings() -> (Vec<UsageOutput>, Vec<String>) {
     let providers: Vec<UsageProvider> = vec![
         ("Claude", claude::has_credentials, claude::fetch),
         ("Codex", codex::has_credentials, codex::fetch),
@@ -93,18 +97,51 @@ pub fn fetch_all() -> Vec<UsageOutput> {
     let active: Vec<_> = providers.into_iter().filter(|(_, has, _)| has()).collect();
 
     if active.is_empty() {
-        return vec![];
+        return (
+            vec![],
+            vec!["No subscription usage credentials found.".to_string()],
+        );
     }
 
-    std::thread::scope(|s| {
-        active
+    let mut outputs = Vec::new();
+    let mut warnings = Vec::new();
+    let results = std::thread::scope(|s| {
+        let handles = active
             .into_iter()
-            .map(|(_, _, fetch)| s.spawn(move || fetch().ok()))
+            .map(|(name, _, fetch)| s.spawn(move || (name, fetch())))
+            .collect::<Vec<_>>();
+        handles
+            .into_iter()
+            .filter_map(|handle| handle.join().ok())
             .collect::<Vec<_>>()
-            .into_iter()
-            .filter_map(|h| h.join().ok().flatten())
-            .collect()
-    })
+    });
+
+    for (name, result) in results {
+        match result {
+            Ok(output) => {
+                if output.metrics.is_empty() {
+                    warnings.push(format!("{name} usage returned no quota metrics."));
+                }
+                outputs.push(output);
+            }
+            Err(error) => warnings.push(format!(
+                "{name} usage unavailable: {}",
+                usage_warning_message(&error)
+            )),
+        }
+    }
+
+    (outputs, warnings)
+}
+
+fn usage_warning_message(error: &anyhow::Error) -> String {
+    let message = error.to_string();
+    let message = if message.contains("NEEDS_AUTH") {
+        "needs re-authentication".to_string()
+    } else {
+        message.replace('\n', " ")
+    };
+    message.chars().take(180).collect()
 }
 
 // ── Light-mode rendering ──
@@ -156,12 +193,17 @@ fn render_light(output: &UsageOutput) {
 }
 
 pub fn run(json: bool, _light: bool) -> Result<()> {
-    let outputs = fetch_all();
+    let (outputs, warnings) = fetch_all_with_warnings();
     if json {
         println!("{}", serde_json::to_string_pretty(&outputs)?);
     } else {
         for o in &outputs {
             render_light(o);
+        }
+        if outputs.is_empty() {
+            for warning in warnings {
+                eprintln!("warning: {warning}");
+            }
         }
     }
     Ok(())

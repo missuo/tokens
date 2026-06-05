@@ -6,7 +6,7 @@ final class TokscaleSummaryTests: XCTestCase {
         let summary = try TokscaleSummary.decode(sampleSummaryData())
 
         XCTAssertEqual(summary.statusTitle, "$399")
-        XCTAssertEqual(summary.menuBarTitle, "AI $399")
+        XCTAssertEqual(summary.menuBarTitle, "Tokens")
         XCTAssertEqual(summary.collapsed.state, "normal")
         XCTAssertFalse(summary.stale)
     }
@@ -224,6 +224,37 @@ final class TokscaleSummaryTests: XCTestCase {
         XCTAssertEqual(claude.weeklyQuota?.title, "Week")
     }
 
+    func testDashboardModelPreservesOneDecimalForQuotaPercentages() throws {
+        let data = sampleSummaryJSON(
+            topJSON: #""client":"claude","model":"claude-sonnet""#,
+            accuracyJSON: #""confidence":"medium","sourceKinds":["local-scan"],"warnings":[]"#,
+            quotaJSON: """
+            [
+              {
+                "provider": "Claude",
+                "plan": "Max 5x",
+                "windows": [
+                  {
+                    "label": "Session",
+                    "usedPercent": 72.4,
+                    "remainingPercent": 27.6,
+                    "resetsAt": "2026-06-04T10:00:00Z"
+                  }
+                ]
+              }
+            ]
+            """
+        ).data(using: .utf8)!
+        let summary = try TokscaleSummary.decode(data)
+
+        let quota = try XCTUnwrap(TokscaleDashboardModel(summary: summary).quotaBoardProviders[0].primaryQuota)
+
+        XCTAssertEqual(quota.value(for: .remaining), "27.6% left")
+        XCTAssertEqual(quota.detail(for: .remaining), "72.4% used")
+        XCTAssertEqual(quota.value(for: .used), "72.4% used")
+        XCTAssertEqual(quota.detail(for: .used), "27.6% left")
+    }
+
     func testDecodesQuotaAndHistoryModules() throws {
         let summary = try TokscaleSummary.decode(sampleSummaryData())
 
@@ -234,10 +265,10 @@ final class TokscaleSummaryTests: XCTestCase {
         XCTAssertEqual(summary.quota[0].windows[0].label, "Session")
         XCTAssertEqual(summary.quota[0].windows[0].usedPercent, 72.0)
         XCTAssertEqual(summary.quota[0].windows[0].resetsAt, "2026-06-04T10:00:00Z")
-        XCTAssertEqual(summary.history.count, 7)
-        XCTAssertEqual(summary.history[0].date, "2026-05-29")
-        XCTAssertEqual(summary.history[6].date, "2026-06-04")
-        XCTAssertEqual(summary.history[6].costUsd, 398.56475810000006)
+        XCTAssertEqual(summary.history.count, 14)
+        XCTAssertEqual(summary.history[0].date, "2026-05-22")
+        XCTAssertEqual(summary.history[13].date, "2026-06-04")
+        XCTAssertEqual(summary.history[13].costUsd, 398.56475810000006)
     }
 
     func testDashboardModelBuildsQuotaAndHistorySections() throws {
@@ -252,10 +283,19 @@ final class TokscaleSummaryTests: XCTestCase {
         XCTAssertEqual(dashboard.quotaWindows[0].detail, "72% used")
         XCTAssertEqual(dashboard.quotaWindows[0].progress, 0.72, accuracy: 0.01)
         XCTAssertEqual(dashboard.quotaWindows[1].title, "Week")
-        XCTAssertEqual(dashboard.historyTrend.count, 7)
-        XCTAssertEqual(dashboard.historyTrend[0].value, "$10.00")
-        XCTAssertEqual(dashboard.historyTrend[6].value, "$398.56")
+        XCTAssertEqual(dashboard.historyTrend.count, 14)
+        XCTAssertEqual(dashboard.historyTrend[0].value, "$2.00")
+        XCTAssertEqual(dashboard.historyTrend[13].value, "$398.56")
         XCTAssertEqual(dashboard.historyPeak?.date, "2026-06-04")
+        XCTAssertEqual(dashboard.previousWeekTrend.count, 7)
+        XCTAssertEqual(dashboard.currentWeekTrend.count, 7)
+        XCTAssertEqual(dashboard.spendHighlights[0].title, "Today")
+        XCTAssertEqual(dashboard.spendHighlights[0].value, "$398.56")
+        XCTAssertEqual(dashboard.spendHighlights[1].title, "All-time")
+        XCTAssertEqual(dashboard.spendHighlights[1].value, "$24.0K")
+        XCTAssertEqual(dashboard.spendHighlights[2].title, "7d spend")
+        XCTAssertEqual(dashboard.spendHighlights[2].value, "$588.56")
+        XCTAssertEqual(dashboard.spendHighlights[2].detail, "+320% vs prior 7d")
     }
 
     private func sampleSummaryData() -> Data {
@@ -268,9 +308,32 @@ final class TokscaleSummaryTests: XCTestCase {
     private func sampleSummaryJSON(
         generatedAt: String = "2026-06-04T02:25:56.459117+00:00",
         topJSON: String,
-        accuracyJSON: String
+        accuracyJSON: String,
+        quotaJSON: String? = nil
     ) -> String {
-        """
+        let quotaJSON = quotaJSON ?? """
+            [
+              {
+                "provider": "Claude",
+                "plan": "Pro 5x",
+                "windows": [
+                  {
+                    "label": "Session",
+                    "usedPercent": 72.0,
+                    "remainingPercent": 28.0,
+                    "resetsAt": "2026-06-04T10:00:00Z"
+                  },
+                  {
+                    "label": "Weekly",
+                    "usedPercent": 41.0,
+                    "remainingPercent": 59.0,
+                    "resetsAt": "2026-06-08T00:00:00Z"
+                  }
+                ]
+              }
+            ]
+            """
+        return """
         {
           "version": 1,
           "generatedAt": "\(generatedAt)",
@@ -335,33 +398,21 @@ final class TokscaleSummaryTests: XCTestCase {
               "topModel": "openclaw"
             }
           ],
-          "quota": [
-            {
-              "provider": "Claude",
-              "plan": "Pro 5x",
-              "windows": [
-                {
-                  "label": "Session",
-                  "usedPercent": 72.0,
-                  "remainingPercent": 28.0,
-                  "resetsAt": "2026-06-04T10:00:00Z"
-                },
-                {
-                  "label": "Weekly",
-                  "usedPercent": 41.0,
-                  "remainingPercent": 59.0,
-                  "resetsAt": "2026-06-08T00:00:00Z"
-                }
-              ]
-            }
-          ],
+          "quota": \(quotaJSON),
           "history": [
+            {"date": "2026-05-22", "costUsd": 2.0, "tokens": 200000, "messages": 2},
+            {"date": "2026-05-23", "costUsd": 8.0, "tokens": 800000, "messages": 8},
+            {"date": "2026-05-24", "costUsd": 12.0, "tokens": 1200000, "messages": 12},
+            {"date": "2026-05-25", "costUsd": 18.0, "tokens": 1800000, "messages": 18},
+            {"date": "2026-05-26", "costUsd": 24.0, "tokens": 2400000, "messages": 24},
+            {"date": "2026-05-27", "costUsd": 32.0, "tokens": 3200000, "messages": 32},
+            {"date": "2026-05-28", "costUsd": 44.0, "tokens": 4400000, "messages": 44},
             {"date": "2026-05-29", "costUsd": 10.0, "tokens": 1000000, "messages": 10},
             {"date": "2026-05-30", "costUsd": 20.0, "tokens": 2000000, "messages": 20},
             {"date": "2026-05-31", "costUsd": 30.0, "tokens": 3000000, "messages": 30},
             {"date": "2026-06-01", "costUsd": 40.0, "tokens": 4000000, "messages": 40},
             {"date": "2026-06-02", "costUsd": 50.0, "tokens": 5000000, "messages": 50},
-            {"date": "2026-06-03", "costUsd": 60.0, "tokens": 6000000, "messages": 60},
+            {"date": "2026-06-03", "costUsd": 40.0, "tokens": 4000000, "messages": 40},
             {"date": "2026-06-04", "costUsd": 398.56475810000006, "tokens": 522596373, "messages": 2501}
           ],
           "top": {

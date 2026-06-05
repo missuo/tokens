@@ -71,7 +71,7 @@ public struct TokscaleSummary: Decodable, Equatable {
     }
 
     public var menuBarTitle: String {
-        "AI \(statusTitle)"
+        "Tokens"
     }
 
     public var menuLines: [String] {
@@ -158,7 +158,10 @@ public struct TokscaleDashboardModel: Equatable {
     public let insights: [Panel]
     public let quotaWindows: [QuotaWindowSummary]
     public let historyTrend: [HistoryPoint]
+    public let previousWeekTrend: [HistoryPoint]
+    public let currentWeekTrend: [HistoryPoint]
     public let historyPeak: HistoryPoint?
+    public let spendHighlights: [Panel]
     public let health: HealthStatus
     private let summaryStale: Bool
     private let providerDetailsById: [String: ProviderDetails]
@@ -168,6 +171,7 @@ public struct TokscaleDashboardModel: Equatable {
     public init(summary: TokscaleSummary) {
         let providerRows = Self.providerRows(summary: summary)
         let historyRows = Self.historyRows(summary: summary)
+        let weekTrends = Self.weekTrends(historyRows: historyRows)
         summaryStale = summary.stale
         clientLabels = providerRows.map { clientDisplayName($0.client) }
         providers = Self.providerSummaries(rows: providerRows, totalCost: summary.totals.costUsd)
@@ -221,12 +225,15 @@ public struct TokscaleDashboardModel: Equatable {
         ]
         quotaWindows = Self.quotaWindows(summary: summary)
         historyTrend = historyRows
+        previousWeekTrend = weekTrends.previous
+        currentWeekTrend = weekTrends.current
         historyPeak = historyRows.max { left, right in
             if left.costUsd == right.costUsd {
                 return left.date < right.date
             }
             return left.costUsd < right.costUsd
         }
+        spendHighlights = Self.spendHighlights(summary: summary, currentWeekTrend: weekTrends.current, previousWeekTrend: weekTrends.previous)
         health = HealthStatus(
             title: summary.stale ? "Stale" : "Fresh",
             detail: "Last scan \(formatDuration(milliseconds: summary.health.lastScanDurationMs))",
@@ -370,8 +377,8 @@ public struct TokscaleDashboardModel: Equatable {
                     provider: provider.provider,
                     plan: provider.plan,
                     title: Self.displayQuotaTitle(window.label),
-                    value: window.remainingLabel ?? "\(Int(remainingPercent.rounded()))% left",
-                    detail: "\(Int(usedPercent.rounded()))% used",
+                    value: window.remainingLabel ?? "\(formatPercent(remainingPercent))% left",
+                    detail: "\(formatPercent(usedPercent))% used",
                     reset: window.resetsAt,
                     progress: usedPercent / 100,
                     usedPercent: usedPercent,
@@ -414,6 +421,51 @@ public struct TokscaleDashboardModel: Equatable {
                 progress: maxCost > 0 ? min(max(day.costUsd / maxCost, 0), 1) : 0
             )
         }
+    }
+
+    private static func weekTrends(historyRows: [HistoryPoint]) -> (previous: [HistoryPoint], current: [HistoryPoint]) {
+        let recent = Array(historyRows.suffix(14))
+        if recent.count <= 7 {
+            return ([], recent)
+        }
+        return (Array(recent.dropLast(7)), Array(recent.suffix(7)))
+    }
+
+    private static func spendHighlights(
+        summary: TokscaleSummary,
+        currentWeekTrend: [HistoryPoint],
+        previousWeekTrend: [HistoryPoint]
+    ) -> [Panel] {
+        let currentWeekCost = currentWeekTrend.reduce(0) { $0 + $1.costUsd }
+        let previousWeekCost = previousWeekTrend.reduce(0) { $0 + $1.costUsd }
+        return [
+            Panel(
+                title: "Today",
+                value: formatUSD(summary.today.costUsd),
+                detail: "\(formatTokens(summary.today.tokens)) tokens - \(summary.today.messages) messages"
+            ),
+            Panel(
+                title: "All-time",
+                value: formatUSD(summary.totals.costUsd),
+                detail: "\(formatTokens(summary.totals.tokens)) tokens - \(summary.totals.activeDays) active days"
+            ),
+            Panel(
+                title: "7d spend",
+                value: formatUSD(currentWeekCost),
+                detail: weekComparisonDetail(current: currentWeekCost, previous: previousWeekCost)
+            )
+        ]
+    }
+
+    private static func weekComparisonDetail(current: Double, previous: Double) -> String {
+        if previous <= 0 {
+            return current > 0 ? "new vs prior 7d" : "flat vs prior 7d"
+        }
+        let percent = Int(((current - previous) / previous * 100).rounded())
+        if percent > 0 {
+            return "+\(percent)% vs prior 7d"
+        }
+        return "\(percent)% vs prior 7d"
     }
 
     private static func progressAgainstDailyAverage(summary: TokscaleSummary) -> Double {
@@ -504,7 +556,7 @@ public extension TokscaleDashboardModel {
             case .remaining:
                 return value
             case .used:
-                return "\(Int(usedPercent.rounded()))% used"
+                return "\(formatPercent(usedPercent))% used"
             }
         }
 
@@ -513,7 +565,7 @@ public extension TokscaleDashboardModel {
             case .remaining:
                 return detail
             case .used:
-                return "\(Int(remainingPercent.rounded()))% left"
+                return "\(formatPercent(remainingPercent))% left"
             }
         }
 
@@ -708,6 +760,14 @@ private func formatUSD(_ value: Double) -> String {
         return String(format: "$%.1fK", value / 1_000)
     }
     return String(format: "$%.2f", value)
+}
+
+private func formatPercent(_ value: Double) -> String {
+    let rounded = value.rounded()
+    if abs(value - rounded) < 0.05 {
+        return "\(Int(rounded))"
+    }
+    return String(format: "%.1f", value)
 }
 
 private func formatTokens(_ value: Int64) -> String {
