@@ -136,6 +136,8 @@ private struct SummaryContent: View {
                     HistorySection(model: model)
                     .padding(.bottom, 2)
 
+                    ContributionHeatmap(days: summary.contribution)
+
                     Text("Dollar amounts are API-equivalent value, not subscription spend.")
                         .font(.system(size: 9, weight: .medium))
                         .foregroundStyle(.secondary)
@@ -1391,6 +1393,130 @@ private struct HistoryBars: View {
             return "\(day.date) · \(day.value) · \(day.messages)"
         }
         return "\(day.date) · \(day.value) · last wk \(previous.value)"
+    }
+}
+
+private struct ContributionHeatmap: View {
+    let days: [TokscaleSummary.ContributionDay]
+
+    private let cell: CGFloat = 9
+    private let spacing: CGFloat = 2
+
+    var body: some View {
+        let grid = Self.buildGrid(days)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 7) {
+                Image(systemName: "square.grid.3x3.fill")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(companionOrange)
+                Text("Activity")
+                    .font(.system(size: 13, weight: .bold))
+                Spacer(minLength: 0)
+                Text("\(days.count) active days")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.secondary)
+            }
+            if grid.isEmpty {
+                CompactEmptyMessage(
+                    title: "No activity yet",
+                    detail: "Run `tokens submit` to build your contribution history.",
+                    icon: "square.grid.3x3"
+                )
+            } else {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(alignment: .top, spacing: spacing) {
+                        ForEach(Array(grid.enumerated()), id: \.offset) { _, week in
+                            VStack(spacing: spacing) {
+                                ForEach(Array(week.enumerated()), id: \.offset) { _, level in
+                                    RoundedRectangle(cornerRadius: 2, style: .continuous)
+                                        .fill(color(level))
+                                        .frame(width: cell, height: cell)
+                                }
+                            }
+                        }
+                    }
+                    HStack(spacing: 4) {
+                        Text("Less").font(.system(size: 8)).foregroundStyle(.secondary)
+                        ForEach(0...4, id: \.self) { level in
+                            RoundedRectangle(cornerRadius: 2, style: .continuous)
+                                .fill(color(level))
+                                .frame(width: 8, height: 8)
+                        }
+                        Text("More").font(.system(size: 8)).foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+        .padding(15)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(companionGlassPanelColor)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(companionOrange.opacity(0.16), lineWidth: 1)
+        )
+    }
+
+    private func color(_ level: Int) -> Color {
+        switch level {
+        case 1: return companionOrange.opacity(0.30)
+        case 2: return companionOrange.opacity(0.52)
+        case 3: return companionOrange.opacity(0.74)
+        case 4: return companionOrange.opacity(0.96)
+        case -1: return Color.clear
+        default: return Color.gray.opacity(0.16)
+        }
+    }
+
+    // Calendar grid as columns of 7 (Sun..Sat). -1 pads days outside the data range,
+    // 0 is an in-range day with no usage, 1-4 are intensity buckets.
+    static func buildGrid(_ days: [TokscaleSummary.ContributionDay]) -> [[Int]] {
+        guard let firstDay = days.first, let lastDay = days.last else {
+            return []
+        }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC") ?? .current
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.timeZone = calendar.timeZone
+        formatter.dateFormat = "yyyy-MM-dd"
+
+        let byDate = Dictionary(days.map { ($0.date, $0.intensity) }, uniquingKeysWith: { first, _ in first })
+        guard let first = formatter.date(from: firstDay.date),
+            let last = formatter.date(from: lastDay.date)
+        else {
+            return []
+        }
+
+        let firstWeekday = calendar.component(.weekday, from: first) - 1
+        guard let gridStart = calendar.date(byAdding: .day, value: -firstWeekday, to: first) else {
+            return []
+        }
+
+        var columns: [[Int]] = []
+        var current: [Int] = []
+        var day = gridStart
+        while day <= last {
+            let weekday = calendar.component(.weekday, from: day) - 1
+            let level = day < first ? -1 : (byDate[formatter.string(from: day)] ?? 0)
+            current.append(level)
+            if weekday == 6 {
+                columns.append(current)
+                current = []
+            }
+            guard let next = calendar.date(byAdding: .day, value: 1, to: day) else {
+                break
+            }
+            day = next
+        }
+        if !current.isEmpty {
+            while current.count < 7 {
+                current.append(-1)
+            }
+            columns.append(current)
+        }
+        return columns
     }
 }
 

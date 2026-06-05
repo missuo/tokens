@@ -11,6 +11,7 @@ public struct TokscaleSummary: Decodable, Equatable {
     public let providers: [Provider]
     public let quota: [QuotaProvider]
     public let history: [HistoryDay]
+    public let contribution: [ContributionDay]
     public let top: Top
     public let latestSubmit: LatestSubmit?
     public let health: Health
@@ -27,6 +28,7 @@ public struct TokscaleSummary: Decodable, Equatable {
         case providers
         case quota
         case history
+        case contribution
         case top
         case latestSubmit
         case health
@@ -45,6 +47,8 @@ public struct TokscaleSummary: Decodable, Equatable {
         providers = try container.decodeIfPresent([Provider].self, forKey: .providers) ?? []
         quota = try container.decodeIfPresent([QuotaProvider].self, forKey: .quota) ?? []
         history = try container.decodeIfPresent([HistoryDay].self, forKey: .history) ?? []
+        contribution =
+            try container.decodeIfPresent([ContributionDay].self, forKey: .contribution) ?? []
         top = try container.decode(Top.self, forKey: .top)
         latestSubmit = try container.decodeIfPresent(LatestSubmit.self, forKey: .latestSubmit)
         health = try container.decode(Health.self, forKey: .health)
@@ -723,6 +727,12 @@ public extension TokscaleSummary {
         public let costUsd: Double
         public let tokens: Int64
         public let messages: Int
+    }
+
+    struct ContributionDay: Decodable, Equatable {
+        public let date: String
+        public let costUsd: Double
+        public let intensity: Int
     }
 
     struct Top: Decodable, Equatable {

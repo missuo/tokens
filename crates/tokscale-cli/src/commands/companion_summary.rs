@@ -25,6 +25,8 @@ pub struct CompanionSummary {
     pub quota: Vec<CompanionQuotaProvider>,
     #[serde(default)]
     pub history: Vec<CompanionHistoryDay>,
+    #[serde(default)]
+    pub contribution: Vec<CompanionContributionDay>,
     pub top: CompanionTop,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub latest_submit: Option<CompanionLatestSubmit>,
@@ -101,6 +103,14 @@ pub struct CompanionHistoryDay {
     pub cost_usd: f64,
     pub tokens: i64,
     pub messages: i32,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompanionContributionDay {
+    pub date: String,
+    pub cost_usd: f64,
+    pub intensity: u8,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -290,6 +300,7 @@ pub fn from_graph_with_usage(
         providers: provider_breakdown(graph, today_date),
         quota: quota_breakdown(usage_outputs),
         history: history_breakdown(graph, today_date),
+        contribution: contribution_breakdown(graph),
         top: CompanionTop {
             client: top_client(graph),
             model: top_model(graph),
@@ -456,6 +467,38 @@ pub(crate) fn quota_breakdown(
     providers
 }
 
+fn contribution_breakdown(graph: &tokscale_core::GraphResult) -> Vec<CompanionContributionDay> {
+    let mut by_date = std::collections::BTreeMap::<String, f64>::new();
+    for day in &graph.contributions {
+        *by_date.entry(day.date.clone()).or_insert(0.0) += day.totals.cost;
+    }
+    let max_cost = by_date.values().copied().fold(0.0_f64, f64::max);
+    by_date
+        .into_iter()
+        .map(|(date, cost_usd)| CompanionContributionDay {
+            date,
+            cost_usd,
+            intensity: contribution_intensity(cost_usd, max_cost),
+        })
+        .collect()
+}
+
+fn contribution_intensity(cost: f64, max_cost: f64) -> u8 {
+    if cost <= 0.0 || max_cost <= 0.0 {
+        return 0;
+    }
+    let ratio = (cost / max_cost).clamp(0.0, 1.0);
+    if ratio <= 0.25 {
+        1
+    } else if ratio <= 0.5 {
+        2
+    } else if ratio <= 0.75 {
+        3
+    } else {
+        4
+    }
+}
+
 fn history_breakdown(
     graph: &tokscale_core::GraphResult,
     today_date: &str,
@@ -545,6 +588,7 @@ mod tests {
             }],
             quota: Vec::new(),
             history: Vec::new(),
+            contribution: Vec::new(),
             top: CompanionTop {
                 client: Some("codex".to_string()),
                 model: Some("gpt-5".to_string()),
