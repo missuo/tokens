@@ -101,6 +101,19 @@ public struct TokscaleSummary: Decodable, Equatable {
         }
     }
 
+    public func needsRefreshOnOpen(
+        now: Date = Date(),
+        minimumInterval: TimeInterval = 60
+    ) -> Bool {
+        if stale {
+            return true
+        }
+        guard let generatedAtDate = parseISODate(generatedAt) else {
+            return true
+        }
+        return now.timeIntervalSince(generatedAtDate) >= minimumInterval
+    }
+
     private mutating func markStale(reason: String) {
         stale = true
         staleReason = staleReason ?? reason
@@ -164,6 +177,7 @@ public struct TokscaleDashboardModel: Equatable {
     public let spendHighlights: [Panel]
     public let health: HealthStatus
     private let summaryStale: Bool
+    private let quotaWasRefreshed: Bool
     private let providerDetailsById: [String: ProviderDetails]
 
     private static let quotaBoardProviderIds = ["claude", "codex", "gemini"]
@@ -172,6 +186,8 @@ public struct TokscaleDashboardModel: Equatable {
         let providerRows = Self.providerRows(summary: summary)
         let historyRows = Self.historyRows(summary: summary)
         let weekTrends = Self.weekTrends(historyRows: historyRows)
+        let hasLiveQuotaRefresh = summary.health.quotaRefreshedAt != nil
+        quotaWasRefreshed = hasLiveQuotaRefresh
         summaryStale = summary.stale
         clientLabels = providerRows.map { clientDisplayName($0.client) }
         providers = Self.providerSummaries(rows: providerRows, totalCost: summary.totals.costUsd)
@@ -187,7 +203,8 @@ public struct TokscaleDashboardModel: Equatable {
                         total: "\(formatUSD(row.costUsd)) total",
                         tokens: formatTokens(row.tokens),
                         messages: "\(row.messages) messages",
-                        share: Self.providerShare(row.costUsd, totalCost: summary.totals.costUsd)
+                        share: Self.providerShare(row.costUsd, totalCost: summary.totals.costUsd),
+                        hasLiveQuotaRefresh: hasLiveQuotaRefresh
                     )
                 )
             }
@@ -260,7 +277,8 @@ public struct TokscaleDashboardModel: Equatable {
             total: "$0.00 total",
             tokens: "0",
             messages: "0 messages",
-            share: 0
+            share: 0,
+            hasLiveQuotaRefresh: false
         )
     }
 
@@ -290,7 +308,8 @@ public struct TokscaleDashboardModel: Equatable {
                 total: "$0.00 total",
                 tokens: "0",
                 messages: "0 messages",
-                share: 0
+                share: 0,
+                hasLiveQuotaRefresh: quotaWasRefreshed
             )
         )
     }
@@ -316,7 +335,7 @@ public struct TokscaleDashboardModel: Equatable {
             quotaWindows: quota,
             primaryQuota: primary,
             weeklyQuota: weekly,
-            quotaStatus: quota.isEmpty ? "No live quota" : (summaryStale ? "Cached" : "Live"),
+            quotaStatus: quota.isEmpty ? "No live quota" : (summaryStale && !details.hasLiveQuotaRefresh ? "Cached" : "Live"),
             workTime: "Work time unavailable",
             focusedModelTime: Self.focusedModelTimeLabel(providerId: details.id, model: details.model)
         )
@@ -605,6 +624,7 @@ public extension TokscaleDashboardModel {
         public let tokens: String
         public let messages: String
         public let share: Double
+        public let hasLiveQuotaRefresh: Bool
     }
 
     struct ProviderFocus: Equatable {
@@ -713,6 +733,7 @@ public extension TokscaleSummary {
     struct Health: Decodable, Equatable {
         public let summaryPath: String
         public let lastScanDurationMs: Int
+        public let quotaRefreshedAt: String?
         public let warnings: [String]
     }
 

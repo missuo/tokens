@@ -491,30 +491,20 @@ private struct QuotaUnavailableLine: View {
 private struct QuotaProgressBar: View {
     let progress: Double
     let color: Color
-    @State private var visibleProgress = 0.0
 
     var body: some View {
         GeometryReader { proxy in
+            let clampedProgress = min(max(progress, 0), 1)
             ZStack(alignment: .leading) {
                 RoundedRectangle(cornerRadius: 5, style: .continuous)
                     .fill(Color(nsColor: .separatorColor).opacity(0.18))
                 RoundedRectangle(cornerRadius: 5, style: .continuous)
                     .fill(color)
-                    .frame(width: max(7, proxy.size.width * visibleProgress))
+                    .frame(width: max(7, proxy.size.width * clampedProgress))
                     .shadow(color: color.opacity(0.16), radius: 5, x: 0, y: 0)
             }
         }
         .frame(height: 11)
-        .onAppear {
-            withAnimation(.spring(response: 0.48, dampingFraction: 0.82)) {
-                visibleProgress = min(max(progress, 0), 1)
-            }
-        }
-        .onChange(of: progress) { newValue in
-            withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
-                visibleProgress = min(max(newValue, 0), 1)
-            }
-        }
     }
 }
 
@@ -1361,29 +1351,19 @@ private struct UsageArcGauge: View {
 private struct ProgressBar: View {
     let progress: Double
     let color: Color
-    @State private var visibleProgress = 0.0
 
     var body: some View {
         GeometryReader { proxy in
+            let clampedProgress = min(max(progress, 0), 1)
             ZStack(alignment: .leading) {
                 Capsule()
                     .fill(Color(nsColor: .separatorColor).opacity(0.24))
                 Capsule()
                     .fill(color.opacity(0.78))
-                    .frame(width: max(6, proxy.size.width * visibleProgress))
+                    .frame(width: max(6, proxy.size.width * clampedProgress))
             }
         }
         .frame(height: 6)
-        .onAppear {
-            withAnimation(.spring(response: 0.5, dampingFraction: 0.84)) {
-                visibleProgress = min(max(progress, 0), 1)
-            }
-        }
-        .onChange(of: progress) { newValue in
-            withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
-                visibleProgress = min(max(newValue, 0), 1)
-            }
-        }
     }
 }
 
@@ -1499,14 +1479,26 @@ private struct LiveDot: View {
         }
         .frame(width: 19, height: 19)
         .onAppear {
-            withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: false)) {
-                pulse = true
-            }
+            updatePulse()
+        }
+        .onChange(of: active) { _ in
+            updatePulse()
         }
     }
 
     private var dotColor: Color {
         active ? providerColor("openclaw") : (stale ? providerColor("claude") : providerColor("codex"))
+    }
+
+    private func updatePulse() {
+        guard active else {
+            pulse = false
+            return
+        }
+        pulse = false
+        withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: false)) {
+            pulse = true
+        }
     }
 }
 

@@ -144,6 +144,39 @@ final class TokscaleSummaryTests: XCTestCase {
         XCTAssertEqual(summary.collapsed.state, "stale")
     }
 
+    func testSummaryRequestsOpenRefreshWhenStaleOrOlderThanMinimumInterval() throws {
+        var staleSummary = try TokscaleSummary.decode(sampleSummaryData())
+        staleSummary.refreshFreshness(now: try isoDate("2026-06-04T04:26:00Z"))
+
+        XCTAssertTrue(staleSummary.needsRefreshOnOpen(now: try isoDate("2026-06-04T04:26:00Z")))
+
+        let oldSummary = try TokscaleSummary.decode(sampleSummaryData())
+        XCTAssertTrue(
+            oldSummary.needsRefreshOnOpen(
+                now: try isoDate("2026-06-04T02:27:01Z"),
+                minimumInterval: 60
+            )
+        )
+
+        XCTAssertFalse(
+            oldSummary.needsRefreshOnOpen(
+                now: try isoDate("2026-06-04T02:26:30Z"),
+                minimumInterval: 60
+            )
+        )
+    }
+
+    func testSummaryRequestsOpenRefreshWhenGeneratedAtCannotBeParsed() throws {
+        let data = sampleSummaryJSON(
+            generatedAt: "not-a-date",
+            topJSON: #""client":"codex","model":"gpt-5.5""#,
+            accuracyJSON: #""confidence":"medium","sourceKinds":["local-scan"],"warnings":[]"#
+        ).data(using: .utf8)!
+        let summary = try TokscaleSummary.decode(data)
+
+        XCTAssertTrue(summary.needsRefreshOnOpen(now: try isoDate("2026-06-04T02:26:30Z")))
+    }
+
     func testDashboardModelBuildsMultiClientDashboardSections() throws {
         let summary = try TokscaleSummary.decode(sampleSummaryData())
 
@@ -222,6 +255,22 @@ final class TokscaleSummaryTests: XCTestCase {
         XCTAssertEqual(primaryQuota.detail(for: .used), "28% left")
         XCTAssertEqual(primaryQuota.progress(for: .used), 0.72, accuracy: 0.01)
         XCTAssertEqual(claude.weeklyQuota?.title, "Week")
+    }
+
+    func testDashboardTreatsQuotaRefreshAsLiveWhenHistoryIsStale() throws {
+        let data = sampleSummaryJSON(
+            generatedAt: "2026-06-04T02:25:56.459117+00:00",
+            topJSON: #""client":"codex","model":"gpt-5.5""#,
+            accuracyJSON: #""confidence":"medium","sourceKinds":["local-scan"],"warnings":[]"#,
+            healthExtraJSON: #","quotaRefreshedAt":"2026-06-04T04:25:56Z""#
+        ).data(using: .utf8)!
+        var summary = try TokscaleSummary.decode(data)
+        summary.refreshFreshness(now: try isoDate("2026-06-04T04:26:00Z"))
+
+        let dashboard = TokscaleDashboardModel(summary: summary)
+
+        XCTAssertTrue(summary.stale)
+        XCTAssertEqual(dashboard.quotaBoardProviders[0].quotaStatus, "Live")
     }
 
     func testDashboardModelPreservesOneDecimalForQuotaPercentages() throws {
@@ -309,7 +358,8 @@ final class TokscaleSummaryTests: XCTestCase {
         generatedAt: String = "2026-06-04T02:25:56.459117+00:00",
         topJSON: String,
         accuracyJSON: String,
-        quotaJSON: String? = nil
+        quotaJSON: String? = nil,
+        healthExtraJSON: String = ""
     ) -> String {
         let quotaJSON = quotaJSON ?? """
             [
@@ -422,6 +472,7 @@ final class TokscaleSummaryTests: XCTestCase {
             "summaryPath": "/Users/example/.config/tokens/cache/companion-summary.json",
             "lastScanDurationMs": 300943,
             "warnings": []
+            \(healthExtraJSON)
           },
           "accuracy": {
             \(accuracyJSON)

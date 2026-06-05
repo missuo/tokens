@@ -15,7 +15,8 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
     private let store = TokscaleSummaryStore()
     private let viewState = TokensMenuBarState()
     private let popoverContentSize = NSSize(width: 560, height: 760)
-    private let statusItemLength: CGFloat = 76
+    private let statusItemLength = NSStatusItem.squareLength
+    private let openRefreshMinimumInterval: TimeInterval = 60
     private var statusItem: NSStatusItem?
     private let popover = NSPopover()
     private var hostingController: NSHostingController<TokensPopoverView>?
@@ -30,18 +31,13 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
         let item = NSStatusBar.system.statusItem(withLength: statusItemLength)
         statusItem = item
         if let button = item.button {
-            button.font = NSFont.monospacedDigitSystemFont(
-                ofSize: NSFont.systemFontSize,
-                weight: .regular
-            )
             button.toolTip = "Tokens"
             button.setAccessibilityLabel("Tokens")
             button.alignment = .center
-            button.lineBreakMode = .byTruncatingTail
             if let image = NSImage(systemSymbolName: "chart.bar.xaxis", accessibilityDescription: "Tokens") {
                 image.isTemplate = true
                 button.image = image
-                button.imagePosition = .imageLeading
+                button.imagePosition = .imageOnly
             }
             button.target = self
             button.action = #selector(togglePopover)
@@ -76,10 +72,6 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
         reload()
     }
 
-    @objc private func reloadFromMenu() {
-        reload()
-    }
-
     @objc private func togglePopover() {
         guard let button = statusItem?.button else {
             return
@@ -88,11 +80,19 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
             popover.performClose(nil)
             return
         }
+        reload()
         NSApp.activate(ignoringOtherApps: true)
         popover.contentSize = popoverContentSize
         hostingController?.view.frame = NSRect(origin: .zero, size: popoverContentSize)
-        let anchorRect = NSRect(x: button.bounds.midX - 0.5, y: button.bounds.minY, width: 1, height: button.bounds.height)
-        popover.show(relativeTo: anchorRect, of: button, preferredEdge: .minY)
+        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        recenterPopoverWindow(relativeTo: button)
+        DispatchQueue.main.async { [weak self, weak button] in
+            guard let self, let button else {
+                return
+            }
+            self.recenterPopoverWindow(relativeTo: button)
+            self.refreshQuotaOnOpenIfNeeded()
+        }
         popover.contentViewController?.view.window?.makeKey()
     }
 
@@ -110,16 +110,37 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
         NSWorkspace.shared.open(store.summaryURL.deletingLastPathComponent())
     }
 
-    private func refreshScan() {
+    private func refreshScan(status: String = "Scanning local AI sessions...") {
         guard !viewState.isRefreshing else {
             return
         }
         viewState.isRefreshing = true
-        viewState.refreshStatus = "Scanning local AI sessions..."
+        viewState.refreshStatus = status
         render()
 
         DispatchQueue.global(qos: .utility).async { [weak self] in
             let result = Self.runCompanionRefresh()
+            DispatchQueue.main.async {
+                guard let self else {
+                    return
+                }
+                self.viewState.isRefreshing = false
+                self.viewState.refreshStatus = result
+                self.reload()
+            }
+        }
+    }
+
+    private func refreshQuota(status: String = "Refreshing live quota...") {
+        guard !viewState.isRefreshing else {
+            return
+        }
+        viewState.isRefreshing = true
+        viewState.refreshStatus = status
+        render()
+
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let result = Self.runCompanionQuotaRefresh()
             DispatchQueue.main.async {
                 guard let self else {
                     return
@@ -147,15 +168,52 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
     }
 
     private func render() {
-        statusItem?.button?.title = viewState.summary?.menuBarTitle ?? "Tokens"
-        statusItem?.button?.toolTip = viewState.summary?.menuBarTitle ?? "Tokens"
+        statusItem?.button?.title = ""
+        statusItem?.button?.toolTip = "Tokens"
         statusItem?.length = statusItemLength
         popover.contentSize = popoverContentSize
         hostingController?.view.frame = NSRect(origin: .zero, size: popoverContentSize)
     }
 
+    private func refreshQuotaOnOpenIfNeeded() {
+        guard !viewState.isRefreshing else {
+            return
+        }
+        guard viewState.summary?.needsRefreshOnOpen(minimumInterval: openRefreshMinimumInterval) ?? true else {
+            return
+        }
+        refreshQuota(status: "Refreshing quota on open...")
+    }
+
+    private func recenterPopoverWindow(relativeTo button: NSStatusBarButton) {
+        guard let popoverWindow = popover.contentViewController?.view.window,
+              let buttonWindow = button.window else {
+            return
+        }
+        let buttonFrame = buttonWindow.convertToScreen(button.convert(button.bounds, to: nil))
+        guard let screen = NSScreen.screens.first(where: { $0.frame.intersects(buttonFrame) }) ?? buttonWindow.screen else {
+            return
+        }
+        let margin: CGFloat = 8
+        var windowFrame = popoverWindow.frame
+        let desiredX = buttonFrame.midX - windowFrame.width / 2
+        let minX = screen.visibleFrame.minX + margin
+        let maxX = screen.visibleFrame.maxX - windowFrame.width - margin
+        windowFrame.origin.x = min(max(desiredX, minX), maxX)
+        popoverWindow.setFrameOrigin(windowFrame.origin)
+    }
+
     nonisolated private static func runCompanionRefresh() -> String {
         let arguments = ["--no-spinner", "companion-summary", "--refresh", "--json"]
+        return runCompanionCommand(arguments: arguments)
+    }
+
+    nonisolated private static func runCompanionQuotaRefresh() -> String {
+        let arguments = ["--no-spinner", "companion-summary", "--refresh-quota", "--json"]
+        return runCompanionCommand(arguments: arguments)
+    }
+
+    nonisolated private static func runCompanionCommand(arguments: [String]) -> String {
         var lastFailure: String?
         for path in companionRefreshCandidates() where FileManager.default.isExecutableFile(atPath: path) {
             let result = runCompanionRefreshProcess(

@@ -195,6 +195,12 @@ enum Commands {
         json: bool,
         #[arg(long, help = "Refresh the local summary with an explicit scan")]
         refresh: bool,
+        #[arg(
+            long = "refresh-quota",
+            conflicts_with = "refresh",
+            help = "Refresh only live quota windows without scanning local sessions"
+        )]
+        refresh_quota: bool,
     },
     #[command(about = "Display saved API token as QR code")]
     Qr {
@@ -580,9 +586,13 @@ fn main() -> Result<()> {
             reject_unsupported_home_override(&cli.home, "status")?;
             commands::status::run(json)
         }
-        Some(Commands::CompanionSummary { json, refresh }) => {
+        Some(Commands::CompanionSummary {
+            json,
+            refresh,
+            refresh_quota,
+        }) => {
             reject_unsupported_home_override(&cli.home, "companion-summary")?;
-            run_companion_summary_command(json, refresh)
+            run_companion_summary_command(json, refresh, refresh_quota)
         }
         Some(Commands::Qr { yes }) => {
             reject_unsupported_home_override(&cli.home, "qr")?;
@@ -4071,9 +4081,11 @@ fn to_ts_token_contribution_data_for_submit(
     payload
 }
 
-fn run_companion_summary_command(json: bool, refresh: bool) -> Result<()> {
+fn run_companion_summary_command(json: bool, refresh: bool, refresh_quota: bool) -> Result<()> {
     let summary = if refresh {
         refresh_companion_summary()?
+    } else if refresh_quota {
+        refresh_companion_summary_quota()?
     } else {
         commands::companion_summary::read_latest()?
     };
@@ -4098,6 +4110,23 @@ fn run_companion_summary_command(json: bool, refresh: bool) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn refresh_companion_summary_quota() -> Result<Option<commands::companion_summary::CompanionSummary>>
+{
+    let Some(mut summary) = commands::companion_summary::read_latest()? else {
+        return Ok(None);
+    };
+    let (usage_outputs, usage_warnings) = commands::usage::fetch_all_with_warnings();
+    if !usage_outputs.is_empty() {
+        commands::usage::save_cache(&usage_outputs);
+        summary.quota = commands::companion_summary::quota_breakdown(&usage_outputs);
+        summary.health.quota_refreshed_at = Some(chrono::Utc::now().to_rfc3339());
+    }
+    summary.health.warnings.extend(usage_warnings);
+    dedupe_strings_in_place(&mut summary.health.warnings);
+    commands::companion_summary::write_latest(&summary)?;
+    Ok(Some(summary))
 }
 
 fn refresh_companion_summary() -> Result<Option<commands::companion_summary::CompanionSummary>> {
@@ -4138,8 +4167,14 @@ fn refresh_companion_summary() -> Result<Option<commands::companion_summary::Com
         &usage_outputs,
     );
     summary.health.warnings.extend(usage_warnings);
+    dedupe_strings_in_place(&mut summary.health.warnings);
     commands::companion_summary::write_latest(&summary)?;
     Ok(Some(summary))
+}
+
+fn dedupe_strings_in_place(values: &mut Vec<String>) {
+    let mut seen = std::collections::HashSet::new();
+    values.retain(|value| seen.insert(value.clone()));
 }
 
 fn run_login_command(token: Option<String>) -> Result<()> {
@@ -5944,9 +5979,14 @@ mod tests {
         let cli = Cli::try_parse_from(["tokens", "companion-summary", "--json"]).unwrap();
 
         match cli.command {
-            Some(Commands::CompanionSummary { json, refresh }) => {
+            Some(Commands::CompanionSummary {
+                json,
+                refresh,
+                refresh_quota,
+            }) => {
                 assert!(json);
                 assert!(!refresh);
+                assert!(!refresh_quota);
             }
             _ => panic!("companion-summary --json command should parse"),
         }
@@ -5958,11 +5998,35 @@ mod tests {
             Cli::try_parse_from(["tokens", "companion-summary", "--refresh", "--json"]).unwrap();
 
         match cli.command {
-            Some(Commands::CompanionSummary { json, refresh }) => {
+            Some(Commands::CompanionSummary {
+                json,
+                refresh,
+                refresh_quota,
+            }) => {
                 assert!(json);
                 assert!(refresh);
+                assert!(!refresh_quota);
             }
             _ => panic!("companion-summary --refresh --json command should parse"),
+        }
+    }
+
+    #[test]
+    fn test_companion_summary_command_parses_refresh_quota_json_flags() {
+        let cli = Cli::try_parse_from(["tokens", "companion-summary", "--refresh-quota", "--json"])
+            .unwrap();
+
+        match cli.command {
+            Some(Commands::CompanionSummary {
+                json,
+                refresh,
+                refresh_quota,
+            }) => {
+                assert!(json);
+                assert!(!refresh);
+                assert!(refresh_quota);
+            }
+            _ => panic!("companion-summary --refresh-quota --json command should parse"),
         }
     }
 

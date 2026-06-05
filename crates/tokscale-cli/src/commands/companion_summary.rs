@@ -126,6 +126,8 @@ pub struct CompanionLatestSubmit {
 pub struct CompanionHealth {
     pub summary_path: String,
     pub last_scan_duration_ms: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quota_refreshed_at: Option<String>,
     pub warnings: Vec<String>,
 }
 
@@ -296,6 +298,8 @@ pub fn from_graph_with_usage(
         health: CompanionHealth {
             summary_path: summary_path.to_string(),
             last_scan_duration_ms: graph.meta.processing_time_ms,
+            quota_refreshed_at: (!usage_outputs.is_empty())
+                .then(|| chrono::Utc::now().to_rfc3339()),
             warnings: Vec::new(),
         },
         accuracy: CompanionAccuracy {
@@ -421,7 +425,7 @@ fn provider_breakdown(
     providers
 }
 
-fn quota_breakdown(
+pub(crate) fn quota_breakdown(
     usage_outputs: &[crate::commands::usage::UsageOutput],
 ) -> Vec<CompanionQuotaProvider> {
     let mut providers: Vec<CompanionQuotaProvider> = usage_outputs
@@ -549,6 +553,7 @@ mod tests {
             health: CompanionHealth {
                 summary_path: "/tmp/companion-summary.json".to_string(),
                 last_scan_duration_ms: 1800,
+                quota_refreshed_at: None,
                 warnings: Vec::new(),
             },
             accuracy: CompanionAccuracy {
