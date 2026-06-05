@@ -35,6 +35,14 @@ struct TokensPopoverView: View {
             RoundedRectangle(cornerRadius: 26, style: .continuous)
                 .stroke(companionOrange.opacity(0.28), lineWidth: 1)
         )
+        .background {
+            Button("Refresh") { model.refreshScan() }
+                .keyboardShortcut("r", modifiers: .command)
+                .hidden()
+            Button("Open tokens.ci") { model.openTokensCI() }
+                .keyboardShortcut("d", modifiers: .command)
+                .hidden()
+        }
     }
 
     private var summary: TokscaleSummary? {
@@ -1015,6 +1023,8 @@ private struct CompactSettingsPanel: View {
                 ToolbarIconButton(systemName: "power", tint: providerColor("claude"), help: "Quit", action: onQuit)
             }
             RefreshCadenceRow(color: providerColor(focus.id))
+            AutoRefreshRow(color: providerColor(focus.id))
+            ThemeRow(color: providerColor(focus.id))
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 7)
@@ -1082,6 +1092,108 @@ private struct RefreshCadenceToggle: View {
                 }
                 .buttonStyle(.plain)
                 .help("Quota refresh cadence when the menu opens")
+            }
+        }
+        .padding(3)
+        .background(
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .fill(companionWarmGlassColor)
+        )
+    }
+}
+
+private struct AutoRefreshRow: View {
+    let color: Color
+    @AppStorage(AutoRefresh.storageKey) private var autoRawValue = AutoRefresh.default.rawValue
+
+    private var auto: AutoRefresh {
+        AutoRefresh(storedValue: autoRawValue)
+    }
+
+    var body: some View {
+        HStack(spacing: 7) {
+            HStack(spacing: 6) {
+                Image(systemName: "arrow.triangle.2.circlepath")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(color)
+                Text("Auto-refresh")
+                    .font(.system(size: 10, weight: .bold))
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+            SettingsSegment(
+                titles: AutoRefresh.allCases.map(\.title),
+                selectedIndex: AutoRefresh.allCases.firstIndex(of: auto) ?? 0,
+                onSelect: { autoRawValue = AutoRefresh.allCases[$0].rawValue },
+                help: "Background quota auto-refresh interval"
+            )
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 5)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(color.opacity(0.055))
+        )
+    }
+}
+
+private struct ThemeRow: View {
+    let color: Color
+    @AppStorage(AppTheme.storageKey) private var themeRawValue = AppTheme.default.rawValue
+
+    private var theme: AppTheme {
+        AppTheme(storedValue: themeRawValue)
+    }
+
+    var body: some View {
+        HStack(spacing: 7) {
+            HStack(spacing: 6) {
+                Image(systemName: "paintpalette.fill")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(color)
+                Text("Theme")
+                    .font(.system(size: 10, weight: .bold))
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+            SettingsSegment(
+                titles: AppTheme.allCases.map(\.title),
+                selectedIndex: AppTheme.allCases.firstIndex(of: theme) ?? 0,
+                onSelect: { themeRawValue = AppTheme.allCases[$0].rawValue },
+                help: "Accent color theme (applies on reopen)"
+            )
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 5)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(color.opacity(0.055))
+        )
+    }
+}
+
+private struct SettingsSegment: View {
+    let titles: [String]
+    let selectedIndex: Int
+    let onSelect: (Int) -> Void
+    let help: String
+
+    var body: some View {
+        HStack(spacing: 3) {
+            ForEach(Array(titles.enumerated()), id: \.offset) { index, title in
+                Button(action: { onSelect(index) }) {
+                    Text(title)
+                        .font(.system(size: 10, weight: .bold))
+                        .lineLimit(1)
+                        .frame(width: 44, height: 24)
+                        .foregroundStyle(index == selectedIndex ? Color.primary : Color.secondary)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .fill(index == selectedIndex ? companionSelectedSurfaceColor : Color.clear)
+                        )
+                }
+                .buttonStyle(.plain)
+                .help(help)
             }
         }
         .padding(3)
@@ -1825,7 +1937,11 @@ private struct CompanionBackdrop: View {
     }
 }
 
-private let companionOrange = Color(hue: 0.065, saturation: 0.96, brightness: 0.98)
+private var companionOrange: Color {
+    let theme = AppTheme(storedValue: UserDefaults.standard.string(forKey: AppTheme.storageKey))
+    let hsb = theme.accentHSB
+    return Color(hue: hsb.hue, saturation: hsb.saturation, brightness: hsb.brightness)
+}
 
 private let companionSurfaceColor = Color(
     nsColor: NSColor(name: nil) { appearance in

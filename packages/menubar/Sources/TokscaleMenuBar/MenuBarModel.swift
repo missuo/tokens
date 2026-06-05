@@ -13,11 +13,12 @@ final class MenuBarModel: ObservableObject {
 
     private let store = TokscaleSummaryStore()
     private var refreshTimer: Timer?
+    private var lastAutoRefresh = Date()
 
     init() {
         reload()
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.reload() }
+            Task { @MainActor in self?.tick() }
         }
     }
 
@@ -34,6 +35,19 @@ final class MenuBarModel: ObservableObject {
             menuBarImage = nil
             errorMessage = error.localizedDescription
         }
+    }
+
+    private func tick() {
+        reload()
+        let auto = AutoRefresh(storedValue: UserDefaults.standard.string(forKey: AutoRefresh.storageKey))
+        guard !isRefreshing, let interval = auto.interval else {
+            return
+        }
+        if Date().timeIntervalSince(lastAutoRefresh) < interval {
+            return
+        }
+        lastAutoRefresh = Date()
+        refreshQuota(status: "Auto-refreshing quota...")
     }
 
     func refreshScan() {
