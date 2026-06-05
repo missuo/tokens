@@ -1,7 +1,13 @@
 # Menu bar glance redesign — quota decision aid
 
-Status: approved (design), pending spec review
+Status: superseded in part — see Update below
 Date: 2026-06-05
+
+> **Update 2026-06-05 (direction change).** The glance-only trim described below was implemented but rejected on review as too thin ("我们那么多功能怎么就剩这点"). Final direction: keep the full quota/spend/history dashboard — restored and adapted onto the new SwiftUI `MenuBarExtra` entry, with the dashboard model built once per load (the original per-render rebuild was the real slowness) — and pursue ClaudeBar feature parity plus our own extras.
+>
+> Shipped on this branch: MenuBarExtra positioning fix (kills the crooked popover); color-coded menu bar badge rendered as a non-template `NSImage` (MenuBarExtra would not render an inline SwiftUI bar), using ClaudeBar's thresholds on remaining quota — `>50` healthy / `20-50` warning / `<20` critical / `0` depleted; cross-provider **Best now** hint; reset countdowns (already present); dollar amounts relabeled as **API-equivalent value** rather than implied subscription spend; the token/message vanity metric demoted.
+>
+> Deliberately not done: **system notifications** — the pure transition logic lives in `QuotaGlance.alerts` (unit-tested) but the runtime was removed because an unsigned dev build cannot register/deliver notifications and there is no Apple Developer account; the always-visible colored menu bar badge is the permission-free passive alert. **Per-model quota windows** — providers return only Session + Weekly, so there is no per-model data to show. The implementation plan's later phases (glance popover, app-piece split) are superseded by the restore.
 
 ## Problem
 
