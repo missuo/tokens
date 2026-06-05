@@ -130,10 +130,15 @@ final class MenuBarModel: ObservableObject {
     }
 
     nonisolated private static func companionRefreshCandidates() -> [String] {
-        // Only stable install locations. Never probe a repo-relative path: when the
-        // .app lives under ~/Desktop, touching it trips the macOS Desktop-access prompt
-        // and uses a slow unsigned debug binary. Falls back to PATH lookup of `tokens`.
-        dedupePaths([
+        // Prefer ~/.local/bin (not a Desktop/Documents TCC-protected folder, so no
+        // access prompt) where a current build with `companion-summary` is installed;
+        // the published Homebrew binary predates that subcommand. Never probe a
+        // repo-relative path under ~/Desktop. Falls back to PATH lookup of `tokens`.
+        let localBin = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".local/bin/tokens", isDirectory: false)
+            .path
+        return dedupePaths([
+            localBin,
             "/opt/homebrew/bin/tokens",
             "/usr/local/bin/tokens",
         ])

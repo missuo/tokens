@@ -4,6 +4,9 @@ import TokscaleMenuBarCore
 
 struct TokensPopoverView: View {
     @ObservedObject var model: MenuBarModel
+    // Observed so changing the theme re-renders the whole popover and the accent
+    // (read globally from this key) updates everywhere at once.
+    @AppStorage(AppTheme.storageKey) private var themeRawValue = AppTheme.default.rawValue
 
     var body: some View {
         ZStack {
