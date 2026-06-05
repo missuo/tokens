@@ -160,11 +160,15 @@ public struct TokscaleDashboardModel: Equatable {
     public let historyTrend: [HistoryPoint]
     public let historyPeak: HistoryPoint?
     public let health: HealthStatus
+    private let summaryStale: Bool
     private let providerDetailsById: [String: ProviderDetails]
+
+    private static let quotaBoardProviderIds = ["claude", "codex", "gemini"]
 
     public init(summary: TokscaleSummary) {
         let providerRows = Self.providerRows(summary: summary)
         let historyRows = Self.historyRows(summary: summary)
+        summaryStale = summary.stale
         clientLabels = providerRows.map { clientDisplayName($0.client) }
         providers = Self.providerSummaries(rows: providerRows, totalCost: summary.totals.costUsd)
         providerDetailsById = Dictionary(
@@ -230,6 +234,10 @@ public struct TokscaleDashboardModel: Equatable {
         )
     }
 
+    public var quotaBoardProviders: [ProviderFocus] {
+        Self.quotaBoardProviderIds.compactMap { providerFocusIfAvailable(for: $0) }
+    }
+
     public func providerDetails(for id: String?) -> ProviderDetails {
         if let id, let details = providerDetailsById[id] {
             return details
@@ -251,6 +259,36 @@ public struct TokscaleDashboardModel: Equatable {
 
     public func providerFocus(for id: String?) -> ProviderFocus {
         let details = providerDetails(for: id)
+        return providerFocus(details: details)
+    }
+
+    private func providerFocusIfAvailable(for id: String) -> ProviderFocus? {
+        if let details = providerDetailsById[id] {
+            return providerFocus(details: details)
+        }
+        let title = clientDisplayName(id)
+        let hasQuota = quotaWindows.contains { window in
+            let provider = window.provider.lowercased()
+            return provider == id || provider == title.lowercased()
+        }
+        guard hasQuota else {
+            return nil
+        }
+        return providerFocus(
+            details: ProviderDetails(
+                id: id,
+                title: title,
+                model: "No local model data",
+                today: "$0.00 today",
+                total: "$0.00 total",
+                tokens: "0",
+                messages: "0 messages",
+                share: 0
+            )
+        )
+    }
+
+    private func providerFocus(details: ProviderDetails) -> ProviderFocus {
         let normalized = details.id.lowercased()
         let quota = quotaWindows.filter { window in
             let provider = window.provider.lowercased()
@@ -271,7 +309,7 @@ public struct TokscaleDashboardModel: Equatable {
             quotaWindows: quota,
             primaryQuota: primary,
             weeklyQuota: weekly,
-            quotaStatus: quota.isEmpty ? "No official quota" : "Quota fresh",
+            quotaStatus: quota.isEmpty ? "No live quota" : (summaryStale ? "Cached" : "Live"),
             workTime: "Work time unavailable",
             focusedModelTime: Self.focusedModelTimeLabel(providerId: details.id, model: details.model)
         )
@@ -335,7 +373,9 @@ public struct TokscaleDashboardModel: Equatable {
                     value: window.remainingLabel ?? "\(Int(remainingPercent.rounded()))% left",
                     detail: "\(Int(usedPercent.rounded()))% used",
                     reset: window.resetsAt,
-                    progress: usedPercent / 100
+                    progress: usedPercent / 100,
+                    usedPercent: usedPercent,
+                    remainingPercent: remainingPercent
                 )
             }
         }
@@ -408,6 +448,20 @@ public struct TokscaleDashboardModel: Equatable {
 }
 
 public extension TokscaleDashboardModel {
+    enum QuotaDisplayMode: String, CaseIterable, Equatable {
+        case remaining
+        case used
+
+        public var title: String {
+            switch self {
+            case .remaining:
+                return "Left"
+            case .used:
+                return "Used"
+            }
+        }
+    }
+
     struct Hero: Equatable {
         public let title: String
         public let subtitle: String
@@ -442,6 +496,35 @@ public extension TokscaleDashboardModel {
         public let detail: String
         public let reset: String?
         public let progress: Double
+        public let usedPercent: Double
+        public let remainingPercent: Double
+
+        public func value(for mode: QuotaDisplayMode) -> String {
+            switch mode {
+            case .remaining:
+                return value
+            case .used:
+                return "\(Int(usedPercent.rounded()))% used"
+            }
+        }
+
+        public func detail(for mode: QuotaDisplayMode) -> String {
+            switch mode {
+            case .remaining:
+                return detail
+            case .used:
+                return "\(Int(remainingPercent.rounded()))% left"
+            }
+        }
+
+        public func progress(for mode: QuotaDisplayMode) -> Double {
+            switch mode {
+            case .remaining:
+                return remainingPercent / 100
+            case .used:
+                return usedPercent / 100
+            }
+        }
     }
 
     struct HistoryPoint: Equatable {

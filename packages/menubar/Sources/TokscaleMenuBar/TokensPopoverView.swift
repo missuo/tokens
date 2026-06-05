@@ -81,6 +81,7 @@ private struct SummaryContent: View {
 
     @State private var selectedProviderId: String?
     @State private var settingsVisible = false
+    @State private var quotaDisplayMode: TokscaleDashboardModel.QuotaDisplayMode = .remaining
 
     private var model: TokscaleDashboardModel {
         TokscaleDashboardModel(summary: summary)
@@ -121,28 +122,24 @@ private struct SummaryContent: View {
 
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(spacing: 8) {
-                    ProviderChipRow(
-                        providers: model.providers,
-                        selectedProviderId: selectedFocus.id,
-                        onSelect: { providerId in
-                            withAnimation(.spring(response: 0.26, dampingFraction: 0.86)) {
-                                selectedProviderId = providerId
+                    QuotaBoardSection(
+                        summary: summary,
+                        model: model,
+                        displayMode: quotaDisplayMode,
+                        onModeChange: { mode in
+                            withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
+                                quotaDisplayMode = mode
                             }
                         }
                     )
 
-                    FocusHeroCard(
-                        summary: summary,
-                        model: model,
-                        focus: selectedFocus,
-                        isRefreshing: isRefreshing
-                    )
-
-                    DashboardSections(
+                    CompactOverviewStrip(
                         summary: summary,
                         model: model,
                         focus: selectedFocus
                     )
+
+                    HistorySection(model: model)
                     .padding(.bottom, 2)
                 }
                 .frame(maxWidth: .infinity, alignment: .top)
@@ -221,6 +218,293 @@ private struct CompanionHeader: View {
             return "\(quota.provider) quota\(plan)"
         }
         return "\(focus.title) · \(focus.quotaStatus)"
+    }
+}
+
+private struct QuotaBoardSection: View {
+    let summary: TokscaleSummary
+    let model: TokscaleDashboardModel
+    let displayMode: TokscaleDashboardModel.QuotaDisplayMode
+    let onModeChange: (TokscaleDashboardModel.QuotaDisplayMode) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 11) {
+            HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Quota")
+                        .font(.system(size: 18, weight: .bold, design: .rounded))
+                    Text(boardSubtitle)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 0)
+                QuotaModeToggle(mode: displayMode, onChange: onModeChange)
+            }
+
+            VStack(spacing: 8) {
+                if model.quotaBoardProviders.isEmpty {
+                    CompactEmptyMessage(
+                        title: "No live quota",
+                        detail: "Claude, Codex, and Gemini quota windows are unavailable in this summary.",
+                        icon: "exclamationmark.triangle"
+                    )
+                } else {
+                    ForEach(model.quotaBoardProviders, id: \.id) { focus in
+                        ProviderQuotaRow(focus: focus, displayMode: displayMode)
+                    }
+                }
+            }
+        }
+        .padding(13)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(companionPanelColor.opacity(0.98))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.primary.opacity(0.06), lineWidth: 1)
+        )
+        .shadow(color: Color.black.opacity(0.07), radius: 10, x: 0, y: 5)
+    }
+
+    private var boardSubtitle: String {
+        if summary.stale {
+            return "Cached data - refresh before trusting limits"
+        }
+        return "Live quota windows - 5h and weekly"
+    }
+}
+
+private struct QuotaModeToggle: View {
+    let mode: TokscaleDashboardModel.QuotaDisplayMode
+    let onChange: (TokscaleDashboardModel.QuotaDisplayMode) -> Void
+
+    var body: some View {
+        HStack(spacing: 3) {
+            ForEach(TokscaleDashboardModel.QuotaDisplayMode.allCases, id: \.self) { option in
+                Button(action: { onChange(option) }) {
+                    Text(option.title)
+                        .font(.system(size: 10, weight: .bold))
+                        .lineLimit(1)
+                        .frame(width: 42, height: 24)
+                        .foregroundStyle(option == mode ? Color.primary : Color.secondary)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .fill(option == mode ? companionSelectedSurfaceColor : Color.clear)
+                        )
+                }
+                .buttonStyle(.plain)
+                .help(option == .remaining ? "Show remaining quota" : "Show used quota")
+            }
+        }
+        .padding(3)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color(nsColor: .separatorColor).opacity(0.10))
+        )
+    }
+}
+
+private struct ProviderQuotaRow: View {
+    let focus: TokscaleDashboardModel.ProviderFocus
+    let displayMode: TokscaleDashboardModel.QuotaDisplayMode
+
+    private var color: Color {
+        providerColor(focus.id)
+    }
+
+    var body: some View {
+        HStack(spacing: 11) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    ProviderDot(color: color)
+                    Text(focus.title)
+                        .font(.system(size: 12, weight: .bold))
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                }
+                Text(focus.topModel)
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
+                QuotaSourceBadge(status: focus.quotaStatus, color: color)
+            }
+            .frame(width: 92, alignment: .leading)
+
+            VStack(spacing: 7) {
+                if focus.quotaWindows.isEmpty {
+                    QuotaUnavailableLine(providerColor: color)
+                } else {
+                    QuotaBarLine(quota: focus.primaryQuota, fallbackTitle: "5h", displayMode: displayMode)
+                    QuotaBarLine(quota: focus.weeklyQuota, fallbackTitle: "Week", displayMode: displayMode)
+                }
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 9)
+        .background(
+            RoundedRectangle(cornerRadius: 13, style: .continuous)
+                .fill(color.opacity(0.050))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 13, style: .continuous)
+                .stroke(color.opacity(0.16), lineWidth: 1)
+        )
+    }
+}
+
+private struct QuotaBarLine: View {
+    let quota: TokscaleDashboardModel.QuotaWindowSummary?
+    let fallbackTitle: String
+    let displayMode: TokscaleDashboardModel.QuotaDisplayMode
+
+    var body: some View {
+        if let quota {
+            HStack(spacing: 8) {
+                Text(quota.title)
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 32, alignment: .leading)
+                QuotaProgressBar(progress: quota.progress(for: displayMode), color: quotaHealthColor(quota))
+                VStack(alignment: .trailing, spacing: 1) {
+                    Text(quota.value(for: displayMode))
+                        .font(.system(size: 14, weight: .bold, design: .rounded))
+                        .monospacedDigit()
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.72)
+                    Text(resetLabel(quota.reset) ?? quota.detail(for: displayMode))
+                        .font(.system(size: 8, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.70)
+                }
+                .frame(width: 78, alignment: .trailing)
+            }
+            .frame(height: 26)
+        } else {
+            HStack(spacing: 8) {
+                Text(fallbackTitle)
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 32, alignment: .leading)
+                QuotaProgressBar(progress: 0, color: .secondary)
+                Text("N/A")
+                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 78, alignment: .trailing)
+            }
+            .frame(height: 26)
+        }
+    }
+}
+
+private struct QuotaUnavailableLine: View {
+    let providerColor: Color
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "lock.open.trianglebadge.exclamationmark")
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(providerColor)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("No live quota")
+                    .font(.system(size: 11, weight: .bold))
+                Text("Local usage is available, official 5h/Week limits are not.")
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
+            }
+            Spacer(minLength: 0)
+        }
+        .frame(height: 59)
+        .padding(.horizontal, 9)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color(nsColor: .separatorColor).opacity(0.075))
+        )
+    }
+}
+
+private struct QuotaProgressBar: View {
+    let progress: Double
+    let color: Color
+    @State private var visibleProgress = 0.0
+
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack(alignment: .leading) {
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .fill(Color(nsColor: .separatorColor).opacity(0.18))
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .fill(color)
+                    .frame(width: max(7, proxy.size.width * visibleProgress))
+                    .shadow(color: color.opacity(0.16), radius: 5, x: 0, y: 0)
+            }
+        }
+        .frame(height: 9)
+        .onAppear {
+            withAnimation(.spring(response: 0.48, dampingFraction: 0.82)) {
+                visibleProgress = min(max(progress, 0), 1)
+            }
+        }
+        .onChange(of: progress) { newValue in
+            withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
+                visibleProgress = min(max(newValue, 0), 1)
+            }
+        }
+    }
+}
+
+private struct QuotaSourceBadge: View {
+    let status: String
+    let color: Color
+
+    var body: some View {
+        Text(status)
+            .font(.system(size: 8, weight: .bold))
+            .lineLimit(1)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .foregroundStyle(status == "No live quota" ? Color.secondary : color)
+            .background(
+                Capsule()
+                    .fill((status == "No live quota" ? Color.secondary : color).opacity(0.12))
+            )
+    }
+}
+
+private struct CompactOverviewStrip: View {
+    let summary: TokscaleSummary
+    let model: TokscaleDashboardModel
+    let focus: TokscaleDashboardModel.ProviderFocus
+
+    var body: some View {
+        HStack(spacing: 7) {
+            VisualMetricPill(
+                title: "Today",
+                value: formatToday(summary),
+                detail: "\(summary.today.messages) messages",
+                progress: model.hero.progress,
+                color: providerColor("gemini")
+            )
+            VisualMetricPill(
+                title: "Top",
+                value: model.insights.first?.detail ?? "none",
+                detail: model.insights.first?.value ?? "No provider data",
+                progress: focus.share,
+                color: providerColor(focus.id)
+            )
+            VisualMetricPill(
+                title: "Accuracy",
+                value: model.health.title,
+                detail: summary.accuracy.confidence,
+                progress: summary.stale ? 0.25 : 1,
+                color: summary.stale ? providerColor("claude") : providerColor("codex")
+            )
+        }
     }
 }
 
@@ -1239,6 +1523,19 @@ private func parseISODate(_ value: String) -> Date? {
         return date
     }
     return ISO8601DateFormatter().date(from: value)
+}
+
+private func quotaHealthColor(_ quota: TokscaleDashboardModel.QuotaWindowSummary) -> Color {
+    if quota.remainingPercent <= 0 {
+        return .secondary
+    }
+    if quota.remainingPercent < 20 {
+        return Color(hue: 0.01, saturation: 0.92, brightness: 0.96)
+    }
+    if quota.remainingPercent < 50 {
+        return Color(hue: 0.12, saturation: 0.96, brightness: 0.98)
+    }
+    return Color(hue: 0.39, saturation: 0.88, brightness: 0.86)
 }
 
 private func providerColor(_ id: String) -> Color {

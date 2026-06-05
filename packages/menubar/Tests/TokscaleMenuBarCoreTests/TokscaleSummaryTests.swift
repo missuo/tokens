@@ -191,7 +191,7 @@ final class TokscaleSummaryTests: XCTestCase {
         XCTAssertEqual(claude.quotaWindows.map(\.title), ["5h", "Week"])
         XCTAssertEqual(claude.primaryQuota?.title, "5h")
         XCTAssertEqual(claude.weeklyQuota?.title, "Week")
-        XCTAssertEqual(claude.quotaStatus, "Quota fresh")
+        XCTAssertEqual(claude.quotaStatus, "Live")
         XCTAssertEqual(claude.focusedModelTime, "Sonnet-only unavailable")
 
         let gemini = dashboard.providerFocus(for: "gemini")
@@ -199,7 +199,29 @@ final class TokscaleSummaryTests: XCTestCase {
         XCTAssertEqual(gemini.title, "Gemini")
         XCTAssertNil(gemini.primaryQuota)
         XCTAssertTrue(gemini.quotaWindows.isEmpty)
-        XCTAssertEqual(gemini.quotaStatus, "No official quota")
+        XCTAssertEqual(gemini.quotaStatus, "No live quota")
+    }
+
+    func testDashboardModelBuildsQuotaBoardForPrimaryProviders() throws {
+        let summary = try TokscaleSummary.decode(sampleSummaryData())
+
+        let dashboard = TokscaleDashboardModel(summary: summary)
+
+        XCTAssertEqual(dashboard.quotaBoardProviders.map(\.id), ["claude", "codex", "gemini"])
+        XCTAssertEqual(dashboard.quotaBoardProviders[0].quotaStatus, "Live")
+        XCTAssertEqual(dashboard.quotaBoardProviders[1].quotaStatus, "No live quota")
+        XCTAssertEqual(dashboard.quotaBoardProviders[2].quotaStatus, "No live quota")
+
+        let claude = dashboard.quotaBoardProviders[0]
+        let primaryQuota = try XCTUnwrap(claude.primaryQuota)
+        XCTAssertEqual(primaryQuota.title, "5h")
+        XCTAssertEqual(primaryQuota.value(for: .remaining), "28% left")
+        XCTAssertEqual(primaryQuota.detail(for: .remaining), "72% used")
+        XCTAssertEqual(primaryQuota.progress(for: .remaining), 0.28, accuracy: 0.01)
+        XCTAssertEqual(primaryQuota.value(for: .used), "72% used")
+        XCTAssertEqual(primaryQuota.detail(for: .used), "28% left")
+        XCTAssertEqual(primaryQuota.progress(for: .used), 0.72, accuracy: 0.01)
+        XCTAssertEqual(claude.weeklyQuota?.title, "Week")
     }
 
     func testDecodesQuotaAndHistoryModules() throws {
