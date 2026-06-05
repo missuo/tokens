@@ -35,7 +35,6 @@ struct TokensPopoverView: View {
             RoundedRectangle(cornerRadius: 26, style: .continuous)
                 .stroke(companionOrange.opacity(0.28), lineWidth: 1)
         )
-        .shadow(color: companionOrange.opacity(0.16), radius: 24, x: 0, y: 10)
     }
 
     private var summary: TokscaleSummary? {
