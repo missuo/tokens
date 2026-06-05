@@ -1,6 +1,6 @@
 import type { SubmissionFreshness } from "@/lib/submissionFreshness";
 
-export type Period = "all" | "month" | "last-month" | "week" | "custom";
+export type Period = "all" | "month" | "last-month" | "week" | "today" | "custom";
 export type SortBy = "tokens" | "cost" | "time";
 
 export interface LeaderboardUser {

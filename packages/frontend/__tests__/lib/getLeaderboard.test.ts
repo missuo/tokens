@@ -264,6 +264,43 @@ describe("period leaderboard data", () => {
     });
   });
 
+  it("falls back to the server UTC date for today when no viewer date is given", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-07T18:45:00Z"));
+    mockState.setPeriodRows(rows);
+
+    await getLeaderboardData("today", 1, 50, "tokens");
+
+    expect(mockState.fromCalls[0]).toBe(mockState.tables.dailyBreakdown);
+    expect(mockState.gte).toHaveBeenCalledWith(
+      mockState.tables.dailyBreakdown.date,
+      "2026-03-07"
+    );
+    expect(mockState.lte).toHaveBeenCalledWith(
+      mockState.tables.dailyBreakdown.date,
+      "2026-03-07"
+    );
+  });
+
+  it("uses the viewer's local date for today instead of the UTC day", async () => {
+    // It is already 2026-03-08 in the viewer's timezone while the server is
+    // still on 2026-03-07 UTC; the board must follow the viewer.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-07T18:45:00Z"));
+    mockState.setPeriodRows(rows);
+
+    await getLeaderboardData("today", 1, 50, "tokens", "", "2026-03-08", "2026-03-08");
+
+    expect(mockState.gte).toHaveBeenCalledWith(
+      mockState.tables.dailyBreakdown.date,
+      "2026-03-08"
+    );
+    expect(mockState.lte).toHaveBeenCalledWith(
+      mockState.tables.dailyBreakdown.date,
+      "2026-03-08"
+    );
+  });
+
   it("filters period leaderboards by username while preserving each user's true rank", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-03-07T18:45:00Z"));

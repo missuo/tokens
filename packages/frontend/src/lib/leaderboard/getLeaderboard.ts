@@ -86,6 +86,18 @@ function getPeriodDateRange(
     Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())
   );
 
+  if (period === "today") {
+    // Daily rows are bucketed by the submitter's local date, so "today" is just
+    // a calendar-date match. The viewer's client passes its own local date via
+    // customFrom; we fall back to the server's UTC date when it's absent (SSR /
+    // direct API hits) and let the client correct it after hydration.
+    const todayDate = customFrom || toUtcDateString(end);
+    return {
+      start: todayDate,
+      end: todayDate,
+    };
+  }
+
   if (period === "week") {
     const start = new Date(end);
     start.setUTCDate(start.getUTCDate() - 6);
@@ -541,6 +553,8 @@ export function getLeaderboardData(
 ): Promise<LeaderboardData> {
   const cacheKey = period === "custom"
     ? `leaderboard:custom:${customFrom}:${customTo}:${page}:${limit}:${sortBy}:${search}`
+    : period === "today"
+    ? `leaderboard:today:${customFrom ?? ""}:${page}:${limit}:${sortBy}:${search}`
     : `leaderboard:${period}:${page}:${limit}:${sortBy}:${search}`;
 
   return unstable_cache(
@@ -667,7 +681,11 @@ export function getUserRank(
   customTo?: string
 ): Promise<LeaderboardUser | null> {
   const usernameCacheKey = normalizeUsernameCacheKey(username);
-  const periodKey = period === "custom" ? `custom:${customFrom}:${customTo}` : period;
+  const periodKey = period === "custom"
+    ? `custom:${customFrom}:${customTo}`
+    : period === "today"
+    ? `today:${customFrom ?? ""}`
+    : period;
 
   return unstable_cache(
     () => fetchUserRank(username, period, sortBy, customFrom, customTo),

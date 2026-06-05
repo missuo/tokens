@@ -15,7 +15,7 @@ function isMissingDatabaseUrl(error: unknown): boolean {
   return error instanceof Error && error.message === "DATABASE_URL environment variable is not set";
 }
 
-const VALID_PERIODS: Period[] = ["all", "month", "last-month", "week", "custom"];
+const VALID_PERIODS: Period[] = ["all", "month", "last-month", "week", "today", "custom"];
 
 function createEmptyLeaderboardData(sortBy: SortBy): LeaderboardData {
   return {

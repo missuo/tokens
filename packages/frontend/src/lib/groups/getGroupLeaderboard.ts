@@ -67,6 +67,10 @@ function getPeriodDateRange(period: Period, now: Date = new Date()) {
   }
 
   const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  if (period === "today") {
+    return { start: toUtcDateString(end), end: toUtcDateString(end) };
+  }
+
   if (period === "week") {
     const start = new Date(end);
     start.setUTCDate(start.getUTCDate() - 6);

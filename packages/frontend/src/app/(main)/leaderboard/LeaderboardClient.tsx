@@ -14,7 +14,7 @@ import { useSettings } from "@/lib/useSettings";
 import { isValidSortBy, type LeaderboardSortBy } from "@/lib/leaderboard/constants";
 import { parseCustomDateRange } from "@/lib/leaderboard/dateRange";
 
-export type Period = "all" | "month" | "last-month" | "week" | "custom";
+export type Period = "all" | "month" | "last-month" | "week" | "today" | "custom";
 
 export interface LeaderboardUser {
   rank: number;
@@ -152,11 +152,22 @@ const LeaderboardRow = memo(function LeaderboardRow({
   );
 });
 
-const VALID_PERIODS: Period[] = ["all", "month", "last-month", "week", "custom"];
+const VALID_PERIODS: Period[] = ["all", "month", "last-month", "week", "today", "custom"];
 
 function parsePeriodParam(value: string | null): Period | null {
   if (!value) return null;
   return VALID_PERIODS.includes(value as Period) ? (value as Period) : null;
+}
+
+// The viewer's local calendar date as YYYY-MM-DD. Daily usage is bucketed by
+// each submitter's local date, so "today" is timezone-relative to whoever is
+// looking: my Jun 5 and a US user's Jun 5 are both "today" in their own clocks.
+function getLocalTodayDate(): string {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 const dateInputClass =
@@ -189,6 +200,9 @@ export default function LeaderboardClient({ initialData, currentUser, initialSor
   const [customTo, setCustomTo] = useState(initialCustomDateRange?.to || "");
   const [appliedFrom, setAppliedFrom] = useState(initialCustomDateRange?.from || "");
   const [appliedTo, setAppliedTo] = useState(initialCustomDateRange?.to || "");
+  // Null until mounted so SSR (which only knows UTC) and the first client render
+  // agree; once known, a mismatch with the resolved request drives a refetch.
+  const [localToday, setLocalToday] = useState<string | null>(null);
   const [resolvedRequest, setResolvedRequest] = useState({
     period: initialData.period,
     page: initialData.pagination.page,
@@ -199,6 +213,10 @@ export default function LeaderboardClient({ initialData, currentUser, initialSor
     customTo: initialCustomDateRange?.to || "",
   });
 
+  useEffect(() => {
+    setLocalToday(getLocalTodayDate());
+  }, []);
+
   const { leaderboardSortBy, setLeaderboardSort, mounted } = useSettings();
 
   // URL `?sortBy=` wins on first paint; once the user clicks, their persisted
@@ -207,14 +225,19 @@ export default function LeaderboardClient({ initialData, currentUser, initialSor
   const effectiveSortBy = urlSortOverride ? urlSortOverride : mounted ? leaderboardSortBy : initialSortBy;
   const requestedPage = data.pagination.totalPages > 0 ? Math.min(page, data.pagination.totalPages) : page;
   const isCustomWithoutDates = period === "custom" && (!appliedFrom || !appliedTo);
+  // Before the local date is known (SSR / pre-hydration) we can't resolve the
+  // viewer's "today", so hold off rather than fetch the UTC fallback.
+  const isTodayPendingLocalDate = period === "today" && localToday === null;
   const isLoading =
     !isCustomWithoutDates &&
+    !isTodayPendingLocalDate &&
     (period !== resolvedRequest.period ||
       requestedPage !== resolvedRequest.page ||
       effectiveSortBy !== resolvedRequest.sortBy ||
       debouncedSearch !== resolvedRequest.search ||
       retryToken !== resolvedRequest.retryToken ||
-      (period === "custom" && (appliedFrom !== resolvedRequest.customFrom || appliedTo !== resolvedRequest.customTo)));
+      (period === "custom" && (appliedFrom !== resolvedRequest.customFrom || appliedTo !== resolvedRequest.customTo)) ||
+      (period === "today" && localToday !== resolvedRequest.customFrom));
 
   const isFirstRankFetch = useRef(true);
   const isFirstUrlSync = useRef(true);
@@ -256,8 +279,14 @@ export default function LeaderboardClient({ initialData, currentUser, initialSor
       isFirstRankFetch.current = false;
       return;
     }
+    if (period === "today" && !localToday) return;
     const abortController = new AbortController();
-    const customParams = period === "custom" ? `&from=${appliedFrom}&to=${appliedTo}` : "";
+    const customParams =
+      period === "custom"
+        ? `&from=${appliedFrom}&to=${appliedTo}`
+        : period === "today" && localToday
+        ? `&from=${localToday}&to=${localToday}`
+        : "";
     fetch(`/api/leaderboard/user/${currentUser.username}?period=${period}&sortBy=${effectiveSortBy}${customParams}`, {
       signal: abortController.signal,
     })
@@ -276,7 +305,7 @@ export default function LeaderboardClient({ initialData, currentUser, initialSor
         }
       });
     return () => abortController.abort();
-  }, [currentUser, period, effectiveSortBy, appliedFrom, appliedTo]);
+  }, [currentUser, period, effectiveSortBy, appliedFrom, appliedTo, localToday]);
 
   const fetchData = useCallback(
     (
@@ -291,7 +320,9 @@ export default function LeaderboardClient({ initialData, currentUser, initialSor
     ) => {
       const searchParam = targetSearch ? `&search=${encodeURIComponent(targetSearch)}` : "";
       const customParams =
-        targetPeriod === "custom" && targetCustomFrom && targetCustomTo ? `&from=${targetCustomFrom}&to=${targetCustomTo}` : "";
+        (targetPeriod === "custom" || targetPeriod === "today") && targetCustomFrom && targetCustomTo
+          ? `&from=${targetCustomFrom}&to=${targetCustomTo}`
+          : "";
       fetch(`/api/leaderboard?period=${targetPeriod}&page=${targetPage}&limit=50&sortBy=${targetSortBy}${searchParam}${customParams}`, { signal })
         .then((res) => {
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -332,10 +363,13 @@ export default function LeaderboardClient({ initialData, currentUser, initialSor
   useEffect(() => {
     if (!isLoading) return;
     if (period === "custom" && (!appliedFrom || !appliedTo)) return;
+    if (period === "today" && !localToday) return;
+    const requestFrom = period === "today" ? localToday ?? undefined : appliedFrom;
+    const requestTo = period === "today" ? localToday ?? undefined : appliedTo;
     const abortController = new AbortController();
-    fetchData(period, requestedPage, effectiveSortBy, debouncedSearch, retryToken, abortController.signal, appliedFrom, appliedTo);
+    fetchData(period, requestedPage, effectiveSortBy, debouncedSearch, retryToken, abortController.signal, requestFrom, requestTo);
     return () => abortController.abort();
-  }, [appliedFrom, appliedTo, debouncedSearch, effectiveSortBy, fetchData, isLoading, period, requestedPage, retryToken]);
+  }, [appliedFrom, appliedTo, debouncedSearch, effectiveSortBy, fetchData, isLoading, localToday, period, requestedPage, retryToken]);
 
   const sortedUsers = data.users || [];
   const showSubmissionCount = period === "all";
@@ -408,6 +442,7 @@ export default function LeaderboardClient({ initialData, currentUser, initialSor
             { id: "last-month" as Period, label: "Last Month" },
             { id: "month" as Period, label: "This Month" },
             { id: "week" as Period, label: "This Week" },
+            { id: "today" as Period, label: "Today" },
             { id: "custom" as Period, label: "Custom" },
           ]}
           activeTab={period}
