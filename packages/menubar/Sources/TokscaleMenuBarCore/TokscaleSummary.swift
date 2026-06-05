@@ -828,7 +828,7 @@ private func formatDuration(milliseconds: Int) -> String {
     return "\(remainingSeconds)s"
 }
 
-private func parseISODate(_ value: String) -> Date? {
+func parseISODate(_ value: String) -> Date? {
     let fractional = ISO8601DateFormatter()
     fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
     if let date = fractional.date(from: value) {
