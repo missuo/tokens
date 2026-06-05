@@ -1,0 +1,58 @@
+name: Deploy Frontend
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-frontend-production
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Deploy production frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Configure SSH
+        env:
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.TOKENS_DEPLOY_KNOWN_HOSTS }}
+          DEPLOY_SSH_KEY: ${{ secrets.TOKENS_DEPLOY_SSH_KEY }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${DEPLOY_SSH_KEY}" ]; then
+            echo "TOKENS_DEPLOY_SSH_KEY secret is required." >&2
+            exit 1
+          fi
+
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+
+          printf '%s\n' "${DEPLOY_SSH_KEY}" | tr -d '\r' > ~/.ssh/tokens_deploy
+          chmod 600 ~/.ssh/tokens_deploy
+
+          if [ -n "${DEPLOY_KNOWN_HOSTS}" ]; then
+            printf '%s\n' "${DEPLOY_KNOWN_HOSTS}" | tr -d '\r' > ~/.ssh/known_hosts
+          else
+            ssh-keyscan -T 10 -H 23.191.8.35 > ~/.ssh/known_hosts
+          fi
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Deploy on server
+        run: |
+          set -euo pipefail
+
+          ssh -i ~/.ssh/tokens_deploy -o IdentitiesOnly=yes root@23.191.8.35 <<'EOF'
+            set -euo pipefail
+            cd /root/tokens
+            git pull --ff-only
+            cd packages/frontend
+            docker compose up -d --build
+          EOF
