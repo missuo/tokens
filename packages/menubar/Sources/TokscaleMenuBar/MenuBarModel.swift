@@ -5,12 +5,16 @@ import TokscaleMenuBarCore
 @MainActor
 final class MenuBarModel: ObservableObject {
     @Published var summary: TokscaleSummary?
+    @Published var dashboard: TokscaleDashboardModel?
     @Published var errorMessage: String?
     @Published var isRefreshing = false
     @Published var refreshStatus: String?
 
     private let store = TokscaleSummaryStore()
     private var refreshTimer: Timer?
+    private let notifier = QuotaNotifier()
+    private var lastLevels: [String: UrgencyLevel] = [:]
+    private var alertsSeeded = false
 
     init() {
         reload()
@@ -21,11 +25,27 @@ final class MenuBarModel: ObservableObject {
 
     func reload() {
         do {
-            summary = try store.load()
+            let loaded = try store.load()
+            summary = loaded
+            dashboard = loaded.map { TokscaleDashboardModel(summary: $0) }
             errorMessage = nil
+            evaluateAlerts(loaded?.quota ?? [])
         } catch {
             summary = nil
+            dashboard = nil
             errorMessage = error.localizedDescription
+        }
+    }
+
+    private func evaluateAlerts(_ quota: [TokscaleSummary.QuotaProvider]) {
+        let (alerts, levels) = QuotaGlance.alerts(previous: lastLevels, quota: quota)
+        lastLevels = levels
+        guard alertsSeeded else {
+            alertsSeeded = true
+            return
+        }
+        for alert in alerts {
+            notifier.notify(alert)
         }
     }
 

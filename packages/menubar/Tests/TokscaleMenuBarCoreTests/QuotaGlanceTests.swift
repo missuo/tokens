@@ -93,4 +93,37 @@ final class QuotaGlanceTests: XCTestCase {
         ]
         XCTAssertEqual(QuotaGlance.providersByUrgency(providers), ["Codex", "Claude", "Gemini"])
     }
+
+    func testAlertsFireOnWorseningIntoWarningOrCritical() {
+        let healthy = [provider("Claude", [window("Session", remaining: 60)])]
+        let (a1, l1) = QuotaGlance.alerts(previous: [:], quota: healthy)
+        XCTAssertTrue(a1.isEmpty)
+        XCTAssertEqual(l1["Claude|Session"], .healthy)
+
+        let critical = [provider("Claude", [window("Session", remaining: 15)])]
+        let (a2, l2) = QuotaGlance.alerts(previous: l1, quota: critical)
+        XCTAssertEqual(a2.count, 1)
+        XCTAssertEqual(a2.first?.provider, "Claude")
+        XCTAssertEqual(a2.first?.level, .critical)
+        XCTAssertEqual(l2["Claude|Session"], .critical)
+
+        let (a3, _) = QuotaGlance.alerts(previous: l2, quota: critical)
+        XCTAssertTrue(a3.isEmpty, "staying critical should not re-alert")
+
+        let (a4, l4) = QuotaGlance.alerts(previous: l2, quota: healthy)
+        XCTAssertTrue(a4.isEmpty, "recovery should not alert")
+        XCTAssertEqual(l4["Claude|Session"], .healthy)
+
+        let warning = [provider("Claude", [window("Session", remaining: 40)])]
+        let (a5, _) = QuotaGlance.alerts(previous: l4, quota: warning)
+        XCTAssertEqual(a5.count, 1)
+        XCTAssertEqual(a5.first?.level, .warning)
+    }
+
+    func testAlertsTreatMissingBaselineAsHealthy() {
+        let critical = [provider("Codex", [window("Weekly", remaining: 12)])]
+        let (alerts, _) = QuotaGlance.alerts(previous: [:], quota: critical)
+        XCTAssertEqual(alerts.count, 1)
+        XCTAssertEqual(alerts.first?.level, .critical)
+    }
 }

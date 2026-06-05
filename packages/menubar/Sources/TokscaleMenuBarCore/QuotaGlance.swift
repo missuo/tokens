@@ -91,3 +91,50 @@ public enum QuotaGlance {
             .map(\.provider)
     }
 }
+
+public struct QuotaAlert: Equatable {
+    public let provider: String
+    public let windowLabel: String
+    public let level: UrgencyLevel
+    public let remainingPercent: Double
+}
+
+extension QuotaGlance {
+    /// Returns the windows that just worsened into warning/critical/depleted (so the caller can
+    /// notify once per transition) plus the full updated level map to persist as the new baseline.
+    /// A missing previous level is treated as healthy.
+    public static func alerts(
+        previous: [String: UrgencyLevel],
+        quota: [TokscaleSummary.QuotaProvider]
+    ) -> (alerts: [QuotaAlert], levels: [String: UrgencyLevel]) {
+        var alerts: [QuotaAlert] = []
+        var levels: [String: UrgencyLevel] = [:]
+        for provider in quota {
+            for window in provider.windows {
+                let key = "\(provider.provider)|\(window.label)"
+                let current = urgency(remainingPercent: window.remainingPercent)
+                levels[key] = current
+                if current != .healthy, severity(current) > severity(previous[key] ?? .healthy) {
+                    alerts.append(
+                        QuotaAlert(
+                            provider: provider.provider,
+                            windowLabel: window.label,
+                            level: current,
+                            remainingPercent: window.remainingPercent
+                        )
+                    )
+                }
+            }
+        }
+        return (alerts, levels)
+    }
+
+    private static func severity(_ level: UrgencyLevel) -> Int {
+        switch level {
+        case .healthy: return 0
+        case .warning: return 1
+        case .critical: return 2
+        case .depleted: return 3
+        }
+    }
+}
