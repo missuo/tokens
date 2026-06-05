@@ -177,6 +177,30 @@ final class TokscaleSummaryTests: XCTestCase {
         XCTAssertTrue(summary.needsRefreshOnOpen(now: try isoDate("2026-06-04T02:26:30Z")))
     }
 
+    func testSummaryDoesNotRequestOpenRefreshSoonAfterQuotaRefresh() throws {
+        let data = sampleSummaryJSON(
+            generatedAt: "2026-06-04T02:25:56Z",
+            topJSON: #""client":"codex","model":"gpt-5.5""#,
+            accuracyJSON: #""confidence":"medium","sourceKinds":["local-scan"],"warnings":[]"#,
+            healthExtraJSON: #","quotaRefreshedAt":"2026-06-04T02:30:00Z""#
+        ).data(using: .utf8)!
+        let summary = try TokscaleSummary.decode(data)
+
+        XCTAssertFalse(
+            summary.needsRefreshOnOpen(
+                now: try isoDate("2026-06-04T02:30:30Z"),
+                minimumInterval: 60
+            )
+        )
+
+        XCTAssertTrue(
+            summary.needsRefreshOnOpen(
+                now: try isoDate("2026-06-04T02:31:30Z"),
+                minimumInterval: 60
+            )
+        )
+    }
+
     func testDashboardModelBuildsMultiClientDashboardSections() throws {
         let summary = try TokscaleSummary.decode(sampleSummaryData())
 

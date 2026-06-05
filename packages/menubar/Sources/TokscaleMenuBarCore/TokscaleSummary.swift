@@ -111,7 +111,13 @@ public struct TokscaleSummary: Decodable, Equatable {
         guard let generatedAtDate = parseISODate(generatedAt) else {
             return true
         }
-        return now.timeIntervalSince(generatedAtDate) >= minimumInterval
+        var lastRefreshedDate = generatedAtDate
+        if let quotaRefreshedAt = health.quotaRefreshedAt,
+            let quotaRefreshedAtDate = parseISODate(quotaRefreshedAt),
+            quotaRefreshedAtDate > lastRefreshedDate {
+            lastRefreshedDate = quotaRefreshedAtDate
+        }
+        return now.timeIntervalSince(lastRefreshedDate) >= minimumInterval
     }
 
     private mutating func markStale(reason: String) {
