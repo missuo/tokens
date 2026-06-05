@@ -173,7 +173,7 @@ describe("GET /api/embed/[username]/svg", () => {
     );
   });
 
-  it.each(["orbit", "vitals", "blueprint", "receipt"])(
+  it.each(["orbit", "vitals", "blueprint", "receipt", "pulse"])(
     "renders the %s template end to end",
     async (tpl) => {
       getUserEmbedStats.mockResolvedValue(statsFor("octocat"));

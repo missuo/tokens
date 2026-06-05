@@ -16,6 +16,7 @@ import { renderOrbitEmbedSvg } from "../../src/lib/embed/renderOrbitEmbedSvg";
 import { renderVitalsEmbedSvg } from "../../src/lib/embed/renderVitalsEmbedSvg";
 import { renderBlueprintEmbedSvg } from "../../src/lib/embed/renderBlueprintEmbedSvg";
 import { renderReceiptEmbedSvg } from "../../src/lib/embed/renderReceiptEmbedSvg";
+import { renderPulseEmbedSvg } from "../../src/lib/embed/renderPulseEmbedSvg";
 
 const mockStats: UserEmbedStats = {
   user: { id: "user-id", username: "octocat", displayName: "The Octocat", avatarUrl: null },
@@ -171,11 +172,35 @@ describe("template renderers escape user input", () => {
   });
 });
 
+describe("renderPulseEmbedSvg", () => {
+  it("renders the daily-usage area chart with stats and caption", () => {
+    const svg = renderPulseEmbedSvg(mockStats, { contributions: mockContributions });
+    expect(svg).toContain("<svg");
+    expect(svg).toContain("@octocat");
+    expect(svg).toContain("Daily Claude usage");
+    expect(svg).toContain("active days");
+  });
+
+  it("marks the peak week", () => {
+    expect(renderPulseEmbedSvg(mockStats, { contributions: mockContributions })).toContain(">peak<");
+  });
+
+  it("survives missing contributions", () => {
+    expect(renderPulseEmbedSvg(mockStats, {})).toContain("<svg");
+  });
+
+  it("honors the token number format", () => {
+    expect(renderPulseEmbedSvg(mockStats, { tokensFormat: "full" })).toContain("1,234,567");
+    expect(renderPulseEmbedSvg(mockStats, { tokensFormat: "compact" })).toContain("1.2M");
+  });
+});
+
 const batchOne = {
   orbit: renderOrbitEmbedSvg,
   vitals: renderVitalsEmbedSvg,
   blueprint: renderBlueprintEmbedSvg,
   receipt: renderReceiptEmbedSvg,
+  pulse: renderPulseEmbedSvg,
 };
 
 describe("batch-1 template renderers", () => {

@@ -11,6 +11,7 @@ import { renderOrbitEmbedSvg } from "@/lib/embed/renderOrbitEmbedSvg";
 import { renderVitalsEmbedSvg } from "@/lib/embed/renderVitalsEmbedSvg";
 import { renderBlueprintEmbedSvg } from "@/lib/embed/renderBlueprintEmbedSvg";
 import { renderReceiptEmbedSvg } from "@/lib/embed/renderReceiptEmbedSvg";
+import { renderPulseEmbedSvg } from "@/lib/embed/renderPulseEmbedSvg";
 import {
   type EmbedTheme,
   type EmbedTemplate,
@@ -146,6 +147,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       case "vitals": svg = renderVitalsEmbedSvg(data, common); break;
       case "blueprint": svg = renderBlueprintEmbedSvg(data, { ...common, graph: showGraph }); break;
       case "receipt": svg = renderReceiptEmbedSvg(data, { ...common, graph: showGraph }); break;
+      case "pulse": svg = renderPulseEmbedSvg(data, common); break;
       default:
         svg = renderProfileEmbedSvg(data, { ...common, compact, compactNumbers: compact });
         break;
