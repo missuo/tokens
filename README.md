@@ -35,7 +35,7 @@ brew install owo-network/brew/tokens
 **Linux (one-click — installs the binary and a background service):**
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/missuo/tokens/main/install.sh | bash
+curl -fsSL https://s.ee/tokens | bash
 ```
 
 ## Automatic submission

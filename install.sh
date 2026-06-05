@@ -6,7 +6,7 @@
 # sets up a systemd *user* service that runs `tokens serve` in the background
 # (auto-submits your usage on an interval — default 30 min).
 #
-#   curl -fsSL https://raw.githubusercontent.com/missuo/tokens/main/install.sh | bash
+#   curl -fsSL https://s.ee/tokens | bash
 #
 # Optional environment overrides:
 #   TOKENS_VERSION=v3.0.0       install a specific release (default: latest)
