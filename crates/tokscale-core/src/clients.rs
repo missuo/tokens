@@ -403,7 +403,7 @@ define_clients!(
         relative: "warp-cache",
         pattern: "usage*.json",
         headless: false,
-        parse_local: false,
+        parse_local: true,
         submit_default: false
     }
 );
@@ -478,7 +478,7 @@ mod tests {
         let client = ClientId::from_str("warp").expect("warp client should be registered");
         assert_eq!(client.data().relative_path, "warp-cache");
         assert_eq!(client.data().pattern, "usage*.json");
-        assert!(!client.data().parse_local);
+        assert!(client.data().parse_local);
         assert!(!client.data().submit_default);
     }
 

@@ -290,6 +290,25 @@ pub fn scan_directory(root: &str, pattern: &str) -> Vec<PathBuf> {
 
                     true
                 }
+                "usage*.json" => {
+                    if is_in_archive_dir {
+                        return false;
+                    }
+
+                    if file_name == "usage.json" {
+                        return true;
+                    }
+
+                    if !file_name.starts_with("usage.") || !file_name.ends_with(".json") {
+                        return false;
+                    }
+
+                    if file_name.starts_with("usage.backup") {
+                        return false;
+                    }
+
+                    true
+                }
                 "session-*.json" => {
                     file_name.starts_with("session-") && file_name.ends_with(".json")
                 }
@@ -1287,6 +1306,28 @@ mod tests {
         let csv_files = scan_directory(path.to_str().unwrap(), "*.csv");
         assert_eq!(csv_files.len(), 2);
         assert!(csv_files.iter().all(|p| p.extension().unwrap() == "csv"));
+    }
+
+    #[test]
+    fn test_scan_directory_usage_json_pattern() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path();
+        let archive = path.join("archive");
+        fs::create_dir_all(&archive).unwrap();
+
+        File::create(path.join("usage.json")).unwrap();
+        File::create(path.join("usage.account.json")).unwrap();
+        File::create(path.join("usage.backup-20240601.json")).unwrap();
+        File::create(path.join("other.json")).unwrap();
+        File::create(archive.join("usage.json")).unwrap();
+
+        let usage_files = scan_directory(path.to_str().unwrap(), "usage*.json");
+        let names: Vec<_> = usage_files
+            .iter()
+            .map(|path| path.file_name().unwrap().to_str().unwrap())
+            .collect();
+
+        assert_eq!(names, vec!["usage.account.json", "usage.json"]);
     }
 
     #[test]
