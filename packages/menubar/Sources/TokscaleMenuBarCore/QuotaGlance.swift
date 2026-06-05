@@ -1,9 +1,10 @@
 import Foundation
 
 public enum UrgencyLevel: Equatable {
-    case normal
+    case healthy
     case warning
     case critical
+    case depleted
 }
 
 public enum QuotaGlance {
@@ -25,9 +26,10 @@ public enum QuotaGlance {
     }
 
     public static func urgency(remainingPercent: Double) -> UrgencyLevel {
-        if remainingPercent <= 10 { return .critical }
-        if remainingPercent <= 20 { return .warning }
-        return .normal
+        if remainingPercent <= 0 { return .depleted }
+        if remainingPercent < 20 { return .critical }
+        if remainingPercent <= 50 { return .warning }
+        return .healthy
     }
 
     public static func resetCountdown(from resetsAt: String?, now: Date = Date()) -> String? {

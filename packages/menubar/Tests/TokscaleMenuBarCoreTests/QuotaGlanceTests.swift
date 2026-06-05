@@ -41,12 +41,14 @@ final class QuotaGlanceTests: XCTestCase {
     }
 
     func testUrgencyThresholds() {
-        XCTAssertEqual(QuotaGlance.urgency(remainingPercent: 50), .normal)
-        XCTAssertEqual(QuotaGlance.urgency(remainingPercent: 21), .normal)
+        // Aligned with ClaudeBar: >50 healthy, 20-50 warning, <20 critical, 0 depleted (by remaining).
+        XCTAssertEqual(QuotaGlance.urgency(remainingPercent: 60), .healthy)
+        XCTAssertEqual(QuotaGlance.urgency(remainingPercent: 51), .healthy)
+        XCTAssertEqual(QuotaGlance.urgency(remainingPercent: 50), .warning)
         XCTAssertEqual(QuotaGlance.urgency(remainingPercent: 20), .warning)
-        XCTAssertEqual(QuotaGlance.urgency(remainingPercent: 11), .warning)
-        XCTAssertEqual(QuotaGlance.urgency(remainingPercent: 10), .critical)
-        XCTAssertEqual(QuotaGlance.urgency(remainingPercent: 0), .critical)
+        XCTAssertEqual(QuotaGlance.urgency(remainingPercent: 19), .critical)
+        XCTAssertEqual(QuotaGlance.urgency(remainingPercent: 1), .critical)
+        XCTAssertEqual(QuotaGlance.urgency(remainingPercent: 0), .depleted)
     }
 
     func testResetCountdownFormats() throws {
