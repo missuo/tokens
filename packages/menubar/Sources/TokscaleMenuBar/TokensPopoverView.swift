@@ -32,7 +32,7 @@ struct TokensPopoverView: View {
             .padding(.top, 18)
             .padding(.bottom, 14)
         }
-        .frame(width: 560, height: 760, alignment: .top)
+        .frame(width: 560, height: 920, alignment: .top)
         .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 26, style: .continuous)
@@ -1575,12 +1575,12 @@ private struct ContributionHeatmap: View {
 
     private func color(_ level: Int) -> Color {
         switch level {
-        case 1: return companionOrange.opacity(0.30)
-        case 2: return companionOrange.opacity(0.52)
-        case 3: return companionOrange.opacity(0.74)
-        case 4: return companionOrange.opacity(0.96)
+        case 1: return companionOrange.opacity(0.42)
+        case 2: return companionOrange.opacity(0.64)
+        case 3: return companionOrange.opacity(0.82)
+        case 4: return companionOrange.opacity(1.0)
         case -1: return Color.clear
-        default: return Color.gray.opacity(0.16)
+        default: return Color.gray.opacity(0.20)
         }
     }
 
@@ -1597,7 +1597,21 @@ private struct ContributionHeatmap: View {
         formatter.timeZone = calendar.timeZone
         formatter.dateFormat = "yyyy-MM-dd"
 
-        let byDate = Dictionary(days.map { ($0.date, $0.intensity) }, uniquingKeysWith: { first, _ in first })
+        let byDate = Dictionary(days.map { ($0.date, $0.costUsd) }, uniquingKeysWith: { first, _ in first })
+        // Bucket by quartiles of active-day cost so shades spread evenly instead of
+        // clumping at the faintest level under a few outlier days.
+        let sortedCosts = days.map(\.costUsd).filter { $0 > 0 }.sorted()
+        func bucket(_ cost: Double) -> Int {
+            guard cost > 0 else { return 0 }
+            guard !sortedCosts.isEmpty else { return 1 }
+            func threshold(_ p: Double) -> Double {
+                sortedCosts[min(sortedCosts.count - 1, Int((Double(sortedCosts.count) - 1) * p))]
+            }
+            if cost <= threshold(0.25) { return 1 }
+            if cost <= threshold(0.50) { return 2 }
+            if cost <= threshold(0.75) { return 3 }
+            return 4
+        }
         guard let first = formatter.date(from: firstDay.date),
             let last = formatter.date(from: lastDay.date)
         else {
@@ -1614,7 +1628,7 @@ private struct ContributionHeatmap: View {
         var day = gridStart
         while day <= last {
             let weekday = calendar.component(.weekday, from: day) - 1
-            let level = day < first ? -1 : (byDate[formatter.string(from: day)] ?? 0)
+            let level = day < first ? -1 : bucket(byDate[formatter.string(from: day)] ?? 0)
             current.append(level)
             if weekday == 6 {
                 columns.append(current)
