@@ -192,11 +192,20 @@ public struct TokscaleDashboardModel: Equatable {
 
     private static let quotaBoardProviderIds = ["claude", "codex", "gemini"]
 
-    public init(summary: TokscaleSummary) {
+    /// Live only when the quota was actually fetched recently; an old timestamp from a
+    /// past success (e.g. later refreshes failing) must not keep reading as "Live".
+    private static func isQuotaRefreshRecent(_ value: String?, now: Date) -> Bool {
+        guard let value, let date = parseISODate(value) else {
+            return false
+        }
+        return now.timeIntervalSince(date) < 900
+    }
+
+    public init(summary: TokscaleSummary, now: Date = Date()) {
         let providerRows = Self.providerRows(summary: summary)
         let historyRows = Self.historyRows(summary: summary)
         let weekTrends = Self.weekTrends(historyRows: historyRows)
-        let hasLiveQuotaRefresh = summary.health.quotaRefreshedAt != nil
+        let hasLiveQuotaRefresh = Self.isQuotaRefreshRecent(summary.health.quotaRefreshedAt, now: now)
         quotaWasRefreshed = hasLiveQuotaRefresh
         summaryStale = summary.stale
         clientLabels = providerRows.map { clientDisplayName($0.client) }

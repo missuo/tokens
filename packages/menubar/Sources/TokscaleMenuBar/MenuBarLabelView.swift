@@ -23,7 +23,8 @@ enum MenuBarBadgeRenderer {
         let badge = MenuBarBadge(
             remainingFraction: constrained.remainingPercent / 100,
             percent: Int(constrained.remainingPercent.rounded()),
-            color: color(for: constrained.remainingPercent)
+            color: color(for: constrained.remainingPercent),
+            stale: summary?.stale ?? false
         )
         // Match the system appearance so the adaptive label color bakes legibly
         // (ImageRenderer defaults to light, which would render black text invisible
@@ -52,6 +53,7 @@ private struct MenuBarBadge: View {
     let remainingFraction: Double
     let percent: Int
     let color: Color
+    let stale: Bool
 
     var body: some View {
         HStack(spacing: 4) {
@@ -70,5 +72,6 @@ private struct MenuBarBadge: View {
         }
         .padding(.horizontal, 1)
         .frame(height: 16)
+        .opacity(stale ? 0.45 : 1.0)
     }
 }

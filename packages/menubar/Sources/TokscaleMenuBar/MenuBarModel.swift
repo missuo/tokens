@@ -53,19 +53,25 @@ final class MenuBarModel: ObservableObject {
     func refreshScan() {
         runRefresh(
             status: "Scanning local AI sessions...",
-            arguments: ["--no-spinner", "companion-summary", "--refresh", "--json"]
+            arguments: ["--no-spinner", "companion-summary", "--refresh"]
         )
     }
 
     func refreshQuota(status: String = "Refreshing live quota...") {
         runRefresh(
             status: status,
-            arguments: ["--no-spinner", "companion-summary", "--refresh-quota", "--json"]
+            arguments: ["--no-spinner", "companion-summary", "--refresh-quota"]
         )
     }
 
     func refreshQuotaOnOpenIfNeeded() {
         guard !isRefreshing else { return }
+        // No cache yet: a quota-only refresh returns null and writes nothing, so do a
+        // full scan to initialize instead of silently reporting success.
+        if summary == nil {
+            refreshScan()
+            return
+        }
         let cadence = RefreshCadence(
             storedValue: UserDefaults.standard.string(forKey: RefreshCadence.storageKey)
         )
@@ -162,12 +168,20 @@ final class MenuBarModel: ObservableObject {
             uniquingKeysWith: { _, new in new }
         )
         process.standardError = error
+        process.standardOutput = FileHandle.nullDevice
+
+        let finished = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in finished.signal() }
 
         do {
             try process.run()
-            process.waitUntilExit()
         } catch {
             return (false, error.localizedDescription)
+        }
+
+        if finished.wait(timeout: .now() + 30) == .timedOut {
+            process.terminate()
+            return (false, "refresh timed out")
         }
 
         if process.terminationStatus == 0 {

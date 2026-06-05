@@ -291,7 +291,10 @@ final class TokscaleSummaryTests: XCTestCase {
         var summary = try TokscaleSummary.decode(data)
         summary.refreshFreshness(now: try isoDate("2026-06-04T04:26:00Z"))
 
-        let dashboard = TokscaleDashboardModel(summary: summary)
+        let dashboard = TokscaleDashboardModel(
+            summary: summary,
+            now: try isoDate("2026-06-04T04:26:00Z")
+        )
 
         XCTAssertTrue(summary.stale)
         XCTAssertEqual(dashboard.quotaBoardProviders[0].quotaStatus, "Live")
