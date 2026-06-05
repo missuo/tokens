@@ -6,15 +6,13 @@ import TokscaleMenuBarCore
 final class MenuBarModel: ObservableObject {
     @Published var summary: TokscaleSummary?
     @Published var dashboard: TokscaleDashboardModel?
+    @Published private(set) var menuBarImage: NSImage?
     @Published var errorMessage: String?
     @Published var isRefreshing = false
     @Published var refreshStatus: String?
 
     private let store = TokscaleSummaryStore()
     private var refreshTimer: Timer?
-    private let notifier = QuotaNotifier()
-    private var lastLevels: [String: UrgencyLevel] = [:]
-    private var alertsSeeded = false
 
     init() {
         reload()
@@ -28,24 +26,13 @@ final class MenuBarModel: ObservableObject {
             let loaded = try store.load()
             summary = loaded
             dashboard = loaded.map { TokscaleDashboardModel(summary: $0) }
+            menuBarImage = MenuBarBadgeRenderer.image(for: loaded)
             errorMessage = nil
-            evaluateAlerts(loaded?.quota ?? [])
         } catch {
             summary = nil
             dashboard = nil
+            menuBarImage = nil
             errorMessage = error.localizedDescription
-        }
-    }
-
-    private func evaluateAlerts(_ quota: [TokscaleSummary.QuotaProvider]) {
-        let (alerts, levels) = QuotaGlance.alerts(previous: lastLevels, quota: quota)
-        lastLevels = levels
-        guard alertsSeeded else {
-            alertsSeeded = true
-            return
-        }
-        for alert in alerts {
-            notifier.notify(alert)
         }
     }
 
@@ -129,18 +116,10 @@ final class MenuBarModel: ObservableObject {
     }
 
     nonisolated private static func companionRefreshCandidates() -> [String] {
-        let bundleURL = Bundle.main.bundleURL
-        let repoDebugTokens = bundleURL
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .appendingPathComponent("target", isDirectory: true)
-            .appendingPathComponent("debug", isDirectory: true)
-            .appendingPathComponent("tokens", isDirectory: false)
-            .path
-        return dedupePaths([
-            repoDebugTokens,
+        // Only stable install locations. Never probe a repo-relative path: when the
+        // .app lives under ~/Desktop, touching it trips the macOS Desktop-access prompt
+        // and uses a slow unsigned debug binary. Falls back to PATH lookup of `tokens`.
+        dedupePaths([
             "/opt/homebrew/bin/tokens",
             "/usr/local/bin/tokens",
         ])

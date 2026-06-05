@@ -3,18 +3,20 @@ import SwiftUI
 import TokscaleMenuBarCore
 
 struct MenuBarLabelView: View {
-    let summary: TokscaleSummary?
+    let image: NSImage?
 
     var body: some View {
-        if let image = renderedBadge() {
+        if let image {
             Image(nsImage: image)
         } else {
             Image(systemName: "chart.bar.xaxis")
         }
     }
+}
 
+enum MenuBarBadgeRenderer {
     @MainActor
-    private func renderedBadge() -> NSImage? {
+    static func image(for summary: TokscaleSummary?) -> NSImage? {
         guard let constrained = summary.flatMap({ QuotaGlance.mostConstrained(in: $0.quota) }) else {
             return nil
         }
@@ -23,7 +25,11 @@ struct MenuBarLabelView: View {
             percent: Int(constrained.remainingPercent.rounded()),
             color: color(for: constrained.remainingPercent)
         )
-        let renderer = ImageRenderer(content: badge)
+        // Match the system appearance so the adaptive label color bakes legibly
+        // (ImageRenderer defaults to light, which would render black text invisible
+        // on a dark menu bar).
+        let isDark = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        let renderer = ImageRenderer(content: badge.environment(\.colorScheme, isDark ? .dark : .light))
         renderer.scale = NSScreen.main?.backingScaleFactor ?? 2
         guard let image = renderer.nsImage else {
             return nil
@@ -32,7 +38,7 @@ struct MenuBarLabelView: View {
         return image
     }
 
-    private func color(for remaining: Double) -> Color {
+    private static func color(for remaining: Double) -> Color {
         switch QuotaGlance.urgency(remainingPercent: remaining) {
         case .healthy: return .green
         case .warning: return .yellow
@@ -60,7 +66,7 @@ private struct MenuBarBadge: View {
             Text("\(percent)%")
                 .font(.system(size: 11, weight: .semibold))
                 .monospacedDigit()
-                .foregroundStyle(color)
+                .foregroundStyle(.primary)
         }
         .padding(.horizontal, 1)
         .frame(height: 16)

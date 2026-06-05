@@ -2,13 +2,14 @@ import SwiftUI
 
 @main
 struct TokensMenuBarApp: App {
+    @StateObject private var model = MenuBarModel()
+
     var body: some Scene {
         MenuBarExtra {
-            Text("Spike OK")
-                .padding()
-                .frame(width: 220, height: 120)
+            TokensPopoverView(model: model)
+                .onAppear { model.refreshQuotaOnOpenIfNeeded() }
         } label: {
-            Image(systemName: "chart.bar.xaxis")
+            MenuBarLabelView(image: model.menuBarImage)
         }
         .menuBarExtraStyle(.window)
     }
