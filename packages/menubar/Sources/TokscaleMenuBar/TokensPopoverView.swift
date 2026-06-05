@@ -989,15 +989,18 @@ private struct CompactSettingsPanel: View {
     let onQuit: () -> Void
 
     var body: some View {
-        HStack(spacing: 7) {
-            SettingsStatusPill(
-                title: summary.menuBarTitle,
-                value: refreshStatus ?? model.health.warning ?? model.health.detail,
-                color: providerColor(focus.id)
-            )
-            ToolbarIconButton(systemName: "safari", tint: providerColor("codex"), help: "Open tokens.ci", action: onOpenTokensCI)
-            ToolbarIconButton(systemName: "folder", tint: providerColor("openclaw"), help: "Reveal cache", action: onRevealCache)
-            ToolbarIconButton(systemName: "power", tint: providerColor("claude"), help: "Quit", action: onQuit)
+        VStack(spacing: 7) {
+            HStack(spacing: 7) {
+                SettingsStatusPill(
+                    title: summary.menuBarTitle,
+                    value: refreshStatus ?? model.health.warning ?? model.health.detail,
+                    color: providerColor(focus.id)
+                )
+                ToolbarIconButton(systemName: "safari", tint: providerColor("codex"), help: "Open tokens.ci", action: onOpenTokensCI)
+                ToolbarIconButton(systemName: "folder", tint: providerColor("openclaw"), help: "Reveal cache", action: onRevealCache)
+                ToolbarIconButton(systemName: "power", tint: providerColor("claude"), help: "Quit", action: onQuit)
+            }
+            RefreshCadenceRow(color: providerColor(focus.id))
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 7)
@@ -1008,6 +1011,69 @@ private struct CompactSettingsPanel: View {
         .overlay(
             RoundedRectangle(cornerRadius: 13, style: .continuous)
                 .stroke(providerColor(focus.id).opacity(0.14), lineWidth: 1)
+        )
+    }
+}
+
+private struct RefreshCadenceRow: View {
+    let color: Color
+    @AppStorage(RefreshCadence.storageKey) private var cadenceRawValue = RefreshCadence.default.rawValue
+
+    private var cadence: RefreshCadence {
+        RefreshCadence(storedValue: cadenceRawValue)
+    }
+
+    var body: some View {
+        HStack(spacing: 7) {
+            HStack(spacing: 6) {
+                Image(systemName: "clock.arrow.circlepath")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(color)
+                Text("Refresh on open")
+                    .font(.system(size: 10, weight: .bold))
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+            RefreshCadenceToggle(
+                selected: cadence,
+                onChange: { cadenceRawValue = $0.rawValue }
+            )
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 5)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(color.opacity(0.055))
+        )
+    }
+}
+
+private struct RefreshCadenceToggle: View {
+    let selected: RefreshCadence
+    let onChange: (RefreshCadence) -> Void
+
+    var body: some View {
+        HStack(spacing: 3) {
+            ForEach(RefreshCadence.allCases, id: \.self) { option in
+                Button(action: { onChange(option) }) {
+                    Text(option.title)
+                        .font(.system(size: 10, weight: .bold))
+                        .lineLimit(1)
+                        .frame(width: 46, height: 24)
+                        .foregroundStyle(option == selected ? Color.primary : Color.secondary)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .fill(option == selected ? companionSelectedSurfaceColor : Color.clear)
+                        )
+                }
+                .buttonStyle(.plain)
+                .help("Quota refresh cadence when the menu opens")
+            }
+        }
+        .padding(3)
+        .background(
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .fill(companionWarmGlassColor)
         )
     }
 }

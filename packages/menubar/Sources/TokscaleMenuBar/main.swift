@@ -16,7 +16,6 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
     private let viewState = TokensMenuBarState()
     private let popoverContentSize = NSSize(width: 560, height: 760)
     private let statusItemLength = NSStatusItem.squareLength
-    private let openRefreshMinimumInterval: TimeInterval = 60
     private var statusItem: NSStatusItem?
     private let popover = NSPopover()
     private var hostingController: NSHostingController<TokensPopoverView>?
@@ -179,7 +178,13 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
         guard !viewState.isRefreshing else {
             return
         }
-        guard viewState.summary?.needsRefreshOnOpen(minimumInterval: openRefreshMinimumInterval) ?? true else {
+        let cadence = RefreshCadence(
+            storedValue: UserDefaults.standard.string(forKey: RefreshCadence.storageKey)
+        )
+        guard let minimumInterval = cadence.minimumInterval else {
+            return
+        }
+        guard viewState.summary?.needsRefreshOnOpen(minimumInterval: minimumInterval) ?? true else {
             return
         }
         refreshQuota(status: "Refreshing quota on open...")
