@@ -1320,40 +1320,68 @@ private struct HistoryBars: View {
     let previousDays: [TokscaleDashboardModel.HistoryPoint]
     let currentDays: [TokscaleDashboardModel.HistoryPoint]
 
+    private let lastWeekColor = Color.gray.opacity(0.55)
+
     var body: some View {
-        let maxCost = max((previousDays + currentDays).map(\.costUsd).max() ?? 0, 1)
-        HStack(alignment: .bottom, spacing: 8) {
-            ForEach(Array(currentDays.enumerated()), id: \.element.date) { index, day in
-                let previous = previousDays[safe: index]
-                VStack(spacing: 4) {
-                    ZStack(alignment: .bottom) {
-                        if let previous {
-                            RoundedRectangle(cornerRadius: 4, style: .continuous)
-                                .fill(companionOrange.opacity(0.18))
-                                .frame(width: 12, height: barHeight(previous.costUsd, maxCost: maxCost))
+        let all = previousDays + currentDays
+        let maxCost = max(all.map(\.costUsd).max() ?? 0, 1)
+        let byDate = Dictionary(all.map { ($0.date, $0) }, uniquingKeysWith: { first, _ in first })
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 12) {
+                legend(color: companionOrange, label: "This week")
+                legend(color: lastWeekColor, label: "Last week")
+                Spacer(minLength: 0)
+            }
+            HStack(alignment: .bottom, spacing: 7) {
+                ForEach(currentDays, id: \.date) { day in
+                    let previous = priorWeekDate(day.date).flatMap { byDate[$0] }
+                    VStack(spacing: 4) {
+                        HStack(alignment: .bottom, spacing: 2) {
+                            bar(previous?.costUsd ?? 0, maxCost: maxCost, color: lastWeekColor)
+                            bar(day.costUsd, maxCost: maxCost, color: companionOrange)
                         }
-                        RoundedRectangle(cornerRadius: 4, style: .continuous)
-                            .fill(historyColor(day.costUsd / maxCost))
-                            .frame(height: barHeight(day.costUsd, maxCost: maxCost))
+                        .frame(maxHeight: 72, alignment: .bottom)
+                        Text(String(day.date.suffix(2)))
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundStyle(.secondary)
                     }
-                    .frame(maxHeight: 78, alignment: .bottom)
-                    Text(String(day.date.suffix(2)))
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: 90, alignment: .bottom)
+                    .help(historyHelp(day: day, previous: previous))
                 }
-                .frame(maxWidth: .infinity, maxHeight: 95, alignment: .bottom)
-                .help(historyHelp(day: day, previous: previous))
             }
         }
-        .frame(height: 96)
     }
 
-    private func barHeight(_ cost: Double, maxCost: Double) -> CGFloat {
-        max(8, 78 * min(max(cost / maxCost, 0), 1))
+    private func bar(_ cost: Double, maxCost: Double, color: Color) -> some View {
+        RoundedRectangle(cornerRadius: 3, style: .continuous)
+            .fill(color)
+            .frame(width: 10, height: max(3, 72 * min(max(cost / maxCost, 0), 1)))
     }
 
-    private func historyColor(_ progress: Double) -> Color {
-        companionOrange.opacity(progress > 0 ? 0.28 + 0.58 * progress : 0.14)
+    private func legend(color: Color, label: String) -> some View {
+        HStack(spacing: 4) {
+            RoundedRectangle(cornerRadius: 2, style: .continuous)
+                .fill(color)
+                .frame(width: 9, height: 9)
+            Text(label)
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func priorWeekDate(_ dateString: String) -> String? {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC") ?? .current
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.timeZone = calendar.timeZone
+        formatter.dateFormat = "yyyy-MM-dd"
+        guard let date = formatter.date(from: dateString),
+            let prior = calendar.date(byAdding: .day, value: -7, to: date)
+        else {
+            return nil
+        }
+        return formatter.string(from: prior)
     }
 
     private func historyHelp(
@@ -1363,7 +1391,7 @@ private struct HistoryBars: View {
         guard let previous else {
             return "\(day.date) · \(day.value) · \(day.messages)"
         }
-        return "\(day.date) · \(day.value) · prior \(previous.value)"
+        return "\(day.date) · \(day.value) · last wk \(previous.value)"
     }
 }
 
