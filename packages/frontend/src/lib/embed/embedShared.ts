@@ -21,7 +21,8 @@ export type EmbedTemplate =
   | "orbit"
   | "vitals"
   | "blueprint"
-  | "receipt";
+  | "receipt"
+  | "pulse";
 export type EmbedNumberFormat = "compact" | "full";
 export type EmbedRankFormat = "plain" | "percent" | "total";
 export type EmbedColorName = ColorPaletteName;
@@ -141,6 +142,7 @@ export const EMBED_TEMPLATES: EmbedTemplate[] = [
   "vitals",
   "blueprint",
   "receipt",
+  "pulse",
 ];
 
 /** Parse the `template` query param, falling back to the classic card. */
