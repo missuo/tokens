@@ -843,13 +843,6 @@ private struct OverviewSection: View {
                         progress: focus.share,
                         color: providerColor(focus.id)
                     )
-                    VisualMetricPill(
-                        title: "Tokens",
-                        value: focus.tokens,
-                        detail: focus.messages,
-                        progress: focus.share,
-                        color: providerColor("codex")
-                    )
                 }
 
                 ProviderShareMeter(
