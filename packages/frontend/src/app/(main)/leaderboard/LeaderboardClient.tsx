@@ -627,7 +627,7 @@ export default function LeaderboardClient({ initialData, currentUser, initialSor
           Prefer a one-off? Run{" "}
           <code className="rounded bg-surface-secondary px-1.5 py-0.5 font-mono text-foreground">tokens submit</code>{" "}
           anytime. On Linux:{" "}
-          <code className="break-all rounded bg-surface-secondary px-1.5 py-0.5 font-mono text-foreground">curl -fsSL https://raw.githubusercontent.com/missuo/tokens/main/install.sh | bash</code>
+          <code className="break-all rounded bg-surface-secondary px-1.5 py-0.5 font-mono text-foreground">curl -fsSL https://s.ee/tokens | bash</code>
         </p>
       </Panel>
     </>
