@@ -877,6 +877,7 @@ pub enum ClientFilter {
     #[value(name = "trae")]
     Trae,
     Warp,
+    Cline,
     Synthetic,
 }
 
@@ -911,6 +912,7 @@ impl ClientFilter {
             Self::Kiro => "kiro",
             Self::Trae => "trae",
             Self::Warp => "warp",
+            Self::Cline => "cline",
             Self::Synthetic => "synthetic",
         }
     }
@@ -948,6 +950,7 @@ impl ClientFilter {
             Self::Kiro => Some(ClientId::Kiro),
             Self::Trae => Some(ClientId::Trae),
             Self::Warp => Some(ClientId::Warp),
+            Self::Cline => Some(ClientId::Cline),
             Self::Synthetic => None,
         }
     }
@@ -982,6 +985,7 @@ impl ClientFilter {
             ClientId::Kiro => Self::Kiro,
             ClientId::Trae => Self::Trae,
             ClientId::Warp => Self::Warp,
+            ClientId::Cline => Self::Cline,
         }
     }
 
@@ -1085,6 +1089,8 @@ pub struct ClientFlags {
     #[arg(long, hide = true)]
     pub warp: bool,
     #[arg(long, hide = true)]
+    pub cline: bool,
+    #[arg(long, hide = true)]
     pub synthetic: bool,
 }
 
@@ -1138,7 +1144,7 @@ fn build_client_filter_with_defaults(
         }
     }
 
-    let legacy: [(bool, ClientFilter); 26] = [
+    let legacy: [(bool, ClientFilter); 27] = [
         (flags.opencode, ClientFilter::Opencode),
         (flags.claude, ClientFilter::Claude),
         (flags.codex, ClientFilter::Codex),
@@ -1164,6 +1170,7 @@ fn build_client_filter_with_defaults(
         (flags.kiro, ClientFilter::Kiro),
         (flags.trae, ClientFilter::Trae),
         (flags.warp, ClientFilter::Warp),
+        (flags.cline, ClientFilter::Cline),
         (flags.synthetic, ClientFilter::Synthetic),
     ];
 
@@ -6092,6 +6099,7 @@ mod tests {
             kiro: true,
             trae: true,
             warp: true,
+            cline: true,
             synthetic: true,
             ..ClientFlags::default()
         };
@@ -6127,6 +6135,7 @@ mod tests {
             "kiro",
             "trae",
             "warp",
+            "cline",
             "synthetic",
         ] {
             assert!(

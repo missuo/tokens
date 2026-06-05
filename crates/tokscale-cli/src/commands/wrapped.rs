@@ -1454,6 +1454,7 @@ fn client_display_name(client: &str) -> Option<&'static str> {
         "antigravity" => Some("Antigravity"),
         "zed" => Some("Zed Agent"),
         "warp" => Some("Warp"),
+        "cline" => Some("Cline"),
         "synthetic" => Some("Synthetic"),
         _ => None,
     }
