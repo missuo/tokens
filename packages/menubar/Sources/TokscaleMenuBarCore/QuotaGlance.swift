@@ -65,6 +65,32 @@ public enum QuotaGlance {
         return best
     }
 
+    public static func sessionWindow(
+        forProvider providerName: String,
+        in providers: [TokscaleSummary.QuotaProvider]
+    ) -> GlanceWindow? {
+        guard let provider = providers.first(where: {
+            $0.provider.lowercased() == providerName.lowercased()
+        }) else {
+            return nil
+        }
+        guard let window = provider.windows.first(where: { isSessionLabel($0.label) }) else {
+            return nil
+        }
+        return GlanceWindow(
+            provider: provider.provider,
+            label: window.label,
+            usedPercent: window.usedPercent,
+            remainingPercent: window.remainingPercent,
+            resetsAt: window.resetsAt
+        )
+    }
+
+    private static func isSessionLabel(_ label: String) -> Bool {
+        let normalized = label.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return normalized == "5h" || normalized == "session"
+    }
+
     public static func bestNow(
         in providers: [TokscaleSummary.QuotaProvider]
     ) -> ProviderHeadroom? {

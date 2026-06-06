@@ -17,14 +17,18 @@ struct MenuBarLabelView: View {
 enum MenuBarBadgeRenderer {
     @MainActor
     static func image(for summary: TokscaleSummary?) -> NSImage? {
-        guard let constrained = summary.flatMap({ QuotaGlance.mostConstrained(in: $0.quota) }) else {
+        guard let summary else { return nil }
+        let claudeWindows = summary.quota.filter { $0.provider.lowercased() == "claude" }
+        guard let constrained = QuotaGlance.sessionWindow(forProvider: "claude", in: summary.quota)
+            ?? QuotaGlance.mostConstrained(in: claudeWindows)
+            ?? QuotaGlance.mostConstrained(in: summary.quota) else {
             return nil
         }
         let badge = MenuBarBadge(
             remainingFraction: constrained.remainingPercent / 100,
             percent: Int(constrained.remainingPercent.rounded()),
             color: color(for: constrained.remainingPercent),
-            stale: summary?.stale ?? false
+            stale: summary.stale
         )
         let renderer = ImageRenderer(content: badge)
         renderer.scale = NSScreen.main?.backingScaleFactor ?? 2
