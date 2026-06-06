@@ -91,9 +91,15 @@ private struct SummaryContent: View {
     @State private var selectedProviderId: String?
     @State private var settingsVisible = false
     @State private var quotaDisplayMode: TokscaleDashboardModel.QuotaDisplayMode = .remaining
+    @State private var page = 0
+    @AppStorage(LayoutMode.storageKey) private var layoutRawValue = LayoutMode.default.rawValue
 
     private var model: TokscaleDashboardModel {
         dashboard
+    }
+
+    private var layout: LayoutMode {
+        LayoutMode(storedValue: layoutRawValue)
     }
 
     private var selectedFocus: TokscaleDashboardModel.ProviderFocus {
@@ -129,31 +135,30 @@ private struct SummaryContent: View {
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
 
+            if layout == .paged {
+                PageTabSwitcher(
+                    page: page,
+                    color: providerColor(selectedFocus.id),
+                    onSelect: { target in
+                        withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
+                            page = target
+                        }
+                    }
+                )
+            }
+
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(spacing: 8) {
-                    QuotaBoardSection(
-                        summary: summary,
-                        model: model,
-                        displayMode: quotaDisplayMode,
-                        onModeChange: { mode in
-                            withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
-                                quotaDisplayMode = mode
-                            }
+                    if layout == .paged {
+                        if page == 0 {
+                            glanceSection
+                        } else {
+                            historySection
                         }
-                    )
-
-                    CompactOverviewStrip(model: model)
-
-                    HistorySection(model: model)
-                    .padding(.bottom, 2)
-
-                    ContributionHeatmap(days: summary.contribution)
-
-                    Text("Dollar amounts are API-equivalent value, not subscription spend.")
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.bottom, 4)
+                    } else {
+                        glanceSection
+                        historySection
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .top)
             }
@@ -168,6 +173,35 @@ private struct SummaryContent: View {
         .onChange(of: model.providers) { _ in
             syncSelectedProvider()
         }
+    }
+
+    @ViewBuilder private var glanceSection: some View {
+        QuotaBoardSection(
+            summary: summary,
+            model: model,
+            displayMode: quotaDisplayMode,
+            prominent: layout == .paged,
+            onModeChange: { mode in
+                withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
+                    quotaDisplayMode = mode
+                }
+            }
+        )
+    }
+
+    @ViewBuilder private var historySection: some View {
+        CompactOverviewStrip(model: model)
+
+        HistorySection(model: model)
+            .padding(.bottom, 2)
+
+        ContributionHeatmap(days: summary.contribution)
+
+        Text("Dollar amounts are API-equivalent value, not subscription spend.")
+            .font(.system(size: 9, weight: .medium))
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.bottom, 4)
     }
 
     private func syncSelectedProvider() {
@@ -233,10 +267,48 @@ private struct CompanionHeader: View {
     }
 }
 
+private struct PageTabSwitcher: View {
+    let page: Int
+    let color: Color
+    let onSelect: (Int) -> Void
+
+    private let tabs = ["Glance", "History"]
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(Array(tabs.enumerated()), id: \.offset) { index, title in
+                Button(action: { onSelect(index) }) {
+                    Text(title)
+                        .font(.system(size: 12, weight: .bold))
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 30)
+                        .foregroundStyle(index == page ? Color.primary : Color.secondary)
+                        .background(
+                            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                .fill(index == page ? color.opacity(0.16) : Color.clear)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                .stroke(index == page ? color.opacity(0.32) : Color.clear, lineWidth: 1)
+                        )
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(4)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(companionWarmGlassColor)
+        )
+    }
+}
+
 private struct QuotaBoardSection: View {
     let summary: TokscaleSummary
     let model: TokscaleDashboardModel
     let displayMode: TokscaleDashboardModel.QuotaDisplayMode
+    var prominent: Bool = false
     let onModeChange: (TokscaleDashboardModel.QuotaDisplayMode) -> Void
 
     var body: some View {
@@ -244,7 +316,7 @@ private struct QuotaBoardSection: View {
             HStack(spacing: 8) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Quota")
-                        .font(.system(size: 22, weight: .bold, design: .rounded))
+                        .font(.system(size: prominent ? 27 : 22, weight: .bold, design: .rounded))
                         .foregroundStyle(
                             LinearGradient(
                                 colors: [companionOrange, Color.primary],
@@ -288,7 +360,7 @@ private struct QuotaBoardSection: View {
                     )
                 } else {
                     ForEach(model.quotaBoardProviders, id: \.id) { focus in
-                        ProviderQuotaRow(focus: focus, displayMode: displayMode)
+                        ProviderQuotaRow(focus: focus, displayMode: displayMode, prominent: prominent)
                     }
                 }
             }
@@ -350,6 +422,7 @@ private struct QuotaModeToggle: View {
 private struct ProviderQuotaRow: View {
     let focus: TokscaleDashboardModel.ProviderFocus
     let displayMode: TokscaleDashboardModel.QuotaDisplayMode
+    var prominent: Bool = false
 
     private var color: Color {
         providerColor(focus.id)
@@ -361,7 +434,7 @@ private struct ProviderQuotaRow: View {
                 HStack(spacing: 6) {
                     ProviderDot(color: color)
                     Text(focus.title)
-                        .font(.system(size: 12, weight: .bold))
+                        .font(.system(size: prominent ? 14 : 12, weight: .bold))
                         .lineLimit(1)
                     Spacer(minLength: 0)
                 }
@@ -387,13 +460,15 @@ private struct ProviderQuotaRow: View {
                         quota: focus.primaryQuota,
                         fallbackTitle: "5h",
                         displayMode: displayMode,
-                        isCached: focus.quotaStatus == "Cached"
+                        isCached: focus.quotaStatus == "Cached",
+                        prominent: prominent
                     )
                     QuotaBarLine(
                         quota: focus.weeklyQuota,
                         fallbackTitle: "Week",
                         displayMode: displayMode,
-                        isCached: focus.quotaStatus == "Cached"
+                        isCached: focus.quotaStatus == "Cached",
+                        prominent: prominent
                     )
                 }
             }
@@ -416,6 +491,7 @@ private struct QuotaBarLine: View {
     let fallbackTitle: String
     let displayMode: TokscaleDashboardModel.QuotaDisplayMode
     let isCached: Bool
+    var prominent: Bool = false
 
     var body: some View {
         if let quota {
@@ -432,19 +508,19 @@ private struct QuotaBarLine: View {
                 )
                 VStack(alignment: .trailing, spacing: 1) {
                     Text(quotaValueText(quota: quota, displayMode: displayMode, isCached: isCached, expired: expired))
-                        .font(.system(size: 15, weight: .bold, design: .rounded))
+                        .font(.system(size: prominent ? 21 : 15, weight: .bold, design: .rounded))
                         .monospacedDigit()
                         .lineLimit(1)
                         .minimumScaleFactor(0.72)
                     Text(quotaDetailText(quota: quota, displayMode: displayMode, isCached: isCached, expired: expired))
-                        .font(.system(size: 8, weight: .medium))
+                        .font(.system(size: prominent ? 9 : 8, weight: .medium))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.70)
                 }
-                .frame(width: 92, alignment: .trailing)
+                .frame(width: prominent ? 106 : 92, alignment: .trailing)
             }
-            .frame(height: 28)
+            .frame(height: prominent ? 34 : 28)
         } else {
             HStack(spacing: 8) {
                 Text(fallbackTitle)
@@ -1025,6 +1101,7 @@ private struct CompactSettingsPanel: View {
                 ToolbarIconButton(systemName: "folder", tint: providerColor("openclaw"), help: "Reveal cache", action: onRevealCache)
                 ToolbarIconButton(systemName: "power", tint: providerColor("claude"), help: "Quit", action: onQuit)
             }
+            LayoutModeRow(color: providerColor(focus.id))
             RefreshCadenceRow(color: providerColor(focus.id))
             AutoRefreshRow(color: providerColor(focus.id))
             ThemeRow(color: providerColor(focus.id))
@@ -1038,6 +1115,41 @@ private struct CompactSettingsPanel: View {
         .overlay(
             RoundedRectangle(cornerRadius: 13, style: .continuous)
                 .stroke(providerColor(focus.id).opacity(0.14), lineWidth: 1)
+        )
+    }
+}
+
+private struct LayoutModeRow: View {
+    let color: Color
+    @AppStorage(LayoutMode.storageKey) private var layoutRawValue = LayoutMode.default.rawValue
+
+    private var layout: LayoutMode {
+        LayoutMode(storedValue: layoutRawValue)
+    }
+
+    var body: some View {
+        HStack(spacing: 7) {
+            HStack(spacing: 6) {
+                Image(systemName: "rectangle.split.1x2")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(color)
+                Text("Layout")
+                    .font(.system(size: 10, weight: .bold))
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+            SettingsSegment(
+                titles: LayoutMode.allCases.map(\.title),
+                selectedIndex: LayoutMode.allCases.firstIndex(of: layout) ?? 0,
+                onSelect: { layoutRawValue = LayoutMode.allCases[$0].rawValue },
+                help: "Single scrolling dashboard, or a two-page glance + history"
+            )
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 5)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(color.opacity(0.055))
         )
     }
 }
