@@ -720,16 +720,44 @@ public extension TokscaleSummary {
 
     struct Subagents: Decodable, Equatable {
         public let sessions: Int
+        public let invocations: Int
         public let tokens: Int64
         public let messages: Int
         public let share: Double
         public let top: [SubagentEntry]
+
+        enum CodingKeys: String, CodingKey {
+            case sessions, invocations, tokens, messages, share, top
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            sessions = try c.decode(Int.self, forKey: .sessions)
+            invocations = try c.decodeIfPresent(Int.self, forKey: .invocations) ?? sessions
+            tokens = try c.decode(Int64.self, forKey: .tokens)
+            messages = try c.decode(Int.self, forKey: .messages)
+            share = try c.decode(Double.self, forKey: .share)
+            top = try c.decode([SubagentEntry].self, forKey: .top)
+        }
     }
 
     struct SubagentEntry: Decodable, Equatable {
         public let name: String
         public let tokens: Int64
         public let sessions: Int
+        public let invocations: Int
+
+        enum CodingKeys: String, CodingKey {
+            case name, tokens, sessions, invocations
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            name = try c.decode(String.self, forKey: .name)
+            tokens = try c.decode(Int64.self, forKey: .tokens)
+            sessions = try c.decode(Int.self, forKey: .sessions)
+            invocations = try c.decodeIfPresent(Int.self, forKey: .invocations) ?? sessions
+        }
     }
 
     struct Provider: Decodable, Equatable {

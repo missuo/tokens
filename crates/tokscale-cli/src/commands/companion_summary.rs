@@ -41,6 +41,7 @@ pub struct CompanionSummary {
 #[serde(rename_all = "camelCase")]
 pub struct CompanionSubagents {
     pub sessions: i64,
+    pub invocations: i64,
     pub tokens: i64,
     pub messages: i64,
     /// Subagent tokens as a fraction of all tokens (0..1).
@@ -55,6 +56,7 @@ pub struct CompanionSubagentEntry {
     pub name: String,
     pub tokens: i64,
     pub sessions: i64,
+    pub invocations: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -353,6 +355,7 @@ fn subagent_breakdown(graph: &tokscale_core::GraphResult) -> Option<CompanionSub
     let total = graph.summary.total_tokens.max(1);
     Some(CompanionSubagents {
         sessions: s.session_count,
+        invocations: s.invocation_count,
         tokens: s.total_tokens,
         messages: s.total_messages,
         share: s.total_tokens as f64 / total as f64,
@@ -364,6 +367,7 @@ fn subagent_breakdown(graph: &tokscale_core::GraphResult) -> Option<CompanionSub
                 name: a.name.clone(),
                 tokens: a.tokens,
                 sessions: a.sessions,
+                invocations: a.invocations,
             })
             .collect(),
     })
@@ -637,6 +641,7 @@ mod tests {
             quota: Vec::new(),
             history: Vec::new(),
             contribution: Vec::new(),
+            subagents: None,
             top: CompanionTop {
                 client: Some("codex".to_string()),
                 model: Some("gpt-5".to_string()),
@@ -803,6 +808,40 @@ mod tests {
         assert_eq!(summary.providers[1].client, "claude");
         assert_eq!(summary.providers[1].today_cost_usd, 0.0);
         assert_eq!(summary.providers[2].client, "gemini");
+    }
+
+    #[test]
+    fn summary_from_graph_includes_subagent_invocations() {
+        let mut graph = graph_result_for_test(vec![daily_contribution_for_test(
+            "2026-06-04",
+            "claude",
+            "claude-sonnet",
+            10_000,
+            0.50,
+            3,
+        )]);
+        graph.subagents = Some(tokscale_core::SubagentSummary {
+            total_tokens: 2_500,
+            total_messages: 8,
+            session_count: 1,
+            invocation_count: 3,
+            agents: vec![tokscale_core::SubagentEntry {
+                name: "Explore".to_string(),
+                tokens: 2_500,
+                messages: 8,
+                sessions: 1,
+                invocations: 3,
+            }],
+        });
+
+        let summary = from_graph(&graph, None, "2026-06-04", "/tmp/companion-summary.json");
+        let subagents = summary.subagents.unwrap();
+
+        assert_eq!(subagents.sessions, 1);
+        assert_eq!(subagents.invocations, 3);
+        assert_eq!(subagents.tokens, 2_500);
+        assert_eq!(subagents.top[0].name, "Explore");
+        assert_eq!(subagents.top[0].invocations, 3);
     }
 
     #[test]

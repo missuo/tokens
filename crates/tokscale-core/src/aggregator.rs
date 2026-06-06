@@ -246,6 +246,8 @@ pub struct SubagentSummary {
     pub total_messages: i64,
     /// Distinct sessions that contained any agent activity.
     pub session_count: i64,
+    /// Distinct subagent invocations, keyed by agent_run_id when available.
+    pub invocation_count: i64,
     /// Per-agent-name breakdown, sorted by tokens descending.
     pub agents: Vec<SubagentEntry>,
 }
@@ -256,6 +258,7 @@ pub struct SubagentEntry {
     pub tokens: i64,
     pub messages: i64,
     pub sessions: i64,
+    pub invocations: i64,
 }
 
 /// Roll up every message that carries an `agent` attribution, by agent name.
@@ -268,10 +271,12 @@ pub fn aggregate_subagents(messages: &[UnifiedMessage]) -> SubagentSummary {
         tokens: i64,
         messages: i64,
         sessions: HashSet<String>,
+        invocations: HashSet<String>,
     }
 
     let mut by_agent: HashMap<String, Acc> = HashMap::new();
     let mut all_sessions: HashSet<String> = HashSet::new();
+    let mut all_invocations: HashSet<String> = HashSet::new();
     let mut total_tokens: i64 = 0;
     let mut total_messages: i64 = 0;
 
@@ -291,15 +296,22 @@ pub fn aggregate_subagents(messages: &[UnifiedMessage]) -> SubagentSummary {
         total_tokens = total_tokens.saturating_add(tokens);
         total_messages = total_messages.saturating_add(messages_count);
         all_sessions.insert(msg.session_id.clone());
+        let invocation_key = msg
+            .agent_run_id
+            .clone()
+            .unwrap_or_else(|| format!("{}|{}", msg.session_id, agent));
+        all_invocations.insert(invocation_key.clone());
 
         let entry = by_agent.entry(agent.clone()).or_insert_with(|| Acc {
             tokens: 0,
             messages: 0,
             sessions: HashSet::new(),
+            invocations: HashSet::new(),
         });
         entry.tokens = entry.tokens.saturating_add(tokens);
         entry.messages = entry.messages.saturating_add(messages_count);
         entry.sessions.insert(msg.session_id.clone());
+        entry.invocations.insert(invocation_key);
     }
 
     let mut agents: Vec<SubagentEntry> = by_agent
@@ -309,6 +321,7 @@ pub fn aggregate_subagents(messages: &[UnifiedMessage]) -> SubagentSummary {
             tokens: acc.tokens,
             messages: acc.messages,
             sessions: acc.sessions.len() as i64,
+            invocations: acc.invocations.len() as i64,
         })
         .collect();
     agents.sort_by(|a, b| b.tokens.cmp(&a.tokens).then_with(|| a.name.cmp(&b.name)));
@@ -317,6 +330,7 @@ pub fn aggregate_subagents(messages: &[UnifiedMessage]) -> SubagentSummary {
         total_tokens,
         total_messages,
         session_count: all_sessions.len() as i64,
+        invocation_count: all_invocations.len() as i64,
         agents,
     }
 }
@@ -965,6 +979,7 @@ mod tests {
             duration_ms: None,
             message_count: 1,
             agent: None,
+            agent_run_id: None,
             dedup_key: None,
             is_turn_start: false,
         }
@@ -993,6 +1008,41 @@ mod tests {
         assert_eq!(result[0].totals.tokens, 1000);
         assert_eq!(result[0].totals.cost, 0.05);
         assert_eq!(result[0].totals.messages, 1);
+    }
+
+    #[test]
+    fn test_aggregate_subagents_counts_distinct_agent_runs() {
+        let mut msg_a1 =
+            mock_unified_message("2024-01-01", 1000, 0.05, "claude-3-5-sonnet", "claude");
+        msg_a1.session_id = "shared-parent".to_string();
+        msg_a1.agent = Some("Explore".to_string());
+        msg_a1.agent_run_id = Some("agent-run-a".to_string());
+
+        let mut msg_a2 =
+            mock_unified_message("2024-01-01", 1200, 0.06, "claude-3-5-sonnet", "claude");
+        msg_a2.session_id = "shared-parent".to_string();
+        msg_a2.agent = Some("Explore".to_string());
+        msg_a2.agent_run_id = Some("agent-run-a".to_string());
+
+        let mut msg_b =
+            mock_unified_message("2024-01-01", 800, 0.04, "claude-3-5-sonnet", "claude");
+        msg_b.session_id = "shared-parent".to_string();
+        msg_b.agent = Some("Explore".to_string());
+        msg_b.agent_run_id = Some("agent-run-b".to_string());
+
+        let mut legacy =
+            mock_unified_message("2024-01-01", 600, 0.03, "claude-3-5-sonnet", "claude");
+        legacy.session_id = "legacy-parent".to_string();
+        legacy.agent = Some("Explore".to_string());
+
+        let result = aggregate_subagents(&[msg_a1, msg_a2, msg_b, legacy]);
+
+        assert_eq!(result.session_count, 2);
+        assert_eq!(result.invocation_count, 3);
+        assert_eq!(result.agents.len(), 1);
+        assert_eq!(result.agents[0].sessions, 2);
+        assert_eq!(result.agents[0].invocations, 3);
+        assert_eq!(result.agents[0].messages, 4);
     }
 
     #[test]
@@ -1505,6 +1555,7 @@ mod tests {
             cost,
             message_count: 1,
             agent: None,
+            agent_run_id: None,
             dedup_key: None,
             is_turn_start: false,
             duration_ms: None,

@@ -1803,9 +1803,9 @@ private struct SubagentCard: View {
                     detail: "from subagents"
                 )
                 HistoryStatPill(
-                    title: "Sessions",
-                    value: "\(subagents.sessions)",
-                    detail: "used subagents"
+                    title: "Runs",
+                    value: "\(subagents.invocations)",
+                    detail: "subagent runs"
                 )
                 HistoryStatPill(
                     title: "Messages",
@@ -1826,7 +1826,7 @@ private struct SubagentCard: View {
                                 .lineLimit(1)
                                 .minimumScaleFactor(0.8)
                             Spacer(minLength: 6)
-                            Text("\(formatTokens(agent.tokens)) · \(agent.sessions) sess")
+                            Text("\(formatTokens(agent.tokens)) · \(agent.invocations) runs")
                                 .font(.system(size: 10, weight: .medium))
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)

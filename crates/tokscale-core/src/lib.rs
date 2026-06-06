@@ -2541,6 +2541,7 @@ pub fn parsed_to_unified(msg: &ParsedMessage, cost: f64) -> UnifiedMessage {
         duration_ms: msg.duration_ms,
         message_count: msg.message_count,
         agent: msg.agent.clone(),
+        agent_run_id: None,
         dedup_key: None,
         is_turn_start: false,
     }

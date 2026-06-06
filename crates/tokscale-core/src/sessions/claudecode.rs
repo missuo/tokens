@@ -346,6 +346,7 @@ pub fn parse_claude_file_with_cache(
     let mut pending_request_start_timestamp_ms: Option<i64> = None;
     // Sidechain detection state (resolved lazily on first parseable entry)
     let mut sidechain_agent: Option<String> = None;
+    let mut sidechain_run_id: Option<String> = None;
     let mut sidechain_detected = false;
 
     for line in reader.lines() {
@@ -378,6 +379,10 @@ pub fn parse_claude_file_with_cache(
                         entry.agent_id.as_deref(),
                         parent_cache,
                     ));
+                    sidechain_run_id = path
+                        .file_stem()
+                        .and_then(|stem| stem.to_str())
+                        .map(str::to_string);
                 }
             }
 
@@ -504,6 +509,7 @@ pub fn parse_claude_file_with_cache(
                 );
                 unified.duration_ms = duration_ms;
                 unified.agent = sidechain_agent.clone();
+                unified.agent_run_id = sidechain_run_id.clone();
                 unified.set_workspace(workspace_key.clone(), workspace_label.clone());
                 // Mark the first assistant response after a user message as a turn start
                 if pending_turn_start {
@@ -1565,6 +1571,7 @@ mod tests {
             messages[0].session_id, "parent-uuid-001",
             "Should use parent session ID from transcript, not filename"
         );
+        assert_eq!(messages[0].agent_run_id, Some("agent-abc123".to_string()));
         assert_eq!(messages[0].tokens.input, 200);
         assert_eq!(messages[0].tokens.output, 80);
         assert_eq!(messages[0].tokens.cache_read, 50);
@@ -1704,7 +1711,9 @@ mod tests {
             messages[0].agent, None,
             "Main session messages must not have an agent"
         );
+        assert_eq!(messages[0].agent_run_id, None);
         assert_eq!(messages[1].agent, None);
+        assert_eq!(messages[1].agent_run_id, None);
     }
 
     #[test]
