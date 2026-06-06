@@ -360,7 +360,11 @@ private struct QuotaBoardSection: View {
                     )
                 } else {
                     ForEach(model.quotaBoardProviders, id: \.id) { focus in
-                        ProviderQuotaRow(focus: focus, displayMode: displayMode, prominent: prominent)
+                        if prominent {
+                            ProviderGlanceCard(focus: focus, displayMode: displayMode)
+                        } else {
+                            ProviderQuotaRow(focus: focus, displayMode: displayMode)
+                        }
                     }
                 }
             }
@@ -566,6 +570,111 @@ private func quotaDetailText(
         return "refresh for live"
     }
     return resetLabel(quota.reset) ?? quota.detail(for: displayMode)
+}
+
+// ClaudeBar-style glance card: each quota window stacked vertically with a large
+// number and a full-width progress bar, instead of cramming everything into one row.
+private struct ProviderGlanceCard: View {
+    let focus: TokscaleDashboardModel.ProviderFocus
+    let displayMode: TokscaleDashboardModel.QuotaDisplayMode
+
+    private var color: Color {
+        providerColor(focus.id)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 7) {
+                ProviderDot(color: color)
+                Text(focus.title)
+                    .font(.system(size: 16, weight: .bold))
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                QuotaSourceBadge(status: focus.quotaStatus, color: color)
+            }
+
+            if focus.quotaWindows.isEmpty {
+                QuotaUnavailableLine(providerColor: color)
+            } else {
+                GlanceQuotaLine(
+                    quota: focus.primaryQuota,
+                    fallbackTitle: "5-hour",
+                    displayMode: displayMode,
+                    isCached: focus.quotaStatus == "Cached",
+                    color: color
+                )
+                GlanceQuotaLine(
+                    quota: focus.weeklyQuota,
+                    fallbackTitle: "Weekly",
+                    displayMode: displayMode,
+                    isCached: focus.quotaStatus == "Cached",
+                    color: color
+                )
+            }
+        }
+        .padding(15)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(companionWarmGlassColor)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(color.opacity(0.22), lineWidth: 1)
+        )
+    }
+}
+
+private struct GlanceQuotaLine: View {
+    let quota: TokscaleDashboardModel.QuotaWindowSummary?
+    let fallbackTitle: String
+    let displayMode: TokscaleDashboardModel.QuotaDisplayMode
+    let isCached: Bool
+    let color: Color
+
+    var body: some View {
+        if let quota {
+            let expired = resetIsExpired(quota.reset)
+            let unavailable = isCached || expired
+            VStack(alignment: .leading, spacing: 7) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(quota.title)
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
+                    Text(quotaValueText(quota: quota, displayMode: displayMode, isCached: isCached, expired: expired))
+                        .font(.system(size: 36, weight: .heavy, design: .rounded))
+                        .monospacedDigit()
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.5)
+                        .foregroundStyle(unavailable ? Color.secondary : Color.primary)
+                }
+                QuotaProgressBar(
+                    progress: unavailable ? 0 : quota.progress(for: displayMode),
+                    color: unavailable ? companionOrange : quotaHealthColor(quota)
+                )
+                .frame(height: 15)
+                Text(quotaDetailText(quota: quota, displayMode: displayMode, isCached: isCached, expired: expired))
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+        } else {
+            VStack(alignment: .leading, spacing: 7) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(fallbackTitle)
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
+                    Text("N/A")
+                        .font(.system(size: 36, weight: .heavy, design: .rounded))
+                        .foregroundStyle(.secondary)
+                }
+                QuotaProgressBar(progress: 0, color: .secondary)
+                    .frame(height: 15)
+            }
+        }
+    }
 }
 
 private struct QuotaUnavailableLine: View {
