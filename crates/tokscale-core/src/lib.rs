@@ -386,6 +386,11 @@ pub struct GraphResult {
     pub contributions: Vec<DailyContribution>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub time_metrics: Option<sessionize::TimeMetrics>,
+    /// Opt-in subagent breakdown. Populated only when
+    /// [`ReportOptions::include_subagents`] is set; omitted from JSON otherwise,
+    /// so default output (and the submit payload) is unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subagents: Option<aggregator::SubagentSummary>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -400,6 +405,11 @@ pub struct ReportOptions {
     /// Persistent scanner config loaded from `~/.config/tokens/settings.json`.
     /// Defaults to empty when callers don't care about user-configured paths.
     pub scanner_settings: scanner::ScannerSettings,
+    /// When true, compute the additive subagent breakdown and attach it to
+    /// [`GraphResult::subagents`]. Defaults to false so the CLI's default
+    /// output, totals, and submit payload are completely unaffected. Intended
+    /// for the menu bar app, which opts in via `tokens graph --subagents`.
+    pub include_subagents: bool,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -1802,11 +1812,20 @@ async fn generate_graph_with_loaded_pricing(
         sessionize::compute_time_metrics(&intervals, sessionize::DEFAULT_IDLE_GAP_MS);
 
     let daily_active_time = sessionize::compute_daily_active_time(&intervals);
+    // Opt-in only: compute the additive subagent breakdown before `filtered` is
+    // moved into the daily aggregation. This is read-only and never alters the
+    // totals; when not requested we do no extra work at all.
+    let subagents = if options.include_subagents {
+        Some(aggregator::aggregate_subagents(&filtered))
+    } else {
+        None
+    };
     let contributions = aggregator::aggregate_by_date(filtered);
 
     let processing_time_ms = start.elapsed().as_millis() as u32;
     let mut result = aggregator::generate_graph_result(contributions, processing_time_ms);
     result.time_metrics = Some(time_metrics);
+    result.subagents = subagents;
 
     for contribution in &mut result.contributions {
         if let Some(&ms) = daily_active_time.get(&contribution.date) {
@@ -2581,6 +2600,7 @@ pub fn parsed_to_unified(msg: &ParsedMessage, cost: f64) -> UnifiedMessage {
         duration_ms: msg.duration_ms,
         message_count: msg.message_count,
         agent: msg.agent.clone(),
+        agent_run_id: None,
         dedup_key: None,
         is_turn_start: false,
     }

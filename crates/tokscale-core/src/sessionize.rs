@@ -352,6 +352,7 @@ mod tests {
             cost: 0.01,
             message_count: 1,
             agent: None,
+            agent_run_id: None,
             dedup_key: None,
             is_turn_start: false,
             duration_ms: None,

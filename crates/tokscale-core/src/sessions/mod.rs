@@ -49,6 +49,12 @@ pub struct UnifiedMessage {
     #[serde(default = "default_message_count")]
     pub message_count: i32,
     pub agent: Option<String>,
+    /// Identifies a single subagent invocation (the sidechain transcript file
+    /// stem). `Some` only for subagent/sidechain messages; `None` for normal
+    /// main-session messages. Used purely for the opt-in subagent breakdown —
+    /// it never affects token/cost totals or dedup.
+    #[serde(default)]
+    pub agent_run_id: Option<String>,
     pub dedup_key: Option<String>,
     /// True if this message is the first assistant response after a user turn.
     /// Used to count user interaction turns (as opposed to API message count).
@@ -291,6 +297,7 @@ impl UnifiedMessage {
             duration_ms: None,
             message_count: default_message_count(),
             agent,
+            agent_run_id: None,
             dedup_key,
             is_turn_start: false,
         }

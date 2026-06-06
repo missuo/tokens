@@ -249,6 +249,7 @@ async fn load_wrapped_data(options: &WrappedOptions) -> Result<WrappedData> {
         year: Some(year.clone()),
         group_by: GroupBy::default(),
         scanner_settings: crate::tui::settings::load_scanner_settings(),
+        include_subagents: false,
     })
     .await
     .map_err(anyhow::Error::msg)?;

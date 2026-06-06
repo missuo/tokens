@@ -100,6 +100,114 @@ pub fn aggregate_by_session(messages: Vec<UnifiedMessage>) -> Vec<SessionContrib
     contributions
 }
 
+/// Per-agent usage rollup for the opt-in subagent breakdown.
+///
+/// An "agent" message is any message carrying an `agent` attribution (Claude
+/// Agent-tool subagents / sidechains). This is a purely additive view computed
+/// only when explicitly requested — it never participates in the token/cost
+/// totals (`aggregate_by_date`) and never affects dedup. Token totals use the
+/// same all-bucket sum as the daily aggregation so the share is comparable to
+/// the grand total.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct SubagentSummary {
+    pub total_tokens: i64,
+    pub total_messages: i64,
+    /// Distinct parent sessions that contained any subagent activity.
+    pub session_count: i64,
+    /// Distinct subagent invocations, keyed by `agent_run_id` when available
+    /// (falls back to `session_id|agent` for messages parsed before the
+    /// `agent_run_id` field existed).
+    pub invocation_count: i64,
+    /// Per-agent-name breakdown, sorted by tokens descending.
+    pub agents: Vec<SubagentEntry>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SubagentEntry {
+    pub name: String,
+    pub tokens: i64,
+    pub messages: i64,
+    pub sessions: i64,
+    pub invocations: i64,
+}
+
+/// Roll up every message that carries an `agent` attribution, by agent name.
+///
+/// Read-only over `messages`; does not mutate or remove anything, so it cannot
+/// change the grand total.
+pub fn aggregate_subagents(messages: &[UnifiedMessage]) -> SubagentSummary {
+    use std::collections::HashSet;
+
+    struct Acc {
+        tokens: i64,
+        messages: i64,
+        sessions: HashSet<String>,
+        invocations: HashSet<String>,
+    }
+
+    let mut by_agent: HashMap<String, Acc> = HashMap::new();
+    let mut all_sessions: HashSet<String> = HashSet::new();
+    let mut all_invocations: HashSet<String> = HashSet::new();
+    let mut total_tokens: i64 = 0;
+    let mut total_messages: i64 = 0;
+
+    for msg in messages {
+        let Some(agent) = msg.agent.as_ref() else {
+            continue;
+        };
+        let tokens = msg
+            .tokens
+            .input
+            .saturating_add(msg.tokens.output)
+            .saturating_add(msg.tokens.cache_read)
+            .saturating_add(msg.tokens.cache_write)
+            .saturating_add(msg.tokens.reasoning);
+        let messages_count = msg.message_count.max(0) as i64;
+
+        total_tokens = total_tokens.saturating_add(tokens);
+        total_messages = total_messages.saturating_add(messages_count);
+        all_sessions.insert(msg.session_id.clone());
+        // Combine the parent session with the per-invocation key so file-stem
+        // collisions across different parents cannot merge two invocations.
+        let invocation_key = match msg.agent_run_id.as_deref() {
+            Some(run_id) => format!("{}|{}", msg.session_id, run_id),
+            None => format!("{}|{}", msg.session_id, agent),
+        };
+        all_invocations.insert(invocation_key.clone());
+
+        let entry = by_agent.entry(agent.clone()).or_insert_with(|| Acc {
+            tokens: 0,
+            messages: 0,
+            sessions: HashSet::new(),
+            invocations: HashSet::new(),
+        });
+        entry.tokens = entry.tokens.saturating_add(tokens);
+        entry.messages = entry.messages.saturating_add(messages_count);
+        entry.sessions.insert(msg.session_id.clone());
+        entry.invocations.insert(invocation_key);
+    }
+
+    let mut agents: Vec<SubagentEntry> = by_agent
+        .into_iter()
+        .map(|(name, acc)| SubagentEntry {
+            name,
+            tokens: acc.tokens,
+            messages: acc.messages,
+            sessions: acc.sessions.len() as i64,
+            invocations: acc.invocations.len() as i64,
+        })
+        .collect();
+    agents.sort_by(|a, b| b.tokens.cmp(&a.tokens).then_with(|| a.name.cmp(&b.name)));
+
+    SubagentSummary {
+        total_tokens,
+        total_messages,
+        session_count: all_sessions.len() as i64,
+        invocation_count: all_invocations.len() as i64,
+        agents,
+    }
+}
+
 /// Calculate summary statistics
 pub fn calculate_summary(contributions: &[DailyContribution]) -> DataSummary {
     let total_tokens: i64 = contributions.iter().map(|c| c.totals.tokens).sum();
@@ -212,6 +320,7 @@ pub fn generate_graph_result(
         years,
         contributions,
         time_metrics: None,
+        subagents: None,
     }
 }
 
@@ -763,6 +872,7 @@ mod tests {
             duration_ms: None,
             message_count: 1,
             agent: None,
+            agent_run_id: None,
             dedup_key: None,
             is_turn_start: false,
         }
@@ -773,6 +883,73 @@ mod tests {
         let messages = Vec::new();
         let result = aggregate_by_date(messages);
         assert_eq!(result.len(), 0);
+    }
+
+    #[test]
+    fn test_aggregate_subagents_ignores_non_agent_messages() {
+        // A plain main-session message (agent: None) must not appear in the
+        // subagent rollup at all.
+        let plain = mock_unified_message("2024-01-01", 1000, 0.05, "claude-sonnet-4-5", "claude");
+        let result = aggregate_subagents(&[plain]);
+        assert_eq!(result.total_tokens, 0);
+        assert_eq!(result.session_count, 0);
+        assert_eq!(result.invocation_count, 0);
+        assert!(result.agents.is_empty());
+    }
+
+    #[test]
+    fn test_aggregate_subagents_counts_distinct_invocations() {
+        // Two messages share one invocation (agent-run-a), a third is a separate
+        // invocation (agent-run-b) in the same parent session, and a legacy row
+        // has no agent_run_id (falls back to session|agent).
+        let mut a1 = mock_unified_message("2024-01-01", 1000, 0.05, "claude-sonnet-4-5", "claude");
+        a1.session_id = "shared-parent".to_string();
+        a1.agent = Some("Explore".to_string());
+        a1.agent_run_id = Some("agent-run-a".to_string());
+
+        let mut a2 = mock_unified_message("2024-01-01", 1200, 0.06, "claude-sonnet-4-5", "claude");
+        a2.session_id = "shared-parent".to_string();
+        a2.agent = Some("Explore".to_string());
+        a2.agent_run_id = Some("agent-run-a".to_string());
+
+        let mut b = mock_unified_message("2024-01-01", 800, 0.04, "claude-sonnet-4-5", "claude");
+        b.session_id = "shared-parent".to_string();
+        b.agent = Some("Explore".to_string());
+        b.agent_run_id = Some("agent-run-b".to_string());
+
+        let mut legacy = mock_unified_message("2024-01-01", 600, 0.03, "claude-sonnet-4-5", "claude");
+        legacy.session_id = "legacy-parent".to_string();
+        legacy.agent = Some("Explore".to_string());
+
+        let result = aggregate_subagents(&[a1, a2, b, legacy]);
+
+        assert_eq!(result.session_count, 2, "shared-parent + legacy-parent");
+        assert_eq!(result.invocation_count, 3, "run-a, run-b, legacy fallback");
+        assert_eq!(result.total_messages, 4);
+        assert_eq!(result.agents.len(), 1);
+        assert_eq!(result.agents[0].name, "Explore");
+        assert_eq!(result.agents[0].sessions, 2);
+        assert_eq!(result.agents[0].invocations, 3);
+        assert_eq!(result.agents[0].messages, 4);
+    }
+
+    #[test]
+    fn test_aggregate_subagents_same_run_id_distinct_parents_not_merged() {
+        // The same file stem under two different parents must count as two
+        // invocations (the key combines session_id with agent_run_id).
+        let mut p1 = mock_unified_message("2024-01-01", 100, 0.01, "claude-sonnet-4-5", "claude");
+        p1.session_id = "parent-1".to_string();
+        p1.agent = Some("Explore".to_string());
+        p1.agent_run_id = Some("agent-dup".to_string());
+
+        let mut p2 = mock_unified_message("2024-01-01", 100, 0.01, "claude-sonnet-4-5", "claude");
+        p2.session_id = "parent-2".to_string();
+        p2.agent = Some("Explore".to_string());
+        p2.agent_run_id = Some("agent-dup".to_string());
+
+        let result = aggregate_subagents(&[p1, p2]);
+        assert_eq!(result.session_count, 2);
+        assert_eq!(result.invocation_count, 2);
     }
 
     #[test]
@@ -1303,6 +1480,7 @@ mod tests {
             cost,
             message_count: 1,
             agent: None,
+            agent_run_id: None,
             dedup_key: None,
             is_turn_start: false,
             duration_ms: None,
