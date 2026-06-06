@@ -9,6 +9,7 @@ final class MenuBarModel: ObservableObject {
     @Published private(set) var menuBarImage: NSImage?
     @Published var errorMessage: String?
     @Published var isRefreshing = false
+    @Published private(set) var isBackgroundScanning = false
     @Published var refreshStatus: String?
 
     private let store = TokscaleSummaryStore()
@@ -51,35 +52,60 @@ final class MenuBarModel: ObservableObject {
     }
 
     func refreshScan() {
-        runRefresh(
-            status: "Scanning local AI sessions...",
-            arguments: ["--no-spinner", "companion-summary", "--refresh"]
-        )
+        runRefresh(status: "Scanning all AI sessions...") {
+            MenuBarModel.runMergedScanCommand()
+        }
     }
 
-    func refreshQuota(status: String = "Refreshing live quota...") {
-        runRefresh(
-            status: status,
-            arguments: ["--no-spinner", "companion-summary", "--refresh-quota"]
-        )
+    func refreshQuota(status: String = "Refreshing live quota...", completion: (@MainActor () -> Void)? = nil) {
+        runRefresh(status: status, completion: completion) {
+            MenuBarModel.runCompanionCommand(
+                arguments: ["--no-spinner", "companion-summary", "--refresh-quota"]
+            )
+        }
+    }
+
+    // Full merged-history scan is slow (minutes). It runs on the lowest-priority queue
+    // with its own flag so it never blocks the fast quota refresh that keeps the first
+    // page current.
+    private func backgroundMergedScan() {
+        guard !isBackgroundScanning else { return }
+        isBackgroundScanning = true
+        DispatchQueue.global(qos: .background).async { [weak self] in
+            _ = MenuBarModel.runMergedScanCommand()
+            Task { @MainActor in
+                guard let self else { return }
+                self.isBackgroundScanning = false
+                self.reload()
+            }
+        }
     }
 
     func refreshOnOpenIfNeeded() {
-        guard !isRefreshing else { return }
-        // No cache yet: initialize with a full scan.
+        // No cache yet: do the first full scan in the background so the popover stays
+        // responsive while it runs.
         if summary == nil {
-            refreshScan()
+            backgroundMergedScan()
             return
         }
+        // First page wins: always refresh live quota right away (fast, local), even
+        // while a background merged scan is running, so the glance page is current the
+        // instant the popover opens. The full merged usage scan is slow (minutes), so it
+        // runs silently in the background afterwards and is throttled hard. With
+        // "Refresh on open = Off" only the background scan is skipped, never quota.
+        guard !isRefreshing else { return }
         let cadence = RefreshCadence(
             storedValue: UserDefaults.standard.string(forKey: RefreshCadence.storageKey)
         )
-        guard let minimumInterval = cadence.minimumInterval else { return }
-        // Full scan (not quota-only) so tokens / contribution / subagent usage
-        // refreshes when the popover opens. Throttled on usage freshness
-        // (generatedAt) so frequent background quota refreshes don't mask stale usage.
-        guard summary?.needsScanOnOpen(minimumInterval: minimumInterval) ?? true else { return }
-        refreshScan()
+        let allowMergedScan = cadence.minimumInterval != nil
+        let needsMergedScan = allowMergedScan
+            && !isBackgroundScanning
+            && (summary?.needsScanOnOpen(minimumInterval: 600) ?? true)
+        refreshQuota { [weak self] in
+            if needsMergedScan {
+                self?.backgroundMergedScan()
+            }
+        }
     }
 
     func openTokensCI() {
@@ -100,19 +126,44 @@ final class MenuBarModel: ObservableObject {
         NSApp.terminate(nil)
     }
 
-    private func runRefresh(status: String, arguments: [String]) {
+    private func runRefresh(
+        status: String,
+        completion: (@MainActor () -> Void)? = nil,
+        work: @escaping @Sendable () -> String
+    ) {
         guard !isRefreshing else { return }
         isRefreshing = true
         refreshStatus = status
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            let result = MenuBarModel.runCompanionCommand(arguments: arguments)
+            let result = work()
             Task { @MainActor in
                 guard let self else { return }
                 self.isRefreshing = false
                 self.refreshStatus = result
                 self.reload()
+                completion?()
             }
         }
+    }
+
+    nonisolated private static func runMergedScanCommand() -> String {
+        let wrapper = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".local/bin/tokens-companion-merged", isDirectory: false)
+        if FileManager.default.isExecutableFile(atPath: wrapper.path) {
+            let result = runCompanionRefreshProcess(
+                executableURL: wrapper,
+                arguments: [],
+                timeout: 300
+            )
+            if result.success {
+                return "Refresh finished."
+            }
+            return "Refresh failed: \(result.message ?? "merged scan")"
+        }
+        // No merged wrapper on this machine: fall back to a local-only scan.
+        return runCompanionCommand(
+            arguments: ["--no-spinner", "companion-summary", "--refresh"]
+        )
     }
 
     nonisolated private static func runCompanionCommand(arguments: [String]) -> String {
@@ -159,7 +210,8 @@ final class MenuBarModel: ObservableObject {
 
     nonisolated private static func runCompanionRefreshProcess(
         executableURL: URL,
-        arguments: [String]
+        arguments: [String],
+        timeout: TimeInterval = 30
     ) -> (success: Bool, message: String?) {
         let process = Process()
         let error = Pipe()
@@ -181,7 +233,7 @@ final class MenuBarModel: ObservableObject {
             return (false, error.localizedDescription)
         }
 
-        if finished.wait(timeout: .now() + 30) == .timedOut {
+        if finished.wait(timeout: .now() + timeout) == .timedOut {
             process.terminate()
             return (false, "refresh timed out")
         }
