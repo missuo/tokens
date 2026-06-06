@@ -369,17 +369,6 @@ private struct QuotaBoardSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Quota")
-                .font(.system(size: prominent ? 27 : 22, weight: .bold, design: .rounded))
-                .foregroundStyle(
-                    LinearGradient(
-                        colors: [companionOrange, Color.primary],
-                        startPoint: .leading,
-                        endPoint: .trailing
-                    )
-                )
-                .frame(maxWidth: .infinity, alignment: .leading)
-
             VStack(spacing: 9) {
                 if model.quotaBoardProviders.isEmpty {
                     CompactEmptyMessage(
@@ -1111,10 +1100,10 @@ private struct HistorySection: View {
                     .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(companionOrange)
                 Text("History")
-                    .font(.system(size: 13, weight: .bold))
+                    .font(.system(size: 15, weight: .bold))
                 Spacer(minLength: 0)
                 Text("14d · est. API value")
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.secondary)
             }
 
@@ -1159,15 +1148,15 @@ private struct HistoryStatPill: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(title)
-                .font(.system(size: 9, weight: .bold))
+                .font(.system(size: 10, weight: .bold))
                 .foregroundStyle(.secondary)
             Text(value)
-                .font(.system(size: 20, weight: .bold, design: .rounded))
+                .font(.system(size: 23, weight: .bold, design: .rounded))
                 .monospacedDigit()
                 .lineLimit(1)
                 .minimumScaleFactor(0.70)
             Text(detail)
-                .font(.system(size: 8, weight: .medium))
+                .font(.system(size: 9, weight: .medium))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.72)
@@ -1737,7 +1726,7 @@ private struct HistoryBars: View {
                         }
                         .frame(maxHeight: 96, alignment: .bottom)
                         Text(String(day.date.suffix(2)))
-                            .font(.system(size: 9, weight: .bold))
+                            .font(.system(size: 10, weight: .bold))
                             .foregroundStyle(.secondary)
                     }
                     .frame(maxWidth: .infinity, maxHeight: 116, alignment: .bottom)
@@ -1759,7 +1748,7 @@ private struct HistoryBars: View {
                 .fill(color)
                 .frame(width: 9, height: 9)
             Text(label)
-                .font(.system(size: 9, weight: .semibold))
+                .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(.secondary)
         }
     }
