@@ -330,6 +330,7 @@ private struct QuotaBoardSection: View {
                         .lineLimit(1)
                 }
                 Spacer(minLength: 0)
+                QuotaModeToggle(mode: displayMode, onChange: onModeChange)
             }
 
             if let best = QuotaGlance.bestNow(in: summary.quota) {
@@ -337,7 +338,7 @@ private struct QuotaBoardSection: View {
                     Image(systemName: "arrow.right.circle.fill")
                         .font(.system(size: 11, weight: .bold))
                         .foregroundStyle(providerColor(best.provider))
-                    Text("Best now → \(best.provider) · \(Int(best.remainingPercent.rounded()))% left")
+                    Text("Best now → \(best.provider) · \(Int(best.remainingPercent.rounded()))%")
                         .font(.system(size: 11, weight: .semibold))
                         .lineLimit(1)
                     Spacer(minLength: 0)
@@ -541,6 +542,14 @@ private struct QuotaBarLine: View {
     }
 }
 
+// The percentage already reads as a percent; drop the trailing "left"/"used"
+// word so the value shows just "29%".
+private func stripQuotaWord(_ text: String) -> String {
+    text
+        .replacingOccurrences(of: " left", with: "")
+        .replacingOccurrences(of: " used", with: "")
+}
+
 private func quotaValueText(
     quota: TokscaleDashboardModel.QuotaWindowSummary,
     displayMode: TokscaleDashboardModel.QuotaDisplayMode,
@@ -553,7 +562,7 @@ private func quotaValueText(
     if isCached {
         return "Cached"
     }
-    return quota.value(for: displayMode)
+    return stripQuotaWord(quota.value(for: displayMode))
 }
 
 private func quotaDetailText(
@@ -568,7 +577,7 @@ private func quotaDetailText(
     if isCached {
         return "refresh for live"
     }
-    return resetLabel(quota.reset) ?? quota.detail(for: displayMode)
+    return stripQuotaWord(resetLabel(quota.reset) ?? quota.detail(for: displayMode))
 }
 
 // ClaudeBar-style glance card: each quota window stacked vertically with a large
