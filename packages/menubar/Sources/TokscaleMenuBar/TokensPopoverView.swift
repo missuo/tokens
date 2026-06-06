@@ -176,6 +176,9 @@ private struct SummaryContent: View {
     }
 
     @ViewBuilder private var glanceSection: some View {
+        if layout == .paged {
+            TodayGlanceCard(summary: summary, color: providerColor(selectedFocus.id))
+        }
         QuotaBoardSection(
             summary: summary,
             model: model,
@@ -264,6 +267,56 @@ private struct CompanionHeader: View {
             return "Cached quota monitor"
         }
         return "Quota monitor · history"
+    }
+}
+
+// ClaudeBar-style "today" glance: today's cost and token usage as two large
+// numbers at the top of the glance page.
+private struct TodayGlanceCard: View {
+    let summary: TokscaleSummary
+    let color: Color
+
+    var body: some View {
+        HStack(spacing: 14) {
+            stat(
+                value: formatUSD(summary.today.costUsd),
+                label: "Cost today",
+                tint: color
+            )
+            Rectangle()
+                .fill(Color.primary.opacity(0.08))
+                .frame(width: 1, height: 46)
+            stat(
+                value: formatTokens(summary.today.tokens),
+                label: "Tokens today",
+                tint: providerColor("gemini")
+            )
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(companionWarmGlassColor)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(color.opacity(0.20), lineWidth: 1)
+        )
+    }
+
+    private func stat(value: String, label: String, tint: Color) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(value)
+                .font(.system(size: 30, weight: .heavy, design: .rounded))
+                .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.5)
+                .foregroundStyle(tint)
+            Text(label.uppercased())
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
