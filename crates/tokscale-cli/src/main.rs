@@ -210,6 +210,11 @@ enum Commands {
         benchmark: bool,
         #[arg(long, help = "Disable spinner")]
         no_spinner: bool,
+        #[arg(
+            long,
+            help = "Include a subagent usage breakdown in the JSON (additive; does not change totals)"
+        )]
+        subagents: bool,
     },
     #[command(about = "Launch interactive TUI with optional filters")]
     Tui {
@@ -621,6 +626,7 @@ fn main() -> Result<()> {
             date,
             benchmark,
             no_spinner,
+            subagents,
         }) => {
             let today = date.today;
             let week = date.week;
@@ -637,6 +643,7 @@ fn main() -> Result<()> {
                 year,
                 benchmark,
                 no_spinner,
+                subagents,
             )
         }
         Some(Commands::Tui { clients, date }) => {
@@ -1770,6 +1777,7 @@ fn run_models_report(
                 year: year.clone(),
                 group_by: group_by.clone(),
                 scanner_settings: tui::settings::load_scanner_settings_for_home(&home_dir),
+                include_subagents: false,
             })
             .await
         })
@@ -2542,6 +2550,7 @@ fn run_monthly_report(
                 year,
                 group_by: GroupBy::default(),
                 scanner_settings: tui::settings::load_scanner_settings_for_home(&home_dir),
+                include_subagents: false,
             })
             .await
         })
@@ -2841,6 +2850,7 @@ fn run_hourly_report(
                 year,
                 group_by: GroupBy::default(),
                 scanner_settings: tui::settings::load_scanner_settings_for_home(&home_dir),
+                include_subagents: false,
             })
             .await
         })
@@ -4477,6 +4487,7 @@ fn run_time_metrics_report(
                 year,
                 group_by: GroupBy::default(),
                 scanner_settings: tui::settings::load_scanner_settings_for_home(&home_dir),
+                include_subagents: false,
             })
             .await
         })
@@ -4561,6 +4572,7 @@ fn run_graph_command(
     year: Option<String>,
     benchmark: bool,
     no_spinner: bool,
+    subagents: bool,
 ) -> Result<()> {
     use colored::Colorize;
     use std::time::Instant;
@@ -4602,6 +4614,7 @@ fn run_graph_command(
                 year,
                 group_by: GroupBy::default(),
                 scanner_settings: tui::settings::load_scanner_settings_for_home(&home_dir),
+                include_subagents: subagents,
             })
             .await
         })
@@ -4615,7 +4628,20 @@ fn run_graph_command(
 
     let processing_time_ms = start.elapsed().as_millis() as u32;
     let output_data = to_ts_token_contribution_data(&graph_result, None);
-    let json_output = serde_json::to_string_pretty(&output_data)?;
+    let json_output = if subagents {
+        // Attach the opt-in subagent breakdown as a separate top-level key so the
+        // shared contribution-data shape (and therefore the submit payload) stays
+        // byte-for-byte identical to the default output.
+        let mut value = serde_json::to_value(&output_data)?;
+        if let (serde_json::Value::Object(map), Some(summary)) =
+            (&mut value, graph_result.subagents.as_ref())
+        {
+            map.insert("subagents".to_string(), serde_json::to_value(summary)?);
+        }
+        serde_json::to_string_pretty(&value)?
+    } else {
+        serde_json::to_string_pretty(&output_data)?
+    };
 
     if let Some(output_path) = output {
         std::fs::write(&output_path, json_output)?;
@@ -5045,6 +5071,9 @@ fn run_submit_command(
                 year,
                 group_by: GroupBy::default(),
                 scanner_settings: tui::settings::load_scanner_settings(),
+                // Submit path: never compute subagents — the submit payload must
+                // be identical with or without this feature.
+                include_subagents: false,
             })
             .await
         })
