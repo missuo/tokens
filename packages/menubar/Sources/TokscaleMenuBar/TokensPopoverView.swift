@@ -330,7 +330,6 @@ private struct QuotaBoardSection: View {
                         .lineLimit(1)
                 }
                 Spacer(minLength: 0)
-                QuotaModeToggle(mode: displayMode, onChange: onModeChange)
             }
 
             if let best = QuotaGlance.bestNow(in: summary.quota) {
@@ -1136,7 +1135,7 @@ private struct HistoryStatPill: View {
                 .font(.system(size: 9, weight: .bold))
                 .foregroundStyle(.secondary)
             Text(value)
-                .font(.system(size: 16, weight: .bold, design: .rounded))
+                .font(.system(size: 20, weight: .bold, design: .rounded))
                 .monospacedDigit()
                 .lineLimit(1)
                 .minimumScaleFactor(0.70)
@@ -1677,12 +1676,12 @@ private struct HistoryBars: View {
                             bar(previous?.costUsd ?? 0, maxCost: maxCost, color: lastWeekColor)
                             bar(day.costUsd, maxCost: maxCost, color: companionOrange)
                         }
-                        .frame(maxHeight: 72, alignment: .bottom)
+                        .frame(maxHeight: 96, alignment: .bottom)
                         Text(String(day.date.suffix(2)))
-                            .font(.system(size: 8, weight: .bold))
+                            .font(.system(size: 9, weight: .bold))
                             .foregroundStyle(.secondary)
                     }
-                    .frame(maxWidth: .infinity, maxHeight: 90, alignment: .bottom)
+                    .frame(maxWidth: .infinity, maxHeight: 116, alignment: .bottom)
                     .help(historyHelp(day: day, previous: previous))
                 }
             }
@@ -1692,7 +1691,7 @@ private struct HistoryBars: View {
     private func bar(_ cost: Double, maxCost: Double, color: Color) -> some View {
         RoundedRectangle(cornerRadius: 3, style: .continuous)
             .fill(color)
-            .frame(width: 10, height: max(3, 72 * min(max(cost / maxCost, 0), 1)))
+            .frame(width: 13, height: max(3, 96 * min(max(cost / maxCost, 0), 1)))
     }
 
     private func legend(color: Color, label: String) -> some View {
