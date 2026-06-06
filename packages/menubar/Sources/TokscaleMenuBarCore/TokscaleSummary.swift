@@ -12,6 +12,7 @@ public struct TokscaleSummary: Decodable, Equatable {
     public let quota: [QuotaProvider]
     public let history: [HistoryDay]
     public let contribution: [ContributionDay]
+    public let subagents: Subagents?
     public let top: Top
     public let latestSubmit: LatestSubmit?
     public let health: Health
@@ -29,6 +30,7 @@ public struct TokscaleSummary: Decodable, Equatable {
         case quota
         case history
         case contribution
+        case subagents
         case top
         case latestSubmit
         case health
@@ -49,6 +51,7 @@ public struct TokscaleSummary: Decodable, Equatable {
         history = try container.decodeIfPresent([HistoryDay].self, forKey: .history) ?? []
         contribution =
             try container.decodeIfPresent([ContributionDay].self, forKey: .contribution) ?? []
+        subagents = try container.decodeIfPresent(Subagents.self, forKey: .subagents)
         top = try container.decode(Top.self, forKey: .top)
         latestSubmit = try container.decodeIfPresent(LatestSubmit.self, forKey: .latestSubmit)
         health = try container.decode(Health.self, forKey: .health)
@@ -556,7 +559,7 @@ public struct TokscaleDashboardModel: Equatable {
 }
 
 public extension TokscaleDashboardModel {
-    enum QuotaDisplayMode: String, CaseIterable, Equatable {
+    enum QuotaDisplayMode: String, CaseIterable, Equatable, Sendable {
         case remaining
         case used
 
@@ -567,6 +570,17 @@ public extension TokscaleDashboardModel {
             case .used:
                 return "Used"
             }
+        }
+
+        public static let `default`: QuotaDisplayMode = .remaining
+        public static let storageKey = "quotaDisplayMode"
+
+        public init(storedValue: String?) {
+            guard let storedValue, let parsed = QuotaDisplayMode(rawValue: storedValue) else {
+                self = .default
+                return
+            }
+            self = parsed
         }
     }
 
@@ -702,6 +716,20 @@ public extension TokscaleSummary {
         public let activeDays: Int
         public let clients: [String]
         public let models: Int
+    }
+
+    struct Subagents: Decodable, Equatable {
+        public let sessions: Int
+        public let tokens: Int64
+        public let messages: Int
+        public let share: Double
+        public let top: [SubagentEntry]
+    }
+
+    struct SubagentEntry: Decodable, Equatable {
+        public let name: String
+        public let tokens: Int64
+        public let sessions: Int
     }
 
     struct Provider: Decodable, Equatable {

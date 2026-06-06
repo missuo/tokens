@@ -363,6 +363,7 @@ mod tests {
                 active_time_ms: None,
             }],
             time_metrics: None,
+            subagents: None,
         };
 
         let report = accuracy_report_for_graph(&graph);

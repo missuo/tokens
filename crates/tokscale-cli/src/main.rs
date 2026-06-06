@@ -6193,6 +6193,7 @@ mod tests {
             years: calculate_years(&contributions),
             contributions,
             time_metrics: None,
+            subagents: None,
         }
     }
 

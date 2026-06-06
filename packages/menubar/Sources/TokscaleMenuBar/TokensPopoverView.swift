@@ -90,9 +90,10 @@ private struct SummaryContent: View {
 
     @State private var selectedProviderId: String?
     @State private var settingsVisible = false
-    @State private var quotaDisplayMode: TokscaleDashboardModel.QuotaDisplayMode = .remaining
     @State private var page = 0
     @AppStorage(LayoutMode.storageKey) private var layoutRawValue = LayoutMode.default.rawValue
+    @AppStorage(TokscaleDashboardModel.QuotaDisplayMode.storageKey)
+    private var quotaModeRawValue = TokscaleDashboardModel.QuotaDisplayMode.default.rawValue
 
     private var model: TokscaleDashboardModel {
         dashboard
@@ -100,6 +101,10 @@ private struct SummaryContent: View {
 
     private var layout: LayoutMode {
         LayoutMode(storedValue: layoutRawValue)
+    }
+
+    private var quotaDisplayMode: TokscaleDashboardModel.QuotaDisplayMode {
+        TokscaleDashboardModel.QuotaDisplayMode(storedValue: quotaModeRawValue)
     }
 
     private var selectedFocus: TokscaleDashboardModel.ProviderFocus {
@@ -183,12 +188,7 @@ private struct SummaryContent: View {
             summary: summary,
             model: model,
             displayMode: quotaDisplayMode,
-            prominent: layout == .paged,
-            onModeChange: { mode in
-                withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
-                    quotaDisplayMode = mode
-                }
-            }
+            prominent: layout == .paged
         )
     }
 
@@ -197,6 +197,10 @@ private struct SummaryContent: View {
 
         HistorySection(model: model)
             .padding(.bottom, 2)
+
+        if let subagents = summary.subagents {
+            SubagentCard(subagents: subagents)
+        }
 
         ContributionHeatmap(days: summary.contribution)
 
@@ -362,47 +366,19 @@ private struct QuotaBoardSection: View {
     let model: TokscaleDashboardModel
     let displayMode: TokscaleDashboardModel.QuotaDisplayMode
     var prominent: Bool = false
-    let onModeChange: (TokscaleDashboardModel.QuotaDisplayMode) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Quota")
-                        .font(.system(size: prominent ? 27 : 22, weight: .bold, design: .rounded))
-                        .foregroundStyle(
-                            LinearGradient(
-                                colors: [companionOrange, Color.primary],
-                                startPoint: .leading,
-                                endPoint: .trailing
-                            )
-                        )
-                    Text(boardSubtitle)
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-                Spacer(minLength: 0)
-                QuotaModeToggle(mode: displayMode, onChange: onModeChange)
-            }
-
-            if let best = QuotaGlance.bestNow(in: summary.quota) {
-                HStack(spacing: 5) {
-                    Image(systemName: "arrow.right.circle.fill")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(providerColor(best.provider))
-                    Text("Best now → \(best.provider) · \(Int(best.remainingPercent.rounded()))%")
-                        .font(.system(size: 11, weight: .semibold))
-                        .lineLimit(1)
-                    Spacer(minLength: 0)
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(
-                    RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .fill(providerColor(best.provider).opacity(0.10))
+            Text("Quota")
+                .font(.system(size: prominent ? 27 : 22, weight: .bold, design: .rounded))
+                .foregroundStyle(
+                    LinearGradient(
+                        colors: [companionOrange, Color.primary],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
                 )
-            }
+                .frame(maxWidth: .infinity, alignment: .leading)
 
             VStack(spacing: 9) {
                 if model.quotaBoardProviders.isEmpty {
@@ -432,17 +408,6 @@ private struct QuotaBoardSection: View {
                 .stroke(companionOrange.opacity(0.18), lineWidth: 1)
         )
         .shadow(color: companionOrange.opacity(0.09), radius: 18, x: 0, y: 8)
-    }
-
-    private var boardSubtitle: String {
-        if summary.stale {
-            return "Cached data - refresh before trusting limits"
-        }
-        if model.quotaBoardProviders.allSatisfy({ $0.quotaWindows.isEmpty }),
-           let warning = summary.health.warnings.first {
-            return warning
-        }
-        return "Live quota windows - 5h and weekly"
     }
 }
 
@@ -1272,6 +1237,7 @@ private struct CompactSettingsPanel: View {
                 ToolbarIconButton(systemName: "power", tint: providerColor("claude"), help: "Quit", action: onQuit)
             }
             LayoutModeRow(color: providerColor(focus.id))
+            QuotaModeRow(color: providerColor(focus.id))
             RefreshCadenceRow(color: providerColor(focus.id))
             AutoRefreshRow(color: providerColor(focus.id))
             ThemeRow(color: providerColor(focus.id))
@@ -1285,6 +1251,37 @@ private struct CompactSettingsPanel: View {
         .overlay(
             RoundedRectangle(cornerRadius: 13, style: .continuous)
                 .stroke(providerColor(focus.id).opacity(0.14), lineWidth: 1)
+        )
+    }
+}
+
+private struct QuotaModeRow: View {
+    let color: Color
+    @AppStorage(TokscaleDashboardModel.QuotaDisplayMode.storageKey)
+    private var rawValue = TokscaleDashboardModel.QuotaDisplayMode.default.rawValue
+
+    private var mode: TokscaleDashboardModel.QuotaDisplayMode {
+        TokscaleDashboardModel.QuotaDisplayMode(storedValue: rawValue)
+    }
+
+    var body: some View {
+        HStack(spacing: 7) {
+            HStack(spacing: 6) {
+                Image(systemName: "percent")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(color)
+                Text("Quota shows")
+                    .font(.system(size: 10, weight: .bold))
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+            QuotaModeToggle(mode: mode, onChange: { rawValue = $0.rawValue })
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 5)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(color.opacity(0.055))
         )
     }
 }
@@ -1790,6 +1787,74 @@ private struct HistoryBars: View {
             return "\(day.date) · \(day.value) · \(day.messages)"
         }
         return "\(day.date) · \(day.value) · last wk \(previous.value)"
+    }
+}
+
+private struct SubagentCard: View {
+    let subagents: TokscaleSummary.Subagents
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 11) {
+            HStack(spacing: 7) {
+                Image(systemName: "rectangle.stack.person.crop.fill")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(companionOrange)
+                Text("Subagents")
+                    .font(.system(size: 13, weight: .bold))
+                Spacer(minLength: 0)
+                Text("\(Int((subagents.share * 100).rounded()))% of all tokens")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.secondary)
+            }
+
+            HStack(spacing: 8) {
+                HistoryStatPill(
+                    title: "Tokens",
+                    value: formatTokens(subagents.tokens),
+                    detail: "from subagents"
+                )
+                HistoryStatPill(
+                    title: "Sessions",
+                    value: "\(subagents.sessions)",
+                    detail: "used subagents"
+                )
+                HistoryStatPill(
+                    title: "Messages",
+                    value: formatTokens(Int64(subagents.messages)),
+                    detail: "subagent msgs"
+                )
+            }
+
+            if !subagents.top.isEmpty {
+                VStack(spacing: 6) {
+                    ForEach(Array(subagents.top.prefix(5).enumerated()), id: \.offset) { _, agent in
+                        HStack(spacing: 8) {
+                            Circle()
+                                .fill(companionOrange.opacity(0.7))
+                                .frame(width: 5, height: 5)
+                            Text(agent.name)
+                                .font(.system(size: 11, weight: .semibold))
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.8)
+                            Spacer(minLength: 6)
+                            Text("\(formatTokens(agent.tokens)) · \(agent.sessions) sess")
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(15)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(companionGlassPanelColor)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(companionOrange.opacity(0.16), lineWidth: 1)
+        )
     }
 }
 

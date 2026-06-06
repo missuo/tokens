@@ -387,6 +387,8 @@ pub struct GraphResult {
     pub contributions: Vec<DailyContribution>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub time_metrics: Option<sessionize::TimeMetrics>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subagents: Option<aggregator::SubagentSummary>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -1779,11 +1781,13 @@ async fn generate_graph_with_loaded_pricing(
         sessionize::compute_time_metrics(&intervals, sessionize::DEFAULT_IDLE_GAP_MS);
 
     let daily_active_time = sessionize::compute_daily_active_time(&intervals);
+    let subagents = aggregator::aggregate_subagents(&filtered);
     let contributions = aggregator::aggregate_by_date(filtered);
 
     let processing_time_ms = start.elapsed().as_millis() as u32;
     let mut result = aggregator::generate_graph_result(contributions, processing_time_ms);
     result.time_metrics = Some(time_metrics);
+    result.subagents = Some(subagents);
 
     for contribution in &mut result.contributions {
         if let Some(&ms) = daily_active_time.get(&contribution.date) {

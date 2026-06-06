@@ -27,11 +27,34 @@ pub struct CompanionSummary {
     pub history: Vec<CompanionHistoryDay>,
     #[serde(default)]
     pub contribution: Vec<CompanionContributionDay>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subagents: Option<CompanionSubagents>,
     pub top: CompanionTop,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub latest_submit: Option<CompanionLatestSubmit>,
     pub health: CompanionHealth,
     pub accuracy: CompanionAccuracy,
+}
+
+/// Subagent (Agent-tool / sidechain) usage rollup surfaced in the menu bar.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct CompanionSubagents {
+    pub sessions: i64,
+    pub tokens: i64,
+    pub messages: i64,
+    /// Subagent tokens as a fraction of all tokens (0..1).
+    pub share: f64,
+    #[serde(default)]
+    pub top: Vec<CompanionSubagentEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompanionSubagentEntry {
+    pub name: String,
+    pub tokens: i64,
+    pub sessions: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -301,6 +324,7 @@ pub fn from_graph_with_usage(
         quota: quota_breakdown(usage_outputs),
         history: history_breakdown(graph, today_date),
         contribution: contribution_breakdown(graph),
+        subagents: subagent_breakdown(graph),
         top: CompanionTop {
             client: top_client(graph),
             model: top_model(graph),
@@ -319,6 +343,30 @@ pub fn from_graph_with_usage(
             warnings: accuracy.warnings.clone(),
         },
     }
+}
+
+fn subagent_breakdown(graph: &tokscale_core::GraphResult) -> Option<CompanionSubagents> {
+    let s = graph.subagents.as_ref()?;
+    if s.total_tokens == 0 && s.agents.is_empty() {
+        return None;
+    }
+    let total = graph.summary.total_tokens.max(1);
+    Some(CompanionSubagents {
+        sessions: s.session_count,
+        tokens: s.total_tokens,
+        messages: s.total_messages,
+        share: s.total_tokens as f64 / total as f64,
+        top: s
+            .agents
+            .iter()
+            .take(6)
+            .map(|a| CompanionSubagentEntry {
+                name: a.name.clone(),
+                tokens: a.tokens,
+                sessions: a.sessions,
+            })
+            .collect(),
+    })
 }
 
 fn dedupe_strings(values: &mut Vec<String>) {
@@ -928,6 +976,7 @@ mod tests {
             years,
             contributions,
             time_metrics: None,
+            subagents: None,
         }
     }
 }
