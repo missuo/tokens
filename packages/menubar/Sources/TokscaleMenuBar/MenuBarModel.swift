@@ -64,10 +64,9 @@ final class MenuBarModel: ObservableObject {
         )
     }
 
-    func refreshQuotaOnOpenIfNeeded() {
+    func refreshOnOpenIfNeeded() {
         guard !isRefreshing else { return }
-        // No cache yet: a quota-only refresh returns null and writes nothing, so do a
-        // full scan to initialize instead of silently reporting success.
+        // No cache yet: initialize with a full scan.
         if summary == nil {
             refreshScan()
             return
@@ -76,8 +75,11 @@ final class MenuBarModel: ObservableObject {
             storedValue: UserDefaults.standard.string(forKey: RefreshCadence.storageKey)
         )
         guard let minimumInterval = cadence.minimumInterval else { return }
-        guard summary?.needsRefreshOnOpen(minimumInterval: minimumInterval) ?? true else { return }
-        refreshQuota(status: "Refreshing quota on open...")
+        // Full scan (not quota-only) so tokens / contribution / subagent usage
+        // refreshes when the popover opens. Throttled on usage freshness
+        // (generatedAt) so frequent background quota refreshes don't mask stale usage.
+        guard summary?.needsScanOnOpen(minimumInterval: minimumInterval) ?? true else { return }
+        refreshScan()
     }
 
     func openTokensCI() {

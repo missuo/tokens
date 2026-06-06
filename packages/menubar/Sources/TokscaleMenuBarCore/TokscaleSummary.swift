@@ -124,6 +124,24 @@ public struct TokscaleSummary: Decodable, Equatable {
         return now.timeIntervalSince(lastRefreshedDate) >= minimumInterval
     }
 
+    /// Whether locally-scanned usage (tokens, contribution, daily history) is stale
+    /// enough to warrant a full re-scan when the popover opens. Unlike
+    /// `needsRefreshOnOpen`, this looks only at `generatedAt` and ignores quota-only
+    /// refreshes — those never re-scan usage, so frequent background quota updates
+    /// must not mask stale usage data.
+    public func needsScanOnOpen(
+        now: Date = Date(),
+        minimumInterval: TimeInterval = 60
+    ) -> Bool {
+        if stale {
+            return true
+        }
+        guard let generatedAtDate = parseISODate(generatedAt) else {
+            return true
+        }
+        return now.timeIntervalSince(generatedAtDate) >= minimumInterval
+    }
+
     private mutating func markStale(reason: String) {
         stale = true
         staleReason = staleReason ?? reason

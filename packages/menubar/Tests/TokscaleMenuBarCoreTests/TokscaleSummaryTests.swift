@@ -201,6 +201,55 @@ final class TokscaleSummaryTests: XCTestCase {
         )
     }
 
+    func testSummaryRequestsScanOnOpenWhenUsageStaleDespiteRecentQuotaRefresh() throws {
+        // Usage (generatedAt) is 4m+ stale, but quota was just refreshed 30s ago.
+        // needsRefreshOnOpen is fooled by the recent quota refresh and returns false;
+        // needsScanOnOpen must still ask for a full re-scan, because quota-only
+        // refreshes never update local usage (tokens / contribution / subagents).
+        let data = sampleSummaryJSON(
+            generatedAt: "2026-06-04T02:25:56Z",
+            topJSON: #""client":"codex","model":"gpt-5.5""#,
+            accuracyJSON: #""confidence":"medium","sourceKinds":["local-scan"],"warnings":[]"#,
+            healthExtraJSON: #","quotaRefreshedAt":"2026-06-04T02:30:00Z""#
+        ).data(using: .utf8)!
+        let summary = try TokscaleSummary.decode(data)
+
+        XCTAssertFalse(
+            summary.needsRefreshOnOpen(
+                now: try isoDate("2026-06-04T02:30:30Z"),
+                minimumInterval: 60
+            )
+        )
+        XCTAssertTrue(
+            summary.needsScanOnOpen(
+                now: try isoDate("2026-06-04T02:30:30Z"),
+                minimumInterval: 60
+            )
+        )
+    }
+
+    func testSummaryDoesNotRequestScanOnOpenWhenUsageFresh() throws {
+        let data = sampleSummaryJSON(
+            generatedAt: "2026-06-04T02:25:56Z",
+            topJSON: #""client":"codex","model":"gpt-5.5""#,
+            accuracyJSON: #""confidence":"medium","sourceKinds":["local-scan"],"warnings":[]"#
+        ).data(using: .utf8)!
+        let summary = try TokscaleSummary.decode(data)
+
+        XCTAssertFalse(
+            summary.needsScanOnOpen(
+                now: try isoDate("2026-06-04T02:26:30Z"),
+                minimumInterval: 60
+            )
+        )
+        XCTAssertTrue(
+            summary.needsScanOnOpen(
+                now: try isoDate("2026-06-04T02:27:01Z"),
+                minimumInterval: 60
+            )
+        )
+    }
+
     func testDashboardModelBuildsMultiClientDashboardSections() throws {
         let summary = try TokscaleSummary.decode(sampleSummaryData())
 

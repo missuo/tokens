@@ -7,7 +7,7 @@ struct TokensMenuBarApp: App {
     var body: some Scene {
         MenuBarExtra {
             TokensPopoverView(model: model)
-                .onAppear { model.refreshQuotaOnOpenIfNeeded() }
+                .onAppear { model.refreshOnOpenIfNeeded() }
         } label: {
             MenuBarLabelView(image: model.menuBarImage)
         }
