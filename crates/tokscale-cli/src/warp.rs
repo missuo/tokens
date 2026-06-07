@@ -134,7 +134,7 @@ pub(crate) fn load_usage_cache() -> Option<WarpUsageCache> {
 
 pub fn has_usage_cache_in_home(home_dir: &Path) -> bool {
     home_dir
-        .join(".config/tokscale/warp-cache/usage.json")
+        .join(".config/tokens/warp-cache/usage.json")
         .exists()
 }
 
@@ -166,7 +166,7 @@ pub fn run_warp_login(token: Option<String>, cookie: bool) -> Result<()> {
     println!("{}", "  Warp credentials saved.".green());
     println!(
         "{}",
-        "  Run `tokscale warp sync` to cache aggregate requests and spend.".bright_black()
+        "  Run `tokens warp sync` to cache aggregate requests and spend.".bright_black()
     );
     Ok(())
 }
@@ -267,7 +267,7 @@ async fn sync_warp_cache() -> SyncWarpResult {
                 spend_cents: None,
                 workspace_count: 0,
                 error: Some(
-                    "Not authenticated. Run `tokscale warp login`, then `tokscale warp sync`."
+                    "Not authenticated. Run `tokens warp login`, then `tokens warp sync`."
                         .to_string(),
                 ),
             };
@@ -352,7 +352,7 @@ async fn send_graphql(
         || response.status() == reqwest::StatusCode::FORBIDDEN
     {
         anyhow::bail!(
-            "Warp authentication failed. Run `tokscale warp login` with a fresh credential."
+            "Warp authentication failed. Run `tokens warp login` with a fresh credential."
         );
     }
     if !response.status().is_success() {
@@ -399,10 +399,10 @@ fn build_status() -> WarpStatus {
     let usage_path = usage_path();
     let mut diagnostics = Vec::new();
     if !has_credentials {
-        diagnostics.push("missing credentials; run `tokscale warp login`".to_string());
+        diagnostics.push("missing credentials; run `tokens warp login`".to_string());
     }
     if !has_cache {
-        diagnostics.push("missing aggregate usage cache; run `tokscale warp sync`".to_string());
+        diagnostics.push("missing aggregate usage cache; run `tokens warp sync`".to_string());
     }
 
     let usage = cache.as_ref().map(|cache| &cache.usage);

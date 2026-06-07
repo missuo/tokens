@@ -1342,7 +1342,7 @@ fn warp_setup_warnings_for_report(
             Some(home) => (home, false),
             None => {
                 return vec![
-                    "Warp usage requires Tokscale's Warp aggregate cache, but the home directory could not be resolved. Tokscale does not parse local Warp transcripts.".to_string(),
+                    "Warp usage requires Tokens' Warp aggregate cache, but the home directory could not be resolved. Tokens does not parse local Warp transcripts.".to_string(),
                 ];
             }
         },
@@ -1358,22 +1358,22 @@ fn warp_setup_warnings_for_report(
 
     let cache_glob = if home_override {
         home_path
-            .join(".config/tokscale/warp-cache/usage*.json")
+            .join(".config/tokens/warp-cache/usage*.json")
             .to_string_lossy()
             .to_string()
     } else {
-        "~/.config/tokscale/warp-cache/usage*.json".to_string()
+        "~/.config/tokens/warp-cache/usage*.json".to_string()
     };
     let action = if home_override {
-        "run `tokscale warp sync` for the default profile or populate that cache before running a report with --home"
+        "run `tokens warp sync` for the default profile or populate that cache before running a report with --home"
     } else if warp::has_credentials() {
-        "run `tokscale warp sync`"
+        "run `tokens warp sync`"
     } else {
-        "run `tokscale warp login` and `tokscale warp sync`"
+        "run `tokens warp login` and `tokens warp sync`"
     };
 
     vec![format!(
-        "Warp usage requires Tokscale's aggregate API cache at `{}`; {}. Tokscale does not parse local Warp/Oz session transcripts and does not infer tokens from request counts.",
+        "Warp usage requires Tokens' aggregate API cache at `{}`; {}. Tokens does not parse local Warp/Oz session transcripts and does not infer tokens from request counts.",
         cache_glob, action
     )]
 }
@@ -7458,7 +7458,7 @@ mod tests {
         );
 
         assert_eq!(warnings.len(), 1);
-        assert!(warnings[0].contains("tokscale warp"));
+        assert!(warnings[0].contains("tokens warp"));
         assert!(warnings[0].contains("does not infer tokens from request counts"));
     }
 

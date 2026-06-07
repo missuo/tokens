@@ -103,7 +103,7 @@ describe("getSessionFromRequest — CSRF origin check (B6)", () => {
     mockState.getSession.mockResolvedValue(validUser);
 
     const result = await getSessionFromRequest(
-      makeRequest("POST", { Origin: "https://tokscale.dev" })
+      makeRequest("POST", { Origin: "https://tokens.ci" })
     );
 
     expect(result).toEqual(validUser);
