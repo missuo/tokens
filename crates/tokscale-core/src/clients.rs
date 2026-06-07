@@ -368,7 +368,7 @@ define_clients!(
         pattern: "*.jsonl",
         headless: false,
         parse_local: true,
-        submit_default: false
+        submit_default: true
     },
     Zed = 21 => {
         id: "zed",
@@ -403,8 +403,17 @@ define_clients!(
         relative: "warp-cache",
         pattern: "usage*.json",
         headless: false,
-        parse_local: false,
+        parse_local: true,
         submit_default: false
+    },
+    Cline = 25 => {
+        id: "cline",
+        root: PathRoot::Home,
+        relative: ".config/Code/User/globalStorage/saoudrizwan.claude-dev/tasks",
+        pattern: "ui_messages.json",
+        headless: false,
+        parse_local: true,
+        submit_default: true
     }
 );
 
@@ -457,7 +466,7 @@ mod tests {
 
     #[test]
     fn test_client_id_count() {
-        assert_eq!(ClientId::COUNT, 25);
+        assert_eq!(ClientId::COUNT, 26);
     }
 
     #[test]
@@ -478,7 +487,7 @@ mod tests {
         let client = ClientId::from_str("warp").expect("warp client should be registered");
         assert_eq!(client.data().relative_path, "warp-cache");
         assert_eq!(client.data().pattern, "usage*.json");
-        assert!(!client.data().parse_local);
+        assert!(client.data().parse_local);
         assert!(!client.data().submit_default);
     }
 
@@ -738,16 +747,22 @@ mod tests {
     }
 
     #[test]
-    fn test_antigravity_submit_default_is_false() {
-        assert!(!ClientId::Antigravity.submit_default());
+    fn test_antigravity_submit_default_is_true() {
+        assert!(ClientId::Antigravity.submit_default());
     }
 
     #[test]
     fn test_zed_data_dir_path() {
+        let _guard = env_lock().lock().unwrap();
+        let previous = std::env::var("XDG_DATA_HOME").ok();
+        unsafe { std::env::remove_var("XDG_DATA_HOME") };
+
         assert_eq!(
             ClientId::Zed.data().resolve_path("/tmp/home"),
             "/tmp/home/.local/share/zed/threads/threads.db"
         );
+
+        restore_env("XDG_DATA_HOME", previous);
     }
 
     #[test]
