@@ -6072,7 +6072,7 @@ mod tests {
         let temp_dir = tempfile::TempDir::new().unwrap();
         let sessions_dir = temp_dir
             .path()
-            .join(".config/tokscale/antigravity-cache/sessions");
+            .join(".config/tokens/antigravity-cache/sessions");
         std::fs::create_dir_all(&sessions_dir).unwrap();
         std::fs::write(
             sessions_dir.join("ag-submit.jsonl"),
@@ -6099,6 +6099,7 @@ mod tests {
                     year: None,
                     group_by: GroupBy::default(),
                     scanner_settings: scanner::ScannerSettings::default(),
+                    include_subagents: false,
                 },
                 None,
             ))

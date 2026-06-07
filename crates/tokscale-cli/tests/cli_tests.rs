@@ -127,7 +127,7 @@ fn create_fake_codex_bin() -> TempDir {
     fs::write(
         &codex_path,
         r#"#!/bin/sh
-case "$TOKSCALE_FAKE_CODEX_MODE" in
+case "$TOKENS_FAKE_CODEX_MODE" in
   success)
     printf 'captured ok'
     exit 0
@@ -140,7 +140,7 @@ case "$TOKSCALE_FAKE_CODEX_MODE" in
     exec sleep 20
     ;;
   *)
-    echo "unknown TOKSCALE_FAKE_CODEX_MODE" >&2
+    echo "unknown TOKENS_FAKE_CODEX_MODE" >&2
     exit 2
     ;;
 esac
@@ -160,7 +160,7 @@ esac
 }
 
 fn headless_capture_command(fake_bin: &Path, output_path: &Path, mode: &str) -> Command {
-    let mut cmd = cargo_bin_cmd!("tokscale");
+    let mut cmd = cargo_bin_cmd!("tokens");
     let path = std::env::var_os("PATH").unwrap_or_default();
     let joined_path = std::env::join_paths(
         std::iter::once(fake_bin.to_path_buf()).chain(std::env::split_paths(&path)),
@@ -168,8 +168,8 @@ fn headless_capture_command(fake_bin: &Path, output_path: &Path, mode: &str) -> 
     .unwrap();
 
     cmd.env("HOME", fake_bin)
-        .env("TOKSCALE_FAKE_CODEX_MODE", mode)
-        .env("TOKSCALE_NATIVE_TIMEOUT_MS", "10000")
+        .env("TOKENS_FAKE_CODEX_MODE", mode)
+        .env("TOKENS_NATIVE_TIMEOUT_MS", "10000")
         .env("PATH", joined_path)
         .args([
             "headless",
