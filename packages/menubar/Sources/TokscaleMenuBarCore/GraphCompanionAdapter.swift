@@ -227,6 +227,8 @@ public enum GraphCompanionAdapter {
             var todayCost = 0.0
             var todayTokens: Int64 = 0
             var todayMessages = 0
+            var cacheRead: Int64 = 0
+            var freshInput: Int64 = 0
             var modelCosts: [String: Double] = [:]
         }
         var providers: [String: Acc] = [:]
@@ -238,6 +240,8 @@ public enum GraphCompanionAdapter {
                 acc.cost += client.cost
                 acc.tokens += tokenCount
                 acc.messages += client.messages
+                acc.cacheRead += client.tokens.cacheRead
+                acc.freshInput += client.tokens.input
                 acc.modelCosts[client.modelId, default: 0] += client.cost
                 if isToday {
                     acc.todayCost += client.cost
@@ -250,6 +254,12 @@ public enum GraphCompanionAdapter {
         return providers
             .map { client, acc -> [String: Any] in
                 let topModel = acc.modelCosts.max { $0.value < $1.value }?.key
+                // Prompt-cache hit rate: how much of the read input came from cache
+                // (cache reads are ~10× cheaper than fresh input).
+                let readTotal = acc.cacheRead + acc.freshInput
+                let cacheHitPercent = readTotal > 0
+                    ? Double(acc.cacheRead) / Double(readTotal) * 100
+                    : 0
                 var row: [String: Any] = [
                     "client": client,
                     "costUsd": acc.cost,
@@ -258,6 +268,7 @@ public enum GraphCompanionAdapter {
                     "todayCostUsd": acc.todayCost,
                     "todayTokens": acc.todayTokens,
                     "todayMessages": acc.todayMessages,
+                    "cacheHitPercent": cacheHitPercent,
                 ]
                 if let topModel { row["topModel"] = topModel }
                 return row

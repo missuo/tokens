@@ -276,20 +276,24 @@ private struct TodayGlanceCard: View {
     let summary: TokscaleSummary
     let color: Color
 
+    private var days: Int { summary.totals.activeDays }
+
     var body: some View {
         HStack(spacing: 14) {
             stat(
                 value: formatUSD(summary.today.costUsd),
                 label: "Cost today",
-                tint: color
+                tint: color,
+                momentum: momentum(today: summary.today.costUsd, total: summary.totals.costUsd)
             )
             Rectangle()
                 .fill(Color.primary.opacity(0.08))
-                .frame(width: 1, height: 46)
+                .frame(width: 1, height: 56)
             stat(
                 value: formatTokens(summary.today.tokens),
                 label: "Tokens today",
-                tint: providerColor("gemini")
+                tint: providerColor("gemini"),
+                momentum: momentum(today: Double(summary.today.tokens), total: Double(summary.totals.tokens))
             )
         }
         .padding(16)
@@ -304,7 +308,20 @@ private struct TodayGlanceCard: View {
         )
     }
 
-    private func stat(value: String, label: String, tint: Color) -> some View {
+    // Today against the all-time daily average — a real reference so a single
+    // day's number isn't read in a vacuum. >=1x is a high-output day (highlighted).
+    private func momentum(today: Double, total: Double) -> (text: String, high: Bool)? {
+        guard days > 0, total > 0, today > 0 else { return nil }
+        let average = total / Double(days)
+        guard average > 0 else { return nil }
+        let ratio = today / average
+        if ratio >= 1 {
+            return (String(format: "↑ %.1f× avg", ratio), true)
+        }
+        return (String(format: "%.0f%% of avg", ratio * 100), false)
+    }
+
+    private func stat(value: String, label: String, tint: Color, momentum: (text: String, high: Bool)?) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(value)
                 .font(.system(size: 30, weight: .heavy, design: .rounded))
@@ -315,6 +332,13 @@ private struct TodayGlanceCard: View {
             Text(label.uppercased())
                 .font(.system(size: 10, weight: .bold))
                 .foregroundStyle(.secondary)
+            if let momentum {
+                Text(momentum.text)
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(momentum.high ? Color.green : Color.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -463,20 +487,15 @@ private struct ProviderQuotaRow: View {
                 if focus.quotaWindows.isEmpty {
                     QuotaUnavailableLine(providerColor: color)
                 } else {
-                    QuotaBarLine(
-                        quota: focus.primaryQuota,
-                        fallbackTitle: "5h",
-                        displayMode: displayMode,
-                        isCached: focus.quotaStatus == "Cached",
-                        prominent: prominent
-                    )
-                    QuotaBarLine(
-                        quota: focus.weeklyQuota,
-                        fallbackTitle: "Week",
-                        displayMode: displayMode,
-                        isCached: focus.quotaStatus == "Cached",
-                        prominent: prominent
-                    )
+                    ForEach(Array(focus.quotaWindows.enumerated()), id: \.offset) { _, window in
+                        QuotaBarLine(
+                            quota: window,
+                            fallbackTitle: window.title,
+                            displayMode: displayMode,
+                            isCached: focus.quotaStatus == "Cached",
+                            prominent: prominent
+                        )
+                    }
                 }
             }
         }
@@ -595,32 +614,51 @@ private struct ProviderGlanceCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 7) {
+            HStack(spacing: 8) {
                 ProviderDot(color: color)
                 Text(focus.title)
                     .font(.system(size: 16, weight: .bold))
                     .lineLimit(1)
-                Spacer(minLength: 0)
+                // This provider's own spend today, right next to its name — same
+                // size, full-strength color — so the three models aren't blurred
+                // into one combined number and it's readable at a glance.
+                Text(focus.today)
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+                Spacer(minLength: 6)
                 QuotaSourceBadge(status: focus.quotaStatus, color: color)
             }
 
             if focus.quotaWindows.isEmpty {
                 QuotaUnavailableLine(providerColor: color)
             } else {
-                GlanceQuotaLine(
-                    quota: focus.primaryQuota,
-                    fallbackTitle: "5-hour",
-                    displayMode: displayMode,
-                    isCached: focus.quotaStatus == "Cached",
-                    color: color
-                )
-                GlanceQuotaLine(
-                    quota: focus.weeklyQuota,
-                    fallbackTitle: "Weekly",
-                    displayMode: displayMode,
-                    isCached: focus.quotaStatus == "Cached",
-                    color: color
-                )
+                // Render every quota window the provider actually exposes — Claude/
+                // Codex have Session + Weekly; Gemini has per-tier daily limits
+                // (Pro / Flash / Flash Lite) with no weekly window.
+                ForEach(Array(focus.quotaWindows.enumerated()), id: \.offset) { _, window in
+                    GlanceQuotaLine(
+                        quota: window,
+                        fallbackTitle: window.title,
+                        displayMode: displayMode,
+                        isCached: focus.quotaStatus == "Cached",
+                        color: color
+                    )
+                }
+            }
+
+            if focus.cacheHitPercent > 0.5 {
+                HStack(spacing: 5) {
+                    Image(systemName: "bolt.fill")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(.green)
+                    Text("Cache hit \(Int(focus.cacheHitPercent.rounded()))%")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                }
             }
         }
         .padding(15)

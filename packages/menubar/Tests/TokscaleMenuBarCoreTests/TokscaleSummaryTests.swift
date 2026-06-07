@@ -293,7 +293,7 @@ final class TokscaleSummaryTests: XCTestCase {
         XCTAssertEqual(claude.id, "claude")
         XCTAssertEqual(claude.title, "Claude")
         XCTAssertEqual(claude.topModel, "claude-sonnet")
-        XCTAssertEqual(claude.today, "$30.00 today")
+        XCTAssertEqual(claude.today, "$30.00 · 20M")
         XCTAssertEqual(claude.quotaWindows.map(\.title), ["5h", "Week"])
         XCTAssertEqual(claude.primaryQuota?.title, "5h")
         XCTAssertEqual(claude.weeklyQuota?.title, "Week")

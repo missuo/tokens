@@ -243,12 +243,13 @@ public struct TokscaleDashboardModel: Equatable {
                         id: row.client,
                         title: clientDisplayName(row.client),
                         model: row.topModel ?? "No model data",
-                        today: "\(formatUSD(row.todayCostUsd)) today",
+                        today: "\(formatUSD(row.todayCostUsd)) · \(formatTokens(row.todayTokens))",
                         total: "\(formatUSD(row.costUsd)) total",
                         tokens: formatTokens(row.tokens),
                         messages: "\(row.messages) messages",
                         share: Self.providerShare(row.costUsd, totalCost: summary.totals.costUsd),
-                        hasLiveQuotaRefresh: hasLiveQuotaRefresh
+                        hasLiveQuotaRefresh: hasLiveQuotaRefresh,
+                        cacheHitPercent: row.cacheHitPercent
                     )
                 )
             }
@@ -326,7 +327,8 @@ public struct TokscaleDashboardModel: Equatable {
             tokens: "0",
             messages: "0 messages",
             share: 0,
-            hasLiveQuotaRefresh: false
+            hasLiveQuotaRefresh: false,
+            cacheHitPercent: 0
         )
     }
 
@@ -352,12 +354,13 @@ public struct TokscaleDashboardModel: Equatable {
                 id: id,
                 title: title,
                 model: "No local model data",
-                today: "$0.00 today",
+                today: "$0.00 · 0",
                 total: "$0.00 total",
                 tokens: "0",
                 messages: "0 messages",
                 share: 0,
-                hasLiveQuotaRefresh: quotaWasRefreshed
+                hasLiveQuotaRefresh: quotaWasRefreshed,
+                cacheHitPercent: 0
             )
         )
     }
@@ -385,7 +388,8 @@ public struct TokscaleDashboardModel: Equatable {
             weeklyQuota: weekly,
             quotaStatus: quota.isEmpty ? "No live quota" : (summaryStale && !details.hasLiveQuotaRefresh ? "Cached" : "Live"),
             workTime: "Work time unavailable",
-            focusedModelTime: Self.focusedModelTimeLabel(providerId: details.id, model: details.model)
+            focusedModelTime: Self.focusedModelTimeLabel(providerId: details.id, model: details.model),
+            cacheHitPercent: details.cacheHitPercent
         )
     }
 
@@ -694,6 +698,7 @@ public extension TokscaleDashboardModel {
         public let messages: String
         public let share: Double
         public let hasLiveQuotaRefresh: Bool
+        public let cacheHitPercent: Double
     }
 
     struct ProviderFocus: Equatable {
@@ -711,6 +716,7 @@ public extension TokscaleDashboardModel {
         public let quotaStatus: String
         public let workTime: String
         public let focusedModelTime: String
+        public let cacheHitPercent: Double
     }
 }
 
@@ -787,6 +793,25 @@ public extension TokscaleSummary {
         public let todayTokens: Int64
         public let todayMessages: Int
         public let topModel: String?
+        public let cacheHitPercent: Double
+
+        enum CodingKeys: String, CodingKey {
+            case client, costUsd, tokens, messages
+            case todayCostUsd, todayTokens, todayMessages, topModel, cacheHitPercent
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            client = try c.decode(String.self, forKey: .client)
+            costUsd = try c.decode(Double.self, forKey: .costUsd)
+            tokens = try c.decode(Int64.self, forKey: .tokens)
+            messages = try c.decode(Int.self, forKey: .messages)
+            todayCostUsd = try c.decode(Double.self, forKey: .todayCostUsd)
+            todayTokens = try c.decode(Int64.self, forKey: .todayTokens)
+            todayMessages = try c.decode(Int.self, forKey: .todayMessages)
+            topModel = try c.decodeIfPresent(String.self, forKey: .topModel)
+            cacheHitPercent = try c.decodeIfPresent(Double.self, forKey: .cacheHitPercent) ?? 0
+        }
 
         public init(
             client: String,
@@ -796,7 +821,8 @@ public extension TokscaleSummary {
             todayCostUsd: Double,
             todayTokens: Int64,
             todayMessages: Int,
-            topModel: String?
+            topModel: String?,
+            cacheHitPercent: Double = 0
         ) {
             self.client = client
             self.costUsd = costUsd
@@ -806,6 +832,7 @@ public extension TokscaleSummary {
             self.todayTokens = todayTokens
             self.todayMessages = todayMessages
             self.topModel = topModel
+            self.cacheHitPercent = cacheHitPercent
         }
     }
 
