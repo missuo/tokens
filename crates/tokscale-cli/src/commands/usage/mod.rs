@@ -2,6 +2,7 @@ mod amp;
 mod claude;
 mod codex;
 mod copilot;
+mod gemini;
 pub mod helpers;
 mod kimi;
 mod minimax;
@@ -84,6 +85,7 @@ pub fn fetch_all() -> Vec<UsageOutput> {
     let providers: Vec<UsageProvider> = vec![
         ("Claude", claude::has_credentials, claude::fetch),
         ("Codex", codex::has_credentials, codex::fetch),
+        ("Gemini", gemini::has_credentials, gemini::fetch),
         ("Z.ai", zai::has_credentials, zai::fetch),
         ("Amp", amp::has_credentials, amp::fetch),
         ("Copilot", copilot::has_credentials, copilot::fetch),
