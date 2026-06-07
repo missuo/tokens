@@ -20,9 +20,9 @@ pub struct ClientDiagnostic {
 }
 
 const CLAUDE_DESKTOP_MESSAGE: &str =
-    "Claude Desktop app data was detected, but Tokscale counts Claude Code JSONL transcripts only.";
+    "Claude Desktop app data was detected, but Tokens counts Claude Code JSONL transcripts only.";
 
-const CLAUDE_DESKTOP_HELP: &str = "Claude Desktop chat storage and Claude data exports do not expose a documented per-message token ledger. Use `tokscale usage` for Claude subscription quota bars; organization/API billing requires Anthropic Admin Usage/Cost API outside local scanning.";
+const CLAUDE_DESKTOP_HELP: &str = "Claude Desktop chat storage and Claude data exports do not expose a documented per-message token ledger. Use `tokens usage` for Claude subscription quota bars; organization/API billing requires Anthropic Admin Usage/Cost API outside local scanning.";
 
 pub fn diagnostics_for_clients_row(home_dir: &Path) -> Vec<ClientDiagnostic> {
     claude_diagnostics(home_dir, true)
@@ -69,7 +69,7 @@ fn claude_diagnostics(home_dir: &Path, include_info: bool) -> Vec<ClientDiagnost
         diagnostics.push(ClientDiagnostic {
             code: "claude_stats_cache_not_imported",
             severity: "info",
-            message: "Claude Code stats-cache.json was detected, but Tokscale does not import aggregate cache totals as session usage.",
+            message: "Claude Code stats-cache.json was detected, but Tokens does not import aggregate cache totals as session usage.",
             help: "stats-cache.json contains aggregate /usage data without stable per-message/session attribution, so importing it would risk double counting or fabricated model/session totals.",
             paths: vec![DiagnosticPath {
                 label: "statsCache",

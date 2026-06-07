@@ -2509,7 +2509,7 @@ fn test_models_json_includes_claude_desktop_diagnostic_for_empty_explicit_claude
             && item["message"]
                 .as_str()
                 .unwrap()
-                .contains("Tokscale counts Claude Code JSONL transcripts")
+                .contains("Tokens counts Claude Code JSONL transcripts")
     }));
 }
 
