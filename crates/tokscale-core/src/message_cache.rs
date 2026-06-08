@@ -10,10 +10,11 @@ use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
-// Bumped to 17: UnifiedMessage gained `agent_run_id` (per-invocation key for the
-// opt-in subagent breakdown) and Codex fork logs now skip replayed parent usage
-// (#649); re-scan so cached sidechain/Codex messages reparse under the new rules.
-const CACHE_SCHEMA_VERSION: u32 = 17;
+// 17: UnifiedMessage gained `agent_run_id` (per-invocation key for the opt-in
+// subagent breakdown) and Codex fork logs now skip replayed parent usage (#649).
+// 18: codex token_count dedup key scoped to the fork parent (#681); cached
+// messages store their dedup_key, so old entries must be reparsed.
+const CACHE_SCHEMA_VERSION: u32 = 18;
 const CACHE_FILENAME: &str = "source-message-cache.bin";
 const CACHE_LOCK_FILENAME: &str = "source-message-cache.lock";
 const MAX_CACHE_FILE_BYTES: u64 = 256 * 1024 * 1024;
