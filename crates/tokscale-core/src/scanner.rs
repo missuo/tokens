@@ -118,6 +118,18 @@ impl ScanResult {
         &mut self.files[client as usize]
     }
 
+    /// Drop JSONL transcript files last modified before `since_ms`, so a
+    /// today-only scan never reads historical files. SQLite sources are left
+    /// intact (they're read whole, not per-file). A file whose mtime can't be
+    /// read reports "now" and is kept, so a fresh-but-unreadable file is never
+    /// dropped.
+    pub fn retain_files_modified_since(&mut self, since_ms: i64) {
+        for client_files in &mut self.files {
+            client_files
+                .retain(|path| crate::sessions::utils::file_modified_timestamp_ms(path) >= since_ms);
+        }
+    }
+
     /// Get total number of files found
     pub fn total_files(&self) -> usize {
         self.files.iter().map(|v| v.len()).sum()

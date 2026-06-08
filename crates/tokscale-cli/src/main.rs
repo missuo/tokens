@@ -216,6 +216,16 @@ enum Commands {
             help = "Include a subagent usage breakdown in the JSON (additive; does not change totals)"
         )]
         subagents: bool,
+        #[arg(
+            long,
+            help = "Include today's per-client active work time in the JSON (additive; does not change totals)"
+        )]
+        work_time: bool,
+        #[arg(
+            long,
+            help = "Only scan files modified today — fast refresh of today's usage (skips historical files)"
+        )]
+        today_only: bool,
     },
     #[command(about = "Launch interactive TUI with optional filters")]
     Tui {
@@ -628,6 +638,8 @@ fn main() -> Result<()> {
             benchmark,
             no_spinner,
             subagents,
+            work_time,
+            today_only,
         }) => {
             let today = date.today;
             let week = date.week;
@@ -645,6 +657,8 @@ fn main() -> Result<()> {
                 benchmark,
                 no_spinner,
                 subagents,
+                work_time,
+                today_only,
             )
         }
         Some(Commands::Tui { clients, date }) => {
@@ -1817,6 +1831,8 @@ fn run_models_report(
                 group_by: group_by.clone(),
                 scanner_settings: tui::settings::load_scanner_settings_for_home(&home_dir),
                 include_subagents: false,
+                include_work_time: false,
+                today_only: false,
             })
             .await
         })
@@ -2610,6 +2626,8 @@ fn run_monthly_report(
                 group_by: GroupBy::default(),
                 scanner_settings: tui::settings::load_scanner_settings_for_home(&home_dir),
                 include_subagents: false,
+                include_work_time: false,
+                today_only: false,
             })
             .await
         })
@@ -2910,6 +2928,8 @@ fn run_hourly_report(
                 group_by: GroupBy::default(),
                 scanner_settings: tui::settings::load_scanner_settings_for_home(&home_dir),
                 include_subagents: false,
+                include_work_time: false,
+                today_only: false,
             })
             .await
         })
@@ -4565,6 +4585,8 @@ fn run_time_metrics_report(
                 group_by: GroupBy::default(),
                 scanner_settings: tui::settings::load_scanner_settings_for_home(&home_dir),
                 include_subagents: false,
+                include_work_time: false,
+                today_only: false,
             })
             .await
         })
@@ -4650,6 +4672,8 @@ fn run_graph_command(
     benchmark: bool,
     no_spinner: bool,
     subagents: bool,
+    work_time: bool,
+    today_only: bool,
 ) -> Result<()> {
     use colored::Colorize;
     use std::time::Instant;
@@ -4683,6 +4707,8 @@ fn run_graph_command(
                 group_by: GroupBy::default(),
                 scanner_settings: tui::settings::load_scanner_settings_for_home(&home_dir),
                 include_subagents: subagents,
+                include_work_time: work_time,
+                today_only,
             })
             .await
         })
@@ -4696,15 +4722,18 @@ fn run_graph_command(
 
     let processing_time_ms = start.elapsed().as_millis() as u32;
     let output_data = to_ts_token_contribution_data(&graph_result, None);
-    let json_output = if subagents {
-        // Attach the opt-in subagent breakdown as a separate top-level key so the
-        // shared contribution-data shape (and therefore the submit payload) stays
+    let json_output = if subagents || work_time {
+        // Attach opt-in breakdowns as separate top-level keys so the shared
+        // contribution-data shape (and therefore the submit payload) stays
         // byte-for-byte identical to the default output.
         let mut value = serde_json::to_value(&output_data)?;
-        if let (serde_json::Value::Object(map), Some(summary)) =
-            (&mut value, graph_result.subagents.as_ref())
-        {
-            map.insert("subagents".to_string(), serde_json::to_value(summary)?);
+        if let serde_json::Value::Object(map) = &mut value {
+            if let Some(summary) = graph_result.subagents.as_ref() {
+                map.insert("subagents".to_string(), serde_json::to_value(summary)?);
+            }
+            if let Some(work) = graph_result.today_work_time.as_ref() {
+                map.insert("todayWorkTime".to_string(), serde_json::to_value(work)?);
+            }
         }
         serde_json::to_string_pretty(&value)?
     } else {
@@ -5142,6 +5171,8 @@ fn run_submit_command(
                 // Submit path: never compute subagents — the submit payload must
                 // be identical with or without this feature.
                 include_subagents: false,
+                include_work_time: false,
+                today_only: false,
             })
             .await
         })

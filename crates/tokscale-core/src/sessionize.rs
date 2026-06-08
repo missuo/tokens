@@ -347,6 +347,78 @@ where
     daily
 }
 
+/// Active time for a single local day, bucketed by client (milliseconds).
+///
+/// Same local-day attribution as [`compute_daily_active_time`]: an interval
+/// straddling midnight contributes only the portion falling inside `day`. Each
+/// client is summed independently, so two AIs used in parallel both count their
+/// own focused time. Powers the menu bar's per-AI work-time cards.
+pub fn compute_active_time_by_client_for_day(
+    intervals: &[SessionInterval],
+    day: &str,
+) -> HashMap<String, i64> {
+    compute_active_time_by_client_for_day_with_timezone(intervals, day, &chrono::Local)
+}
+
+fn compute_active_time_by_client_for_day_with_timezone<Tz>(
+    intervals: &[SessionInterval],
+    day: &str,
+    timezone: &Tz,
+) -> HashMap<String, i64>
+where
+    Tz: chrono::TimeZone,
+{
+    let Ok(date) = chrono::NaiveDate::parse_from_str(day, "%Y-%m-%d") else {
+        return HashMap::new();
+    };
+    let Some(day_start) = local_day_start(date, timezone) else {
+        return HashMap::new();
+    };
+    let Some(next_day_start) = date.succ_opt().and_then(|next| local_day_start(next, timezone))
+    else {
+        return HashMap::new();
+    };
+
+    // Collect each client's active spans that land inside the day. A client often
+    // runs several sessions at once (a main session plus its subagents), so summing
+    // per-session durations would double-count overlapping wall-clock time and can
+    // exceed 24h. Instead union each client's spans and measure the covered time.
+    let mut spans_by_client: HashMap<String, Vec<(i64, i64)>> = HashMap::new();
+    for interval in intervals {
+        if interval.active_duration_ms <= 0 {
+            continue;
+        }
+        let start = interval.start_ts.max(day_start);
+        let end = interval.end_ts.min(next_day_start);
+        if end <= start {
+            continue;
+        }
+        spans_by_client
+            .entry(interval.client.clone())
+            .or_default()
+            .push((start, end));
+    }
+
+    spans_by_client
+        .into_iter()
+        .map(|(client, mut spans)| {
+            spans.sort_unstable_by_key(|&(start, _)| start);
+            let mut covered = 0i64;
+            let (mut cur_start, mut cur_end) = spans[0];
+            for &(start, end) in spans.iter().skip(1) {
+                if start <= cur_end {
+                    cur_end = cur_end.max(end);
+                } else {
+                    covered += cur_end - cur_start;
+                    (cur_start, cur_end) = (start, end);
+                }
+            }
+            covered += cur_end - cur_start;
+            (client, covered)
+        })
+        .collect()
+}
+
 fn local_date<Tz>(timestamp_ms: i64, timezone: &Tz) -> Option<chrono::NaiveDate>
 where
     Tz: chrono::TimeZone,
@@ -438,6 +510,52 @@ mod tests {
         assert_eq!(result[0].end_ts, 1_045_000);
         assert_eq!(result[0].wall_duration_ms, 45_000);
         assert_eq!(result[0].active_duration_ms, 45_000);
+    }
+
+    #[test]
+    fn work_time_buckets_active_time_by_client_for_the_day() {
+        let tz = FixedOffset::east_opt(0).unwrap();
+        let base = tz
+            .with_ymd_and_hms(2024, 1, 1, 1, 0, 0)
+            .unwrap()
+            .timestamp_millis();
+        let msgs = vec![
+            // claude: two messages 1 min apart → one block, 60s active
+            make_msg("claude", "c1", base),
+            make_msg("claude", "c1", base + 60_000),
+            // codex: two messages 2 min apart → one block, 120s active
+            make_msg("codex", "x1", base),
+            make_msg("codex", "x1", base + 120_000),
+        ];
+        let intervals = sessionize(&msgs, DEFAULT_IDLE_GAP_MS);
+        let by_client =
+            compute_active_time_by_client_for_day_with_timezone(&intervals, "2024-01-01", &tz);
+        assert_eq!(by_client.get("claude"), Some(&60_000));
+        assert_eq!(by_client.get("codex"), Some(&120_000));
+        // A different day sees none of this activity.
+        let empty =
+            compute_active_time_by_client_for_day_with_timezone(&intervals, "2024-01-02", &tz);
+        assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn work_time_unions_overlapping_sessions_without_double_counting() {
+        let tz = FixedOffset::east_opt(0).unwrap();
+        let base = tz
+            .with_ymd_and_hms(2024, 1, 1, 1, 0, 0)
+            .unwrap()
+            .timestamp_millis();
+        let hour = 3_600_000i64;
+        // Two overlapping claude sessions (main + subagent): [0h, 1h] and [0.5h, 1.5h].
+        let msgs = vec![
+            make_timed_msg("claude", "main", base, hour),
+            make_timed_msg("claude", "subagent", base + hour / 2, hour),
+        ];
+        let intervals = sessionize(&msgs, DEFAULT_IDLE_GAP_MS);
+        let by_client =
+            compute_active_time_by_client_for_day_with_timezone(&intervals, "2024-01-01", &tz);
+        // Union of [0,60m] and [30m,90m] is 90m — NOT 60m + 60m = 120m.
+        assert_eq!(by_client.get("claude"), Some(&(hour + hour / 2)));
     }
 
     #[test]
