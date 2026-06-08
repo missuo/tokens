@@ -181,4 +181,154 @@ final class GraphCompanionAdapterTests: XCTestCase {
         XCTAssertEqual(summary.quota[0].provider, "Claude")
         XCTAssertEqual(summary.health.quotaRefreshedAt, "2026-06-07T04:00:00+00:00")
     }
+
+    // Claude pattern: almost every token is cache (reads + first-time writes), fresh
+    // input ~0. A cache-hit rate must count cacheWrite as a miss — otherwise the
+    // denominator collapses to cacheRead and the rate pins to 100%.
+    // 900 read / 100 write / 0 input → 90%, not 100%.
+    func testCacheHitRateCountsCacheWriteAsMiss() throws {
+        let graph = """
+        {
+          "meta": { "generatedAt": "2026-06-07T03:00:00+00:00", "version": "3.0.3",
+                    "dateRange": { "start": "2026-06-07", "end": "2026-06-07" } },
+          "summary": {
+            "totalTokens": 1050, "totalCost": 10.0, "activeDays": 1,
+            "averagePerDay": 10.0, "maxCostInSingleDay": 10.0,
+            "clients": ["claude"], "models": ["claude-opus-4-8"]
+          },
+          "years": [],
+          "contributions": [
+            {
+              "date": "2026-06-07", "intensity": 4,
+              "totals": { "tokens": 1050, "cost": 10.0, "messages": 4 },
+              "tokenBreakdown": { "input": 0, "output": 50, "cacheRead": 900, "cacheWrite": 100, "reasoning": 0 },
+              "clients": [
+                { "client": "claude", "modelId": "claude-opus-4-8", "providerId": "anthropic",
+                  "cost": 10.0, "messages": 4,
+                  "tokens": { "input": 0, "output": 50, "cacheRead": 900, "cacheWrite": 100, "reasoning": 0 } }
+              ]
+            }
+          ]
+        }
+        """
+        let companion = try GraphCompanionAdapter.companionJSON(
+            graphData: Data(graph.utf8),
+            usageData: nil,
+            todayDate: "2026-06-07",
+            summaryPath: "/tmp/companion-summary.json",
+            lastScanDurationMs: 1,
+            quotaRefreshedAt: nil
+        )
+        let summary = try TokscaleSummary.decode(companion)
+        let claude = try XCTUnwrap(summary.providers.first { $0.client == "claude" })
+        XCTAssertEqual(claude.cacheHitPercent, 90.0, accuracy: 0.01)
+    }
+
+    // `graph --work-time` adds a top-level todayWorkTime map (client → active ms).
+    // The adapter routes each into its provider, and the dashboard formats it for
+    // the cards: 1h → "1h 0m", 45 min → "45m".
+    func testWorkTimeFromGraphPopulatesProviders() throws {
+        let graph = """
+        {
+          "meta": { "generatedAt": "2026-06-07T03:00:00+00:00", "version": "3.0.3",
+                    "dateRange": { "start": "2026-06-07", "end": "2026-06-07" } },
+          "summary": {
+            "totalTokens": 3000, "totalCost": 30.0, "activeDays": 1,
+            "averagePerDay": 30.0, "maxCostInSingleDay": 30.0,
+            "clients": ["claude", "codex"], "models": ["claude-opus-4-8", "gpt-5"]
+          },
+          "years": [],
+          "contributions": [
+            {
+              "date": "2026-06-07", "intensity": 4,
+              "totals": { "tokens": 3000, "cost": 30.0, "messages": 12 },
+              "tokenBreakdown": { "input": 3000, "output": 0, "cacheRead": 0, "cacheWrite": 0, "reasoning": 0 },
+              "clients": [
+                { "client": "claude", "modelId": "claude-opus-4-8", "providerId": "anthropic",
+                  "cost": 20.0, "messages": 8,
+                  "tokens": { "input": 2000, "output": 0, "cacheRead": 0, "cacheWrite": 0, "reasoning": 0 } },
+                { "client": "codex", "modelId": "gpt-5", "providerId": "openai",
+                  "cost": 10.0, "messages": 4,
+                  "tokens": { "input": 1000, "output": 0, "cacheRead": 0, "cacheWrite": 0, "reasoning": 0 } }
+              ]
+            }
+          ],
+          "todayWorkTime": { "claude": 3600000, "codex": 2700000 }
+        }
+        """
+        let companion = try GraphCompanionAdapter.companionJSON(
+            graphData: Data(graph.utf8),
+            usageData: nil,
+            todayDate: "2026-06-07",
+            summaryPath: "/tmp/companion-summary.json",
+            lastScanDurationMs: 1,
+            quotaRefreshedAt: nil
+        )
+        let summary = try TokscaleSummary.decode(companion)
+        let claude = try XCTUnwrap(summary.providers.first { $0.client == "claude" })
+        XCTAssertEqual(claude.workTimeMs, 3_600_000)
+        let codex = try XCTUnwrap(summary.providers.first { $0.client == "codex" })
+        XCTAssertEqual(codex.workTimeMs, 2_700_000)
+
+        let dashboard = TokscaleDashboardModel(summary: summary)
+        XCTAssertEqual(dashboard.providerFocus(for: "claude").workTime, "1h 0m")
+        XCTAssertEqual(dashboard.providerFocus(for: "codex").workTime, "45m")
+    }
+
+    // The menu bar's cheap "today" refresh: a today-only scan patches today's
+    // spend + work time over the existing summary, leaving all-time totals,
+    // per-provider lifetime cost, and quota owned by the slow full scan.
+    func testPatchTodayDataRefreshesTodayButKeepsHistory() throws {
+        let full = try GraphCompanionAdapter.companionJSON(
+            graphData: Data(graphJSON.utf8),
+            usageData: Data(usageJSON.utf8),
+            todayDate: "2026-06-07",
+            summaryPath: "/tmp/companion-summary.json",
+            lastScanDurationMs: 1,
+            quotaRefreshedAt: "2026-06-07T03:01:00+00:00"
+        )
+        // Today-only scan: only 2026-06-07, claude spent more + logged 1h work time.
+        let todayGraph = """
+        {
+          "meta": { "generatedAt": "2026-06-07T09:00:00+00:00", "version": "3.0.3",
+                    "dateRange": { "start": "2026-06-07", "end": "2026-06-07" } },
+          "summary": { "totalTokens": 5000, "totalCost": 50.0, "activeDays": 1,
+                       "averagePerDay": 50.0, "maxCostInSingleDay": 50.0,
+                       "clients": ["claude"], "models": ["claude-opus-4-8"] },
+          "years": [],
+          "contributions": [
+            { "date": "2026-06-07", "intensity": 4,
+              "totals": { "tokens": 5000, "cost": 50.0, "messages": 25 },
+              "tokenBreakdown": { "input": 5000, "output": 0, "cacheRead": 0, "cacheWrite": 0, "reasoning": 0 },
+              "clients": [
+                { "client": "claude", "modelId": "claude-opus-4-8", "providerId": "anthropic",
+                  "cost": 50.0, "messages": 25,
+                  "tokens": { "input": 5000, "output": 0, "cacheRead": 0, "cacheWrite": 0, "reasoning": 0 } }
+              ] }
+          ],
+          "todayWorkTime": { "claude": 3600000 }
+        }
+        """
+        let patched = try XCTUnwrap(
+            GraphCompanionAdapter.patchTodayData(
+                companionData: full,
+                todayGraphData: Data(todayGraph.utf8),
+                todayDate: "2026-06-07"
+            )
+        )
+        let summary = try TokscaleSummary.decode(patched)
+        // Today panel refreshed to the today-only numbers.
+        XCTAssertEqual(summary.today.costUsd, 50.0, accuracy: 0.001)
+        XCTAssertEqual(summary.today.tokens, 5000)
+        // All-time totals untouched (still the full scan's 3500 / 35).
+        XCTAssertEqual(summary.totals.tokens, 3500)
+        XCTAssertEqual(summary.totals.costUsd, 35.0, accuracy: 0.001)
+        // Claude: today refreshed + work time set; lifetime cost preserved (30).
+        let claude = try XCTUnwrap(summary.providers.first { $0.client == "claude" })
+        XCTAssertEqual(claude.todayCostUsd, 50.0, accuracy: 0.001)
+        XCTAssertEqual(claude.workTimeMs, 3_600_000)
+        XCTAssertEqual(claude.costUsd, 30.0, accuracy: 0.001)
+        // Quota preserved from the full scan.
+        XCTAssertEqual(summary.quota.count, 1)
+    }
 }

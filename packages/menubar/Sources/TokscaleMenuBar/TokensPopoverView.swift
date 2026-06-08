@@ -648,16 +648,33 @@ private struct ProviderGlanceCard: View {
                 }
             }
 
-            if focus.cacheHitPercent > 0.5 {
-                HStack(spacing: 5) {
-                    Image(systemName: "bolt.fill")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(.green)
-                    Text("Cache hit \(Int(focus.cacheHitPercent.rounded()))%")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
+            if focus.workTime != "—" || focus.cacheHitPercent > 0.5 {
+                HStack(spacing: 8) {
+                    if focus.workTime != "—" {
+                        HStack(spacing: 5) {
+                            Image(systemName: "clock.fill")
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundStyle(color)
+                            Text("Active \(focus.workTime)")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(.primary)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.7)
+                        }
+                    }
+                    Spacer(minLength: 4)
+                    if focus.cacheHitPercent > 0.5 {
+                        HStack(spacing: 5) {
+                            Image(systemName: "bolt.fill")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundStyle(.green)
+                            Text("Cache hit \(Int(focus.cacheHitPercent.rounded()))%")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(.primary)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.7)
+                        }
+                    }
                 }
             }
         }
