@@ -483,14 +483,15 @@ export interface ProfileActivityProps {
   data: TokenContributionData;
   totalActiveTimeMs?: number | null;
   sessionCount?: number | null;
+  mcpServers?: string[];
 }
 
-export function ProfileActivity({ data, totalActiveTimeMs, sessionCount }: ProfileActivityProps) {
+export function ProfileActivity({ data, totalActiveTimeMs, sessionCount, mcpServers }: ProfileActivityProps) {
   // GraphContainer renders the graph card *plus* the breakdown and statistics
   // panels. The contribution canvas scrolls horizontally on its own (see
   // TokenGraph2D), so we must NOT wrap the whole container in a min-width box —
   // doing so forced the breakdown/stats panels off-screen on mobile.
-  return <GraphContainer data={data} totalActiveTimeMs={totalActiveTimeMs} sessionCount={sessionCount} />;
+  return <GraphContainer data={data} totalActiveTimeMs={totalActiveTimeMs} sessionCount={sessionCount} mcpServers={mcpServers} />;
 }
 
 export function ProfileEmptyActivity() {

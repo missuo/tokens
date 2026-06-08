@@ -10,9 +10,10 @@ interface StatsPanelProps {
   palette: GraphColorPalette;
   totalActiveTimeMs?: number | null;
   sessionCount?: number | null;
+  mcpServers?: string[];
 }
 
-export function StatsPanel({ data, palette, totalActiveTimeMs, sessionCount }: StatsPanelProps) {
+export function StatsPanel({ data, palette, totalActiveTimeMs, sessionCount, mcpServers }: StatsPanelProps) {
   const { summary, contributions } = data;
   const currentStreak = calculateCurrentStreak(contributions);
   const longestStreak = calculateLongestStreak(contributions);
@@ -49,6 +50,20 @@ export function StatsPanel({ data, palette, totalActiveTimeMs, sessionCount }: S
           </span>
         ))}
       </div>
+      {mcpServers && mcpServers.length > 0 && (
+        <div className="mt-6 flex flex-wrap items-center gap-2 border-t border-line pt-6">
+          <span className="mr-3 text-xs font-semibold tracking-wider text-muted uppercase max-[480px]:mr-0 max-[480px]:w-full">MCPs:</span>
+          {mcpServers.map((server) => (
+            <span
+              key={server}
+              className="max-w-full min-w-0 truncate rounded-full px-3 py-1.5 text-xs font-medium text-foreground transition hover:scale-105"
+              style={{ backgroundColor: `${palette.grade3}20` }}
+            >
+              {server}
+            </span>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

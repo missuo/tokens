@@ -45,6 +45,7 @@ interface ProfileData {
   updatedAt: string | null;
   clients: string[];
   models: string[];
+  mcpServers?: string[];
   modelUsage?: ModelUsage[];
   contributions: DailyContribution[];
 }
@@ -165,7 +166,7 @@ const EARLY_ADOPTERS = ["code-yeongyu", "gtg7784", "qodot"];
             <div role="tabpanel" id="tabpanel-activity" aria-labelledby="tab-activity">
               {graphData ? (
                 <div className="flex flex-col gap-6">
-                  <ProfileActivity data={graphData} totalActiveTimeMs={data.stats.totalActiveTimeMs} sessionCount={data.stats.sessionCount} />
+                  <ProfileActivity data={graphData} totalActiveTimeMs={data.stats.totalActiveTimeMs} sessionCount={data.stats.sessionCount} mcpServers={data.mcpServers} />
                   <ProfileStats
                     stats={stats}
                     favoriteModel={data.modelUsage?.reduce((max, current) => (current.cost > max.cost ? current : max), data.modelUsage[0])?.model}
