@@ -20,6 +20,8 @@ public enum GraphCompanionAdapter {
         let summary: Summary
         let contributions: [Contribution]
         let subagents: Subagents?
+        /// Opt-in per-client active work time for today (ms), from `graph --work-time`.
+        let todayWorkTime: [String: Int64]?
 
         struct Meta: Decodable {
             let generatedAt: String
@@ -217,6 +219,57 @@ public enum GraphCompanionAdapter {
         return try? JSONSerialization.data(withJSONObject: dict, options: [])
     }
 
+    /// Patch only today's figures into an existing companion summary, from a fast
+    /// today-only graph scan. All-time totals, history, top, and quota are left
+    /// untouched — they come from the slower full scan — so the menu bar can
+    /// refresh today's spend and work time cheaply without rescanning history.
+    public static func patchTodayData(
+        companionData: Data,
+        todayGraphData: Data,
+        todayDate: String
+    ) -> Data? {
+        guard var dict = (try? JSONSerialization.jsonObject(with: companionData)) as? [String: Any]
+        else { return nil }
+        guard
+            let todayData = try? companionJSON(
+                graphData: todayGraphData,
+                usageData: nil,
+                todayDate: todayDate,
+                summaryPath: "",
+                lastScanDurationMs: 0,
+                quotaRefreshedAt: nil
+            ),
+            let todayDict = (try? JSONSerialization.jsonObject(with: todayData)) as? [String: Any]
+        else { return nil }
+
+        // Today panel + glance come straight from the today-only scan.
+        if let today = todayDict["today"] { dict["today"] = today }
+        if let collapsed = todayDict["collapsed"] { dict["collapsed"] = collapsed }
+        if let generatedAt = todayDict["generatedAt"] { dict["generatedAt"] = generatedAt }
+
+        // Patch each provider's today-scoped fields (and work time) from the today
+        // scan; providers absent from today reset to zero. All-time costUsd/tokens/
+        // cacheHitPercent stay owned by the full scan.
+        if let realProviders = dict["providers"] as? [[String: Any]] {
+            var byClient: [String: [String: Any]] = [:]
+            for p in (todayDict["providers"] as? [[String: Any]]) ?? [] {
+                if let client = p["client"] as? String { byClient[client] = p }
+            }
+            dict["providers"] = realProviders.map { provider -> [String: Any] in
+                var provider = provider
+                let client = provider["client"] as? String ?? ""
+                let t = byClient[client]
+                provider["todayCostUsd"] = t?["todayCostUsd"] ?? 0
+                provider["todayTokens"] = t?["todayTokens"] ?? 0
+                provider["todayMessages"] = t?["todayMessages"] ?? 0
+                provider["workTimeMs"] = t?["workTimeMs"] ?? 0
+                return provider
+            }
+        }
+
+        return try? JSONSerialization.data(withJSONObject: dict, options: [])
+    }
+
     // MARK: - breakdowns (mirror companion_summary.rs from_graph)
 
     private static func providerBreakdown(_ graph: Graph, todayDate: String) -> [[String: Any]] {
@@ -229,6 +282,7 @@ public enum GraphCompanionAdapter {
             var todayMessages = 0
             var cacheRead: Int64 = 0
             var freshInput: Int64 = 0
+            var cacheWrite: Int64 = 0
             var modelCosts: [String: Double] = [:]
         }
         var providers: [String: Acc] = [:]
@@ -242,6 +296,7 @@ public enum GraphCompanionAdapter {
                 acc.messages += client.messages
                 acc.cacheRead += client.tokens.cacheRead
                 acc.freshInput += client.tokens.input
+                acc.cacheWrite += client.tokens.cacheWrite
                 acc.modelCosts[client.modelId, default: 0] += client.cost
                 if isToday {
                     acc.todayCost += client.cost
@@ -254,9 +309,10 @@ public enum GraphCompanionAdapter {
         return providers
             .map { client, acc -> [String: Any] in
                 let topModel = acc.modelCosts.max { $0.value < $1.value }?.key
-                // Prompt-cache hit rate: how much of the read input came from cache
-                // (cache reads are ~10× cheaper than fresh input).
-                let readTotal = acc.cacheRead + acc.freshInput
+                // Prompt-cache hit rate: cache reads (hits) over everything first read
+                // this turn — fresh input plus first-time cache writes (both misses).
+                // Counting cacheWrite is what keeps Claude off a permanent ~100%.
+                let readTotal = acc.cacheRead + acc.freshInput + acc.cacheWrite
                 let cacheHitPercent = readTotal > 0
                     ? Double(acc.cacheRead) / Double(readTotal) * 100
                     : 0
@@ -269,6 +325,7 @@ public enum GraphCompanionAdapter {
                     "todayTokens": acc.todayTokens,
                     "todayMessages": acc.todayMessages,
                     "cacheHitPercent": cacheHitPercent,
+                    "workTimeMs": graph.todayWorkTime?[client] ?? 0,
                 ]
                 if let topModel { row["topModel"] = topModel }
                 return row

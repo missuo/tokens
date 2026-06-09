@@ -249,7 +249,8 @@ public struct TokscaleDashboardModel: Equatable {
                         messages: "\(row.messages) messages",
                         share: Self.providerShare(row.costUsd, totalCost: summary.totals.costUsd),
                         hasLiveQuotaRefresh: hasLiveQuotaRefresh,
-                        cacheHitPercent: row.cacheHitPercent
+                        cacheHitPercent: row.cacheHitPercent,
+                        workTimeMs: row.workTimeMs
                     )
                 )
             }
@@ -328,7 +329,8 @@ public struct TokscaleDashboardModel: Equatable {
             messages: "0 messages",
             share: 0,
             hasLiveQuotaRefresh: false,
-            cacheHitPercent: 0
+            cacheHitPercent: 0,
+            workTimeMs: 0
         )
     }
 
@@ -360,7 +362,8 @@ public struct TokscaleDashboardModel: Equatable {
                 messages: "0 messages",
                 share: 0,
                 hasLiveQuotaRefresh: quotaWasRefreshed,
-                cacheHitPercent: 0
+                cacheHitPercent: 0,
+                workTimeMs: 0
             )
         )
     }
@@ -387,7 +390,7 @@ public struct TokscaleDashboardModel: Equatable {
             primaryQuota: primary,
             weeklyQuota: weekly,
             quotaStatus: quota.isEmpty ? "No live quota" : (summaryStale && !details.hasLiveQuotaRefresh ? "Cached" : "Live"),
-            workTime: "Work time unavailable",
+            workTime: formatWorkTime(details.workTimeMs),
             focusedModelTime: Self.focusedModelTimeLabel(providerId: details.id, model: details.model),
             cacheHitPercent: details.cacheHitPercent
         )
@@ -699,6 +702,7 @@ public extension TokscaleDashboardModel {
         public let share: Double
         public let hasLiveQuotaRefresh: Bool
         public let cacheHitPercent: Double
+        public let workTimeMs: Int64
     }
 
     struct ProviderFocus: Equatable {
@@ -794,10 +798,12 @@ public extension TokscaleSummary {
         public let todayMessages: Int
         public let topModel: String?
         public let cacheHitPercent: Double
+        public let workTimeMs: Int64
 
         enum CodingKeys: String, CodingKey {
             case client, costUsd, tokens, messages
             case todayCostUsd, todayTokens, todayMessages, topModel, cacheHitPercent
+            case workTimeMs
         }
 
         public init(from decoder: Decoder) throws {
@@ -811,6 +817,7 @@ public extension TokscaleSummary {
             todayMessages = try c.decode(Int.self, forKey: .todayMessages)
             topModel = try c.decodeIfPresent(String.self, forKey: .topModel)
             cacheHitPercent = try c.decodeIfPresent(Double.self, forKey: .cacheHitPercent) ?? 0
+            workTimeMs = try c.decodeIfPresent(Int64.self, forKey: .workTimeMs) ?? 0
         }
 
         public init(
@@ -822,7 +829,8 @@ public extension TokscaleSummary {
             todayTokens: Int64,
             todayMessages: Int,
             topModel: String?,
-            cacheHitPercent: Double = 0
+            cacheHitPercent: Double = 0,
+            workTimeMs: Int64 = 0
         ) {
             self.client = client
             self.costUsd = costUsd
@@ -833,6 +841,7 @@ public extension TokscaleSummary {
             self.todayMessages = todayMessages
             self.topModel = topModel
             self.cacheHitPercent = cacheHitPercent
+            self.workTimeMs = workTimeMs
         }
     }
 
@@ -964,6 +973,23 @@ private func formatDuration(milliseconds: Int) -> String {
         return "\(minutes)m \(remainingSeconds)s"
     }
     return "\(remainingSeconds)s"
+}
+
+/// Per-AI active work time for a day: "9h 41m", "46m", "<1m", or "—" when idle.
+/// Drives the provider cards' work-time line. Idle gaps over 3 min are already
+/// excluded upstream in `sessionize`, so this is focused time, not elapsed.
+private func formatWorkTime(_ milliseconds: Int64) -> String {
+    guard milliseconds > 0 else { return "—" }
+    let totalMinutes = Int(milliseconds / 60_000)
+    let hours = totalMinutes / 60
+    let minutes = totalMinutes % 60
+    if hours > 0 {
+        return "\(hours)h \(minutes)m"
+    }
+    if minutes > 0 {
+        return "\(minutes)m"
+    }
+    return "<1m"
 }
 
 func parseISODate(_ value: String) -> Date? {

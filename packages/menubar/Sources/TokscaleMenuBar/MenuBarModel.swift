@@ -15,6 +15,12 @@ final class MenuBarModel: ObservableObject {
     private let store = TokscaleSummaryStore()
     private var refreshTimer: Timer?
     private var lastAutoRefresh = Date()
+    // Two-tier scan throttles: today's spend is cheap to rescan (`--today-only`,
+    // ~2s) so it refreshes often; the full history scan is expensive (merged, tens
+    // of seconds) so it runs at most daily. A full scan also covers today, so it
+    // bumps both stamps.
+    private var lastTodayScan = Date.distantPast
+    private var lastHistoryScan = Date.distantPast
 
     init() {
         reload()
@@ -26,6 +32,15 @@ final class MenuBarModel: ObservableObject {
     func reload() {
         do {
             let loaded = try store.load()
+            // Skip the dashboard rebuild + badge re-render when the data version is
+            // unchanged — the 60s tick reloads even when nothing was scanned, and
+            // rebuilding the model + rendering the NSImage every minute is wasteful.
+            if let loaded, let current = summary, errorMessage == nil,
+                loaded.generatedAt == current.generatedAt,
+                loaded.health.quotaRefreshedAt == current.health.quotaRefreshedAt
+            {
+                return
+            }
             summary = loaded
             dashboard = loaded.map { TokscaleDashboardModel(summary: $0) }
             menuBarImage = MenuBarBadgeRenderer.image(for: loaded)
@@ -77,6 +92,29 @@ final class MenuBarModel: ObservableObject {
             Task { @MainActor in
                 guard let self else { return }
                 self.isBackgroundScanning = false
+                self.lastHistoryScan = Date()
+                // The merged history scan owns all-time/history, but its per-client
+                // today work time can be noisy (cross-machine duplicates / stray
+                // timestamps). Chain a local today-only scan to fill in accurate
+                // work time + today's spend; it reloads once done, so the panel
+                // never flashes an empty work-time line between the two scans.
+                self.backgroundTodayScan()
+            }
+        }
+    }
+
+    // Cheap today-only rescan: re-reads just today's files (~2s) and patches the
+    // today figures + work time over the existing summary, leaving history alone.
+    private func backgroundTodayScan() {
+        guard !isBackgroundScanning else { return }
+        isBackgroundScanning = true
+        let summaryURL = store.summaryURL
+        DispatchQueue.global(qos: .background).async { [weak self] in
+            _ = MenuBarModel.runTodayScan(summaryURL: summaryURL)
+            Task { @MainActor in
+                guard let self else { return }
+                self.isBackgroundScanning = false
+                self.lastTodayScan = Date()
                 self.reload()
             }
         }
@@ -98,13 +136,19 @@ final class MenuBarModel: ObservableObject {
         let cadence = RefreshCadence(
             storedValue: UserDefaults.standard.string(forKey: RefreshCadence.storageKey)
         )
-        let allowScan = cadence.minimumInterval != nil
-        let needsScan = allowScan
-            && !isBackgroundScanning
-            && (summary?.needsScanOnOpen(minimumInterval: 600) ?? true)
+        // First page wins: quota refreshes immediately on every open (fast, local),
+        // even while a scan runs. Then pick the cheapest scan that's due: a daily
+        // full history scan, otherwise a throttled today-only scan (~2s). With
+        // "Refresh on open = Off" only quota refreshes, never a background scan.
         refreshQuota { [weak self] in
-            if needsScan {
-                self?.backgroundFullScan()
+            guard let self, cadence.minimumInterval != nil, !self.isBackgroundScanning else {
+                return
+            }
+            let now = Date()
+            if now.timeIntervalSince(self.lastHistoryScan) > 86_400 {
+                self.backgroundFullScan()
+            } else if now.timeIntervalSince(self.lastTodayScan) > 600 {
+                self.backgroundTodayScan()
             }
         }
     }
@@ -189,6 +233,42 @@ final class MenuBarModel: ObservableObject {
         }
     }
 
+    /// Cheap today-only refresh: rescan just today's files (`graph --today-only`,
+    /// ~2s) and patch today's spend + work time over the existing summary, leaving
+    /// the slow-to-scan history untouched. Stays on the local binary (today's data
+    /// is all local), so it skips the merged-home wrapper the full scan uses.
+    nonisolated private static func runTodayScan(summaryURL: URL) -> String {
+        guard let binary = tokensBinaryURL() else {
+            return "Refresh failed: tokens command unavailable"
+        }
+        guard let existing = try? Data(contentsOf: summaryURL), !existing.isEmpty else {
+            return "Today refresh skipped: no summary yet"
+        }
+        let graph = runCapturing(
+            executableURL: binary,
+            arguments: ["graph", "--today-only", "--work-time", "--no-spinner"],
+            timeout: 60
+        )
+        guard graph.ok, let graphData = graph.data, !graphData.isEmpty else {
+            return "Today refresh failed: \(graph.message ?? "graph scan")"
+        }
+        guard
+            let patched = GraphCompanionAdapter.patchTodayData(
+                companionData: existing,
+                todayGraphData: graphData,
+                todayDate: localDateString()
+            )
+        else {
+            return "Today refresh failed: patch"
+        }
+        do {
+            try writeAtomic(patched, to: summaryURL)
+            return "Refresh finished."
+        } catch {
+            return "Today refresh failed: \(error)"
+        }
+    }
+
     /// Quota-only refresh: run `tokens usage` and patch the existing summary. Keeps
     /// the previous quota when the fetch returns nothing, so a transient failure
     /// doesn't blank the badge to "No live".
@@ -248,7 +328,7 @@ final class MenuBarModel: ObservableObject {
         if FileManager.default.isExecutableFile(atPath: wrapper.path) {
             return (wrapper, [])
         }
-        return (binary, ["graph", "--subagents", "--no-spinner"])
+        return (binary, ["graph", "--subagents", "--work-time", "--no-spinner"])
     }
 
     nonisolated private static func tokensBinaryURL() -> URL? {
