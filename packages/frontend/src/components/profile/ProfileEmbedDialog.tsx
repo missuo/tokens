@@ -76,8 +76,11 @@ export function ProfileEmbedDialog({ open, username, displayName, onClose }: Pro
   const [costFormat, setCostFormat] = useState<EmbedNumberFormat>("compact");
   const [rankFormat, setRankFormat] = useState<EmbedRankFormat>("plain");
   const [graph, setGraph] = useState(false);
+  const [today, setToday] = useState(false);
 
-  const graphCapable = template !== "graph" && template !== "vitals";
+  const graphCapable = template !== "graph" && template !== "vitals" && template !== "detailed";
+  // The detailed template always shows today, so the toggle is hidden there.
+  const todayCapable = template !== "detailed";
 
   useEffect(() => {
     if (!open) return;
@@ -102,6 +105,7 @@ export function ProfileEmbedDialog({ open, username, displayName, onClose }: Pro
     if (color) params.set("color", color);
     if (template === "classic" && compact) params.set("compact", "1");
     if (graph && graphCapable) params.set("graph", "1");
+    if (today && todayCapable) params.set("today", "1");
     if (rankFormat !== "plain") params.set("rank", rankFormat);
     params.set("tokens", tokensFormat);
     params.set("cost", costFormat);
@@ -118,7 +122,7 @@ export function ProfileEmbedDialog({ open, username, displayName, onClose }: Pro
       htmlSnippet: `<a href="${resolvedProfileUrl}"><img alt="Tokens Stats for @${username}" src="${resolvedEmbedUrl}" /></a>`,
       profileUrl: resolvedProfileUrl,
     };
-  }, [color, compact, costFormat, graph, graphCapable, rankFormat, sortBy, template, theme, tokensFormat, username, view]);
+  }, [color, compact, costFormat, graph, graphCapable, rankFormat, sortBy, template, theme, today, todayCapable, tokensFormat, username, view]);
 
   const copyToClipboard = async (value: string, label: string) => {
     try {
@@ -233,6 +237,12 @@ export function ProfileEmbedDialog({ open, username, displayName, onClose }: Pro
             {graphCapable && (
               <OptionGroup label="Contribution graph">
                 <Segmented options={[{ id: "off", label: "Off" }, { id: "on", label: "On" }]} value={graph ? "on" : "off"} onChange={(v) => setGraph(v === "on")} />
+              </OptionGroup>
+            )}
+
+            {todayCapable && (
+              <OptionGroup label="Today's usage">
+                <Segmented options={[{ id: "off", label: "Off" }, { id: "on", label: "On" }]} value={today ? "on" : "off"} onChange={(v) => setToday(v === "on")} />
               </OptionGroup>
             )}
 

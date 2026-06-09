@@ -3,7 +3,7 @@
  * hero: large cells span the full width, with a compact stat strip in the
  * header and a Less/More legend below.
  */
-import type { UserEmbedStats, EmbedContributionDay } from "./getUserEmbedStats";
+import type { UserEmbedStats, EmbedContributionDay, EmbedTodayUsage } from "./getUserEmbedStats";
 import { formatNumber, formatCurrency } from "../format";
 import {
   type EmbedTheme,
@@ -14,6 +14,7 @@ import {
   gradeColors,
   getRankColor,
   formatDateLabel,
+  formatTodayInline,
   brandIcon,
   FIGTREE_FONT_STACK,
   FIGTREE_FONT_IMPORT,
@@ -30,6 +31,7 @@ export interface RenderGraphEmbedOptions {
   costFormat?: EmbedNumberFormat;
   rankFormat?: EmbedRankFormat;
   contributions?: EmbedContributionDay[] | null;
+  today?: EmbedTodayUsage | null;
 }
 
 const W = 900;
@@ -94,11 +96,15 @@ export function renderGraphEmbedSvg(
   const stat = (label: string, value: string, color: string): string =>
     `<tspan fill="${color}" font-weight="800">${escapeXml(value)}</tspan><tspan fill="${palette.muted}" font-weight="600"> ${label}</tspan>`;
   const sep = `<tspan fill="${palette.divider}">      </tspan>`;
-  add(`  <text x="${W - PAD}" y="40" font-size="14" text-anchor="end" font-family="${FIGTREE_FONT_STACK}" xml:space="preserve">${[
+  const statStrip = [
     stat("tokens", tokens, palette.brand),
     stat("spent", cost, palette.cost),
     stat(`rank (${sortBy})`, rankText, rankColor),
-  ].join(sep)}</text>`);
+  ];
+  if (options.today) {
+    statStrip.push(stat("today", formatTodayInline(options.today, tokensFormat === "compact", costFormat === "compact"), palette.tokenEnd));
+  }
+  add(`  <text x="${W - PAD}" y="40" font-size="14" text-anchor="end" font-family="${FIGTREE_FONT_STACK}" xml:space="preserve">${statStrip.join(sep)}</text>`);
 
   // Month labels.
   for (const m of layout.months) {

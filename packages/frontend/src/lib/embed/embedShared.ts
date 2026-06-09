@@ -7,8 +7,9 @@
  * onto the embed accent colors, number-format parsing, font stacks, the
  * contribution-grid layout, and small SVG building blocks.
  */
-import { escapeXml } from "../format";
+import { escapeXml, formatNumber, formatCurrency } from "../format";
 import { colorPalettes, getPaletteNames, type ColorPaletteName } from "../themes";
+import type { EmbedTodayUsage } from "./getUserEmbedStats";
 
 export { escapeXml };
 
@@ -22,7 +23,8 @@ export type EmbedTemplate =
   | "vitals"
   | "blueprint"
   | "receipt"
-  | "pulse";
+  | "pulse"
+  | "detailed";
 export type EmbedNumberFormat = "compact" | "full";
 export type EmbedRankFormat = "plain" | "percent" | "total";
 export type EmbedColorName = ColorPaletteName;
@@ -143,7 +145,23 @@ export const EMBED_TEMPLATES: EmbedTemplate[] = [
   "blueprint",
   "receipt",
   "pulse",
+  "detailed",
 ];
+
+/** Templates that support the optional "Today's usage" 4th metric. */
+export const EMBED_TODAY_CAPABLE = EMBED_TEMPLATES.filter((t) => t !== "detailed");
+
+/**
+ * Combined "<tokens> · <cost>" string for today's usage, used as the 4th metric
+ * value across templates so the wording stays identical everywhere.
+ */
+export function formatTodayInline(
+  today: EmbedTodayUsage,
+  tokensCompact: boolean,
+  costCompact: boolean,
+): string {
+  return `${formatNumber(today.tokens, tokensCompact)} · ${formatCurrency(today.cost, costCompact)}`;
+}
 
 /** Parse the `template` query param, falling back to the classic card. */
 export function parseEmbedTemplate(value: string | null): EmbedTemplate {

@@ -3,7 +3,7 @@
  * dimensioned stat values, a contribution "activity profile", and a drawing
  * title block along the bottom.
  */
-import type { UserEmbedStats, EmbedContributionDay } from "./getUserEmbedStats";
+import type { UserEmbedStats, EmbedContributionDay, EmbedTodayUsage } from "./getUserEmbedStats";
 import { formatNumber, formatCurrency } from "../format";
 import {
   type EmbedTheme,
@@ -28,6 +28,7 @@ export interface RenderBlueprintEmbedOptions {
   rankFormat?: EmbedRankFormat;
   contributions?: EmbedContributionDay[] | null;
   graph?: boolean;
+  today?: EmbedTodayUsage | null;
 }
 
 const W = 640;
@@ -60,6 +61,12 @@ export function renderBlueprintEmbedSvg(
     { value: formatCurrency(data.stats.totalCost, costFormat === "compact"), label: "COST" },
     { value: rankText, label: "LEADERBOARD RANK" },
   ];
+  if (options.today) {
+    stats.push({
+      value: formatNumber(options.today.tokens, tokensFormat === "compact"),
+      label: `TODAY · ${formatCurrency(options.today.cost, costFormat === "compact")}`,
+    });
+  }
 
   const updated = escapeXml(formatDateLabel(data.stats.updatedAt).replace(/^Updated /, ""));
   const parts: string[] = [];
@@ -86,13 +93,14 @@ export function renderBlueprintEmbedSvg(
   add(`  <text x="${W - PAD}" y="40" fill="${palette.text}" font-size="12" font-weight="700" text-anchor="end" font-family="${MONO_FONT_STACK}">@${escapeXml(data.user.username)}</text>`);
   add(`  <line x1="${PAD}" y1="52" x2="${W - PAD}" y2="52" stroke="${palette.divider}"/>`);
 
-  // Dimensioned stats.
+  // Dimensioned stats (columns scale with the stat count: 3, or 4 with today).
+  const colW = INNER / stats.length;
   stats.forEach((s, i) => {
-    const cx = PAD + INNER / 6 + i * (INNER / 3);
+    const cx = PAD + colW / 2 + i * colW;
     // Shrink long values so they never collide with the neighbouring column.
-    const vSize = Math.max(13, Math.min(24, 168 / (s.value.length * 0.62)));
+    const vSize = Math.max(12, Math.min(24, (colW * 0.85) / (s.value.length * 0.62)));
     add(`  <text x="${cx.toFixed(1)}" y="100" fill="${palette.text}" font-size="${vSize.toFixed(1)}" font-weight="700" text-anchor="middle" font-family="${MONO_FONT_STACK}">${escapeXml(s.value)}</text>`);
-    const half = 84;
+    const half = Math.min(84, colW / 2 - 8);
     add(`  <line x1="${cx - half}" y1="116" x2="${cx + half}" y2="116" stroke="${accent}" stroke-width="1"/>`);
     add(`  <line x1="${cx - half}" y1="112" x2="${cx - half}" y2="120" stroke="${accent}" stroke-width="1"/>`);
     add(`  <line x1="${cx + half}" y1="112" x2="${cx + half}" y2="120" stroke="${accent}" stroke-width="1"/>`);

@@ -3,11 +3,13 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const getUserEmbedStats = vi.fn();
 const getUserEmbedContributions = vi.fn();
+const getUserEmbedToday = vi.fn();
 const renderProfileEmbedErrorSvg = vi.fn();
 const renderProfileEmbedSvg = vi.fn();
 const renderMinimalEmbedSvg = vi.fn();
 const renderTerminalEmbedSvg = vi.fn();
 const renderGraphEmbedSvg = vi.fn();
+const renderDetailedEmbedSvg = vi.fn();
 const renderIsometric3DEmbedSvg = vi.fn();
 const renderIsometric3DErrorSvg = vi.fn();
 const isValidGitHubUsername = vi.fn();
@@ -15,7 +17,10 @@ const isValidGitHubUsername = vi.fn();
 vi.mock("@/lib/embed/getUserEmbedStats", () => ({
   getUserEmbedStats,
   getUserEmbedContributions,
+  getUserEmbedToday,
 }));
+
+vi.mock("@/lib/embed/renderDetailedEmbedSvg", () => ({ renderDetailedEmbedSvg }));
 
 vi.mock("@/lib/embed/renderProfileEmbedSvg", () => ({
   renderProfileEmbedErrorSvg,
@@ -61,11 +66,13 @@ beforeAll(async () => {
 beforeEach(() => {
   getUserEmbedStats.mockReset();
   getUserEmbedContributions.mockReset();
+  getUserEmbedToday.mockReset();
   renderProfileEmbedErrorSvg.mockReset();
   renderProfileEmbedSvg.mockReset();
   renderMinimalEmbedSvg.mockReset();
   renderTerminalEmbedSvg.mockReset();
   renderGraphEmbedSvg.mockReset();
+  renderDetailedEmbedSvg.mockReset();
   renderIsometric3DEmbedSvg.mockReset();
   renderIsometric3DErrorSvg.mockReset();
   isValidGitHubUsername.mockReset();
@@ -76,7 +83,9 @@ beforeEach(() => {
   renderMinimalEmbedSvg.mockReturnValue("<svg>minimal</svg>");
   renderTerminalEmbedSvg.mockReturnValue("<svg>terminal</svg>");
   renderGraphEmbedSvg.mockReturnValue("<svg>graph</svg>");
+  renderDetailedEmbedSvg.mockReturnValue("<svg>detailed</svg>");
   getUserEmbedContributions.mockResolvedValue([]);
+  getUserEmbedToday.mockResolvedValue(null);
 });
 
 describe("GET /api/embed/[username]/svg", () => {
@@ -171,6 +180,47 @@ describe("GET /api/embed/[username]/svg", () => {
       expect.anything(),
       expect.objectContaining({ color: null }),
     );
+  });
+
+  it("passes today usage to the renderer when today=1", async () => {
+    getUserEmbedStats.mockResolvedValue(statsFor("octocat"));
+    const todayUsage = { date: "2026-02-24", tokens: 4321, cost: 7.77, clients: [] };
+    getUserEmbedToday.mockResolvedValue(todayUsage);
+
+    await request("?template=graph&today=1");
+
+    expect(getUserEmbedToday).toHaveBeenCalledWith("octocat");
+    expect(renderGraphEmbedSvg).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ today: todayUsage }),
+    );
+  });
+
+  it("does not fetch today usage unless requested", async () => {
+    getUserEmbedStats.mockResolvedValue(statsFor("octocat"));
+
+    await request("?template=graph");
+
+    expect(getUserEmbedToday).not.toHaveBeenCalled();
+    expect(renderGraphEmbedSvg).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ today: null }),
+    );
+  });
+
+  it("dispatches to the detailed template and always fetches today usage", async () => {
+    getUserEmbedStats.mockResolvedValue(statsFor("octocat"));
+    const todayUsage = { date: "2026-02-24", tokens: 4321, cost: 7.77, clients: [] };
+    getUserEmbedToday.mockResolvedValue(todayUsage);
+
+    const response = await request("?template=detailed");
+
+    expect(getUserEmbedToday).toHaveBeenCalledWith("octocat");
+    expect(renderDetailedEmbedSvg).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ today: todayUsage }),
+    );
+    await expect(response.text()).resolves.toBe("<svg>detailed</svg>");
   });
 
   it.each(["orbit", "vitals", "blueprint", "receipt", "pulse"])(

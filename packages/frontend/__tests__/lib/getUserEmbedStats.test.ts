@@ -133,6 +133,7 @@ type ModuleExports = typeof import("../../src/lib/embed/getUserEmbedStats");
 
 let getUserEmbedStats: ModuleExports["getUserEmbedStats"];
 let getUserEmbedContributions: ModuleExports["getUserEmbedContributions"];
+let getUserEmbedToday: ModuleExports["getUserEmbedToday"];
 
 function serializeSqlCalls(): string[] {
   return mockState.sql.mock.calls.map((call) => {
@@ -150,6 +151,7 @@ beforeAll(async () => {
   const embedModule = await import("../../src/lib/embed/getUserEmbedStats");
   getUserEmbedStats = embedModule.getUserEmbedStats;
   getUserEmbedContributions = embedModule.getUserEmbedContributions;
+  getUserEmbedToday = embedModule.getUserEmbedToday;
 });
 
 beforeEach(() => {
@@ -242,6 +244,57 @@ describe("user embed data", () => {
     expect(sqlTexts.some((text) =>
       text.toLowerCase().includes("lower(users.username) = imlunahey")
     )).toBe(true);
+  });
+
+  it("aggregates today's usage across device rows by client and model", async () => {
+    mockState.pushAwaitedResult([{ id: "user-x" }]);
+    mockState.pushAwaitedResult([
+      {
+        tokens: 100,
+        cost: "1.00",
+        sourceBreakdown: {
+          claude: {
+            tokens: 100, cost: 1, messages: 2,
+            models: { opus: { tokens: 100, cost: 1, input: 50, output: 50, cacheRead: 0, cacheWrite: 0, reasoning: 0, messages: 2 } },
+          },
+        },
+      },
+      {
+        tokens: 350,
+        cost: "3.50",
+        sourceBreakdown: {
+          claude: {
+            tokens: 300, cost: 3, messages: 4,
+            models: { opus: { tokens: 300, cost: 3, input: 100, output: 200, cacheRead: 0, cacheWrite: 0, reasoning: 0, messages: 4 } },
+          },
+          codex: {
+            tokens: 50, cost: 0.5, messages: 1,
+            models: { gpt: { tokens: 50, cost: 0.5, input: 20, output: 30, cacheRead: 0, cacheWrite: 0, reasoning: 0, messages: 1 } },
+          },
+        },
+      },
+    ]);
+
+    const today = await getUserEmbedToday("octocat");
+
+    expect(today?.tokens).toBe(450);
+    expect(today?.cost).toBeCloseTo(4.5);
+    // Clients sorted by cost descending: claude ($4) before codex ($0.5).
+    expect(today?.clients.map((c) => c.source)).toEqual(["claude", "codex"]);
+
+    const claude = today!.clients[0];
+    expect(claude.cost).toBeCloseTo(4);
+    expect(claude.messages).toBe(6);
+    expect(claude.models).toHaveLength(1);
+    expect(claude.models[0].modelId).toBe("opus");
+    expect(claude.models[0].tokens).toBe(400);
+    expect(claude.models[0].cost).toBeCloseTo(4);
+    expect(claude.models[0].output).toBe(250);
+  });
+
+  it("returns null today usage for an unknown user", async () => {
+    mockState.pushAwaitedResult([]);
+    expect(await getUserEmbedToday("ghost")).toBeNull();
   });
 
   it("rejects ambiguous case-insensitive embed stats matches", async () => {
