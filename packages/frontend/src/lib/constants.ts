@@ -55,6 +55,7 @@ export const SOURCE_DISPLAY_NAMES: Record<ClientType, string> = {
   cline: "Cline",
   synthetic: "Synthetic",
   gjc: "Gajae Code",
+  grok: "Grok Build",
 };
 
 // Client logos from GitHub CDN (public repo)
@@ -88,6 +89,7 @@ export const SOURCE_LOGOS: Record<ClientType, string> = {
   cline: `${GITHUB_CDN_BASE}/client-cline.png`,
   synthetic: `${GITHUB_CDN_BASE}/client-synthetic.png`,
   gjc: `${GITHUB_CDN_BASE}/client-gjc.png`,
+  grok: "https://github.com/xai-org.png",
 };
 
 export const SOURCE_COLORS: Record<ClientType, string> = {
@@ -119,6 +121,7 @@ export const SOURCE_COLORS: Record<ClientType, string> = {
   cline: "#5B8DEF",
   synthetic: "#4ADE80",
   gjc: "#FF6B6B",
+  grok: "#171717",
 };
 
 export const SOURCE_TEXT_COLORS: Partial<Record<ClientType, string>> = {
