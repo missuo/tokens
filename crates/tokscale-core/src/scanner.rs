@@ -731,6 +731,7 @@ fn scan_all_clients_with_env_strategy_inner(
                 | ClientId::Zed
                 | ClientId::Crush
                 | ClientId::Codebuff
+                | ClientId::Kimi
                 | ClientId::Gjc
         ) {
             continue;
@@ -802,6 +803,28 @@ fn scan_all_clients_with_env_strategy_inner(
             &mut seen_scan_roots,
             ClientId::OpenCode,
             opencode_path,
+        );
+    }
+
+    if enabled.contains(&ClientId::Kimi) {
+        // Legacy Kimi (KIMI CLI): ~/.kimi/sessions/**/wire.jsonl
+        let kimi_path = ClientId::Kimi
+            .data()
+            .resolve_path_with_env_strategy(home_dir, use_env_roots);
+        push_unique_scan_task(&mut tasks, &mut seen_scan_roots, ClientId::Kimi, kimi_path);
+
+        // Kimi Code: ~/.kimi-code/sessions/**/wire.jsonl (supports KIMI_CODE_HOME)
+        let kimi_code_home = if use_env_roots {
+            std::env::var("KIMI_CODE_HOME").unwrap_or_else(|_| format!("{}/.kimi-code", home_dir))
+        } else {
+            format!("{}/.kimi-code", home_dir)
+        };
+        let kimi_code_path = format!("{}/sessions", kimi_code_home);
+        push_unique_scan_task(
+            &mut tasks,
+            &mut seen_scan_roots,
+            ClientId::Kimi,
+            kimi_code_path,
         );
     }
 

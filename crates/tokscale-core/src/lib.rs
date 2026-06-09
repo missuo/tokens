@@ -1188,9 +1188,15 @@ fn parse_all_messages_with_pricing_with_env_strategy(
         .get(ClientId::Kimi)
         .par_iter()
         .map(|path| {
-            load_or_parse_source(path, &source_cache, pricing, |path| {
-                sessions::kimi::parse_kimi_file(path)
-            })
+            if sessions::kimi::is_kimi_code_path(path) {
+                load_or_parse_source(path, &source_cache, pricing, |path| {
+                    sessions::kimi::parse_kimi_code_file(path)
+                })
+            } else {
+                load_or_parse_source(path, &source_cache, pricing, |path| {
+                    sessions::kimi::parse_kimi_file(path)
+                })
+            }
         })
         .collect();
     for outcome in kimi_outcomes {
@@ -2392,8 +2398,12 @@ pub fn parse_local_clients(options: LocalParseOptions) -> Result<ParsedMessages,
         .get(ClientId::Kimi)
         .par_iter()
         .flat_map(|path| {
-            sessions::kimi::parse_kimi_file(path)
-                .into_iter()
+            let msgs = if sessions::kimi::is_kimi_code_path(path) {
+                sessions::kimi::parse_kimi_code_file(path)
+            } else {
+                sessions::kimi::parse_kimi_file(path)
+            };
+            msgs.into_iter()
                 .map(|msg| unified_to_parsed(&msg))
                 .collect::<Vec<_>>()
         })
