@@ -250,6 +250,8 @@ async fn load_wrapped_data(options: &WrappedOptions) -> Result<WrappedData> {
         group_by: GroupBy::default(),
         scanner_settings: crate::tui::settings::load_scanner_settings(),
         include_subagents: false,
+        include_work_time: false,
+        today_only: false,
     })
     .await
     .map_err(anyhow::Error::msg)?;

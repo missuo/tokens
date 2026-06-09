@@ -392,6 +392,11 @@ pub struct GraphResult {
     /// so default output (and the submit payload) is unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subagents: Option<aggregator::SubagentSummary>,
+    /// Opt-in per-client active work time for today, in milliseconds. Populated
+    /// only when [`ReportOptions::include_work_time`] is set; omitted otherwise.
+    /// Read-only — never alters totals or the default/submit payload.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub today_work_time: Option<std::collections::HashMap<String, i64>>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -411,6 +416,15 @@ pub struct ReportOptions {
     /// output, totals, and submit payload are completely unaffected. Intended
     /// for the menu bar app, which opts in via `tokens graph --subagents`.
     pub include_subagents: bool,
+    /// When true, attach today's per-client active work time to
+    /// [`GraphResult::today_work_time`]. Opt-in like `include_subagents`; never
+    /// affects totals or default output. The menu bar opts in via
+    /// `tokens graph --work-time`.
+    pub include_work_time: bool,
+    /// When true, only scan transcript files modified today (skips historical
+    /// files at the filesystem layer) and keep only today's messages. Powers the
+    /// menu bar's fast "today" refresh. Opt-in; default false scans everything.
+    pub today_only: bool,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -512,7 +526,20 @@ fn parse_all_messages_with_pricing(
         pricing,
         true,
         &scanner::ScannerSettings::default(),
+        false,
     )
+}
+
+/// Local-timezone midnight (today, 00:00) as Unix ms. Used by today-only scans
+/// to drop files older than today. Returns None only on a DST midnight gap.
+fn local_today_start_ms() -> Option<i64> {
+    use chrono::{Local, TimeZone};
+    let midnight = Local::now().date_naive().and_hms_opt(0, 0, 0)?;
+    match Local.from_local_datetime(&midnight) {
+        chrono::LocalResult::Single(dt) => Some(dt.timestamp_millis()),
+        chrono::LocalResult::Ambiguous(dt, _) => Some(dt.timestamp_millis()),
+        chrono::LocalResult::None => None,
+    }
 }
 
 fn parse_all_messages_with_pricing_with_env_strategy(
@@ -521,6 +548,7 @@ fn parse_all_messages_with_pricing_with_env_strategy(
     pricing: Option<&pricing::PricingService>,
     use_env_roots: bool,
     scanner_settings: &scanner::ScannerSettings,
+    today_only: bool,
 ) -> Vec<UnifiedMessage> {
     #[derive(Debug)]
     struct CachedParseOutcome {
@@ -838,12 +866,19 @@ fn parse_all_messages_with_pricing_with_env_strategy(
         parse_full_log_source(path, pricing, is_headless)
     }
 
-    let scan_result = scanner::scan_all_clients_with_scanner_settings(
+    let mut scan_result = scanner::scan_all_clients_with_scanner_settings(
         home_dir,
         clients,
         use_env_roots,
         scanner_settings,
     );
+    // today-only: drop every transcript not touched today before we read any of
+    // them, so the scan only pays for today's files (the menu bar's light scan).
+    if today_only {
+        if let Some(today_start) = local_today_start_ms() {
+            scan_result.retain_files_modified_since(today_start);
+        }
+    }
     let headless_roots = scanner::headless_roots_with_env_strategy(home_dir, use_env_roots);
     let mut source_cache = message_cache::SourceMessageCache::load();
     source_cache.prune_missing_files();
@@ -1608,6 +1643,7 @@ pub async fn get_model_report(options: ReportOptions) -> Result<ModelReport, Str
         pricing.as_deref(),
         options.use_env_roots,
         &options.scanner_settings,
+        false,
     );
 
     let filtered = filter_messages_for_report(all_messages, &options);
@@ -1664,6 +1700,7 @@ pub async fn get_monthly_report(options: ReportOptions) -> Result<MonthlyReport,
         pricing.as_deref(),
         options.use_env_roots,
         &options.scanner_settings,
+        false,
     );
 
     let filtered = filter_messages_for_report(all_messages, &options);
@@ -1756,6 +1793,7 @@ pub async fn get_hourly_report(options: ReportOptions) -> Result<HourlyReport, S
         pricing.as_deref(),
         options.use_env_roots,
         &options.scanner_settings,
+        false,
     );
 
     let filtered = filter_messages_for_report(all_messages, &options);
@@ -1850,6 +1888,7 @@ async fn generate_graph_with_loaded_pricing(
         pricing,
         options.use_env_roots,
         &options.scanner_settings,
+        options.today_only,
     );
 
     let filtered = filter_messages_for_report(all_messages, &options);
@@ -1878,6 +1917,15 @@ async fn generate_graph_with_loaded_pricing(
         if let Some(&ms) = daily_active_time.get(&contribution.date) {
             contribution.active_time_ms = Some(ms);
         }
+    }
+
+    // Opt-in: per-client active time for today, for the menu bar's work-time
+    // cards. Reuses the intervals already derived above — no extra scan. "Today"
+    // is the local-timezone date, matching the daily heatmap's attribution.
+    if options.include_work_time {
+        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+        result.today_work_time =
+            Some(sessionize::compute_active_time_by_client_for_day(&intervals, &today));
     }
 
     Ok(result)
@@ -1909,6 +1957,7 @@ pub async fn get_time_metrics_report(options: ReportOptions) -> Result<TimeMetri
         None,
         options.use_env_roots,
         &options.scanner_settings,
+        false,
     );
 
     let filtered = filter_messages_for_report(all_messages, &options);
@@ -1949,6 +1998,14 @@ fn filter_messages_for_report(
 
     if let Some(until) = &options.until {
         filtered.retain(|m| m.date.as_str() <= until.as_str());
+    }
+
+    if options.today_only {
+        // File-level pruning leaves today's files, but a file touched today can
+        // still hold yesterday's tail (a session crossing midnight). Pin to today
+        // so a today-only report is exactly today.
+        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+        filtered.retain(|m| m.date == today);
     }
 
     filtered
@@ -2074,6 +2131,7 @@ fn parse_local_unified_messages_resolved(
         pricing,
         options.use_env_roots,
         &options.scanner_settings,
+        false,
     );
     Ok(filter_unified_messages(messages, &options))
 }
@@ -6161,6 +6219,8 @@ mod tests {
                     group_by: GroupBy::default(),
                     scanner_settings: scanner::ScannerSettings::default(),
                     include_subagents: false,
+                    include_work_time: false,
+                    today_only: false,
                 },
                 None,
             ))
