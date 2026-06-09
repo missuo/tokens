@@ -2,7 +2,7 @@
  * "minimal" embed template — a modern card led by a large token count, with
  * cost and rank shown as header badges and an optional contribution graph.
  */
-import type { UserEmbedStats, EmbedContributionDay } from "./getUserEmbedStats";
+import type { UserEmbedStats, EmbedContributionDay, EmbedTodayUsage } from "./getUserEmbedStats";
 import { formatNumber, formatCurrency } from "../format";
 import {
   type EmbedTheme,
@@ -15,6 +15,7 @@ import {
   FIGTREE_FONT_IMPORT,
   brandIcon,
   formatDateLabel,
+  formatTodayInline,
   getRankColor,
   escapeXml,
   formatRank,
@@ -30,6 +31,7 @@ export interface RenderMinimalEmbedOptions {
   rankFormat?: EmbedRankFormat;
   contributions?: EmbedContributionDay[] | null;
   graph?: boolean;
+  today?: EmbedTodayUsage | null;
 }
 
 const W = 600;
@@ -110,6 +112,12 @@ export function renderMinimalEmbedSvg(
   // Token hero.
   add(`  <text x="${PAD}" y="74" fill="${palette.muted}" font-size="10.5" font-weight="600" letter-spacing="0.1em" font-family="${FIGTREE_FONT_STACK}">TOTAL TOKENS</text>`);
   add(`  <text x="${PAD}" y="112" fill="url(#token-grad)" font-size="${tokenSize}" font-weight="800" font-family="${FIGTREE_FONT_STACK}">${escapeXml(tokens)}</text>`);
+
+  // Optional "today" line below the hero.
+  if (options.today) {
+    const todayInline = formatTodayInline(options.today, tokensFormat === "compact", costFormat === "compact");
+    add(`  <text x="${PAD}" y="131" font-family="${FIGTREE_FONT_STACK}"><tspan fill="${palette.muted}" font-size="11" font-weight="600" letter-spacing="0.06em">TODAY  </tspan><tspan fill="${palette.text}" font-size="12" font-weight="700">${escapeXml(todayInline)}</tspan></text>`);
+  }
 
   // Optional contribution graph.
   if (layout) {

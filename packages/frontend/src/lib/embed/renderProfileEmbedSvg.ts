@@ -1,4 +1,4 @@
-import type { UserEmbedStats, EmbedContributionDay } from "./getUserEmbedStats";
+import type { UserEmbedStats, EmbedContributionDay, EmbedTodayUsage } from "./getUserEmbedStats";
 import { formatNumber, formatCurrency } from "../format";
 import {
   type ThemePalette,
@@ -32,6 +32,7 @@ export interface RenderProfileEmbedOptions {
   rankFormat?: EmbedRankFormat;
   sortBy?: EmbedSortBy;
   contributions?: EmbedContributionDay[] | null;
+  today?: EmbedTodayUsage | null;
 }
 
 // Approximate character-width ratio for Figtree at various weights.
@@ -191,9 +192,14 @@ function renderProfileCardSvg(data: UserEmbedStats, options: RenderProfileEmbedO
   const displayNameEstWidth = displayNameRaw ? displayNameRaw.length * APPROX_CHAR_WIDTH_13 : 0;
   const showDisplayName = Boolean(displayName) && displayNameX + displayNameEstWidth < width - px - 12;
 
+  const todayUsage = options.today ?? null;
+  const todayTokens = todayUsage ? formatNumber(todayUsage.tokens, tokensFormat === "compact") : null;
+  const todayCost = todayUsage ? formatCurrency(todayUsage.cost, costFormat === "compact") : null;
+
   const metricsGap = compact ? 8 : 10;
   const metricsW = width - px * 2;
-  const metricW = (metricsW - metricsGap * 2) / 3;
+  const metricCount = todayUsage ? 4 : 3;
+  const metricW = (metricsW - metricsGap * (metricCount - 1)) / metricCount;
   const rankColor = getRankColor(data.stats.rank, palette);
   const rankAccent = (data.stats.rank && data.stats.rank <= 3)
     ? getRankColor(data.stats.rank, palette)
@@ -284,6 +290,22 @@ function renderProfileCardSvg(data: UserEmbedStats, options: RenderProfileEmbedO
     palette,
     compact,
   })}
+  ${
+    todayUsage
+      ? metricCard({
+          x: px + metricW * 3 + metricsGap * 3,
+          y: metricsY,
+          width: metricW,
+          height: metricH,
+          label: `Today · ${todayCost}`,
+          value: todayTokens as string,
+          accentId: "acc-tokens",
+          valueFill: palette.tokenEnd,
+          palette,
+          compact,
+        })
+      : ""
+  }
   ${contributions ? renderContributionGrid(contributions, palette, px, metricsY + metricH + 12) : ""}
   <text x="${px}" y="${footerY}" fill="${palette.muted}" font-size="11" font-family="${FIGTREE_FONT_STACK}">${updated}</text>
   <text x="${width - px}" y="${footerY}" fill="${palette.muted}" font-size="11" font-family="${FIGTREE_FONT_STACK}" text-anchor="end">tokens.ci/u/${escapeXml(

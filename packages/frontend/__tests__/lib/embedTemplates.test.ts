@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { UserEmbedStats, EmbedContributionDay } from "../../src/lib/embed/getUserEmbedStats";
+import type { UserEmbedStats, EmbedContributionDay, EmbedTodayUsage } from "../../src/lib/embed/getUserEmbedStats";
 import {
   THEMES,
   applyEmbedColor,
@@ -9,6 +9,7 @@ import {
   parseRankFormat,
   formatRank,
 } from "../../src/lib/embed/embedShared";
+import { renderProfileEmbedSvg } from "../../src/lib/embed/renderProfileEmbedSvg";
 import { renderMinimalEmbedSvg } from "../../src/lib/embed/renderMinimalEmbedSvg";
 import { renderTerminalEmbedSvg } from "../../src/lib/embed/renderTerminalEmbedSvg";
 import { renderGraphEmbedSvg } from "../../src/lib/embed/renderGraphEmbedSvg";
@@ -17,6 +18,7 @@ import { renderVitalsEmbedSvg } from "../../src/lib/embed/renderVitalsEmbedSvg";
 import { renderBlueprintEmbedSvg } from "../../src/lib/embed/renderBlueprintEmbedSvg";
 import { renderReceiptEmbedSvg } from "../../src/lib/embed/renderReceiptEmbedSvg";
 import { renderPulseEmbedSvg } from "../../src/lib/embed/renderPulseEmbedSvg";
+import { renderDetailedEmbedSvg } from "../../src/lib/embed/renderDetailedEmbedSvg";
 
 const mockStats: UserEmbedStats = {
   user: { id: "user-id", username: "octocat", displayName: "The Octocat", avatarUrl: null },
@@ -36,12 +38,53 @@ const mockContributions: EmbedContributionDay[] = [
   { date: "2026-02-20", totalTokens: 99999, totalCost: 40, intensity: 4 },
 ];
 
+// Distinctive numbers ($7.77 / 4,321) so "today" output is easy to detect and
+// never collides with the totals in mockStats.
+const mockToday: EmbedTodayUsage = {
+  date: "2026-02-24",
+  tokens: 4321,
+  cost: 7.77,
+  clients: [
+    {
+      source: "claude",
+      tokens: 4000,
+      cost: 6.5,
+      messages: 12,
+      models: [
+        { modelId: "claude-opus-4-8", tokens: 4000, cost: 6.5, input: 1000, output: 500, cacheRead: 2000, cacheWrite: 100, reasoning: 0, messages: 12 },
+      ],
+    },
+    {
+      source: "codex",
+      tokens: 321,
+      cost: 1.27,
+      messages: 3,
+      models: [
+        { modelId: "gpt-5-codex", tokens: 321, cost: 1.27, input: 200, output: 121, cacheRead: 0, cacheWrite: 0, reasoning: 0, messages: 3 },
+      ],
+    },
+  ],
+};
+
+const todayCapableRenderers = {
+  classic: renderProfileEmbedSvg,
+  minimal: renderMinimalEmbedSvg,
+  terminal: renderTerminalEmbedSvg,
+  graph: renderGraphEmbedSvg,
+  orbit: renderOrbitEmbedSvg,
+  vitals: renderVitalsEmbedSvg,
+  blueprint: renderBlueprintEmbedSvg,
+  receipt: renderReceiptEmbedSvg,
+  pulse: renderPulseEmbedSvg,
+};
+
 describe("parseEmbedTemplate", () => {
   it("accepts known templates", () => {
     expect(parseEmbedTemplate("minimal")).toBe("minimal");
     expect(parseEmbedTemplate("terminal")).toBe("terminal");
     expect(parseEmbedTemplate("graph")).toBe("graph");
     expect(parseEmbedTemplate("classic")).toBe("classic");
+    expect(parseEmbedTemplate("detailed")).toBe("detailed");
   });
 
   it("falls back to classic for unknown or missing values", () => {
@@ -250,5 +293,47 @@ describe("graph toggle", () => {
       .toContain("Daily token activity");
     expect(renderReceiptEmbedSvg(mockStats, { contributions: mockContributions, graph: true }))
       .toContain("DAILY ACTIVITY");
+  });
+});
+
+describe("today toggle", () => {
+  for (const [name, render] of Object.entries(todayCapableRenderers)) {
+    it(`${name} omits today usage by default and renders it when today is provided`, () => {
+      // "$7.77" is the mockToday cost and never appears in the totals.
+      expect(render(mockStats, { contributions: mockContributions })).not.toContain("$7.77");
+
+      const withToday = render(mockStats, { contributions: mockContributions, today: mockToday });
+      expect(withToday).toContain("$7.77");
+      expect(withToday).toContain("<svg");
+      expect(withToday.trimEnd().endsWith("</svg>")).toBe(true);
+    });
+  }
+});
+
+describe("renderDetailedEmbedSvg", () => {
+  it("renders today's per-client / per-model breakdown", () => {
+    const svg = renderDetailedEmbedSvg(mockStats, { today: mockToday });
+    expect(svg).toContain("<svg");
+    expect(svg.trimEnd().endsWith("</svg>")).toBe(true);
+    expect(svg).toContain("Today's usage");
+    expect(svg).toContain("Claude Code"); // SOURCE_DISPLAY_NAMES.claude
+    expect(svg).toContain("claude-opus-4-8"); // model id
+    expect(svg).toContain("$7.77"); // today total cost
+  });
+
+  it("renders an empty state when there is no usage today", () => {
+    expect(renderDetailedEmbedSvg(mockStats, { today: null })).toContain("No usage recorded today");
+    expect(
+      renderDetailedEmbedSvg(mockStats, { today: { date: "2026-02-24", tokens: 0, cost: 0, clients: [] } })
+    ).toContain("No usage recorded today");
+  });
+
+  it("escapes the username", () => {
+    const svg = renderDetailedEmbedSvg(
+      { ...mockStats, user: { ...mockStats.user, username: "a<b&c" } },
+      { today: mockToday }
+    );
+    expect(svg).toContain("a&lt;b&amp;c");
+    expect(svg).not.toContain("a<b&c");
   });
 });

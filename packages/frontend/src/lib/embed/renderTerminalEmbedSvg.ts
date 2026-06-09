@@ -3,7 +3,7 @@
  * command-output aesthetic: window chrome, a prompt line, aligned key/value
  * stats, and the contribution graph as a block grid.
  */
-import type { UserEmbedStats, EmbedContributionDay } from "./getUserEmbedStats";
+import type { UserEmbedStats, EmbedContributionDay, EmbedTodayUsage } from "./getUserEmbedStats";
 import { formatNumber, formatCurrency } from "../format";
 import {
   type EmbedTheme,
@@ -14,6 +14,7 @@ import {
   gradeColors,
   getRankColor,
   formatDateLabel,
+  formatTodayInline,
   MONO_FONT_STACK,
   escapeXml,
   formatRank,
@@ -29,6 +30,7 @@ export interface RenderTerminalEmbedOptions {
   rankFormat?: EmbedRankFormat;
   contributions?: EmbedContributionDay[] | null;
   graph?: boolean;
+  today?: EmbedTodayUsage | null;
 }
 
 const W = 600;
@@ -68,6 +70,13 @@ export function renderTerminalEmbedSvg(
     { label: "cost", value: cost, color: palette.cost },
     { label: "rank", value: `${rankText}  (${sortBy})`, color: rankColor },
   ];
+  if (options.today) {
+    rows.push({
+      label: "today",
+      value: formatTodayInline(options.today, tokensFormat === "compact", costFormat === "compact"),
+      color: palette.tokenEnd,
+    });
+  }
   if (layout) {
     rows.push({ label: "active", value: `${layout.activeDays} days`, color: palette.text });
   }

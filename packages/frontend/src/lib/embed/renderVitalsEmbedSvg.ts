@@ -3,7 +3,7 @@
  * active-days ratio, average intensity) with the token total at the center
  * and a labeled legend alongside.
  */
-import type { UserEmbedStats, EmbedContributionDay } from "./getUserEmbedStats";
+import type { UserEmbedStats, EmbedContributionDay, EmbedTodayUsage } from "./getUserEmbedStats";
 import { formatNumber, formatCurrency } from "../format";
 import {
   type EmbedTheme,
@@ -30,10 +30,11 @@ export interface RenderVitalsEmbedOptions {
   costFormat?: EmbedNumberFormat;
   rankFormat?: EmbedRankFormat;
   contributions?: EmbedContributionDay[] | null;
+  today?: EmbedTodayUsage | null;
 }
 
 const W = 520;
-const H = 250;
+const BASE_H = 250;
 const PAD = 24;
 const SW = 12;
 
@@ -72,6 +73,16 @@ export function renderVitalsEmbedSvg(
     { name: "Active days", value: String(layout.activeDays), sub: "of ~365", color: grades[3] },
     { name: "Avg intensity", value: avgIntensity.toFixed(1), sub: "of 4.0", color: grades[2] },
   ];
+  if (options.today) {
+    legend.push({
+      name: "Today (UTC)",
+      value: formatNumber(options.today.tokens, tokensFormat === "compact"),
+      sub: formatCurrency(options.today.cost, costFormat === "compact"),
+      color: palette.tokenEnd,
+    });
+  }
+  // Extend the card when the optional 4th (today) legend row is present.
+  const H = BASE_H + (options.today ? 50 : 0);
 
   const tokens = formatNumber(data.stats.totalTokens, tokensFormat === "compact");
   const cost = formatCurrency(data.stats.totalCost, costFormat === "compact");

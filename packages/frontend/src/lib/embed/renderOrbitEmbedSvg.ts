@@ -3,7 +3,7 @@
  * standing (rank percentile), with token / cost / active-day stats stacked
  * alongside.
  */
-import type { UserEmbedStats, EmbedContributionDay } from "./getUserEmbedStats";
+import type { UserEmbedStats, EmbedContributionDay, EmbedTodayUsage } from "./getUserEmbedStats";
 import { formatNumber, formatCurrency } from "../format";
 import {
   type EmbedTheme,
@@ -33,6 +33,7 @@ export interface RenderOrbitEmbedOptions {
   rankFormat?: EmbedRankFormat;
   contributions?: EmbedContributionDay[] | null;
   graph?: boolean;
+  today?: EmbedTodayUsage | null;
 }
 
 const W = 560;
@@ -55,7 +56,10 @@ export function renderOrbitEmbedSvg(
     ? layoutContributions(options.contributions)
     : null;
   const activeDays = layout ? layout.activeDays : null;
-  const H = showGraph && layout ? 369 : 248;
+  // Stat column: tokens + cost, plus active-days and/or today when present.
+  const statCount = 2 + (activeDays !== null ? 1 : 0) + (options.today ? 1 : 0);
+  const stackBottom = 78 + (statCount - 1) * 52 + 24;
+  const H = showGraph && layout ? 369 : Math.max(248, stackBottom + 28);
 
   const fraction = rank && total && total > 0
     ? Math.max(0.02, (total - rank + 1) / total)
@@ -80,6 +84,13 @@ export function renderOrbitEmbedSvg(
   ];
   if (activeDays !== null) {
     stats.push({ label: "ACTIVE DAYS", value: String(activeDays), fill: palette.text });
+  }
+  if (options.today) {
+    stats.push({
+      label: `TODAY · ${formatCurrency(options.today.cost, costFormat === "compact")}`,
+      value: formatNumber(options.today.tokens, tokensFormat === "compact"),
+      fill: palette.tokenEnd,
+    });
   }
 
   const colX = 312;

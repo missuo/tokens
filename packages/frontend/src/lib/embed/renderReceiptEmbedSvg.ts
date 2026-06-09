@@ -3,7 +3,7 @@
  * a narrow torn-edge column of monospace line items with dot leaders, a
  * total, and a faux barcode. The narrowest template.
  */
-import type { UserEmbedStats, EmbedContributionDay } from "./getUserEmbedStats";
+import type { UserEmbedStats, EmbedContributionDay, EmbedTodayUsage } from "./getUserEmbedStats";
 import { formatNumber, formatCurrency } from "../format";
 import {
   type EmbedTheme,
@@ -13,6 +13,7 @@ import {
   layoutContributions,
   gradeColors,
   formatDateLabel,
+  formatTodayInline,
   MONO_FONT_STACK,
   escapeXml,
   formatRank,
@@ -28,6 +29,7 @@ export interface RenderReceiptEmbedOptions {
   rankFormat?: EmbedRankFormat;
   contributions?: EmbedContributionDay[] | null;
   graph?: boolean;
+  today?: EmbedTodayUsage | null;
 }
 
 const W = 400;
@@ -65,7 +67,8 @@ export function renderReceiptEmbedSvg(
   const showGraph = options.graph ?? false;
   const drawGraph = showGraph && (options.contributions?.length ?? 0) > 0;
   const GBAND = 72;
-  const H = 354 + (drawGraph ? GBAND : 0);
+  // Each extra line item below shifts the total + barcode down by 26px.
+  const H = 354 + (drawGraph ? GBAND : 0) + (options.today ? 26 : 0);
   const rankText = data.stats.rank
     ? formatRank(data.stats.rank, data.stats.rankTotal ?? null, options.rankFormat)
     : "UNRANKED";
@@ -74,6 +77,9 @@ export function renderReceiptEmbedSvg(
     ["ACTIVE DAYS", String(layout.activeDays)],
     ["LEADERBOARD", rankText],
   ];
+  if (options.today) {
+    items.push(["TODAY", formatTodayInline(options.today, tokensFormat === "compact", costFormat === "compact")]);
+  }
   const total = formatCurrency(data.stats.totalCost, costFormat === "compact");
   const dateLabel = formatDateLabel(data.stats.updatedAt).replace(/^Updated /, "");
 

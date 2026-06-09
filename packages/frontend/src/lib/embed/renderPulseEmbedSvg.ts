@@ -5,7 +5,7 @@
  * The busiest week is marked. No template in the set charts usage as a trend
  * line, so this is the data-visualization-forward option.
  */
-import type { UserEmbedStats, EmbedContributionDay } from "./getUserEmbedStats";
+import type { UserEmbedStats, EmbedContributionDay, EmbedTodayUsage } from "./getUserEmbedStats";
 import { formatNumber, formatCurrency } from "../format";
 import {
   type EmbedTheme,
@@ -16,6 +16,7 @@ import {
   layoutContributions,
   formatDateLabel,
   formatRank,
+  formatTodayInline,
   brandIcon,
   FIGTREE_FONT_STACK,
   FIGTREE_FONT_IMPORT,
@@ -30,6 +31,7 @@ export interface RenderPulseEmbedOptions {
   costFormat?: EmbedNumberFormat;
   rankFormat?: EmbedRankFormat;
   contributions?: EmbedContributionDay[] | null;
+  today?: EmbedTodayUsage | null;
 }
 
 const W = 900;
@@ -118,11 +120,15 @@ export function renderPulseEmbedSvg(
   const stat = (label: string, value: string, color: string): string =>
     `<tspan fill="${color}" font-weight="800" font-size="22">${escapeXml(value)}</tspan><tspan fill="${palette.muted}" font-weight="600" font-size="13"> ${label}</tspan>`;
   const sep = `<tspan fill="${palette.divider}">      </tspan>`;
-  add(`  <text x="${PAD}" y="78" font-family="${FIGTREE_FONT_STACK}" xml:space="preserve">${[
+  const statLine = [
     stat("tokens", tokens, palette.accentTokens),
     stat(`spent (${sortBy})`, cost, palette.cost),
     stat("active days", String(layout.activeDays), palette.text),
-  ].join(sep)}</text>`);
+  ];
+  if (options.today) {
+    statLine.push(stat("today", formatTodayInline(options.today, tokensFormat === "compact", costFormat === "compact"), palette.tokenEnd));
+  }
+  add(`  <text x="${PAD}" y="78" font-family="${FIGTREE_FONT_STACK}" xml:space="preserve">${statLine.join(sep)}</text>`);
 
   // Faint gridlines.
   for (let g = 1; g <= 2; g++) {

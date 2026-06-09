@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getUserEmbedStats, getUserEmbedContributions, type EmbedSortBy } from "@/lib/embed/getUserEmbedStats";
+import { getUserEmbedStats, getUserEmbedContributions, getUserEmbedToday, type EmbedSortBy } from "@/lib/embed/getUserEmbedStats";
 import {
   renderProfileEmbedErrorSvg,
   renderProfileEmbedSvg,
@@ -12,6 +12,7 @@ import { renderVitalsEmbedSvg } from "@/lib/embed/renderVitalsEmbedSvg";
 import { renderBlueprintEmbedSvg } from "@/lib/embed/renderBlueprintEmbedSvg";
 import { renderReceiptEmbedSvg } from "@/lib/embed/renderReceiptEmbedSvg";
 import { renderPulseEmbedSvg } from "@/lib/embed/renderPulseEmbedSvg";
+import { renderDetailedEmbedSvg } from "@/lib/embed/renderDetailedEmbedSvg";
 import {
   type EmbedTheme,
   type EmbedTemplate,
@@ -49,6 +50,11 @@ function parseGraph(searchParams: URLSearchParams): boolean {
   return value === "1" || value === "true";
 }
 
+function parseToday(searchParams: URLSearchParams): boolean {
+  const value = searchParams.get("today");
+  return value === "1" || value === "true";
+}
+
 function parseView(searchParams: URLSearchParams): "2d" | "3d" {
   return searchParams.get("view") === "3d" ? "3d" : "2d";
 }
@@ -78,6 +84,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   const compact = parseCompact(searchParams);
   const sortBy = parseSort(searchParams);
   const showGraph = parseGraph(searchParams);
+  const showToday = parseToday(searchParams);
   const view = parseView(searchParams);
   const template: EmbedTemplate = parseEmbedTemplate(searchParams.get("template"));
   const color: EmbedColorName | null = parseEmbedColor(searchParams.get("color"));
@@ -131,13 +138,21 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     }
 
     // The classic card fetches contributions on demand (`graph=1`); every other
-    // template receives them and decides how/whether to render the graph.
-    const wantsContributions = template === "classic" ? showGraph && !compact : true;
-    const contributions = wantsContributions
-      ? await getUserEmbedContributions(username).catch(() => null)
-      : null;
+    // (non-detailed) template receives them and decides how/whether to render
+    // the graph. The detailed template needs today's usage instead.
+    const wantsContributions = template === "detailed"
+      ? false
+      : template === "classic" ? showGraph && !compact : true;
+    const wantsToday = template === "detailed" || showToday;
+    const [contributions, todayUsage] = await Promise.all([
+      wantsContributions ? getUserEmbedContributions(username).catch(() => null) : null,
+      wantsToday ? getUserEmbedToday(username).catch(() => null) : null,
+    ]);
 
-    const common = { theme, color, sortBy, tokensFormat, costFormat, rankFormat, contributions };
+    // The 4th "today" metric is opt-in via `today=1`; the detailed template
+    // always renders today, so it takes the data directly.
+    const today = showToday ? todayUsage : null;
+    const common = { theme, color, sortBy, tokensFormat, costFormat, rankFormat, contributions, today };
     let svg: string;
     switch (template) {
       case "minimal": svg = renderMinimalEmbedSvg(data, { ...common, graph: showGraph }); break;
@@ -148,6 +163,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       case "blueprint": svg = renderBlueprintEmbedSvg(data, { ...common, graph: showGraph }); break;
       case "receipt": svg = renderReceiptEmbedSvg(data, { ...common, graph: showGraph }); break;
       case "pulse": svg = renderPulseEmbedSvg(data, common); break;
+      case "detailed": svg = renderDetailedEmbedSvg(data, { theme, color, tokensFormat, costFormat, today: todayUsage }); break;
       default:
         svg = renderProfileEmbedSvg(data, { ...common, compact, compactNumbers: compact });
         break;
