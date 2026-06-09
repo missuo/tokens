@@ -3257,7 +3257,7 @@ mod tests {
 
         let result = scan_all_clients(home_dir.path().to_str().unwrap(), &["gjc".to_string()]);
         assert!(
-            result.get(ClientId::Gjc).len() >= 1,
+            !result.get(ClientId::Gjc).is_empty(),
             "expected at least 1 file from GJC_CONFIG_DIR root, got {:?}",
             result.get(ClientId::Gjc)
         );
@@ -3302,7 +3302,7 @@ mod tests {
 
         let result = scan_all_clients(home_dir.path().to_str().unwrap(), &["gjc".to_string()]);
         assert!(
-            result.get(ClientId::Gjc).len() >= 1,
+            !result.get(ClientId::Gjc).is_empty(),
             "expected at least 1 file from PI_CONFIG_DIR root, got {:?}",
             result.get(ClientId::Gjc)
         );
@@ -3349,7 +3349,7 @@ mod tests {
 
         let result = scan_all_clients(home_dir.path().to_str().unwrap(), &["gjc".to_string()]);
         assert!(
-            result.get(ClientId::Gjc).len() >= 1,
+            !result.get(ClientId::Gjc).is_empty(),
             "expected at least 1 file from XDG_DATA_HOME/gjc/sessions, got {:?}",
             result.get(ClientId::Gjc)
         );
