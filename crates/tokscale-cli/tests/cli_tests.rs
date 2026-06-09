@@ -720,6 +720,18 @@ fn test_clients_command_help() {
 }
 
 #[test]
+fn test_codex_command_help() {
+    let mut cmd = cargo_bin_cmd!("tokens");
+    cmd.arg("codex")
+        .arg("--help")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Codex account integration commands",
+        ));
+}
+
+#[test]
 fn test_graph_command_help() {
     let mut cmd = cargo_bin_cmd!("tokens");
     cmd.arg("graph")
@@ -789,6 +801,18 @@ fn test_invalid_command() {
 fn test_invalid_subcommand() {
     let mut cmd = cargo_bin_cmd!("tokens");
     cmd.arg("models").arg("invalid-flag").assert().failure();
+}
+
+#[test]
+fn test_codex_accounts_empty_json() {
+    let tmp = TempDir::new().expect("failed to create temp home");
+    let mut cmd = cargo_bin_cmd!("tokens");
+    cmd.env("HOME", tmp.path())
+        .env_remove("CODEX_HOME")
+        .args(["codex", "accounts", "--json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""accounts": []"#));
 }
 
 #[test]

@@ -303,6 +303,11 @@ enum Commands {
         #[arg(long, help = "Light terminal output (no TUI)")]
         light: bool,
     },
+    #[command(about = "Codex account integration commands")]
+    Codex {
+        #[command(subcommand)]
+        subcommand: CodexSubcommand,
+    },
     #[command(about = "Cursor API cache integration commands")]
     Cursor {
         #[command(subcommand)]
@@ -377,6 +382,37 @@ enum CursorSubcommand {
     Switch {
         #[arg(help = "Account label or id")]
         name: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum CodexSubcommand {
+    #[command(about = "Import the current Codex OAuth credentials as a saved account")]
+    Import {
+        #[arg(long, help = "Label for this Codex account (e.g., work, personal)")]
+        name: Option<String>,
+    },
+    #[command(about = "List saved Codex accounts")]
+    Accounts {
+        #[arg(long, help = "Output as JSON")]
+        json: bool,
+    },
+    #[command(about = "Switch active Codex account and write Codex auth.json")]
+    Switch {
+        #[arg(help = "Account label or id")]
+        name: String,
+    },
+    #[command(about = "Remove a saved Codex account")]
+    Remove {
+        #[arg(help = "Account label or id")]
+        name: String,
+    },
+    #[command(about = "Check Codex subscription usage for an account")]
+    Status {
+        #[arg(long, help = "Account label or id")]
+        name: Option<String>,
+        #[arg(long, help = "Output as JSON")]
+        json: bool,
     },
 }
 
@@ -769,6 +805,10 @@ fn main() -> Result<()> {
         Some(Commands::Usage { json, light }) => {
             reject_unsupported_home_override(&cli.home, "usage")?;
             commands::usage::run(json, light)
+        }
+        Some(Commands::Codex { subcommand }) => {
+            reject_unsupported_home_override(&cli.home, "codex")?;
+            run_codex_command(subcommand)
         }
         Some(Commands::Trae { subcommand }) => {
             reject_unsupported_home_override(&cli.home, "trae")?;
@@ -5595,6 +5635,18 @@ fn run_cursor_command(subcommand: CursorSubcommand) -> Result<()> {
     }
 }
 
+fn run_codex_command(subcommand: CodexSubcommand) -> Result<()> {
+    match subcommand {
+        CodexSubcommand::Import { name } => commands::usage::codex::run_codex_import(name),
+        CodexSubcommand::Accounts { json } => commands::usage::codex::run_codex_accounts(json),
+        CodexSubcommand::Switch { name } => commands::usage::codex::run_codex_switch(&name),
+        CodexSubcommand::Remove { name } => commands::usage::codex::run_codex_remove(&name),
+        CodexSubcommand::Status { name, json } => {
+            commands::usage::codex::run_codex_status(name, json)
+        }
+    }
+}
+
 fn run_antigravity_command(subcommand: AntigravitySubcommand) -> Result<()> {
     match subcommand {
         AntigravitySubcommand::Sync => antigravity::run_antigravity_sync(),
@@ -7470,6 +7522,21 @@ mod tests {
     fn clap_accepts_cursor_sync_command() {
         assert!(Cli::try_parse_from(["tokens", "cursor", "sync"]).is_ok());
         assert!(Cli::try_parse_from(["tokens", "cursor", "sync", "--json"]).is_ok());
+    }
+
+    #[test]
+    fn clap_accepts_codex_account_commands() {
+        assert!(Cli::try_parse_from(["tokscale", "codex", "import", "--name", "work"]).is_ok());
+        assert!(Cli::try_parse_from(["tokscale", "codex", "accounts"]).is_ok());
+        assert!(Cli::try_parse_from(["tokscale", "codex", "accounts", "--json"]).is_ok());
+        assert!(Cli::try_parse_from(["tokscale", "codex", "switch", "work"]).is_ok());
+        assert!(Cli::try_parse_from(["tokscale", "codex", "remove", "work"]).is_ok());
+        assert!(Cli::try_parse_from(["tokscale", "codex", "status"]).is_ok());
+        assert!(Cli::try_parse_from(["tokscale", "codex", "status", "--name", "work"]).is_ok());
+        assert!(
+            Cli::try_parse_from(["tokscale", "codex", "status", "--name", "work", "--json"])
+                .is_ok()
+        );
     }
 
     #[test]

@@ -227,6 +227,7 @@ pub fn fetch() -> Result<UsageOutput> {
         let buckets = resp.buckets.unwrap_or_default();
         Ok(UsageOutput {
             provider: "Gemini".into(),
+            account: None,
             plan: None,
             email: None,
             metrics: build_metrics(&buckets),
