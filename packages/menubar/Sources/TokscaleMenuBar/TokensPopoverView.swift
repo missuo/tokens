@@ -2,6 +2,22 @@ import Foundation
 import SwiftUI
 import TokscaleMenuBarCore
 
+// Whether the menu bar panel is currently on screen. The content view outlives
+// the panel (MenuBarExtra(.window) keeps it alive across open/close), so
+// repeat-forever animations must stop while this is false or they keep burning
+// CPU at full frame rate with the panel closed. Defaults to true so previews
+// and tests behave as before.
+private struct PanelVisibleKey: EnvironmentKey {
+    static let defaultValue = true
+}
+
+extension EnvironmentValues {
+    var panelVisible: Bool {
+        get { self[PanelVisibleKey.self] }
+        set { self[PanelVisibleKey.self] = newValue }
+    }
+}
+
 struct TokensPopoverView: View {
     @ObservedObject var model: MenuBarModel
     // Observed so changing the theme re-renders the whole popover and the accent
@@ -2052,8 +2068,15 @@ private struct UsageArcGauge: View {
     let centerSubtitle: String
     let active: Bool
 
+    @Environment(\.panelVisible) private var panelVisible
     @State private var visibleProgress = 0.0
-    @State private var pulse = false
+
+    // Repeat-forever animations are additive in SwiftUI — changing the driving
+    // value never cancels one that's already attached, so the render loop keeps
+    // ticking at full frame rate even with the panel closed. Hosting the loop in
+    // a separate child view and removing it from the tree is the only reliable
+    // teardown: the animation dies with the view's identity.
+    private var breathing: Bool { active && panelVisible }
 
     var body: some View {
         ZStack {
@@ -2070,8 +2093,11 @@ private struct UsageArcGauge: View {
 
             Circle()
                 .fill(color.opacity(active ? 0.09 : 0.045))
-                .frame(width: pulse && active ? 82 : 64, height: pulse && active ? 82 : 64)
-                .animation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true), value: pulse)
+                .frame(width: 64, height: 64)
+                .opacity(breathing ? 0 : 1)
+            if breathing {
+                BreathingHalo(color: color)
+            }
 
             VStack(spacing: 1) {
                 Text(centerTitle)
@@ -2086,13 +2112,28 @@ private struct UsageArcGauge: View {
             withAnimation(.spring(response: 0.65, dampingFraction: 0.82)) {
                 visibleProgress = min(max(progress, 0), 1)
             }
-            pulse = true
         }
         .onChange(of: progress) { newValue in
             withAnimation(.spring(response: 0.42, dampingFraction: 0.86)) {
                 visibleProgress = min(max(newValue, 0), 1)
             }
         }
+    }
+}
+
+private struct BreathingHalo: View {
+    let color: Color
+    @State private var grown = false
+
+    var body: some View {
+        Circle()
+            .fill(color.opacity(0.09))
+            .frame(width: grown ? 82 : 64, height: grown ? 82 : 64)
+            .onAppear {
+                withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) {
+                    grown = true
+                }
+            }
     }
 }
 
@@ -2213,40 +2254,42 @@ private struct StatusCapsule: View {
 private struct LiveDot: View {
     let stale: Bool
     let active: Bool
-    @State private var pulse = false
+    @Environment(\.panelVisible) private var panelVisible
 
     var body: some View {
         ZStack {
-            Circle()
-                .stroke(dotColor.opacity(active ? 0.35 : 0), lineWidth: 2)
-                .frame(width: pulse ? 19 : 9, height: pulse ? 19 : 9)
-                .opacity(pulse ? 0 : 1)
+            // Same identity-teardown trick as BreathingHalo: the looping ring
+            // only exists in the tree while it's watchable, because removing
+            // the view is the only way to cancel its repeat-forever animation.
+            if active && panelVisible {
+                PulsingRing(color: dotColor)
+            }
             Circle()
                 .fill(dotColor)
                 .frame(width: 8, height: 8)
         }
         .frame(width: 19, height: 19)
-        .onAppear {
-            updatePulse()
-        }
-        .onChange(of: active) { _ in
-            updatePulse()
-        }
     }
 
     private var dotColor: Color {
         active ? providerColor("openclaw") : (stale ? providerColor("claude") : providerColor("codex"))
     }
+}
 
-    private func updatePulse() {
-        guard active else {
-            pulse = false
-            return
-        }
-        pulse = false
-        withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: false)) {
-            pulse = true
-        }
+private struct PulsingRing: View {
+    let color: Color
+    @State private var expanded = false
+
+    var body: some View {
+        Circle()
+            .stroke(color.opacity(0.35), lineWidth: 2)
+            .frame(width: expanded ? 19 : 9, height: expanded ? 19 : 9)
+            .opacity(expanded ? 0 : 1)
+            .onAppear {
+                withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: false)) {
+                    expanded = true
+                }
+            }
     }
 }
 

@@ -11,6 +11,11 @@ final class MenuBarModel: ObservableObject {
     @Published var isRefreshing = false
     @Published private(set) var isBackgroundScanning = false
     @Published var refreshStatus: String?
+    // The MenuBarExtra(.window) content view stays alive while the panel is
+    // closed, so its repeat-forever animations would keep driving full-rate
+    // render passes forever (~13% CPU measured idle). Views gate their looping
+    // animations on this so a hidden panel costs nothing.
+    @Published private(set) var isPanelVisible = false
 
     private let store = TokscaleSummaryStore()
     private var refreshTimer: Timer?
@@ -27,6 +32,17 @@ final class MenuBarModel: ObservableObject {
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tick() }
         }
+        // Let the system coalesce the wakeup with others instead of waking the
+        // CPU at the exact second; the tick doesn't need to be punctual.
+        refreshTimer?.tolerance = 10
+    }
+
+    func panelDidShow() {
+        isPanelVisible = true
+    }
+
+    func panelDidHide() {
+        isPanelVisible = false
     }
 
     func reload() {
