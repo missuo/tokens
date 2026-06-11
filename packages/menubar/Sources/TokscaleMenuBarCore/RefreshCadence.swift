@@ -38,3 +38,28 @@ public enum RefreshCadence: String, CaseIterable, Sendable {
         }
     }
 }
+
+public struct OpenRefreshScanPolicy: Sendable {
+    public enum Scan: Equatable, Sendable {
+        case none
+        case today
+    }
+
+    public init() {}
+
+    public func scan(
+        summaryIsMissing: Bool,
+        needsUsageScan: Bool,
+        isBackgroundScanning: Bool,
+        lastTodayScan: Date,
+        now: Date = Date()
+    ) -> Scan {
+        if summaryIsMissing || !needsUsageScan || isBackgroundScanning {
+            return .none
+        }
+        if now.timeIntervalSince(lastTodayScan) <= 600 {
+            return .none
+        }
+        return .today
+    }
+}

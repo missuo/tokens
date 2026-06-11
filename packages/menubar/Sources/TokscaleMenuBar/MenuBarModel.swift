@@ -26,6 +26,7 @@ final class MenuBarModel: ObservableObject {
     // bumps both stamps.
     private var lastTodayScan = Date.distantPast
     private var lastHistoryScan = Date.distantPast
+    private let openRefreshScanPolicy = OpenRefreshScanPolicy()
 
     init() {
         reload()
@@ -137,33 +138,35 @@ final class MenuBarModel: ObservableObject {
     }
 
     func refreshOnOpenIfNeeded() {
-        // No cache yet: do the first full scan in the background so the popover stays
-        // responsive while it runs.
+        // No cache yet: avoid auto-starting a full-history scan from merely
+        // opening the menu. The explicit Refresh command still runs the full scan.
         if summary == nil {
-            backgroundFullScan()
+            refreshStatus = "Open Refresh skipped: no summary yet."
             return
         }
-        // First page wins: always refresh live quota right away (fast, local), even
-        // while a background scan is running, so the glance page is current the
-        // instant the popover opens. The full usage scan is slow (minutes), so it
-        // runs silently in the background afterwards and is throttled hard. With
-        // "Refresh on open = Off" only the background scan is skipped, never quota.
         guard !isRefreshing else { return }
         let cadence = RefreshCadence(
             storedValue: UserDefaults.standard.string(forKey: RefreshCadence.storageKey)
         )
         // First page wins: quota refreshes immediately on every open (fast, local),
-        // even while a scan runs. Then pick the cheapest scan that's due: a daily
-        // full history scan, otherwise a throttled today-only scan (~2s). With
-        // "Refresh on open = Off" only quota refreshes, never a background scan.
+        // even while a scan runs. Then run at most a throttled today-only scan
+        // (~2s); full history scans only start from the explicit Refresh action.
+        // With "Refresh on open = Off" only the background scan is skipped, never quota.
+        let needsUsageScan: Bool
+        if let interval = cadence.minimumInterval {
+            needsUsageScan = summary?.needsScanOnOpen(minimumInterval: interval) ?? true
+        } else {
+            needsUsageScan = false
+        }
         refreshQuota { [weak self] in
-            guard let self, cadence.minimumInterval != nil, !self.isBackgroundScanning else {
-                return
-            }
-            let now = Date()
-            if now.timeIntervalSince(self.lastHistoryScan) > 86_400 {
-                self.backgroundFullScan()
-            } else if now.timeIntervalSince(self.lastTodayScan) > 600 {
+            guard let self else { return }
+            let scan = self.openRefreshScanPolicy.scan(
+                summaryIsMissing: self.summary == nil,
+                needsUsageScan: needsUsageScan,
+                isBackgroundScanning: self.isBackgroundScanning,
+                lastTodayScan: self.lastTodayScan
+            )
+            if scan == .today {
                 self.backgroundTodayScan()
             }
         }

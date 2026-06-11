@@ -19,4 +19,47 @@ final class RefreshCadenceTests: XCTestCase {
             XCTAssertEqual(RefreshCadence(storedValue: cadence.rawValue), cadence)
         }
     }
+
+    func testOpenRefreshScanPolicyNeverStartsHistoryScanAutomatically() throws {
+        let policy = OpenRefreshScanPolicy()
+        let now = try Self.isoDate("2026-06-04T02:30:00Z")
+
+        XCTAssertEqual(
+            policy.scan(
+                summaryIsMissing: true,
+                needsUsageScan: true,
+                isBackgroundScanning: false,
+                lastTodayScan: .distantPast,
+                now: now
+            ),
+            .none
+        )
+
+        XCTAssertEqual(
+            policy.scan(
+                summaryIsMissing: false,
+                needsUsageScan: true,
+                isBackgroundScanning: false,
+                lastTodayScan: .distantPast,
+                now: now
+            ),
+            .today
+        )
+
+        XCTAssertEqual(
+            policy.scan(
+                summaryIsMissing: false,
+                needsUsageScan: true,
+                isBackgroundScanning: false,
+                lastTodayScan: try Self.isoDate("2026-06-04T02:25:30Z"),
+                now: now
+            ),
+            .none
+        )
+    }
+
+    private static func isoDate(_ value: String) throws -> Date {
+        let formatter = ISO8601DateFormatter()
+        return try XCTUnwrap(formatter.date(from: value))
+    }
 }
