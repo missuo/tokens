@@ -6050,7 +6050,6 @@ mod tests {
             contributions,
             time_metrics: None,
             subagents: None,
-            today_work_time: None,
         }
     }
 
