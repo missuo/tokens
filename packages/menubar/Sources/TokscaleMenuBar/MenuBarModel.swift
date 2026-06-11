@@ -104,10 +104,18 @@ final class MenuBarModel: ObservableObject {
         isBackgroundScanning = true
         let summaryPath = store.summaryURL.path
         DispatchQueue.global(qos: .background).async { [weak self] in
-            _ = MenuBarModel.runFullScan(summaryPath: summaryPath)
+            let result = MenuBarModel.runFullScan(summaryPath: summaryPath)
             Task { @MainActor in
                 guard let self else { return }
                 self.isBackgroundScanning = false
+                self.refreshStatus = result
+                self.reload()
+                if result.hasPrefix("Refresh failed") {
+                    if self.summary == nil {
+                        self.errorMessage = result
+                    }
+                    return
+                }
                 self.lastHistoryScan = Date()
                 // The merged history scan owns all-time/history, but its per-client
                 // today work time can be noisy (cross-machine duplicates / stray
@@ -126,10 +134,11 @@ final class MenuBarModel: ObservableObject {
         isBackgroundScanning = true
         let summaryURL = store.summaryURL
         DispatchQueue.global(qos: .background).async { [weak self] in
-            _ = MenuBarModel.runTodayScan(summaryURL: summaryURL)
+            let result = MenuBarModel.runTodayScan(summaryURL: summaryURL)
             Task { @MainActor in
                 guard let self else { return }
                 self.isBackgroundScanning = false
+                self.refreshStatus = result
                 self.lastTodayScan = Date()
                 self.reload()
             }
@@ -137,27 +146,25 @@ final class MenuBarModel: ObservableObject {
     }
 
     func refreshOnOpenIfNeeded() {
+        let cadence = RefreshCadence(
+            storedValue: UserDefaults.standard.string(forKey: RefreshCadence.storageKey)
+        )
+        guard let interval = cadence.minimumInterval else {
+            return
+        }
         // No cache yet: do the first full scan in the background so the popover stays
         // responsive while it runs.
         if summary == nil {
             backgroundFullScan()
             return
         }
-        // First page wins: always refresh live quota right away (fast, local), even
-        // while a background scan is running, so the glance page is current the
-        // instant the popover opens. The full usage scan is slow (minutes), so it
-        // runs silently in the background afterwards and is throttled hard. With
-        // "Refresh on open = Off" only the background scan is skipped, never quota.
+        // First page wins: refresh live quota when the open cadence says the cached
+        // summary is old enough, then pick the cheapest scan that's due.
         guard !isRefreshing else { return }
-        let cadence = RefreshCadence(
-            storedValue: UserDefaults.standard.string(forKey: RefreshCadence.storageKey)
-        )
-        // First page wins: quota refreshes immediately on every open (fast, local),
-        // even while a scan runs. Then pick the cheapest scan that's due: a daily
-        // full history scan, otherwise a throttled today-only scan (~2s). With
-        // "Refresh on open = Off" only quota refreshes, never a background scan.
-        refreshQuota { [weak self] in
-            guard let self, cadence.minimumInterval != nil, !self.isBackgroundScanning else {
+        let needsQuotaRefresh = summary?.needsRefreshOnOpen(minimumInterval: interval) ?? true
+        let needsUsageScan = summary?.needsScanOnOpen(minimumInterval: interval) ?? true
+        let runDueScan: @MainActor () -> Void = { [weak self] in
+            guard let self, needsUsageScan, !self.isBackgroundScanning else {
                 return
             }
             let now = Date()
@@ -166,6 +173,11 @@ final class MenuBarModel: ObservableObject {
             } else if now.timeIntervalSince(self.lastTodayScan) > 600 {
                 self.backgroundTodayScan()
             }
+        }
+        if needsQuotaRefresh {
+            refreshQuota(completion: runDueScan)
+        } else {
+            runDueScan()
         }
     }
 
@@ -339,28 +351,62 @@ final class MenuBarModel: ObservableObject {
     /// otherwise a plain local `graph --subagents`. Either way the output is the same
     /// graph JSON the adapter consumes, so the app stays portable without the wrapper.
     nonisolated private static func graphCommand(binary: URL) -> (URL, [String]) {
-        let wrapper = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".local/bin/tokens-graph-merged", isDirectory: false)
-        if FileManager.default.isExecutableFile(atPath: wrapper.path) {
+        for wrapper in graphWrapperCandidates() where FileManager.default.isExecutableFile(atPath: wrapper.path) {
             return (wrapper, [])
         }
         return (binary, ["graph", "--subagents", "--work-time", "--no-spinner"])
     }
 
     nonisolated private static func tokensBinaryURL() -> URL? {
-        // Prefer ~/.local/bin (not a Desktop/Documents TCC-protected folder, so no
-        // access prompt). The published Homebrew binary may lag the `--subagents`
-        // flag, so the local build installed there is the source of truth.
+        // Prefer the bundled CLI so the app cannot silently bind to an older Homebrew
+        // or ~/.local/bin build that lacks graph flags the menu bar depends on.
         let candidates = dedupePaths([
-            FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent(".local/bin/tokens", isDirectory: false).path,
+            Bundle.main.executableURL?
+                .deletingLastPathComponent()
+                .appendingPathComponent("tokens", isDirectory: false)
+                .path,
+            localTokensPath(),
             "/opt/homebrew/bin/tokens",
             "/usr/local/bin/tokens",
-        ])
+        ].compactMap { $0 })
         for path in candidates where FileManager.default.isExecutableFile(atPath: path) {
-            return URL(fileURLWithPath: path)
+            if tokensCandidateSupportsGraph(path) {
+                return URL(fileURLWithPath: path)
+            }
         }
         return nil
+    }
+
+    nonisolated private static func graphWrapperCandidates() -> [URL] {
+        let bundled = Bundle.main.executableURL?
+            .deletingLastPathComponent()
+            .appendingPathComponent("tokens-graph-merged", isDirectory: false)
+        let local = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".local/bin/tokens-graph-merged", isDirectory: false)
+        return [bundled, local].compactMap { $0 }.filter { wrapper in
+            if wrapper == local {
+                return tokensCandidateSupportsGraph(localTokensPath())
+            }
+            return true
+        }
+    }
+
+    nonisolated private static func localTokensPath() -> String {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".local/bin/tokens", isDirectory: false)
+            .path
+    }
+
+    nonisolated private static func tokensCandidateSupportsGraph(_ path: String) -> Bool {
+        let result = runCapturing(
+            executableURL: URL(fileURLWithPath: path),
+            arguments: ["graph", "--help"],
+            timeout: 5
+        )
+        guard result.ok, let data = result.data, let help = String(data: data, encoding: .utf8) else {
+            return false
+        }
+        return help.contains("--subagents") && help.contains("--work-time")
     }
 
     nonisolated private static func dedupePaths(_ paths: [String]) -> [String] {
