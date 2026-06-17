@@ -274,7 +274,14 @@ fn compute_max_concurrent(intervals: &[SessionInterval]) -> u32 {
 pub fn compute_daily_active_time(
     intervals: &[SessionInterval],
 ) -> std::collections::HashMap<String, i64> {
-    compute_daily_active_time_with_timezone(intervals, &chrono::Local)
+    match crate::bucket_tz::bucket_timezone() {
+        crate::bucket_tz::BucketTimezone::Local => {
+            compute_daily_active_time_with_timezone(intervals, &chrono::Local)
+        }
+        crate::bucket_tz::BucketTimezone::Named(tz) => {
+            compute_daily_active_time_with_timezone(intervals, &tz)
+        }
+    }
 }
 
 fn compute_daily_active_time_with_timezone<Tz>(
@@ -357,7 +364,14 @@ pub fn compute_active_time_by_client_for_day(
     intervals: &[SessionInterval],
     day: &str,
 ) -> HashMap<String, i64> {
-    compute_active_time_by_client_for_day_with_timezone(intervals, day, &chrono::Local)
+    match crate::bucket_tz::bucket_timezone() {
+        crate::bucket_tz::BucketTimezone::Local => {
+            compute_active_time_by_client_for_day_with_timezone(intervals, day, &chrono::Local)
+        }
+        crate::bucket_tz::BucketTimezone::Named(tz) => {
+            compute_active_time_by_client_for_day_with_timezone(intervals, day, &tz)
+        }
+    }
 }
 
 fn compute_active_time_by_client_for_day_with_timezone<Tz>(

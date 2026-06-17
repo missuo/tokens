@@ -364,11 +364,14 @@ pub fn workspace_label_from_key(key: &str) -> Option<String> {
         .map(|segment| segment.to_string())
 }
 
-/// Convert Unix milliseconds to a local YYYY-MM-DD date string.
+/// Convert Unix milliseconds to a YYYY-MM-DD date string in the process-wide
+/// bucketing timezone (see [`crate::bucket_tz`]). Defaults to the machine-local
+/// timezone when nothing has been pinned.
 fn timestamp_to_date(timestamp_ms: i64) -> String {
-    timestamp_to_date_with_timezone(timestamp_ms, &chrono::Local)
+    crate::bucket_tz::bucket_timezone().date_of_ms(timestamp_ms)
 }
 
+#[cfg(test)]
 fn timestamp_to_date_with_timezone<Tz>(timestamp_ms: i64, timezone: &Tz) -> String
 where
     Tz: chrono::TimeZone,

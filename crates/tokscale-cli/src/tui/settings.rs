@@ -84,6 +84,14 @@ pub struct Settings {
     /// tab and enable its aggregation in subsequent loads.
     #[serde(default)]
     pub minutely_tab_enabled: bool,
+    /// Pinned IANA timezone (e.g. `"Asia/Shanghai"`) used to bucket usage into
+    /// calendar dates. Detected from the system once and persisted so date
+    /// bucketing stays stable when the user travels or submits from another
+    /// machine — see `tokscale_core::bucket_tz` and
+    /// https://github.com/missuo/tokens/issues/15. `None` falls back to the
+    /// machine's current local timezone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timezone: Option<String>,
 }
 
 /// Lossy deserializer for `defaultClients`: accepts an array of arbitrary
@@ -129,6 +137,7 @@ impl Default for Settings {
             default_clients: Vec::new(),
             light: LightSettings::default(),
             minutely_tab_enabled: false,
+            timezone: None,
         }
     }
 }

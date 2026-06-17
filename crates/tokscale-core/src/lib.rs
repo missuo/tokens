@@ -1,6 +1,7 @@
 #![deny(clippy::all)]
 
 mod aggregator;
+pub mod bucket_tz;
 mod cc_mirror;
 pub mod clients;
 pub mod fs_atomic;
@@ -15,6 +16,9 @@ pub mod sessionize;
 pub mod sessions;
 
 pub use aggregator::*;
+pub use bucket_tz::{
+    bucket_timezone, parse_bucket_timezone, set_bucket_timezone, BucketTimezone,
+};
 pub use clients::{ClientCounts, ClientDef, ClientId, PathRoot};
 pub use parser::*;
 pub use scanner::*;
@@ -530,16 +534,11 @@ fn parse_all_messages_with_pricing(
     )
 }
 
-/// Local-timezone midnight (today, 00:00) as Unix ms. Used by today-only scans
-/// to drop files older than today. Returns None only on a DST midnight gap.
+/// Midnight (today, 00:00) as Unix ms in the configured bucketing timezone.
+/// Used by today-only scans to drop files older than today. Returns None only
+/// on a DST midnight gap.
 fn local_today_start_ms() -> Option<i64> {
-    use chrono::{Local, TimeZone};
-    let midnight = Local::now().date_naive().and_hms_opt(0, 0, 0)?;
-    match Local.from_local_datetime(&midnight) {
-        chrono::LocalResult::Single(dt) => Some(dt.timestamp_millis()),
-        chrono::LocalResult::Ambiguous(dt, _) => Some(dt.timestamp_millis()),
-        chrono::LocalResult::None => None,
-    }
+    crate::bucket_tz::bucket_timezone().midnight_today_ms()
 }
 
 fn parse_all_messages_with_pricing_with_env_strategy(
@@ -1771,8 +1770,6 @@ struct HourAggregator {
 /// Derives the hour slot from `UnifiedMessage.timestamp` (Unix ms).
 /// Falls back to date + "00:00" when timestamp is zero or missing.
 pub async fn get_hourly_report(options: ReportOptions) -> Result<HourlyReport, String> {
-    use chrono::{Local, TimeZone};
-
     let start = Instant::now();
 
     let home_dir = get_home_dir_string(&options.home_dir)?;
@@ -1802,11 +1799,9 @@ pub async fn get_hourly_report(options: ReportOptions) -> Result<HourlyReport, S
 
     for msg in filtered {
         let hour_key = if msg.timestamp > 0 {
-            let ts_secs = msg.timestamp / 1000;
-            match Local.timestamp_opt(ts_secs, 0) {
-                chrono::LocalResult::Single(dt) => dt.format("%Y-%m-%d %H:00").to_string(),
-                _ => format!("{} 00:00", msg.date),
-            }
+            crate::bucket_tz::bucket_timezone()
+                .date_hour_of_ms(msg.timestamp)
+                .unwrap_or_else(|| format!("{} 00:00", msg.date))
         } else {
             format!("{} 00:00", msg.date)
         };
@@ -1923,7 +1918,10 @@ async fn generate_graph_with_loaded_pricing(
     // cards. Reuses the intervals already derived above — no extra scan. "Today"
     // is the local-timezone date, matching the daily heatmap's attribution.
     if options.include_work_time {
-        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+        let today = crate::bucket_tz::bucket_timezone()
+            .today()
+            .format("%Y-%m-%d")
+            .to_string();
         result.today_work_time =
             Some(sessionize::compute_active_time_by_client_for_day(&intervals, &today));
     }
@@ -2004,7 +2002,10 @@ fn filter_messages_for_report(
         // File-level pruning leaves today's files, but a file touched today can
         // still hold yesterday's tail (a session crossing midnight). Pin to today
         // so a today-only report is exactly today.
-        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+        let today = crate::bucket_tz::bucket_timezone()
+            .today()
+            .format("%Y-%m-%d")
+            .to_string();
         filtered.retain(|m| m.date == today);
     }
 

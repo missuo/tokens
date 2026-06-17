@@ -1,4 +1,3 @@
-use chrono::Local;
 use ratatui::prelude::*;
 use ratatui::widgets::{
     Block, Borders, Cell, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, Table,
@@ -57,7 +56,7 @@ pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
     let metric_cache_write_style = app.theme.metric_cache_write_style();
     let current_row_style = app.theme.current_row_style();
     let striped_row_style = app.theme.striped_row_style();
-    let today = Local::now().date_naive();
+    let today = tokscale_core::bucket_timezone().today();
 
     // Date format adapts to *available* width, not just the narrow breakpoint.
     // In full mode the table can still be wider than the terminal, so the year

@@ -33,6 +33,10 @@ walkdir = "2"
 
 # Date/time handling
 chrono = { version = "0.4", features = ["serde"] }
+# Pinned IANA timezones for stable date bucketing (travel-proof submit)
+chrono-tz = "0.10"
+# System IANA timezone detection (bootstraps the pinned bucketing timezone)
+iana-time-zone = "0.1"
 
 # Error handling
 thiserror = "2"

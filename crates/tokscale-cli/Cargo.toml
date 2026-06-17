@@ -27,6 +27,8 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 toml = { workspace = true }
 chrono = { workspace = true }
+chrono-tz = { workspace = true }
+iana-time-zone = { workspace = true }
 dirs = { workspace = true }
 rayon = { workspace = true }
 arboard = { workspace = true }

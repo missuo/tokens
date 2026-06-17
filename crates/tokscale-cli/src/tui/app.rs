@@ -940,7 +940,7 @@ impl App {
         }
         self.selected_daily_detail_date = None;
 
-        let today = chrono::Local::now().date_naive();
+        let today = tokscale_core::bucket_timezone().today();
         let (today_index, total_len) = {
             let sorted_daily = self.get_sorted_daily();
             (

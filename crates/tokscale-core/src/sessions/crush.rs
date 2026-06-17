@@ -7,7 +7,6 @@
 use super::utils::open_readonly_sqlite;
 use super::UnifiedMessage;
 use crate::TokenBreakdown;
-use chrono::{Local, TimeZone};
 use rusqlite::Connection;
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
@@ -218,9 +217,11 @@ fn normalize_crush_timestamp_ms(raw: i64) -> Option<i64> {
 }
 
 fn local_day_key(timestamp_ms: i64) -> Option<String> {
-    match Local.timestamp_millis_opt(timestamp_ms) {
-        chrono::LocalResult::Single(dt) => Some(dt.format("%Y-%m-%d").to_string()),
-        _ => None,
+    let date = crate::bucket_tz::bucket_timezone().date_of_ms(timestamp_ms);
+    if date.is_empty() {
+        None
+    } else {
+        Some(date)
     }
 }
 
