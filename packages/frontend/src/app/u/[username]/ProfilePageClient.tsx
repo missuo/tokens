@@ -10,10 +10,12 @@ import {
   ProfileEmptyActivity,
   ProfileStats,
   ProfileHabits,
+  ProfileDevices,
   type ProfileUser,
   type ProfileStatsData,
   type ProfileTab,
   type ModelUsage,
+  type ProfileDevice,
 } from "@/components/profile";
 import type { TokenContributionData, DailyContribution, ClientType } from "@/lib/types";
 
@@ -53,11 +55,13 @@ interface ProfileData {
 interface ProfilePageClientProps {
   initialData: ProfileData;
   username: string;
+  initialDevices?: ProfileDevice[];
 }
 
-export default function ProfilePageClient({ initialData }: ProfilePageClientProps) {
+export default function ProfilePageClient({ initialData, initialDevices }: ProfilePageClientProps) {
   const [activeTab, setActiveTab] = useState<ProfileTab>("activity");
   const data = initialData;
+  const devices = initialDevices ?? [];
 
   const graphData: TokenContributionData | null = useMemo(() => {
     if (!data || data.contributions.length === 0) return null;
@@ -160,7 +164,7 @@ const EARLY_ADOPTERS = ["code-yeongyu", "gtg7784", "qodot"];
         <div className="flex flex-col gap-8">
           <ProfileHeader user={user} stats={stats} lastUpdated={data.updatedAt || undefined} />
 
-          <ProfileTabBar activeTab={activeTab} onTabChange={setActiveTab} />
+          <ProfileTabBar activeTab={activeTab} onTabChange={setActiveTab} hasDevices={devices.length > 0} />
 
           {activeTab === "activity" && (
             <div role="tabpanel" id="tabpanel-activity" aria-labelledby="tab-activity">
@@ -186,6 +190,11 @@ const EARLY_ADOPTERS = ["code-yeongyu", "gtg7784", "qodot"];
           {activeTab === "models" && (
             <div role="tabpanel" id="tabpanel-models" aria-labelledby="tab-models">
               <ProfileModels models={data.models} modelUsage={data.modelUsage} />
+            </div>
+          )}
+          {activeTab === "devices" && (
+            <div role="tabpanel" id="tabpanel-devices" aria-labelledby="tab-devices">
+              <ProfileDevices devices={devices} />
             </div>
           )}
         </div>

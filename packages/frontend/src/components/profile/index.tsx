@@ -5,7 +5,7 @@ import { Button } from "@heroui/react";
 import { toast } from "react-toastify";
 import { GraphContainer } from "@/components/GraphContainer";
 import type { TokenContributionData } from "@/lib/types";
-import { formatNumber, formatCurrency, formatDuration, formatDateFull } from "@/lib/utils";
+import { formatNumber, formatCurrency, formatDuration, formatDateFull, formatRelativeTime } from "@/lib/utils";
 import type { DailyContribution } from "@/lib/types";
 import { ProfileEmbedDialog } from "./ProfileEmbedDialog";
 
@@ -158,18 +158,21 @@ export function ProfileHeader({ user, stats, lastUpdated }: ProfileHeaderProps) 
   );
 }
 
-export type ProfileTab = "activity" | "breakdown" | "models";
+export type ProfileTab = "activity" | "breakdown" | "models" | "devices";
 
 export interface ProfileTabBarProps {
   activeTab: ProfileTab;
   onTabChange: (tab: ProfileTab) => void;
+  /** Show the Devices tab only when the profile has recorded devices. */
+  hasDevices?: boolean;
 }
 
-export function ProfileTabBar({ activeTab, onTabChange }: ProfileTabBarProps) {
+export function ProfileTabBar({ activeTab, onTabChange, hasDevices = false }: ProfileTabBarProps) {
   const tabs: { id: ProfileTab; label: string }[] = [
     { id: "activity", label: "Activity" },
     { id: "breakdown", label: "Token Breakdown" },
     { id: "models", label: "Models Used" },
+    ...(hasDevices ? [{ id: "devices" as ProfileTab, label: "Devices" }] : []),
   ];
 
   const handleKeyDown = (e: React.KeyboardEvent, currentIndex: number) => {
@@ -473,6 +476,73 @@ export function ProfileModels({ models, modelUsage }: ProfileModelsProps) {
             <div className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: getModelColor(model) }} />
             {model}
           </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Shape returned by GET /api/users/[username]/devices — the route already
+ * coerces the SQL SUM strings to numbers and applies the display-name fallback.
+ */
+export interface ProfileDevice {
+  id: string;
+  deviceKey: string;
+  displayName: string;
+  createdAt: string | null;
+  lastSubmittedAt: string | null;
+  totalTokens: number;
+  totalCost: number;
+  inputTokens: number;
+  outputTokens: number;
+  activeDays: number;
+  firstDay: string | null;
+  lastDay: string | null;
+}
+
+export interface ProfileDevicesProps {
+  devices: ProfileDevice[];
+}
+
+/**
+ * Per-device usage breakdown for the public profile. Renders nothing when the
+ * user has no recorded devices (pre-device legacy profiles), so the caller can
+ * drop it in unconditionally.
+ */
+export function ProfileDevices({ devices }: ProfileDevicesProps) {
+  if (devices.length === 0) return null;
+
+  return (
+    <div className="overflow-hidden rounded-2xl border border-line bg-surface">
+      <div className="grid grid-cols-[1fr_auto_auto] gap-3 border-b border-line bg-surface-secondary px-3 py-3 text-xs font-medium tracking-wider text-muted uppercase sm:px-6 min-[480px]:grid-cols-[1fr_auto_auto_auto] min-[480px]:gap-4 min-[480px]:px-4">
+        <div>Device</div>
+        <div className="w-20 text-right sm:w-24">Tokens</div>
+        <div className="w-16 text-right sm:w-20">Cost</div>
+        <div className="hidden w-14 text-right sm:w-16 min-[480px]:block">Days</div>
+      </div>
+
+      <div>
+        {devices.map((device, index) => (
+          <div
+            key={device.id}
+            className="grid grid-cols-[1fr_auto_auto] items-center gap-3 px-3 py-3 sm:px-6 min-[480px]:grid-cols-[1fr_auto_auto_auto] min-[480px]:gap-4 min-[480px]:px-4"
+            style={{ backgroundColor: index % 2 === 1 ? "var(--surface-secondary)" : "transparent", borderTop: index > 0 ? "1px solid var(--border)" : undefined }}
+          >
+            <div className="flex min-w-0 flex-col gap-0.5">
+              <span className="truncate text-[13px] font-medium text-foreground sm:text-sm">{device.displayName}</span>
+              <span className="text-xs text-muted">Last submit {formatRelativeTime(device.lastSubmittedAt)}</span>
+            </div>
+            <div className="w-20 text-right sm:w-24">
+              <span className="font-mono text-[13px] text-foreground tabular-nums sm:text-sm">{formatNumber(device.totalTokens)}</span>
+            </div>
+            <div className="w-16 text-right sm:w-20">
+              <span className="font-mono text-[13px] font-medium text-accent tabular-nums sm:text-sm">{formatCurrency(device.totalCost)}</span>
+            </div>
+            <div className="hidden w-14 text-right sm:w-16 min-[480px]:block">
+              <span className="font-mono text-[13px] text-muted tabular-nums sm:text-sm">{device.activeDays}</span>
+            </div>
+          </div>
         ))}
       </div>
     </div>

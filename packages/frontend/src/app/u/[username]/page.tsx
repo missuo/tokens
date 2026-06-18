@@ -18,8 +18,27 @@ async function getProfileData(username: string) {
   if (!res.ok) {
     return null;
   }
-  
+
   return res.json();
+}
+
+async function getDevices(username: string) {
+  const baseUrl = process.env.NEXT_PUBLIC_URL
+    || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null)
+    || 'http://127.0.0.1:3000';
+
+  // Tolerate failure: the Devices tab is supplementary, so a fetch error
+  // omits it rather than failing the whole profile page.
+  try {
+    const res = await fetch(`${baseUrl}/api/users/${username}/devices`, {
+      next: { revalidate: 60 },
+    });
+    if (!res.ok) return [];
+    const json = await res.json();
+    return Array.isArray(json?.devices) ? json.devices : [];
+  } catch {
+    return [];
+  }
 }
 
 export async function generateMetadata({ params }: { params: Promise<{ username: string }> }): Promise<Metadata> {
@@ -52,8 +71,11 @@ export async function generateMetadata({ params }: { params: Promise<{ username:
 
 export default async function ProfilePage({ params }: { params: Promise<{ username: string }> }) {
   const { username } = await params;
-  const data = await getProfileData(username);
-  
+  const [data, devices] = await Promise.all([
+    getProfileData(username),
+    getDevices(username),
+  ]);
+
   if (!data) {
     notFound();
   }
@@ -61,6 +83,6 @@ export default async function ProfilePage({ params }: { params: Promise<{ userna
   if (data.user?.username && data.user.username !== username) {
     permanentRedirect(`/u/${data.user.username}`);
   }
-  
-  return <ProfilePageClient initialData={data} username={username} />;
+
+  return <ProfilePageClient initialData={data} username={username} initialDevices={devices} />;
 }

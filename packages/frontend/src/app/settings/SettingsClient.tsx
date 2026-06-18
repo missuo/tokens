@@ -84,6 +84,10 @@ export default function SettingsClient() {
   const [submission, setSubmission] = useState<SubmissionRecord | null>(null);
   const [submissionDevices, setSubmissionDevices] = useState<SubmissionDevice[]>([]);
   const [deletingData, setDeletingData] = useState(false);
+  const [editingDeviceId, setEditingDeviceId] = useState<string | null>(null);
+  const [editingDeviceName, setEditingDeviceName] = useState("");
+  const [renamingDeviceId, setRenamingDeviceId] = useState<string | null>(null);
+  const [renameError, setRenameError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -164,6 +168,51 @@ export default function SettingsClient() {
       alert("Failed to delete submitted data");
     } finally {
       setDeletingData(false);
+    }
+  };
+
+  const startEditingDevice = (device: SubmissionDevice) => {
+    setEditingDeviceId(device.id);
+    setEditingDeviceName(device.displayName ?? "");
+    setRenameError(null);
+  };
+
+  const cancelEditingDevice = () => {
+    setEditingDeviceId(null);
+    setEditingDeviceName("");
+    setRenameError(null);
+  };
+
+  const handleRenameDevice = async (deviceId: string) => {
+    const trimmed = editingDeviceName.trim();
+    // Mirror the server's RenameBodySchema: <=120 chars, no control characters.
+    if (trimmed.length > 120) {
+      setRenameError("Name must be 120 characters or fewer.");
+      return;
+    }
+    if (/\p{C}/u.test(trimmed)) {
+      setRenameError("Name must not contain control characters.");
+      return;
+    }
+    setRenamingDeviceId(deviceId);
+    setRenameError(null);
+    try {
+      const response = await fetch(`/api/settings/devices/${deviceId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: trimmed === "" ? null : trimmed }),
+      });
+      const data = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(data?.error || "Failed to rename device");
+      const newName = (data?.device?.displayName ?? null) as string | null;
+      setSubmissionDevices((current) =>
+        current.map((d) => (d.id === deviceId ? { ...d, displayName: newName } : d))
+      );
+      cancelEditingDevice();
+    } catch (error) {
+      setRenameError(error instanceof Error ? error.message : "Failed to rename device");
+    } finally {
+      setRenamingDeviceId(null);
     }
   };
 
@@ -404,27 +453,80 @@ export default function SettingsClient() {
               <div className="divide-y divide-line overflow-hidden rounded-lg border border-line">
                 {submissionDevices.map((d) => (
                   <div key={d.id} className="flex flex-wrap items-center justify-between gap-4 bg-surface-secondary p-4">
-                    <div className="min-w-0">
-                      <p className="truncate font-medium text-foreground">{d.displayName || "Unnamed device"}</p>
-                      <p className="text-xs text-muted">
-                        {d.lastSubmittedAt ? (
-                          <>Last submitted <span className="font-mono tabular-nums">{new Date(d.lastSubmittedAt).toLocaleDateString()}</span></>
-                        ) : (
-                          "No submissions yet"
-                        )}
-                        {" · "}<span className="font-mono tabular-nums">{d.activeDays}</span> active days
-                      </p>
+                    <div className="min-w-0 flex-1">
+                      {editingDeviceId === d.id ? (
+                        <div>
+                          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                            <input
+                              value={editingDeviceName}
+                              onChange={(e) => setEditingDeviceName(e.target.value)}
+                              maxLength={120}
+                              autoFocus
+                              placeholder="Unnamed device"
+                              aria-label="Device name"
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") handleRenameDevice(d.id);
+                                if (e.key === "Escape") cancelEditingDevice();
+                              }}
+                              className="min-w-0 flex-1 rounded-lg border border-line bg-surface px-3 py-1.5 text-sm text-foreground outline-none transition focus:border-accent focus:ring-2 focus:ring-accent/25"
+                            />
+                            <div className="flex shrink-0 gap-2">
+                              <Button
+                                size="sm"
+                                isDisabled={renamingDeviceId === d.id}
+                                onPress={() => handleRenameDevice(d.id)}
+                                className="h-8 rounded-lg bg-accent px-3 text-sm font-semibold text-accent-foreground transition hover:opacity-90 disabled:opacity-60"
+                              >
+                                {renamingDeviceId === d.id ? "Saving…" : "Save"}
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                isDisabled={renamingDeviceId === d.id}
+                                onPress={cancelEditingDevice}
+                                className="h-8 rounded-lg border border-line bg-surface px-3 text-sm font-medium text-foreground transition hover:bg-surface-secondary disabled:opacity-60"
+                              >
+                                Cancel
+                              </Button>
+                            </div>
+                          </div>
+                          {renameError && <p className="mt-1.5 text-[13px] text-danger">{renameError}</p>}
+                          <p className="mt-1.5 text-xs text-muted">Leave empty to clear the custom name.</p>
+                        </div>
+                      ) : (
+                        <>
+                          <p className="truncate font-medium text-foreground">{d.displayName || "Unnamed device"}</p>
+                          <p className="text-xs text-muted">
+                            {d.lastSubmittedAt ? (
+                              <>Last submitted <span className="font-mono tabular-nums">{new Date(d.lastSubmittedAt).toLocaleDateString()}</span></>
+                            ) : (
+                              "No submissions yet"
+                            )}
+                            {" · "}<span className="font-mono tabular-nums">{d.activeDays}</span> active days
+                          </p>
+                        </>
+                      )}
                     </div>
-                    <div className="flex shrink-0 items-center gap-5">
-                      <div className="text-right">
-                        <p className="text-[11px] font-semibold tracking-wider text-muted uppercase">Tokens</p>
-                        <p className="font-mono text-sm font-semibold text-accent tabular-nums" title={d.tokens.toLocaleString()}>{formatNumber(d.tokens)}</p>
+                    {editingDeviceId !== d.id && (
+                      <div className="flex shrink-0 items-center gap-5">
+                        <div className="text-right">
+                          <p className="text-[11px] font-semibold tracking-wider text-muted uppercase">Tokens</p>
+                          <p className="font-mono text-sm font-semibold text-accent tabular-nums" title={d.tokens.toLocaleString()}>{formatNumber(d.tokens)}</p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-[11px] font-semibold tracking-wider text-muted uppercase">Cost</p>
+                          <p className="font-mono text-sm font-medium text-foreground tabular-nums">{formatCurrency(d.cost)}</p>
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onPress={() => startEditingDevice(d)}
+                          className="h-8 shrink-0 rounded-lg border border-line bg-surface px-3 text-sm font-medium text-foreground transition hover:border-foreground/20 hover:bg-surface-secondary"
+                        >
+                          Rename
+                        </Button>
                       </div>
-                      <div className="text-right">
-                        <p className="text-[11px] font-semibold tracking-wider text-muted uppercase">Cost</p>
-                        <p className="font-mono text-sm font-medium text-foreground tabular-nums">{formatCurrency(d.cost)}</p>
-                      </div>
-                    </div>
+                    )}
                   </div>
                 ))}
               </div>
