@@ -56,7 +56,7 @@ pub async fn fetch() -> Result<PricingDataset, reqwest::Error> {
 
                 if status.is_server_error() || status == reqwest::StatusCode::TOO_MANY_REQUESTS {
                     eprintln!(
-                        "[tokscale] LiteLLM HTTP {} (attempt {}/{})",
+                        "[tokens] LiteLLM HTTP {} (attempt {}/{})",
                         status,
                         attempt + 1,
                         MAX_RETRIES
@@ -72,7 +72,7 @@ pub async fn fetch() -> Result<PricingDataset, reqwest::Error> {
                 }
 
                 if !status.is_success() {
-                    eprintln!("[tokscale] LiteLLM HTTP {}", status);
+                    eprintln!("[tokens] LiteLLM HTTP {}", status);
                     return Err(response.error_for_status().unwrap_err());
                 }
 
@@ -80,7 +80,7 @@ pub async fn fetch() -> Result<PricingDataset, reqwest::Error> {
                     Ok(data) => {
                         if let Err(e) = cache::save_cache(CACHE_FILENAME, &data) {
                             eprintln!(
-                                "[tokscale] Warning: Failed to cache LiteLLM pricing at {}: {}",
+                                "[tokens] Warning: Failed to cache LiteLLM pricing at {}: {}",
                                 cache::get_cache_path(CACHE_FILENAME).display(),
                                 e
                             );
@@ -88,14 +88,14 @@ pub async fn fetch() -> Result<PricingDataset, reqwest::Error> {
                         return Ok(data);
                     }
                     Err(e) => {
-                        eprintln!("[tokscale] LiteLLM JSON parse failed: {}", e);
+                        eprintln!("[tokens] LiteLLM JSON parse failed: {}", e);
                         return Err(e);
                     }
                 }
             }
             Err(e) => {
                 eprintln!(
-                    "[tokscale] LiteLLM network error (attempt {}/{}): {}",
+                    "[tokens] LiteLLM network error (attempt {}/{}): {}",
                     attempt + 1,
                     MAX_RETRIES,
                     e

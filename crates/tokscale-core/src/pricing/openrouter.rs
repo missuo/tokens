@@ -227,14 +227,14 @@ pub async fn fetch_all_models() -> HashMap<String, ModelPricing> {
             }
 
             if !status.is_success() {
-                eprintln!("[tokscale] OpenRouter models API returned {}", status);
+                eprintln!("[tokens] OpenRouter models API returned {}", status);
                 break 'retry Vec::new();
             }
 
             let data: ModelsListResponse = match response.json().await {
                 Ok(d) => d,
                 Err(e) => {
-                    eprintln!("[tokscale] OpenRouter models JSON parse failed: {}", e);
+                    eprintln!("[tokens] OpenRouter models JSON parse failed: {}", e);
                     break 'retry Vec::new();
                 }
             };
@@ -261,7 +261,7 @@ pub async fn fetch_all_models() -> HashMap<String, ModelPricing> {
 
         if let Some(err) = &last_error {
             eprintln!(
-                "[tokscale] OpenRouter fetch failed after {} retries: {}",
+                "[tokens] OpenRouter fetch failed after {} retries: {}",
                 MAX_RETRIES, err
             );
         }
@@ -305,7 +305,7 @@ pub async fn fetch_all_models() -> HashMap<String, ModelPricing> {
     if !result.is_empty() {
         if let Err(e) = cache::save_cache(CACHE_FILENAME, &result) {
             eprintln!(
-                "[tokscale] Warning: Failed to cache OpenRouter pricing at {}: {}",
+                "[tokens] Warning: Failed to cache OpenRouter pricing at {}: {}",
                 cache::get_cache_path(CACHE_FILENAME).display(),
                 e
             );

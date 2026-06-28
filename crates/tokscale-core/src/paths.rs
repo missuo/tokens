@@ -73,11 +73,11 @@ pub fn is_config_dir_overridden() -> bool {
     std::env::var_os("TOKENS_CONFIG_DIR").is_some_and(|v| !v.is_empty())
 }
 
-/// Pre-#470 cache directory at `dirs::cache_dir()/tokscale`.
+/// Pre-#470 cache directory at `dirs::cache_dir()/tokens`.
 ///
 /// On macOS this resolves to `~/Library/Caches/tokens/` (where the
 /// source-message-cache, pricing caches, and opencode-migration.json
-/// historically lived). On Linux this resolves to `$XDG_CACHE_HOME/tokscale`
+/// historically lived). On Linux this resolves to `$XDG_CACHE_HOME/tokens`
 /// or `~/.cache/tokens/`.
 ///
 /// Returns `None` when `TOKENS_CONFIG_DIR` is set so the override stays
@@ -99,7 +99,7 @@ pub fn legacy_dirs_cache_dir() -> Option<PathBuf> {
 ///
 /// Returns `None` when `TOKENS_CONFIG_DIR` is set or HOME cannot be
 /// resolved.
-pub fn legacy_dot_cache_tokscale_dir() -> Option<PathBuf> {
+pub fn legacy_dot_cache_tokens_dir() -> Option<PathBuf> {
     if is_config_dir_overridden() {
         return None;
     }
@@ -214,7 +214,7 @@ mod tests {
             env::set_var("TOKENS_CONFIG_DIR", "/tmp/tokscale-override");
         }
         assert!(legacy_dirs_cache_dir().is_none());
-        assert!(legacy_dot_cache_tokscale_dir().is_none());
+        assert!(legacy_dot_cache_tokens_dir().is_none());
         restore_env(prev);
     }
 
@@ -230,7 +230,7 @@ mod tests {
             "dirs::cache_dir always resolves on test platforms"
         );
         assert!(
-            legacy_dot_cache_tokscale_dir().is_some(),
+            legacy_dot_cache_tokens_dir().is_some(),
             "HOME is set in test environments"
         );
         restore_env(prev);

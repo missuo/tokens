@@ -10,11 +10,20 @@ use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
-// 17: UnifiedMessage gained `agent_run_id` (per-invocation key for the opt-in
-// subagent breakdown) and Codex fork logs now skip replayed parent usage (#649).
-// 18: codex token_count dedup key scoped to the fork parent (#681); cached
-// messages store their dedup_key, so old entries must be reparsed.
-const CACHE_SCHEMA_VERSION: u32 = 18;
+// 22: Codex fork-replay gate now recognizes a same-millisecond user-fork
+// (`thread_source:"user"`) turn without a `task_started`, adding
+// CodexParseState.forked_child_is_user_fork to the cached incremental state;
+// older cached entries must reparse.
+// 21: Codex fork-replay gate now disambiguates a same-millisecond turn via a
+// `task_started` turn_id, adding CodexParseState.forked_child_task_started_turn_ids
+// to the cached incremental state; older cached entries must reparse.
+// 20: Codex fork replay parsing now keeps user-fork turns after repeated child
+// session_meta rows; cached Codex entries from older parser logic can be empty.
+// (19 was the jcode parser change in #718 — bump again so those caches reparse.)
+// 23: Jcode parser now does journal-wins merge (first-occurrence-targeted) and
+// timezone-less timestamp parsing; schema-22 caches return stale snapshot
+// token_usage, so invalidate them.
+const CACHE_SCHEMA_VERSION: u32 = 23;
 const CACHE_FILENAME: &str = "source-message-cache.bin";
 const CACHE_LOCK_FILENAME: &str = "source-message-cache.lock";
 const MAX_CACHE_FILE_BYTES: u64 = 256 * 1024 * 1024;
@@ -48,7 +57,7 @@ fn legacy_cache_paths() -> Vec<PathBuf> {
 
     [
         crate::paths::legacy_dirs_cache_dir().map(|d| d.join(CACHE_FILENAME)),
-        crate::paths::legacy_dot_cache_tokscale_dir().map(|d| d.join(CACHE_FILENAME)),
+        crate::paths::legacy_dot_cache_tokens_dir().map(|d| d.join(CACHE_FILENAME)),
     ]
     .into_iter()
     .flatten()
@@ -58,7 +67,7 @@ fn legacy_cache_paths() -> Vec<PathBuf> {
 fn fallback_cache_dir() -> Option<PathBuf> {
     std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
-        .map(|path| path.join("tokens"))
+        .map(|path| path.join("tokscale"))
         .or_else(user_scoped_temp_dir)
 }
 
@@ -131,6 +140,32 @@ impl SourceFingerprint {
         let related_paths = ["-wal"]
             .into_iter()
             .map(|suffix| (suffix.to_string(), append_path_suffix(path, suffix)));
+        Self::from_path_with_related(path, related_paths)
+    }
+
+    /// Fingerprint for a Jcode session snapshot and its append-only journal
+    /// sidecar. Jcode persists recent changes in `session_*.journal.jsonl`
+    /// until the next checkpoint rewrites the snapshot, so the source-message
+    /// cache must invalidate when either file changes.
+    pub(crate) fn from_jcode_path(path: &Path) -> Option<Self> {
+        let related_paths = std::iter::once((
+            ".journal.jsonl".to_string(),
+            crate::sessions::jcode::jcode_journal_path(path),
+        ));
+        Self::from_path_with_related(path, related_paths)
+    }
+
+    /// Fingerprint for a Roo-family task (`ui_messages.json`) and its sibling
+    /// `api_conversation_history.json`. `parse_roo_kilo_file` reads the history
+    /// sibling for the model and agent, so a history-only rewrite (the UI file
+    /// unchanged) must still invalidate the cache or reports keep stale
+    /// model/agent/pricing.
+    pub(crate) fn from_roo_path(path: &Path) -> Option<Self> {
+        let history = path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join("api_conversation_history.json");
+        let related_paths = std::iter::once(("api_conversation_history.json".to_string(), history));
         Self::from_path_with_related(path, related_paths)
     }
 
@@ -716,6 +751,37 @@ mod tests {
     use std::io::Write;
     use tempfile::{NamedTempFile, TempDir};
 
+    #[test]
+    fn from_roo_path_invalidates_on_history_only_change() {
+        // parse_roo_kilo_file reads model/agent from the sibling
+        // api_conversation_history.json, so a history-only rewrite (ui_messages
+        // byte-identical) must change the fingerprint or the cache serves stale
+        // model/agent/pricing.
+        let dir = TempDir::new().unwrap();
+        let ui = dir.path().join("ui_messages.json");
+        std::fs::write(&ui, b"[]").unwrap();
+        let history = dir.path().join("api_conversation_history.json");
+        std::fs::write(&history, b"<model>claude-sonnet-4</model>").unwrap();
+
+        let roo_before = SourceFingerprint::from_roo_path(&ui).unwrap();
+        let plain_before = SourceFingerprint::from_path(&ui).unwrap();
+
+        // Rewrite the history only; leave ui_messages.json byte-identical.
+        std::fs::write(&history, b"<model>claude-opus-4</model>").unwrap();
+
+        let roo_after = SourceFingerprint::from_roo_path(&ui).unwrap();
+        let plain_after = SourceFingerprint::from_path(&ui).unwrap();
+
+        assert_ne!(
+            roo_before, roo_after,
+            "a history-only change must alter the roo fingerprint"
+        );
+        assert_eq!(
+            plain_before, plain_after,
+            "from_path ignores the history sibling (control)"
+        );
+    }
+
     fn restore_env_var(key: &str, value: Option<impl AsRef<std::ffi::OsStr>>) {
         unsafe {
             match value {
@@ -839,6 +905,34 @@ mod tests {
         std::fs::write(&shm_path, b"shm-1").unwrap();
         let with_shm = SourceFingerprint::from_sqlite_path(&db_path).unwrap();
         assert_eq!(before_shm, with_shm);
+    }
+
+    #[test]
+    fn test_jcode_fingerprint_tracks_journal_sidecar_changes() {
+        let dir = TempDir::new().unwrap();
+        let session_path = dir.path().join("session_fixture.json");
+        std::fs::write(&session_path, br#"{"messages":[]}"#).unwrap();
+
+        let base = SourceFingerprint::from_jcode_path(&session_path).unwrap();
+
+        let journal_path = dir.path().join("session_fixture.journal.jsonl");
+        std::fs::write(
+            &journal_path,
+            br#"{"append_messages":[]}
+"#,
+        )
+        .unwrap();
+        let with_journal = SourceFingerprint::from_jcode_path(&session_path).unwrap();
+        assert_ne!(base, with_journal);
+
+        std::fs::write(
+            &journal_path,
+            br#"{"append_messages":[{"id":"assistant_1"}]}
+"#,
+        )
+        .unwrap();
+        let updated_journal = SourceFingerprint::from_jcode_path(&session_path).unwrap();
+        assert_ne!(with_journal, updated_journal);
     }
 
     #[test]
@@ -1132,7 +1226,7 @@ mod tests {
         {
             assert_eq!(
                 fallback_cache_dir(),
-                Some(runtime_dir.path().join("tokens"))
+                Some(runtime_dir.path().join("tokscale"))
             );
         }
 
@@ -1292,12 +1386,12 @@ mod tests {
         let original_home = std::env::var_os("HOME");
         let original_xdg_cache = std::env::var_os("XDG_CACHE_HOME");
         let original_xdg_config = std::env::var_os("XDG_CONFIG_HOME");
-        let original_override = std::env::var_os("TOKENS_CONFIG_DIR");
+        let original_override = std::env::var_os("TOKSCALE_CONFIG_DIR");
 
         restore_env_var("HOME", Some(temp_home.path()));
         restore_env_var("XDG_CACHE_HOME", Some(temp_xdg_cache.path()));
         restore_env_var("XDG_CONFIG_HOME", Some(temp_home.path().join(".config")));
-        restore_env_var("TOKENS_CONFIG_DIR", None::<&str>);
+        restore_env_var("TOKSCALE_CONFIG_DIR", None::<&str>);
 
         let source = write_temp_file(b"legacy-dirs\n");
         let entry = CachedSourceEntry::new(
@@ -1325,7 +1419,7 @@ mod tests {
         restore_env_var("HOME", original_home);
         restore_env_var("XDG_CACHE_HOME", original_xdg_cache);
         restore_env_var("XDG_CONFIG_HOME", original_xdg_config);
-        restore_env_var("TOKENS_CONFIG_DIR", original_override);
+        restore_env_var("TOKSCALE_CONFIG_DIR", original_override);
     }
 
     #[test]
@@ -1335,12 +1429,12 @@ mod tests {
         let original_home = std::env::var_os("HOME");
         let original_xdg_cache = std::env::var_os("XDG_CACHE_HOME");
         let original_xdg_config = std::env::var_os("XDG_CONFIG_HOME");
-        let original_override = std::env::var_os("TOKENS_CONFIG_DIR");
+        let original_override = std::env::var_os("TOKSCALE_CONFIG_DIR");
 
         restore_env_var("HOME", Some(temp_home.path()));
         restore_env_var("XDG_CACHE_HOME", None::<&str>);
         restore_env_var("XDG_CONFIG_HOME", Some(temp_home.path().join(".config")));
-        restore_env_var("TOKENS_CONFIG_DIR", None::<&str>);
+        restore_env_var("TOKSCALE_CONFIG_DIR", None::<&str>);
 
         let source = write_temp_file(b"legacy-dot\n");
         let entry = CachedSourceEntry::new(
@@ -1351,7 +1445,7 @@ mod tests {
             None,
         );
 
-        let legacy_path = crate::paths::legacy_dot_cache_tokscale_dir()
+        let legacy_path = crate::paths::legacy_dot_cache_tokens_dir()
             .unwrap()
             .join(CACHE_FILENAME);
         ensure_cache_dir(legacy_path.parent().unwrap()).unwrap();
@@ -1368,7 +1462,7 @@ mod tests {
         restore_env_var("HOME", original_home);
         restore_env_var("XDG_CACHE_HOME", original_xdg_cache);
         restore_env_var("XDG_CONFIG_HOME", original_xdg_config);
-        restore_env_var("TOKENS_CONFIG_DIR", original_override);
+        restore_env_var("TOKSCALE_CONFIG_DIR", original_override);
     }
 
     #[cfg(unix)]

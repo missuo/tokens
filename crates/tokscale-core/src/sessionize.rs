@@ -355,15 +355,10 @@ where
 }
 
 /// Active time for a single local day, bucketed by client (milliseconds).
-///
-/// Same local-day attribution as [`compute_daily_active_time`]: an interval
-/// straddling midnight contributes only the portion falling inside `day`. Each
-/// client is summed independently, so two AIs used in parallel both count their
-/// own focused time. Powers the menu bar's per-AI work-time cards.
 pub fn compute_active_time_by_client_for_day(
     intervals: &[SessionInterval],
     day: &str,
-) -> HashMap<String, i64> {
+) -> std::collections::HashMap<String, i64> {
     match crate::bucket_tz::bucket_timezone() {
         crate::bucket_tz::BucketTimezone::Local => {
             compute_active_time_by_client_for_day_with_timezone(intervals, day, &chrono::Local)
@@ -378,26 +373,23 @@ fn compute_active_time_by_client_for_day_with_timezone<Tz>(
     intervals: &[SessionInterval],
     day: &str,
     timezone: &Tz,
-) -> HashMap<String, i64>
+) -> std::collections::HashMap<String, i64>
 where
     Tz: chrono::TimeZone,
 {
     let Ok(date) = chrono::NaiveDate::parse_from_str(day, "%Y-%m-%d") else {
-        return HashMap::new();
+        return std::collections::HashMap::new();
     };
     let Some(day_start) = local_day_start(date, timezone) else {
-        return HashMap::new();
+        return std::collections::HashMap::new();
     };
     let Some(next_day_start) = date.succ_opt().and_then(|next| local_day_start(next, timezone))
     else {
-        return HashMap::new();
+        return std::collections::HashMap::new();
     };
 
-    // Collect each client's active spans that land inside the day. A client often
-    // runs several sessions at once (a main session plus its subagents), so summing
-    // per-session durations would double-count overlapping wall-clock time and can
-    // exceed 24h. Instead union each client's spans and measure the covered time.
-    let mut spans_by_client: HashMap<String, Vec<(i64, i64)>> = HashMap::new();
+    let mut spans_by_client: std::collections::HashMap<String, Vec<(i64, i64)>> =
+        std::collections::HashMap::new();
     for interval in intervals {
         if interval.active_duration_ms <= 0 {
             continue;
@@ -534,10 +526,8 @@ mod tests {
             .unwrap()
             .timestamp_millis();
         let msgs = vec![
-            // claude: two messages 1 min apart → one block, 60s active
             make_msg("claude", "c1", base),
             make_msg("claude", "c1", base + 60_000),
-            // codex: two messages 2 min apart → one block, 120s active
             make_msg("codex", "x1", base),
             make_msg("codex", "x1", base + 120_000),
         ];
@@ -546,7 +536,6 @@ mod tests {
             compute_active_time_by_client_for_day_with_timezone(&intervals, "2024-01-01", &tz);
         assert_eq!(by_client.get("claude"), Some(&60_000));
         assert_eq!(by_client.get("codex"), Some(&120_000));
-        // A different day sees none of this activity.
         let empty =
             compute_active_time_by_client_for_day_with_timezone(&intervals, "2024-01-02", &tz);
         assert!(empty.is_empty());
@@ -560,7 +549,6 @@ mod tests {
             .unwrap()
             .timestamp_millis();
         let hour = 3_600_000i64;
-        // Two overlapping claude sessions (main + subagent): [0h, 1h] and [0.5h, 1.5h].
         let msgs = vec![
             make_timed_msg("claude", "main", base, hour),
             make_timed_msg("claude", "subagent", base + hour / 2, hour),
@@ -568,7 +556,6 @@ mod tests {
         let intervals = sessionize(&msgs, DEFAULT_IDLE_GAP_MS);
         let by_client =
             compute_active_time_by_client_for_day_with_timezone(&intervals, "2024-01-01", &tz);
-        // Union of [0,60m] and [30m,90m] is 90m — NOT 60m + 60m = 120m.
         assert_eq!(by_client.get("claude"), Some(&(hour + hour / 2)));
     }
 

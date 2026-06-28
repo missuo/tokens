@@ -23,7 +23,7 @@ impl PathRoot {
             }
             PathRoot::Config => {
                 if use_env_roots {
-                    if let Some(custom) = std::env::var_os("TOKENS_CONFIG_DIR") {
+                    if let Some(custom) = std::env::var_os("TOKSCALE_CONFIG_DIR") {
                         if !custom.is_empty() {
                             return custom.to_string_lossy().into_owned();
                         }
@@ -38,14 +38,14 @@ impl PathRoot {
                 // Match paths::get_config_dir() platform branches so the
                 // scanner reads from the same root the writer (e.g.
                 // get_antigravity_cache_dir) targets. Hardcoding
-                // `{home}/.config/tokens` everywhere would diverge from
+                // `{home}/.config/tokscale` everywhere would diverge from
                 // dirs::config_dir() on Windows (where it resolves to
                 // %APPDATA%\tokscale), causing synced data to land in
                 // %APPDATA% while the scanner looks in %USERPROFILE%.
                 #[cfg(target_os = "windows")]
                 {
                     if let Some(dir) = dirs::config_dir() {
-                        return dir.join("tokens").to_string_lossy().into_owned();
+                        return dir.join("tokscale").to_string_lossy().into_owned();
                     }
                 }
 
@@ -438,6 +438,81 @@ define_clients!(
         headless: false,
         parse_local: true,
         submit_default: true
+    },
+    Jcode = 28 => {
+        id: "jcode",
+        root: PathRoot::EnvVar {
+            var: "JCODE_HOME",
+            fallback_relative: ".jcode",
+        },
+        relative: "sessions",
+        pattern: "session_*.json",
+        headless: false,
+        parse_local: true,
+        submit_default: true
+    },
+    CommandCode = 29 => {
+        id: "commandcode",
+        root: PathRoot::Home,
+        relative: ".commandcode/projects",
+        pattern: "*.jsonl",
+        headless: false,
+        parse_local: true,
+        submit_default: true
+    },
+    MiMoCode = 30 => {
+        id: "micode",
+        root: PathRoot::XdgData,
+        relative: "mimocode",
+        pattern: "*.db",
+        headless: false,
+        parse_local: true,
+        submit_default: true
+    },
+    // Antigravity CLI stores each conversation as a SQLite `.db` under
+    // `~/.gemini/antigravity-cli/conversations/`. Unlike the IDE-backed
+    // `Antigravity` client (which pulls usage from a running language server
+    // over RPC and caches JSONL under the config dir), the CLI usage sits on
+    // disk and is read directly — no RPC, no `antigravity sync` needed. Honors
+    // `GEMINI_CLI_HOME` so a relocated Gemini home is picked up.
+    AntigravityCli = 31 => {
+        id: "antigravity-cli",
+        root: PathRoot::EnvVar {
+            var: "GEMINI_CLI_HOME",
+            fallback_relative: ".gemini",
+        },
+        relative: "antigravity-cli/conversations",
+        pattern: "*.db",
+        headless: false,
+        parse_local: true,
+        submit_default: true
+    },
+    Junie = 32 => {
+        id: "junie",
+        root: PathRoot::Home,
+        relative: ".junie/sessions",
+        pattern: "events.jsonl",
+        headless: false,
+        parse_local: true,
+        submit_default: true
+    },
+    Zcode = 33 => {
+        id: "zcode",
+        root: PathRoot::Home,
+        relative: ".zcode/projects",
+        pattern: "*.jsonl",
+        headless: false,
+        parse_local: true,
+        submit_default: true
+    },
+    OpenCodeReview = 34 => {
+        id: "opencodereview",
+        root: PathRoot::Home,
+        relative: ".opencodereview/sessions",
+        pattern: "*.jsonl",
+        headless: false,
+        parse_local: true,
+        submit_default: true
     }
 );
 
@@ -490,7 +565,34 @@ mod tests {
 
     #[test]
     fn test_client_id_count() {
-        assert_eq!(ClientId::COUNT, 28);
+        assert_eq!(ClientId::COUNT, 35);
+    }
+
+    #[test]
+    fn test_commandcode_client_registered_as_local_session_source() {
+        let client =
+            ClientId::from_str("commandcode").expect("commandcode client should be registered");
+        assert_eq!(
+            client.data().resolve_path("/tmp/home"),
+            "/tmp/home/.commandcode/projects"
+        );
+        assert_eq!(client.data().pattern, "*.jsonl");
+        assert!(client.data().parse_local);
+        assert!(client.data().submit_default);
+        assert!(!client.data().headless);
+    }
+
+    #[test]
+    fn test_junie_client_registered_as_local_session_source() {
+        let client = ClientId::from_str("junie").expect("junie client should be registered");
+        assert_eq!(
+            client.data().resolve_path("/tmp/home"),
+            "/tmp/home/.junie/sessions"
+        );
+        assert_eq!(client.data().pattern, "events.jsonl");
+        assert!(client.data().parse_local);
+        assert!(client.data().submit_default);
+        assert!(!client.data().headless);
     }
 
     #[test]
@@ -520,6 +622,15 @@ mod tests {
         let client = ClientId::from_str("grok").expect("grok client should be registered");
         assert_eq!(client.data().relative_path, "sessions");
         assert_eq!(client.data().pattern, "updates.jsonl");
+        assert!(client.data().parse_local);
+        assert!(client.data().submit_default);
+    }
+
+    #[test]
+    fn test_jcode_client_registered_as_local_session_source() {
+        let client = ClientId::from_str("jcode").expect("jcode client should be registered");
+        assert_eq!(client.data().relative_path, "sessions");
+        assert_eq!(client.data().pattern, "session_*.json");
         assert!(client.data().parse_local);
         assert!(client.data().submit_default);
     }
@@ -569,17 +680,17 @@ mod tests {
     #[test]
     fn test_path_root_config_uses_override_when_set() {
         let _guard = env_lock().lock().unwrap();
-        let previous_override = std::env::var("TOKENS_CONFIG_DIR").ok();
+        let previous_override = std::env::var("TOKSCALE_CONFIG_DIR").ok();
         let previous_xdg = std::env::var("XDG_CONFIG_HOME").ok();
         unsafe {
-            std::env::set_var("TOKENS_CONFIG_DIR", "/tmp/custom-config-root");
+            std::env::set_var("TOKSCALE_CONFIG_DIR", "/tmp/custom-config-root");
             std::env::set_var("XDG_CONFIG_HOME", "/tmp/xdg-config-home");
         }
 
         let resolved = PathRoot::Config.resolve("/tmp/home");
         assert_eq!(resolved, "/tmp/custom-config-root");
 
-        restore_env("TOKENS_CONFIG_DIR", previous_override);
+        restore_env("TOKSCALE_CONFIG_DIR", previous_override);
         restore_env("XDG_CONFIG_HOME", previous_xdg);
     }
 
@@ -587,17 +698,17 @@ mod tests {
     #[cfg(target_os = "linux")]
     fn test_path_root_config_uses_xdg_config_home_when_override_unset() {
         let _guard = env_lock().lock().unwrap();
-        let previous_override = std::env::var("TOKENS_CONFIG_DIR").ok();
+        let previous_override = std::env::var("TOKSCALE_CONFIG_DIR").ok();
         let previous_xdg = std::env::var("XDG_CONFIG_HOME").ok();
         unsafe {
-            std::env::remove_var("TOKENS_CONFIG_DIR");
+            std::env::remove_var("TOKSCALE_CONFIG_DIR");
             std::env::set_var("XDG_CONFIG_HOME", "/tmp/xdg-config-home");
         }
 
         let resolved = PathRoot::Config.resolve("/tmp/home");
         assert_eq!(resolved, "/tmp/xdg-config-home/tokscale");
 
-        restore_env("TOKENS_CONFIG_DIR", previous_override);
+        restore_env("TOKSCALE_CONFIG_DIR", previous_override);
         restore_env("XDG_CONFIG_HOME", previous_xdg);
     }
 
@@ -607,18 +718,18 @@ mod tests {
         // Windows must resolve PathRoot::Config to the same root that
         // paths::get_config_dir() and get_antigravity_cache_dir() use,
         // i.e. dirs::config_dir() (= %APPDATA%\tokscale). Hardcoding
-        // {home}/.config/tokens would diverge from the writer side
+        // {home}/.config/tokscale would diverge from the writer side
         // and silently hide synced Antigravity data from reports.
         let _guard = env_lock().lock().unwrap();
-        let previous_override = std::env::var("TOKENS_CONFIG_DIR").ok();
+        let previous_override = std::env::var("TOKSCALE_CONFIG_DIR").ok();
         unsafe {
-            std::env::remove_var("TOKENS_CONFIG_DIR");
+            std::env::remove_var("TOKSCALE_CONFIG_DIR");
         }
 
         let resolved = PathRoot::Config.resolve("C:\\fake-home");
         let expected = dirs::config_dir()
             .expect("Windows always exposes dirs::config_dir")
-            .join("tokens")
+            .join("tokscale")
             .to_string_lossy()
             .into_owned();
         assert_eq!(
@@ -626,30 +737,30 @@ mod tests {
             "PathRoot::Config on Windows must match dirs::config_dir().join('tokscale') so the scanner agrees with the writer"
         );
 
-        restore_env("TOKENS_CONFIG_DIR", previous_override);
+        restore_env("TOKSCALE_CONFIG_DIR", previous_override);
     }
 
     #[test]
     fn test_path_root_config_ignores_env_when_disabled() {
         let _guard = env_lock().lock().unwrap();
-        let previous_override = std::env::var("TOKENS_CONFIG_DIR").ok();
+        let previous_override = std::env::var("TOKSCALE_CONFIG_DIR").ok();
         let previous_xdg = std::env::var("XDG_CONFIG_HOME").ok();
         unsafe {
-            std::env::set_var("TOKENS_CONFIG_DIR", "/tmp/custom-config-root");
+            std::env::set_var("TOKSCALE_CONFIG_DIR", "/tmp/custom-config-root");
             std::env::set_var("XDG_CONFIG_HOME", "/tmp/xdg-config-home");
         }
 
         let resolved = PathRoot::Config.resolve_with_env_strategy("/tmp/home", false);
         assert_eq!(resolved, "/tmp/home/.config/tokens");
 
-        restore_env("TOKENS_CONFIG_DIR", previous_override);
+        restore_env("TOKSCALE_CONFIG_DIR", previous_override);
         restore_env("XDG_CONFIG_HOME", previous_xdg);
     }
 
     #[test]
     fn test_path_root_env_var_uses_env_when_set() {
         let _guard = env_lock().lock().unwrap();
-        let var = "TOKENS_TEST_PATH_ROOT";
+        let var = "TOKSCALE_TEST_PATH_ROOT";
         let previous = std::env::var(var).ok();
         unsafe { std::env::set_var(var, "/tmp/custom-root") };
 
@@ -666,7 +777,7 @@ mod tests {
     #[test]
     fn test_path_root_env_var_falls_back_when_unset() {
         let _guard = env_lock().lock().unwrap();
-        let var = "TOKENS_TEST_PATH_ROOT";
+        let var = "TOKSCALE_TEST_PATH_ROOT";
         let previous = std::env::var(var).ok();
         unsafe { std::env::remove_var(var) };
 
@@ -683,7 +794,7 @@ mod tests {
     #[test]
     fn test_path_root_env_var_ignores_env_when_disabled() {
         let _guard = env_lock().lock().unwrap();
-        let var = "TOKENS_TEST_PATH_ROOT";
+        let var = "TOKSCALE_TEST_PATH_ROOT";
         let previous = std::env::var(var).ok();
         unsafe { std::env::set_var(var, "/tmp/custom-root") };
 

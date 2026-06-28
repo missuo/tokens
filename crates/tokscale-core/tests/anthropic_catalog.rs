@@ -1,6 +1,6 @@
 //! Catalog invariant tests against the real cached pricing datasets.
 //!
-//! `#[ignore]`d so CI (which has no `~/.config/tokscale/cache/`) skips them.
+//! `#[ignore]`d so CI (which has no `~/.config/tokens/cache/`) skips them.
 //! Run manually when datasets are cached:
 //!
 //! ```sh
@@ -162,6 +162,7 @@ fn load_lookup() -> Option<PricingLookup> {
     Some(PricingLookup::new_with_models_dev(
         filter_litellm(litellm_data),
         openrouter_data,
+        HashMap::new(),
         HashMap::new(),
         models_dev_data,
     ))

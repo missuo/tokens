@@ -1,8 +1,9 @@
 //! Kiro session parser
 //!
-//! Parses session data from two sources:
+//! Parses session data from three sources:
 //! 1. File-based: ~/.kiro/sessions/cli/*.json + *.jsonl
-//! 2. SQLite-based: ~/Library/Application Support/kiro-cli/data.sqlite3
+//! 2. Kiro IDE globalStorage snapshots
+//! 3. SQLite-based: ~/Library/Application Support/kiro-cli/data.sqlite3
 //!    (conversations_v2 table with history[*].request_metadata)
 //!
 //! Turn-level token counts are currently zero in both sources, so usage is
@@ -14,6 +15,7 @@ use super::{normalize_workspace_key, workspace_label_from_key, UnifiedMessage};
 use crate::TokenBreakdown;
 use rusqlite::Connection;
 use serde::Deserialize;
+use serde_json::Value;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
@@ -94,6 +96,16 @@ struct KiroMessageContent {
 }
 
 pub fn parse_kiro_file(path: &Path) -> Vec<UnifiedMessage> {
+    if is_kiro_global_storage_path(path)
+        || path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| ext.eq_ignore_ascii_case("chat"))
+            .unwrap_or(false)
+    {
+        return parse_kiro_global_storage_file(path);
+    }
+
     let fallback_timestamp = file_modified_timestamp_ms(path);
 
     let mut json_bytes = match std::fs::read(path) {
@@ -208,6 +220,11 @@ pub fn parse_kiro_file(path: &Path) -> Vec<UnifiedMessage> {
                 }
             }
 
+            // NOTE: when explicit per-turn counts are absent (the common case —
+            // Kiro currently reports zero), input/output below are ESTIMATED, not
+            // measured: input is derived from context_usage_percentage *
+            // context_window and output from char_count / 4. Downstream must not
+            // treat these as exact token counts.
             let explicit_input = turn.input_token_count.unwrap_or(0).max(0);
             let explicit_output = turn.output_token_count.unwrap_or(0).max(0);
             let input = if explicit_input > 0 {
@@ -279,7 +296,16 @@ fn estimate_tokens(chars: usize) -> i64 {
 }
 
 fn seconds_to_millis(seconds: f64) -> i64 {
-    (seconds * 1000.0) as i64
+    // Scale fractional seconds to milliseconds (preserving sub-second
+    // precision), then clamp into i64 range. The `f64 as i64` cast saturates
+    // rather than wrapping on out-of-range/garbage timestamps, so the
+    // seconds->ms conversion cannot overflow.
+    let millis = seconds * 1000.0;
+    if millis.is_nan() {
+        0
+    } else {
+        millis.clamp(i64::MIN as f64, i64::MAX as f64) as i64
+    }
 }
 
 fn duration_between_ms(start_ms: Option<i64>, end_ms: Option<i64>) -> Option<i64> {
@@ -309,6 +335,246 @@ fn session_id_from_path(path: &Path) -> String {
         .and_then(|name| name.to_str())
         .unwrap_or("unknown")
         .to_string()
+}
+
+fn is_kiro_global_storage_path(path: &Path) -> bool {
+    let path_str = path.to_string_lossy();
+    path_str.contains("globalStorage") && path_str.contains("kiro.kiroagent")
+}
+
+/// Extract the workspace folder name from a Kiro globalStorage path.
+///
+/// Snapshots live under `.../globalStorage/kiro.kiroagent/<workspace>/...`,
+/// so the workspace folder is the path segment immediately following the
+/// `kiro.kiroagent` component. Returns `None` when no such segment exists.
+fn kiro_global_storage_workspace(path: &Path) -> Option<String> {
+    let mut components = path
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy().into_owned());
+    while let Some(component) = components.next() {
+        if component == "kiro.kiroagent" {
+            return components.next();
+        }
+    }
+    None
+}
+
+#[derive(Debug, Default)]
+struct KiroSnapshotTextCounts {
+    prompt_chars: usize,
+    assistant_chars: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KiroSnapshotRole {
+    Prompt,
+    Assistant,
+}
+
+fn collect_kiro_snapshot_text(
+    value: &Value,
+    counts: &mut KiroSnapshotTextCounts,
+    mut role: Option<KiroSnapshotRole>,
+) {
+    match value {
+        Value::Object(map) => {
+            if let Some(kind) = map.get("role").and_then(|v| v.as_str()) {
+                role = match kind {
+                    "user" | "prompt" => Some(KiroSnapshotRole::Prompt),
+                    "assistant" | "response" => Some(KiroSnapshotRole::Assistant),
+                    _ => role,
+                };
+            }
+            if let Some(kind) = map.get("type").and_then(|v| v.as_str()) {
+                role = match kind {
+                    "user" | "prompt" => Some(KiroSnapshotRole::Prompt),
+                    "assistant" | "response" => Some(KiroSnapshotRole::Assistant),
+                    _ => role,
+                };
+            }
+
+            // Each group below is an ordered list of *aliases* for the same
+            // logical payload (text body, conversation list, sub-parts). Kiro
+            // snapshots frequently store the identical text under more than one
+            // alias in a single object (e.g. both `content` and `text`, or both
+            // `messages` and `entries`). Descending into every present alias
+            // would count that text once per alias and inflate token totals.
+            //
+            // However, an object may also legitimately hold *distinct* payloads
+            // under several keys of the same group (e.g. a turn with both
+            // `prompt` and `response`, or a chat with both `messages` and
+            // `history` pointing at different subtrees). Visiting only the first
+            // present key would silently drop those, undercounting tokens.
+            //
+            // So we descend into every present key in the group but de-duplicate
+            // by VALUE: subtrees structurally equal to one already visited in the
+            // same group are skipped. Distinct subtrees are all counted; repeated
+            // (aliased) subtrees are counted once.
+            for group in [
+                // Inline text body of a single message.
+                &["prompt", "response", "content", "text", "message"][..],
+                // Container holding a list of messages/turns.
+                &[
+                    "messages",
+                    "conversation",
+                    "chat",
+                    "transcript",
+                    "entries",
+                    "events",
+                    "history",
+                ][..],
+                // Sub-parts of a single message.
+                &["parts", "items", "nodes"][..],
+            ] {
+                let mut visited: Vec<&Value> = Vec::new();
+                for key in group {
+                    if let Some(item) = map.get(*key) {
+                        if visited.contains(&item) {
+                            continue;
+                        }
+                        visited.push(item);
+                        collect_kiro_snapshot_text(item, counts, role);
+                    }
+                }
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                collect_kiro_snapshot_text(item, counts, role);
+            }
+        }
+        Value::String(text) => match role {
+            Some(KiroSnapshotRole::Assistant) => counts.assistant_chars += text.chars().count(),
+            Some(KiroSnapshotRole::Prompt) => counts.prompt_chars += text.chars().count(),
+            None => {}
+        },
+        _ => {}
+    }
+}
+
+fn find_kiro_snapshot_model_id(value: &Value) -> Option<String> {
+    match value {
+        Value::Object(map) => {
+            for key in ["model_id", "modelId", "model"] {
+                if let Some(model) = map.get(key).and_then(|v| v.as_str()) {
+                    let model = model.trim();
+                    if !model.is_empty() {
+                        return Some(model.to_string());
+                    }
+                }
+            }
+
+            // Recurse into the same containers `collect_kiro_snapshot_text`
+            // descends into, so the model id is discoverable wherever text is
+            // (otherwise a model id nested under e.g. `parts` or `prompt` would
+            // be missed and fall back to `unknown`). Keep these key-sets aligned.
+            for key in [
+                "messages",
+                "conversation",
+                "chat",
+                "transcript",
+                "entries",
+                "events",
+                "history",
+                "prompt",
+                "response",
+                "content",
+                "text",
+                "message",
+                "parts",
+                "items",
+                "nodes",
+            ] {
+                if let Some(item) = map.get(key) {
+                    if let Some(model) = find_kiro_snapshot_model_id(item) {
+                        return Some(model);
+                    }
+                }
+            }
+
+            None
+        }
+        Value::Array(items) => items.iter().find_map(find_kiro_snapshot_model_id),
+        _ => None,
+    }
+}
+
+fn parse_kiro_global_storage_file(path: &Path) -> Vec<UnifiedMessage> {
+    let fallback_timestamp = file_modified_timestamp_ms(path);
+    let json = match std::fs::read_to_string(path) {
+        Ok(contents) => contents,
+        Err(_) => return Vec::new(),
+    };
+
+    let value: Value = match serde_json::from_str(&json) {
+        Ok(value) => value,
+        Err(_) => return Vec::new(),
+    };
+
+    let file_stem = path
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .unwrap_or("unknown");
+    // Attribute the snapshot to its IDE workspace folder, mirroring how the
+    // file/sqlite Kiro paths derive workspace identity from `cwd`.
+    let workspace = kiro_global_storage_workspace(path);
+    let workspace_key = workspace.as_deref().and_then(normalize_workspace_key);
+    let workspace_label = workspace_key.as_deref().and_then(workspace_label_from_key);
+    // Namespace the session id by workspace so two workspaces that both contain
+    // e.g. `execution.chat` do not collapse into one session / dedup_key.
+    let session_id = match workspace.as_deref() {
+        Some(ws) => format!("{}/{}", ws, file_stem),
+        None => file_stem.to_string(),
+    };
+    let model_id = find_kiro_snapshot_model_id(&value).unwrap_or_else(|| UNKNOWN_MODEL.to_string());
+
+    let mut counts = KiroSnapshotTextCounts::default();
+    collect_kiro_snapshot_text(&value, &mut counts, None);
+
+    let input = estimate_tokens(counts.prompt_chars);
+    let output = estimate_tokens(counts.assistant_chars);
+    if input + output == 0 {
+        return Vec::new();
+    }
+
+    // Date-bucketing limitation: Kiro IDE globalStorage snapshots are a single
+    // rolling JSON blob with no per-turn timestamps — turns carry only their
+    // text, not a `timestamp`/`end_timestamp` field (unlike the CLI `.jsonl`
+    // and the sqlite `request_metadata` sources, which do expose per-turn
+    // times). We therefore emit the entire snapshot as ONE message stamped at
+    // the file's mtime. This mis-buckets historical usage into the day the file
+    // was last written rather than the days the turns actually occurred. We do
+    // NOT synthesize timestamps; if a future snapshot schema adds per-turn
+    // times, read them here and split into one message per turn.
+    let snapshot_timestamp = fallback_timestamp;
+
+    let mut message = UnifiedMessage::new_with_dedup(
+        CLIENT_ID,
+        model_id,
+        PROVIDER_ID,
+        session_id.clone(),
+        snapshot_timestamp,
+        TokenBreakdown {
+            input,
+            output,
+            cache_read: 0,
+            cache_write: 0,
+            reasoning: 0,
+        },
+        0.0,
+        // dedup_key is structurally disjoint from the sqlite (CLI) source: this
+        // key is `<workspace>/<file_stem>:globalstorage` (always the literal
+        // `:globalstorage` suffix), whereas `parse_kiro_sqlite` emits
+        // `<conversation_id>:<turn_index>` (always a numeric-index suffix).
+        // IDE globalStorage snapshots and the kiro-cli `data.sqlite3` are
+        // distinct surfaces, so the same conversation cannot appear in both and
+        // these keys can never collide — no cross-source dedup is needed.
+        Some(format!("{}:globalstorage", session_id)),
+    );
+    message.message_count = 1;
+    message.is_turn_start = true;
+    message.set_workspace(workspace_key, workspace_label);
+    vec![message]
 }
 
 pub fn parse_kiro_sqlite(db_path: &Path) -> Vec<UnifiedMessage> {
@@ -376,7 +642,7 @@ pub fn parse_kiro_sqlite(db_path: &Path) -> Vec<UnifiedMessage> {
             .model_info
             .as_ref()
             .and_then(|info| info.model_id.as_deref())
-            .filter(|m| !m.trim().is_empty() && *m != "auto")
+            .filter(|m| !m.trim().is_empty())
             .unwrap_or(UNKNOWN_MODEL)
             .to_string();
         let workspace_key = normalize_workspace_key(&cwd);
@@ -388,6 +654,11 @@ pub fn parse_kiro_sqlite(db_path: &Path) -> Vec<UnifiedMessage> {
                 continue;
             };
 
+            // NOTE: these are ESTIMATED, not measured token counts. Kiro's
+            // conversations_v2 does not record real per-turn token usage, so
+            // input is derived from context_usage_percentage * context_window
+            // and output from response_size (char_count) / 4. Downstream must
+            // not treat these as exact.
             let ctx_pct = meta.context_usage_percentage.unwrap_or(0.0);
             let response_size = meta.response_size.unwrap_or(0);
 
@@ -460,6 +731,7 @@ struct KiroDbRequestMetadata {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use std::io::Write;
     use tempfile::TempDir;
 
@@ -542,7 +814,7 @@ not valid json at all
         .unwrap();
         let value = r#"{
             "model_info": {
-                "model_id": "claude-sonnet-4-5",
+                "model_id": "auto",
                 "context_window_tokens": 1000
             },
             "history": [{
@@ -564,9 +836,223 @@ not valid json at all
         let messages = parse_kiro_sqlite(&db_path);
 
         assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].model_id, "auto");
         assert_eq!(messages[0].timestamp, 1770983426000);
         assert_eq!(messages[0].duration_ms, Some(1500));
         assert_eq!(messages[0].tokens.input, 100);
         assert_eq!(messages[0].tokens.output, 10);
+    }
+
+    #[test]
+    fn test_parse_kiro_global_storage_chat_file() {
+        let dir = TempDir::new().unwrap();
+        let file_path = dir.path().join(
+            "Library/Application Support/Kiro/User/globalStorage/kiro.kiroagent/workspace-a/execution.chat",
+        );
+        fs::create_dir_all(file_path.parent().unwrap()).unwrap();
+        fs::write(
+            &file_path,
+            r#"{
+                "model": "auto",
+                "messages": [
+                    {"role": "user", "content": "hello world"},
+                    {"role": "assistant", "content": "response text"}
+                ]
+            }"#,
+        )
+        .unwrap();
+
+        let messages = parse_kiro_file(&file_path);
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].client, "kiro");
+        assert_eq!(messages[0].model_id, "auto");
+        assert!(messages[0].tokens.input > 0);
+        assert!(messages[0].tokens.output > 0);
+        // (4a) Workspace attribution: the `<workspace>` segment after
+        // `kiro.kiroagent/` flows through the same workspace helpers.
+        assert_eq!(messages[0].workspace_key, Some("workspace-a".to_string()));
+        assert_eq!(messages[0].workspace_label, Some("workspace-a".to_string()));
+        assert_eq!(
+            messages[0].dedup_key,
+            Some("workspace-a/execution:globalstorage".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_kiro_global_storage_dedup_keys_differ_across_workspaces() {
+        let dir = TempDir::new().unwrap();
+        let payload = r#"{
+                "model": "auto",
+                "messages": [
+                    {"role": "user", "content": "hello world"},
+                    {"role": "assistant", "content": "response text"}
+                ]
+            }"#;
+
+        // Two `execution.chat` snapshots under DIFFERENT workspaces.
+        let path_a = dir.path().join(
+            "Library/Application Support/Kiro/User/globalStorage/kiro.kiroagent/workspace-a/execution.chat",
+        );
+        let path_b = dir.path().join(
+            "Library/Application Support/Kiro/User/globalStorage/kiro.kiroagent/workspace-b/execution.chat",
+        );
+        fs::create_dir_all(path_a.parent().unwrap()).unwrap();
+        fs::create_dir_all(path_b.parent().unwrap()).unwrap();
+        fs::write(&path_a, payload).unwrap();
+        fs::write(&path_b, payload).unwrap();
+
+        let messages_a = parse_kiro_file(&path_a);
+        let messages_b = parse_kiro_file(&path_b);
+
+        assert_eq!(messages_a.len(), 1);
+        assert_eq!(messages_b.len(), 1);
+        assert_ne!(messages_a[0].dedup_key, messages_b[0].dedup_key);
+        assert_eq!(
+            messages_a[0].dedup_key,
+            Some("workspace-a/execution:globalstorage".to_string())
+        );
+        assert_eq!(
+            messages_b[0].dedup_key,
+            Some("workspace-b/execution:globalstorage".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_kiro_global_storage_ignores_unknown_roles() {
+        let dir = TempDir::new().unwrap();
+        let file_path = dir.path().join(
+            "Library/Application Support/Kiro/User/globalStorage/kiro.kiroagent/workspace-a/execution.chat",
+        );
+        fs::create_dir_all(file_path.parent().unwrap()).unwrap();
+        fs::write(
+            &file_path,
+            r#"{
+                "model": "auto",
+                "messages": [
+                    {"role": "mystery", "content": "mystery text"},
+                    {"role": "assistant", "content": "response text"}
+                ]
+            }"#,
+        )
+        .unwrap();
+
+        let messages = parse_kiro_file(&file_path);
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].tokens.output, 4);
+    }
+
+    #[test]
+    fn test_collect_kiro_snapshot_text_does_not_double_count_aliased_keys() {
+        // (a) A single message object that stores the SAME assistant body under
+        // two aliased text keys (`content` and `text`). Before the fix, the
+        // traversal descended into every present alias and counted "response
+        // text" twice (8 assistant chars -> output 2). After the fix it descends
+        // into only the first present alias in the group, counting once.
+        let value: Value = serde_json::from_str(
+            r#"{
+                "messages": [
+                    {"role": "assistant", "content": "abcd", "text": "abcd"}
+                ]
+            }"#,
+        )
+        .unwrap();
+
+        let mut counts = KiroSnapshotTextCounts::default();
+        collect_kiro_snapshot_text(&value, &mut counts, None);
+
+        // "abcd" counted once = 4 chars, not 8.
+        assert_eq!(counts.assistant_chars, 4);
+        assert_eq!(counts.prompt_chars, 0);
+    }
+
+    #[test]
+    fn test_collect_kiro_snapshot_text_does_not_double_count_aliased_containers() {
+        // (a) An object that stores the SAME conversation list under two aliased
+        // container keys (`messages` and `entries`). Before the fix both were
+        // traversed and the text was counted twice.
+        let value: Value = serde_json::from_str(
+            r#"{
+                "messages": [{"role": "user", "content": "hello"}],
+                "entries": [{"role": "user", "content": "hello"}]
+            }"#,
+        )
+        .unwrap();
+
+        let mut counts = KiroSnapshotTextCounts::default();
+        collect_kiro_snapshot_text(&value, &mut counts, None);
+
+        // "hello" counted once = 5 chars, not 10.
+        assert_eq!(counts.prompt_chars, 5);
+        assert_eq!(counts.assistant_chars, 0);
+    }
+
+    #[test]
+    fn test_collect_kiro_snapshot_text_counts_distinct_alias_subtrees() {
+        // A single turn that stores DISTINCT payloads under two keys of the same
+        // alias group: `prompt` (user text) and `response` (assistant text).
+        // These are different subtrees, so both must be counted. A first-key-only
+        // traversal would drop the `response` body and undercount.
+        let value: Value = serde_json::from_str(
+            r#"{
+                "prompt": {"role": "user", "text": "hi there"},
+                "response": {"role": "assistant", "text": "hello back"}
+            }"#,
+        )
+        .unwrap();
+
+        let mut counts = KiroSnapshotTextCounts::default();
+        collect_kiro_snapshot_text(&value, &mut counts, None);
+
+        // "hi there" = 8 prompt chars, "hello back" = 10 assistant chars.
+        assert_eq!(counts.prompt_chars, 8);
+        assert_eq!(counts.assistant_chars, 10);
+    }
+
+    #[test]
+    fn test_collect_kiro_snapshot_text_counts_distinct_container_subtrees() {
+        // A chat object holding DISTINCT conversation lists under two container
+        // aliases (`messages` and `history`). Both must be counted; the
+        // value-based de-dup only skips structurally identical subtrees.
+        let value: Value = serde_json::from_str(
+            r#"{
+                "messages": [{"role": "user", "content": "alpha"}],
+                "history": [{"role": "user", "content": "bravo"}]
+            }"#,
+        )
+        .unwrap();
+
+        let mut counts = KiroSnapshotTextCounts::default();
+        collect_kiro_snapshot_text(&value, &mut counts, None);
+
+        // "alpha" (5) + "bravo" (5) = 10 prompt chars; nothing dropped.
+        assert_eq!(counts.prompt_chars, 10);
+        assert_eq!(counts.assistant_chars, 0);
+    }
+
+    #[test]
+    fn test_find_kiro_snapshot_model_id_descends_into_aliased_text_keys() {
+        // (b) Model id nested under `parts` / `prompt` — keys that
+        // `collect_kiro_snapshot_text` descends into but the model-id finder
+        // previously omitted, causing the model to fall back to `unknown`.
+        let parts_value: Value = serde_json::from_str(
+            r#"{
+                "messages": [
+                    {"parts": [{"model_id": "claude-sonnet-4-5"}]}
+                ]
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(
+            find_kiro_snapshot_model_id(&parts_value),
+            Some("claude-sonnet-4-5".to_string())
+        );
+
+        let prompt_value: Value = serde_json::from_str(r#"{"prompt": {"model": "auto"}}"#).unwrap();
+        assert_eq!(
+            find_kiro_snapshot_model_id(&prompt_value),
+            Some("auto".to_string())
+        );
     }
 }

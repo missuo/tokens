@@ -109,7 +109,7 @@ fn legacy_cache_paths(filename: &str) -> Vec<PathBuf> {
 
     [
         crate::paths::legacy_dirs_cache_dir().map(|d| d.join(filename)),
-        crate::paths::legacy_dot_cache_tokscale_dir().map(|d| d.join(filename)),
+        crate::paths::legacy_dot_cache_tokens_dir().map(|d| d.join(filename)),
     ]
     .into_iter()
     .flatten()

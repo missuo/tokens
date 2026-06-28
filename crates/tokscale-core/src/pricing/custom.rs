@@ -348,7 +348,7 @@ fn to_per_token(per_million: Option<f64>) -> Option<f64> {
 
 fn warn_custom_pricing(path: &Path, message: fmt::Arguments<'_>) {
     eprintln!(
-        "[tokscale] Warning: custom pricing {}: {message}",
+        "[tokens] Warning: custom pricing {}: {message}",
         path.display()
     );
 }
@@ -414,7 +414,7 @@ mod tests {
         fs::write(
             &path,
             r#"{
-                "$schema": "https://tokscale.dev/custom-pricing.schema.json",
+                "$schema": "https://tokscale.ai/custom-pricing.schema.json",
                 "models": {
                         "accounts/fireworks/routers/kimi-k2p6-turbo": {
                         "input_cost_per_million_tokens": 2.00,
