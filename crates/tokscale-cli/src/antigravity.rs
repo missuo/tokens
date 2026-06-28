@@ -406,7 +406,7 @@ impl SyncLockGuard {
                     if let Some((existing_pid, _)) = read_sync_lock(&lock_path) {
                         if pid_is_alive(existing_pid) {
                             anyhow::bail!(
-                                "Another tokscale antigravity sync is in progress (pid {existing_pid}); aborting"
+                                "Another tokens antigravity sync is in progress (pid {existing_pid}); aborting"
                             );
                         }
                     }
@@ -495,7 +495,7 @@ pub fn load_antigravity_manifest() -> Result<AntigravityManifest> {
 
     if manifest.version > ANTIGRAVITY_MANIFEST_VERSION {
         anyhow::bail!(
-            "Manifest from a newer tokscale version detected; refusing to overwrite (got version {}, supported {})",
+            "Manifest from a newer tokens version detected; refusing to overwrite (got version {}, supported {})",
             manifest.version,
             ANTIGRAVITY_MANIFEST_VERSION
         );
@@ -3049,7 +3049,7 @@ mod tests {
         .unwrap();
 
         let err = load_antigravity_manifest().unwrap_err();
-        assert!(err.to_string().contains("newer tokscale version"));
+        assert!(err.to_string().contains("newer tokens version"));
     }
 
     #[test]
@@ -3118,7 +3118,7 @@ mod tests {
         let err = SyncLockGuard::acquire(&cache_dir).unwrap_err();
         assert!(
             err.to_string()
-                .contains("Another tokscale antigravity sync"),
+                .contains("Another tokens antigravity sync"),
             "got: {err:#}"
         );
 

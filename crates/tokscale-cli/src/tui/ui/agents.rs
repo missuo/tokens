@@ -3,7 +3,9 @@ use ratatui::widgets::{
     Block, Borders, Cell, Paragraph, Row, Scrollbar, ScrollbarOrientation, Table,
 };
 
-use super::widgets::{format_cost, format_tokens, get_client_display_name, scrollbar_state};
+use super::widgets::{
+    format_cost, format_tokens, get_client_display_name, viewport_scrollbar_state,
+};
 use crate::tui::app::{App, SortDirection, SortField};
 use crate::ClientFilter;
 
@@ -120,7 +122,7 @@ pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
             } else {
                 vec![
                     Cell::from(format!("{}", idx + 1)).style(Style::default().fg(theme_muted)),
-                    Cell::from(truncate(&agent.agent, 22)).style(
+                    Cell::from(truncate(&agent.agent, 32)).style(
                         Style::default()
                             .fg(app.theme.foreground)
                             .add_modifier(Modifier::BOLD),
@@ -157,7 +159,7 @@ pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
     } else {
         vec![
             Constraint::Length(3),
-            Constraint::Min(16),
+            Constraint::Min(24),
             Constraint::Length(24),
             Constraint::Length(10),
             Constraint::Length(10),
@@ -176,7 +178,8 @@ pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
             .begin_symbol(Some("▲"))
             .end_symbol(Some("▼"));
 
-        let mut scrollbar_state = scrollbar_state(agents_len, scroll_offset, visible_height);
+        let mut scrollbar_state =
+            viewport_scrollbar_state(agents_len, scroll_offset, visible_height);
 
         frame.render_stateful_widget(
             scrollbar,

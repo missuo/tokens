@@ -75,7 +75,7 @@ fn legacy_cache_files() -> Vec<PathBuf> {
         return Vec::new();
     }
 
-    crate::paths::legacy_dot_cache_tokscale_dir()
+    crate::paths::legacy_dot_cache_tokens_dir()
         .map(|dir| vec![dir.join("tui-data-cache.json")])
         .unwrap_or_default()
 }
@@ -691,8 +691,14 @@ fn normalize_cached_agents(agents: Vec<CachedAgentUsage>) -> Vec<AgentUsage> {
 }
 
 fn normalize_cached_agent_name(agent: &str, clients: &str) -> String {
-    if clients.split(", ").any(|client| client == "opencode") {
+    // Mirror the per-client normalization in `tui::data` (see the `msg.agent`
+    // branch there): copilot and opencode agent ids use bespoke normalizers,
+    // everything else falls back to the generic one. Keep these two in sync.
+    let has_client = |name: &str| clients.split(", ").any(|client| client == name);
+    if has_client("opencode") {
         sessions::normalize_opencode_agent_name(agent)
+    } else if has_client("copilot") {
+        sessions::normalize_copilot_agent_name(agent)
     } else {
         sessions::normalize_agent_name(agent)
     }
@@ -999,6 +1005,28 @@ mod tests {
         assert_eq!(prometheus.message_count, 1);
     }
 
+    #[test]
+    fn test_normalize_cached_agents_merges_copilot_display_variants() {
+        // Copilot cached agent ids must go through normalize_copilot_agent_name
+        // (mirroring tui::data). Without the copilot branch in
+        // normalize_cached_agent_name, the raw "github.copilot.default" id would
+        // be left untouched (generic normalizer titlecases it differently) and
+        // would NOT merge with the "GitHub Copilot" display name.
+        let agents = normalize_cached_agents(vec![
+            cached_agent("github.copilot.default", "copilot", 10),
+            cached_agent("GITHUB.COPILOT.DEFAULT", "copilot", 20),
+        ]);
+
+        assert_eq!(agents.len(), 1);
+        let copilot = agents
+            .iter()
+            .find(|agent| agent.agent == "GitHub Copilot")
+            .unwrap();
+        assert_eq!(copilot.clients, "copilot");
+        assert_eq!(copilot.message_count, 2);
+        assert_eq!(copilot.tokens.input, 30);
+    }
+
     // ── check_client_match ──────────────────────────────────────────
 
     #[test]
@@ -1170,10 +1198,10 @@ mod tests {
     fn save_cached_data_writes_report_scope() {
         let temp_dir = TempDir::new().unwrap();
         let previous_home = env::var_os("HOME");
-        let previous_override = env::var_os("TOKSCALE_CONFIG_DIR");
+        let previous_override = env::var_os("TOKENS_CONFIG_DIR");
         unsafe {
             env::set_var("HOME", temp_dir.path());
-            env::remove_var("TOKSCALE_CONFIG_DIR");
+            env::remove_var("TOKENS_CONFIG_DIR");
         }
 
         let clients = make_filters(&[ClientFilter::Claude], false);
@@ -1202,8 +1230,8 @@ mod tests {
             None => unsafe { env::remove_var("HOME") },
         }
         match previous_override {
-            Some(value) => unsafe { env::set_var("TOKSCALE_CONFIG_DIR", value) },
-            None => unsafe { env::remove_var("TOKSCALE_CONFIG_DIR") },
+            Some(value) => unsafe { env::set_var("TOKENS_CONFIG_DIR", value) },
+            None => unsafe { env::remove_var("TOKENS_CONFIG_DIR") },
         }
     }
 

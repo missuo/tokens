@@ -19,8 +19,8 @@ const IMAGE_WIDTH: i32 = 1200 * SCALE;
 const IMAGE_HEIGHT: i32 = 1200 * SCALE;
 const PADDING: i32 = 56 * SCALE;
 
-const TOKENS_LOGO_SVG_URL: &str = "https://tokens.ci/tokscale-logo.svg";
-const TOKENS_LOGO_PNG_SIZE: i32 = 400;
+const TOKSCALE_LOGO_SVG_URL: &str = "https://tokens.ci/tokscale-logo.svg";
+const TOKSCALE_LOGO_PNG_SIZE: i32 = 400;
 const FIGTREE_REGULAR_FILE: &str = "Figtree-Regular.ttf";
 const FIGTREE_REGULAR_URL: &str =
     "https://fonts.gstatic.com/s/figtree/v9/_Xmz-HUzqDCFdgfMsYiV_F7wfS-Bs_d_QF5e.ttf";
@@ -748,9 +748,9 @@ async fn generate_wrapped_image(data: &WrappedData, options: &RenderOptions) -> 
 
     if let Ok(logo_path) = fetch_svg_and_convert_to_png(
         &client,
-        TOKENS_LOGO_SVG_URL,
+        TOKSCALE_LOGO_SVG_URL,
         "tokscale-logo@2x.png",
-        TOKENS_LOGO_PNG_SIZE * SCALE,
+        TOKSCALE_LOGO_PNG_SIZE * SCALE,
     )
     .await
     {
@@ -1279,7 +1279,7 @@ fn first_existing_legacy_wrapped_cache_file(subdir: &str, filename: &str) -> Opt
 
     [
         crate::paths::legacy_dirs_cache_dir().map(|dir| dir.join(subdir).join(filename)),
-        crate::paths::legacy_dot_cache_tokscale_dir().map(|dir| dir.join(subdir).join(filename)),
+        crate::paths::legacy_dot_cache_tokens_dir().map(|dir| dir.join(subdir).join(filename)),
     ]
     .into_iter()
     .flatten()
@@ -1454,10 +1454,13 @@ fn client_display_name(client: &str) -> Option<&'static str> {
         "crush" => Some("Crush"),
         "goose" => Some("Goose"),
         "antigravity" => Some("Antigravity"),
+        "antigravity-cli" => Some("Antigravity CLI"),
         "zed" => Some("Zed Agent"),
         "warp" => Some("Warp"),
         "cline" => Some("Cline"),
         "gjc" => Some("Gajae-Code"),
+        "jcode" => Some("Jcode"),
+        "junie" => Some("Junie"),
         "synthetic" => Some("Synthetic"),
         _ => None,
     }
@@ -1493,12 +1496,14 @@ fn client_logo_url(client_name: &str) -> Option<&'static str> {
         "Goose" => Some(
             "https://raw.githubusercontent.com/junhoyeo/tokscale/main/.github/assets/client-goose.png",
         ),
-        "Antigravity" => Some(
+        "Antigravity" | "Antigravity CLI" => Some(
             "https://raw.githubusercontent.com/junhoyeo/tokscale/main/.github/assets/client-antigravity.png",
         ),
         "Zed Agent" => Some(
             "https://raw.githubusercontent.com/junhoyeo/tokscale/main/.github/assets/client-zed.webp",
         ),
+        "Jcode" => Some("https://raw.githubusercontent.com/junhoyeo/tokscale/main/.github/assets/client-jcode.png"),
+        "Junie" => Some("https://github.com/JetBrains.png"),
         "Synthetic" => Some("https://tokens.ci/assets/logos/synthetic.png"),
         _ => None,
     }
@@ -2451,6 +2456,16 @@ mod tests {
     }
 
     #[test]
+    fn test_client_display_name_jcode() {
+        assert_eq!(client_display_name("jcode"), Some("Jcode"));
+    }
+
+    #[test]
+    fn test_client_display_name_junie() {
+        assert_eq!(client_display_name("junie"), Some("Junie"));
+    }
+
+    #[test]
     fn test_client_display_name_unknown() {
         assert_eq!(client_display_name("unknown"), None);
         assert_eq!(client_display_name(""), None);
@@ -2622,6 +2637,22 @@ mod tests {
             Some(
                 "https://raw.githubusercontent.com/junhoyeo/tokscale/main/.github/assets/client-zed.webp"
             )
+        );
+    }
+
+    #[test]
+    fn test_client_logo_url_jcode() {
+        assert_eq!(
+            client_logo_url("Jcode"),
+            Some("https://raw.githubusercontent.com/junhoyeo/tokscale/main/.github/assets/client-jcode.png")
+        );
+    }
+
+    #[test]
+    fn test_client_logo_url_junie() {
+        assert_eq!(
+            client_logo_url("Junie"),
+            Some("https://github.com/JetBrains.png")
         );
     }
 
@@ -3014,7 +3045,7 @@ fn cursor_setup_warning_for_wrapped(
     };
 
     Some(format!(
-        "Cursor usage requires Tokens's Cursor API cache at `~/.config/tokens/cursor-cache/usage*.csv`; {action}. Tokens does not parse local `~/.cursor` session data."
+        "Cursor usage requires Tokens' Cursor API cache at `~/.config/tokens/cursor-cache/usage*.csv`; {action}. Tokens does not parse local `~/.cursor` session data."
     ))
 }
 

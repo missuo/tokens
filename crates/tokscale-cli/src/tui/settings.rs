@@ -71,7 +71,7 @@ pub struct Settings {
     ///
     /// Stored as canonical lowercase ids matching `ClientFilter::as_filter_str`
     /// (e.g. `["opencode", "claude", "synthetic"]`). Unknown ids are dropped
-    /// silently at load time so a typo or stale entry never breaks tokscale.
+    /// silently at load time so a typo or stale entry never breaks tokens.
     /// CLI flags always override this list completely — no merging.
     #[serde(default, deserialize_with = "deserialize_string_array_lossy")]
     pub default_clients: Vec<String>,

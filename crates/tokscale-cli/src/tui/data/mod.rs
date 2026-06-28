@@ -507,6 +507,8 @@ impl DataLoader {
             if let Some(agent) = msg.agent.as_ref() {
                 let normalized_agent = if msg.client == "opencode" {
                     sessions::normalize_opencode_agent_name(agent)
+                } else if msg.client == "copilot" {
+                    sessions::normalize_copilot_agent_name(agent)
                 } else {
                     sessions::normalize_agent_name(agent)
                 };
@@ -1337,7 +1339,7 @@ mod tests {
     #[test]
     fn test_client_all() {
         let clients = ClientId::ALL;
-        assert_eq!(clients.len(), 28);
+        assert_eq!(clients.len(), ClientId::COUNT);
         assert_eq!(clients[0], ClientId::OpenCode);
         assert_eq!(clients[1], ClientId::Claude);
         assert_eq!(clients[2], ClientId::Codex);
@@ -1366,6 +1368,11 @@ mod tests {
         assert_eq!(clients[25], ClientId::Cline);
         assert_eq!(clients[26], ClientId::Gjc);
         assert_eq!(clients[27], ClientId::Grok);
+        assert_eq!(clients[28], ClientId::Jcode);
+        assert_eq!(clients[29], ClientId::CommandCode);
+        assert_eq!(clients[30], ClientId::MiMoCode);
+        assert_eq!(clients[31], ClientId::AntigravityCli);
+        assert_eq!(clients[32], ClientId::Junie);
     }
 
     #[test]
@@ -1449,6 +1456,18 @@ mod tests {
             crate::tui::client_ui::display_name(ClientId::Grok),
             "Grok Build"
         );
+        assert_eq!(
+            crate::tui::client_ui::display_name(ClientId::Jcode),
+            "Jcode"
+        );
+        assert_eq!(
+            crate::tui::client_ui::display_name(ClientId::AntigravityCli),
+            "Antigravity CLI"
+        );
+        assert_eq!(
+            crate::tui::client_ui::display_name(ClientId::Junie),
+            "Junie"
+        );
     }
 
     #[test]
@@ -1479,6 +1498,9 @@ mod tests {
         assert_eq!(crate::tui::client_ui::hotkey(ClientId::Cline), 'n');
         assert_eq!(crate::tui::client_ui::hotkey(ClientId::Gjc), 'g');
         assert_eq!(crate::tui::client_ui::hotkey(ClientId::Grok), 'u');
+        assert_eq!(crate::tui::client_ui::hotkey(ClientId::Jcode), 'j');
+        assert_eq!(crate::tui::client_ui::hotkey(ClientId::AntigravityCli), 'f');
+        assert_eq!(crate::tui::client_ui::hotkey(ClientId::Junie), 'p');
     }
 
     #[test]
@@ -1566,6 +1588,18 @@ mod tests {
         assert_eq!(
             crate::tui::client_ui::from_hotkey('u'),
             Some(ClientId::Grok)
+        );
+        assert_eq!(
+            crate::tui::client_ui::from_hotkey('j'),
+            Some(ClientId::Jcode)
+        );
+        assert_eq!(
+            crate::tui::client_ui::from_hotkey('f'),
+            Some(ClientId::AntigravityCli)
+        );
+        assert_eq!(
+            crate::tui::client_ui::from_hotkey('p'),
+            Some(ClientId::Junie)
         );
     }
 
@@ -2392,6 +2426,7 @@ after"#,
     fn test_data_loader_keeps_synthetic_gateway_messages_under_original_client() {
         let temp_dir = TempDir::new().unwrap();
         let previous_home = env::var_os("HOME");
+        let previous_xdg_data_home = env::var_os("XDG_DATA_HOME");
         let message_dir = temp_dir
             .path()
             .join(".local/share/opencode/storage/message/project-1");
@@ -2404,6 +2439,7 @@ after"#,
 
         unsafe {
             env::set_var("HOME", temp_dir.path());
+            env::remove_var("XDG_DATA_HOME");
         }
 
         let pricing = test_pricing_service();
@@ -2420,7 +2456,7 @@ after"#,
         let expected_cost = expected_message_cost(
             &pricing,
             "accounts/fireworks/models/deepseek-v3-0324",
-            "fireworks",
+            "fireworks_ai",
             CoreTokenBreakdown {
                 input: 10,
                 output: 5,
@@ -2432,7 +2468,9 @@ after"#,
 
         assert_eq!(usage.models.len(), 1);
         assert_eq!(usage.models[0].client, "opencode");
-        assert_eq!(usage.models[0].provider, "fireworks");
+        // opencode now canonicalizes the provider (fireworks -> fireworks_ai),
+        // matching every other session parser.
+        assert_eq!(usage.models[0].provider, "fireworks_ai");
         assert_eq!(usage.models[0].model, "deepseek-v3-0324");
         assert_eq!(usage.models[0].tokens.total(), 15);
         assert_cost_matches(usage.models[0].cost, expected_cost);
@@ -2440,6 +2478,10 @@ after"#,
         match previous_home {
             Some(home) => unsafe { env::set_var("HOME", home) },
             None => unsafe { env::remove_var("HOME") },
+        }
+        match previous_xdg_data_home {
+            Some(path) => unsafe { env::set_var("XDG_DATA_HOME", path) },
+            None => unsafe { env::remove_var("XDG_DATA_HOME") },
         }
     }
 

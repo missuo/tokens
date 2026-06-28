@@ -436,7 +436,7 @@ mod tests {
             devices: Vec::new(),
             fetched_at_secs: 0,
             cached_for_user: "alice".to_string(),
-            cached_for_api_url: "https://tokscale.ai".to_string(),
+            cached_for_api_url: "https://tokens.ci".to_string(),
         });
         assert_eq!(data_source_label(&app), "local+remote (2 devices)");
 

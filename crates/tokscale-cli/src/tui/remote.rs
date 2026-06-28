@@ -215,21 +215,21 @@ mod tests {
             }],
             fetched_at_secs,
             cached_for_user: "alice".to_string(),
-            cached_for_api_url: "https://tokscale.ai".to_string(),
+            cached_for_api_url: "https://tokens.ci".to_string(),
         }
     }
 
     fn with_temp_config_dir(test: impl FnOnce()) {
         let temp = tempfile::tempdir().expect("tempdir");
-        let prev = env::var_os("TOKSCALE_CONFIG_DIR");
+        let prev = env::var_os("TOKENS_CONFIG_DIR");
         unsafe {
-            env::set_var("TOKSCALE_CONFIG_DIR", temp.path());
+            env::set_var("TOKENS_CONFIG_DIR", temp.path());
         }
         test();
         unsafe {
             match prev {
-                Some(v) => env::set_var("TOKSCALE_CONFIG_DIR", v),
-                None => env::remove_var("TOKSCALE_CONFIG_DIR"),
+                Some(v) => env::set_var("TOKENS_CONFIG_DIR", v),
+                None => env::remove_var("TOKENS_CONFIG_DIR"),
             }
         }
     }
@@ -241,7 +241,7 @@ mod tests {
             let stats = sample_stats(now_secs());
             save_remote_stats_cache(&stats).expect("save cache");
 
-            let loaded = load_cached_remote_stats("alice", "https://tokscale.ai")
+            let loaded = load_cached_remote_stats("alice", "https://tokens.ci")
                 .expect("fresh cache should load");
             assert_eq!(loaded.total_tokens, 1250);
             assert_eq!(loaded.device_count, 2);
@@ -258,7 +258,7 @@ mod tests {
     fn cache_normalizes_trailing_slash_in_api_url() {
         with_temp_config_dir(|| {
             save_remote_stats_cache(&sample_stats(now_secs())).expect("save cache");
-            assert!(load_cached_remote_stats("alice", "https://tokscale.ai/").is_some());
+            assert!(load_cached_remote_stats("alice", "https://tokens.ci/").is_some());
         });
     }
 
@@ -268,7 +268,7 @@ mod tests {
         with_temp_config_dir(|| {
             let stats = sample_stats(now_secs().saturating_sub(CACHE_TTL_SECS + 1));
             save_remote_stats_cache(&stats).expect("save cache");
-            assert!(load_cached_remote_stats("alice", "https://tokscale.ai").is_none());
+            assert!(load_cached_remote_stats("alice", "https://tokens.ci").is_none());
         });
     }
 
@@ -277,10 +277,10 @@ mod tests {
     fn cache_rejects_other_accounts_servers_and_anonymous_lookups() {
         with_temp_config_dir(|| {
             save_remote_stats_cache(&sample_stats(now_secs())).expect("save cache");
-            assert!(load_cached_remote_stats("bob", "https://tokscale.ai").is_none());
-            assert!(load_cached_remote_stats("alice", "https://staging.tokscale.ai").is_none());
+            assert!(load_cached_remote_stats("bob", "https://tokens.ci").is_none());
+            assert!(load_cached_remote_stats("alice", "https://staging.tokens.ci").is_none());
             // Env-token sessions have no username; they must never trust cache.
-            assert!(load_cached_remote_stats("", "https://tokscale.ai").is_none());
+            assert!(load_cached_remote_stats("", "https://tokens.ci").is_none());
         });
     }
 
@@ -291,7 +291,7 @@ mod tests {
             let mut stats = sample_stats(now_secs());
             stats.schema_version = SUPPORTED_SCHEMA_VERSION + 1;
             save_remote_stats_cache(&stats).expect("save cache");
-            assert!(load_cached_remote_stats("alice", "https://tokscale.ai").is_none());
+            assert!(load_cached_remote_stats("alice", "https://tokens.ci").is_none());
         });
     }
 

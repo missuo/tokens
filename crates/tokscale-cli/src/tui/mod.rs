@@ -1,15 +1,17 @@
 mod app;
 mod cache;
 pub mod client_ui;
+pub(crate) mod codex_login;
 mod colors;
 pub mod config;
 pub mod data;
 mod event;
 mod export;
+pub(crate) mod privacy;
 pub mod remote;
 pub mod settings;
 mod themes;
-mod ui;
+pub(crate) mod ui;
 
 pub use app::{App, Tab, TuiConfig};
 pub use cache::{
@@ -135,7 +137,7 @@ pub fn run(
     enable_raw_mode()?;
     let mut stdout = io::stdout();
 
-    let _ = execute!(stdout, SetTitle("Tokens"));
+    let _ = execute!(stdout, SetTitle("Tokscale"));
 
     if let Err(e) = execute!(stdout, EnterAlternateScreen, EnableMouseCapture) {
         let _ = disable_raw_mode();
@@ -219,6 +221,10 @@ pub fn run(
         #[cfg(unix)]
         &sigcont_flag,
     );
+
+    // Don't orphan a `codex login` child (it would keep holding the OAuth
+    // port after the TUI exits).
+    app.kill_codex_login_child();
 
     restore_terminal(&mut terminal);
 

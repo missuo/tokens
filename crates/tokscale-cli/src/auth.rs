@@ -498,7 +498,7 @@ pub fn show_qr(yes: bool) -> Result<()> {
     );
     println!(
         "  {}",
-        "can scan it and gain full access to your tokscale account.".bright_black()
+        "can scan it and gain full access to your tokens account.".bright_black()
     );
     println!();
 

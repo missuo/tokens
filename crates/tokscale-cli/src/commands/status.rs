@@ -96,7 +96,7 @@ fn resolve_serve_interval_minutes_with_env(
 fn classify_status_process_command(command: &str) -> Option<StatusProcessKind> {
     let lower = command.to_ascii_lowercase();
     let has_tokens_binary = lower.starts_with("tokens ")
-        || lower.starts_with("tokscale ")
+        || lower.starts_with("tokens ")
         || lower.contains("/tokens ")
         || lower.contains("/tokscale ")
         || lower.contains("/tokens/bin/tokens ")

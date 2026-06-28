@@ -1,3 +1,4 @@
+use chrono::Local;
 use ratatui::prelude::*;
 use ratatui::widgets::{
     Block, Borders, Cell, Paragraph, Row, Scrollbar, ScrollbarOrientation, Table,
@@ -5,7 +6,7 @@ use ratatui::widgets::{
 
 use super::widgets::{
     format_cache_hit_rate, format_cost, format_cost_per_million, format_tokens,
-    get_client_display_name, get_provider_display_name, scrollbar_state,
+    get_client_display_name, get_provider_display_name, viewport_scrollbar_state,
 };
 use crate::tui::app::{App, SortDirection, SortField};
 
@@ -56,7 +57,7 @@ pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
     let metric_cache_write_style = app.theme.metric_cache_write_style();
     let current_row_style = app.theme.current_row_style();
     let striped_row_style = app.theme.striped_row_style();
-    let today = tokscale_core::bucket_timezone().today();
+    let today = Local::now().date_naive();
 
     // Date format adapts to *available* width, not just the narrow breakpoint.
     // In full mode the table can still be wider than the terminal, so the year
@@ -300,7 +301,8 @@ pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
             .begin_symbol(Some("▲"))
             .end_symbol(Some("▼"));
 
-        let mut scrollbar_state = scrollbar_state(daily_len, scroll_offset, visible_height);
+        let mut scrollbar_state =
+            viewport_scrollbar_state(daily_len, scroll_offset, visible_height);
 
         frame.render_stateful_widget(
             scrollbar,
@@ -524,7 +526,8 @@ fn render_detail(frame: &mut Frame, app: &mut App, area: Rect) {
             .begin_symbol(Some("▲"))
             .end_symbol(Some("▼"));
 
-        let mut scrollbar_state = scrollbar_state(detail_len, scroll_offset, visible_height);
+        let mut scrollbar_state =
+            viewport_scrollbar_state(detail_len, scroll_offset, visible_height);
 
         frame.render_stateful_widget(
             scrollbar,

@@ -12,7 +12,7 @@ use std::path::PathBuf;
 #[allow(unused_imports)]
 pub use tokscale_core::paths::{
     get_cache_dir, get_config_dir, is_config_dir_overridden, legacy_dirs_cache_dir,
-    legacy_dot_cache_tokscale_dir,
+    legacy_dot_cache_tokens_dir,
 };
 
 /// Legacy macOS config dir (`~/Library/Application Support/tokens`).
@@ -70,6 +70,6 @@ mod tests {
         let _cache: PathBuf = get_cache_dir();
         let _: bool = is_config_dir_overridden();
         let _: Option<PathBuf> = legacy_dirs_cache_dir();
-        let _: Option<PathBuf> = legacy_dot_cache_tokscale_dir();
+        let _: Option<PathBuf> = legacy_dot_cache_tokens_dir();
     }
 }
