@@ -3,16 +3,876 @@
 import { useState, useEffect, useRef, useMemo, memo, useCallback } from "react";
 import { useRouter } from "nextjs-toploader/app";
 import { useSearchParams, usePathname } from "next/navigation";
-import { Button } from "@heroui/react";
-import { SearchIcon, XIcon } from "@/components/ui/Icons";
+import styled from "styled-components";
+import { CopyIcon, CheckIcon, SearchIcon, XIcon } from "@/components/ui/Icons";
 import { TabBar } from "@/components/TabBar";
-import { StatGrid, StatTile, Panel } from "@/components/ui/primitives";
 import { LeaderboardSkeleton } from "@/components/Skeleton";
-import { CommandSnippet } from "@/components/ui/CommandSnippet";
 import { formatCurrency, formatNumber, formatDuration } from "@/lib/utils";
 import { useSettings } from "@/lib/useSettings";
 import { isValidSortBy, type LeaderboardSortBy } from "@/lib/leaderboard/constants";
 import { parseCustomDateRange } from "@/lib/leaderboard/dateRange";
+
+const Section = styled.div`
+  margin-bottom: 40px;
+`;
+
+const Description = styled.p`
+  margin-bottom: 24px;
+  color: var(--color-fg-muted);
+`;
+
+const StatsGrid = styled.div`
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+  
+  @media (min-width: 480px) {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+  }
+  
+  @media (min-width: 768px) {
+    display: flex;
+  }
+`;
+
+const StatCard = styled.div`
+  flex: 1;
+  border-radius: 12px;
+  border: 1px solid var(--color-border-default);
+  padding: 12px;
+  background-color: var(--color-bg-default);
+`;
+
+const StatLabel = styled.p`
+  font-size: 12px;
+  color: var(--color-fg-muted);
+`;
+
+const StatValue = styled.p`
+  font-size: 16px;
+  font-weight: bold;
+  color: var(--color-fg-default);
+`;
+
+const StatValuePrimary = styled(StatValue)`
+  color: var(--color-primary);
+`;
+
+const TabSection = styled.div`
+  margin-bottom: 24px;
+`;
+
+const TableContainer = styled.div`
+  border-radius: 16px;
+  border: 1px solid var(--color-border-default);
+  overflow: hidden;
+  background-color: var(--color-bg-default);
+`;
+
+const EmptyState = styled.div`
+  padding: 32px;
+  text-align: center;
+`;
+
+const EmptyMessage = styled.p`
+  margin-bottom: 16px;
+  color: var(--color-fg-muted);
+`;
+
+const EmptyHint = styled.p`
+  font-size: 14px;
+  color: var(--color-fg-subtle);
+`;
+
+const RetryButton = styled.button`
+  margin-top: 16px;
+  padding: 8px 16px;
+  background-color: var(--color-primary);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+`;
+
+const CodeSnippet = styled.code`
+  padding-left: 8px;
+  padding-right: 8px;
+  padding-top: 4px;
+  padding-bottom: 4px;
+  border-radius: 4px;
+  background-color: var(--color-bg-subtle);
+`;
+
+const TableWrapper = styled.div`
+  overflow-x: auto;
+`;
+
+const Table = styled.table`
+  width: 100%;
+  min-width: 500px;
+  
+  @media (max-width: 560px) {
+    min-width: unset;
+  }
+`;
+
+const TableHead = styled.thead`
+  border-bottom: 1px solid var(--color-border-default);
+  background-color: var(--color-bg-elevated);
+`;
+
+const TableHeaderCell = styled.th`
+  padding-left: 12px;
+  padding-right: 12px;
+  padding-top: 12px;
+  padding-bottom: 12px;
+  text-align: left;
+  font-size: 12px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-fg-muted);
+  
+  @media (max-width: 480px) {
+    padding-left: 8px;
+    padding-right: 8px;
+    padding-top: 8px;
+    padding-bottom: 8px;
+  }
+  
+  @media (min-width: 640px) {
+    padding-left: 24px;
+    padding-right: 24px;
+  }
+  
+  &.text-right {
+    text-align: right;
+  }
+  
+  &.hidden-mobile {
+    display: none;
+    
+    @media (min-width: 768px) {
+      display: table-cell;
+    }
+  }
+  
+  &.hidden-cost-mobile {
+    @media (max-width: 560px) {
+      display: none;
+    }
+  }
+  
+  &.w-24 {
+    width: 96px;
+  }
+  
+  &.rank-cell {
+    width: 1%;
+    white-space: nowrap;
+    
+    @media (max-width: 560px) {
+      padding-left: 8px;
+      padding-right: 4px;
+    }
+  }
+`;
+
+const TableBody = styled.tbody``;
+
+const TableRow = styled.tr`
+  cursor: pointer;
+  transition: all 0.2s;
+  position: relative;
+  
+  &:hover {
+    background-color: rgba(20, 26, 33, 0.6);
+  }
+
+  &[data-current-user="true"] {
+    background: rgba(0, 115, 255, 0.05);
+    box-shadow: inset 4px 0 0 #0073FF, inset 0 0 0 2px #0073FF;
+    border-radius: 4px;
+    
+    &:hover {
+      background-color: rgba(0, 115, 255, 0.12);
+    }
+  }
+`;
+
+const TableCell = styled.td`
+  padding-left: 12px;
+  padding-right: 12px;
+  padding-top: 10px;
+  padding-bottom: 10px;
+  white-space: nowrap;
+  vertical-align: middle;
+  
+  @media (max-width: 480px) {
+    padding-left: 8px;
+    padding-right: 8px;
+    padding-top: 8px;
+    padding-bottom: 8px;
+  }
+  
+  @media (min-width: 640px) {
+    padding-left: 24px;
+    padding-right: 24px;
+  }
+  
+  &.text-right {
+    text-align: right;
+  }
+  
+  &.hidden-mobile {
+    display: none;
+    
+    @media (min-width: 768px) {
+      display: table-cell;
+    }
+  }
+  
+  &.hidden-cost-mobile {
+    @media (max-width: 560px) {
+      display: none;
+    }
+  }
+  
+  &.w-24 {
+    width: 96px;
+  }
+  
+  &.rank-cell {
+    width: 1%;
+    white-space: nowrap;
+    
+    @media (max-width: 560px) {
+      padding-left: 8px;
+      padding-right: 4px;
+    }
+  }
+`;
+
+const RankBadge = styled.span`
+  font-size: 16px;
+  font-weight: bold;
+  color: var(--color-fg-muted);
+  
+  &[data-rank="1"] { color: #EAB308; }
+  &[data-rank="2"] { color: #9CA3AF; }
+  &[data-rank="3"] { color: #D97706; }
+  
+  @media (max-width: 480px) {
+    font-size: 14px;
+  }
+  
+  @media (min-width: 640px) {
+    font-size: 18px;
+  }
+`;
+
+const UserContainer = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  
+  @media (max-width: 480px) {
+    gap: 6px;
+    
+    img {
+      width: 32px !important;
+      height: 32px !important;
+    }
+  }
+  
+  @media (min-width: 640px) {
+    gap: 12px;
+  }
+`;
+
+const UserInfo = styled.div`
+  min-width: 0;
+`;
+
+const UserDisplayName = styled.p`
+  font-weight: 500;
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 120px;
+  color: var(--color-fg-default);
+  
+  @media (max-width: 480px) {
+    max-width: 80px;
+    font-size: 13px;
+  }
+  
+  @media (min-width: 640px) {
+    font-size: 16px;
+    max-width: none;
+  }
+`;
+
+const Username = styled.p`
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 120px;
+  color: var(--color-fg-muted);
+  
+  @media (max-width: 480px) {
+    max-width: 80px;
+    font-size: 11px;
+  }
+  
+  @media (min-width: 640px) {
+    font-size: 14px;
+    max-width: none;
+  }
+`;
+
+const StatSpan = styled.span`
+  font-weight: 500;
+  font-size: 14px;
+  color: var(--color-fg-default);
+  
+  @media (min-width: 640px) {
+    font-size: 16px;
+  }
+`;
+
+const TokenValue = styled.span`
+  font-weight: 500;
+  font-size: 14px;
+  color: var(--color-primary);
+  transition: color 0.12s ease;
+  
+  @media (max-width: 480px) {
+    font-size: 13px;
+  }
+  
+  @media (min-width: 640px) {
+    font-size: 16px;
+  }
+  
+  ${TableRow}:hover & {
+    color: #0073FF;
+  }
+`;
+
+const TokenValueFull = styled.span`
+  display: none;
+  
+  @media (min-width: 768px) {
+    display: inline;
+  }
+`;
+
+const TokenValueAbbrev = styled.span`
+  display: inline;
+  
+  @media (min-width: 768px) {
+    display: none;
+  }
+`;
+
+const CombinedValueContainer = styled.div`
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  
+  @media (min-width: 561px) {
+    display: block;
+  }
+`;
+
+const CostValue = styled.span`
+  font-weight: 400;
+  font-size: 12px;
+  color: var(--color-fg-muted);
+  
+  @media (min-width: 561px) {
+    display: none;
+  }
+`;
+
+const SubmitCount = styled.span`
+  color: var(--color-fg-muted);
+`;
+
+const PaginationContainer = styled.div`
+  padding-left: 12px;
+  padding-right: 12px;
+  padding-top: 12px;
+  padding-bottom: 12px;
+  border-top: 1px solid var(--color-border-default);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  
+  @media (min-width: 640px) {
+    padding-left: 24px;
+    padding-right: 24px;
+    padding-top: 16px;
+    padding-bottom: 16px;
+    flex-direction: row;
+  }
+`;
+
+const PaginationText = styled.p`
+  font-size: 12px;
+  text-align: center;
+  color: var(--color-fg-muted);
+  
+  @media (min-width: 640px) {
+    font-size: 14px;
+    text-align: left;
+  }
+`;
+
+const CTASection = styled.div`
+  margin-top: 32px;
+  padding: 24px;
+  border-radius: 16px;
+  border: 1px solid var(--color-border-default);
+  background-color: var(--color-bg-default);
+`;
+
+const CTATitle = styled.h2`
+  font-size: 18px;
+  font-weight: 600;
+  margin-bottom: 12px;
+  color: var(--color-fg-default);
+`;
+
+const CTADescription = styled.p`
+  margin-bottom: 16px;
+  color: var(--color-fg-muted);
+`;
+
+const CodeBlock = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-family: monospace;
+  font-size: 14px;
+`;
+
+const CodeLine = styled.div`
+  padding: 12px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  font-size: 16px;
+  font-weight: 500;
+  letter-spacing: -0.8px;
+  background-color: var(--color-bg-subtle);
+
+  * {
+    font-family: "Inconsolata", monospace !important;
+  }
+`;
+
+const CommandPrompt = styled.span`
+  color: #4B6486;
+  margin-right: 8px;
+`;
+
+const CommandPrefix = styled.span`
+  color: #FFF;
+  &::after {
+    content: " ";
+    white-space: pre;
+  }
+`;
+
+const CommandName = styled.span`
+  background: linear-gradient(90deg, #0CF 0%, #0073FF 100%);
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+`;
+
+const CommandArg = styled.span`
+  color: #FFF;
+  &::before {
+    content: " ";
+    white-space: pre;
+  }
+`;
+
+const CopyIconButton = styled.button`
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
+  padding: 6px;
+  border: none;
+  background: transparent;
+  color: #4B6486;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all 150ms;
+  flex-shrink: 0;
+
+  &:hover {
+    color: #FFF;
+    background: rgba(255, 255, 255, 0.1);
+  }
+
+  &.copied {
+    color: #3FB950;
+  }
+`;
+
+const CurrentUserCard = styled.div`
+  margin-bottom: 24px;
+  padding: 16px;
+  border-radius: 12px;
+  border: 2px solid #0073FF;
+  background: rgba(0, 115, 255, 0.05);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+
+  @media (max-width: 640px) {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+`;
+
+const CurrentUserInfo = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
+`;
+
+const CurrentUserDetails = styled.div`
+  min-width: 0;
+  flex: 1;
+`;
+
+const CurrentUserName = styled.p`
+  font-weight: 600;
+  font-size: 16px;
+  color: var(--color-fg-default);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+`;
+
+const CurrentUserUsername = styled.p`
+  font-size: 14px;
+  color: var(--color-fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+`;
+
+const CurrentUserStats = styled.div`
+  display: flex;
+  gap: 24px;
+  align-items: center;
+
+  @media (max-width: 640px) {
+    justify-content: space-between;
+  }
+`;
+
+const CurrentUserStat = styled.div`
+  text-align: right;
+
+  @media (max-width: 640px) {
+    text-align: left;
+  }
+`;
+
+const CurrentUserStatLabel = styled.p`
+  font-size: 12px;
+  color: var(--color-fg-muted);
+  margin-bottom: 4px;
+`;
+
+const CurrentUserStatValue = styled.p`
+  font-size: 16px;
+  font-weight: 600;
+  color: #0073FF;
+`;
+
+const ErrorBanner = styled.div`
+  margin-bottom: 24px;
+  padding: 12px 16px;
+  border-radius: 8px;
+  border: 1px solid #F85149;
+  background: rgba(248, 81, 73, 0.1);
+  color: #F85149;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+`;
+
+const SortLabel = styled.span`
+  font-size: 12px;
+  color: var(--color-fg-muted);
+  font-weight: 500;
+`;
+
+const SearchSortRow = styled.div`
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+
+  @media (max-width: 560px) {
+    flex-direction: column;
+    align-items: stretch;
+  }
+`;
+
+const SearchInputWrapper = styled.div`
+  position: relative;
+  flex: 1;
+  max-width: 320px;
+
+  @media (max-width: 560px) {
+    max-width: none;
+  }
+`;
+
+const SearchInputIcon = styled.span`
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--color-fg-muted);
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+`;
+
+const SearchInput = styled.input`
+  width: 100%;
+  padding: 8px 36px 8px 36px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border-default);
+  background-color: var(--color-bg-subtle);
+  color: var(--color-fg-default);
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.15s ease;
+
+  &::placeholder {
+    color: var(--color-fg-muted);
+  }
+
+  &:focus {
+    border-color: #0073FF;
+    box-shadow: 0 0 0 3px rgba(0, 115, 255, 0.15);
+  }
+`;
+
+const ClearSearchButton = styled.button`
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  border: none;
+  background: transparent;
+  color: var(--color-fg-muted);
+  cursor: pointer;
+  border-radius: 4px;
+  transition: color 0.15s ease;
+
+  &:hover {
+    color: var(--color-fg-default);
+  }
+`;
+
+const SortToggleInner = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+`;
+
+const DateRangeRow = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+`;
+
+const DateInput = styled.input`
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border-default);
+  background-color: var(--color-bg-subtle);
+  color: var(--color-fg-default);
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.15s ease;
+  min-width: 140px;
+
+  &:focus {
+    border-color: #0073FF;
+    box-shadow: 0 0 0 3px rgba(0, 115, 255, 0.15);
+  }
+
+  &::-webkit-calendar-picker-indicator {
+    filter: invert(0.7);
+    cursor: pointer;
+  }
+`;
+
+const DateSeparator = styled.span`
+  font-size: 14px;
+  color: var(--color-fg-muted);
+`;
+
+const DateApplyButton = styled.button`
+  padding: 8px 16px;
+  border-radius: 8px;
+  border: 1px solid #0073FF;
+  background-color: #0073FF;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: opacity 150ms;
+
+  &:hover {
+    opacity: 0.85;
+  }
+
+  &:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+`;
+
+const SortOptions = styled.div`
+  display: inline-flex;
+  border-radius: 8px;
+  border: 1px solid var(--color-border-default);
+  overflow: hidden;
+`;
+
+const SortOption = styled.button<{ $active: boolean }>`
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: ${({ $active }) => ($active ? 600 : 400)};
+  color: ${({ $active }) => ($active ? '#fff' : 'var(--color-fg-muted)')};
+  background-color: ${({ $active }) => ($active ? '#0073FF' : 'transparent')};
+  border: none;
+  cursor: pointer;
+  transition: all 150ms;
+
+  &:hover:not([disabled]) {
+    color: ${({ $active }) => ($active ? '#fff' : 'var(--color-fg-default)')};
+    background-color: ${({ $active }) => ($active ? '#0073FF' : 'var(--color-bg-subtle)')};
+  }
+
+  & + & {
+    border-left: 1px solid var(--color-border-default);
+  }
+`;
+
+const HoverTooltip = styled.span`
+  position: relative;
+  cursor: default;
+
+  &::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    bottom: calc(100% + 8px);
+    left: 50%;
+    transform: translateX(-50%);
+    background-color: #111B2C;
+    color: #e5e5e5;
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0;
+    white-space: nowrap;
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.06);
+    z-index: 1000;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+  }
+
+  &:hover::after {
+    opacity: 1;
+  }
+`;
+
+const PaginationNav = styled.nav`
+  display: flex;
+  align-items: center;
+  gap: 4px;
+`;
+
+const PageButton = styled.button<{ $active?: boolean }>`
+  min-width: 32px;
+  height: 32px;
+  padding: 0 8px;
+  border-radius: 6px;
+  border: 1px solid ${({ $active }) => $active ? '#0073FF' : 'var(--color-border-default)'};
+  background: ${({ $active }) => $active ? '#0073FF' : 'transparent'};
+  color: ${({ $active }) => $active ? '#fff' : 'var(--color-fg-muted)'};
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 150ms;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  &:hover:not(:disabled) {
+    border-color: #0073FF;
+    color: ${({ $active }) => $active ? '#fff' : 'var(--color-fg-default)'};
+  }
+
+  &:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+`;
+
+const PageEllipsis = styled.span`
+  min-width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-fg-muted);
+  font-size: 13px;
+`;
+
+const PaginationPages = styled.div`
+  display: none;
+  gap: 4px;
+
+  @media (min-width: 768px) {
+    display: flex;
+  }
+`;
 
 export type Period = "all" | "month" | "last-month" | "week" | "today" | "custom";
 
@@ -47,13 +907,13 @@ export interface LeaderboardData {
     uniqueUsers: number;
   };
   period: Period;
-  sortBy?: "tokens" | "cost" | "time";
+  sortBy?: 'tokens' | 'cost' | 'time';
 }
 
 interface LeaderboardClientProps {
   initialData: LeaderboardData;
   currentUser: { id: string; username: string; displayName: string | null; avatarUrl: string | null } | null;
-  initialSortBy: "tokens" | "cost" | "time";
+  initialSortBy: 'tokens' | 'cost' | 'time';
   initialUserRank: LeaderboardUser | null;
 }
 
@@ -68,15 +928,10 @@ function isValidLeaderboardData(data: unknown): data is LeaderboardData {
   );
 }
 
-const rankColor: Record<number, string> = {
-  1: "text-[#EAB308]",
-  2: "text-[#9CA3AF]",
-  3: "text-[#D97706]",
-};
-
 interface LeaderboardRowProps {
   user: LeaderboardUser;
   isCurrentUser: boolean;
+  isLastRow: boolean;
   showSubmissionCount: boolean;
   showTime: boolean;
   onRowClick: (username: string) => void;
@@ -85,70 +940,71 @@ interface LeaderboardRowProps {
 const LeaderboardRow = memo(function LeaderboardRow({
   user,
   isCurrentUser,
+  isLastRow,
   showSubmissionCount,
   showTime,
   onRowClick,
 }: LeaderboardRowProps) {
-  const formattedTokens = useMemo(() => user.totalTokens.toLocaleString("en-US"), [user.totalTokens]);
-  const formattedCost = useMemo(
-    () => user.totalCost.toLocaleString("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2 }),
-    [user.totalCost],
-  );
-
+  const formattedTokens = useMemo(() => user.totalTokens.toLocaleString('en-US'), [user.totalTokens]);
+  const formattedCost = useMemo(() => user.totalCost.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2 }), [user.totalCost]);
+  
   return (
-    <tr
+    <TableRow
       onClick={() => onRowClick(user.username)}
-      className={`group cursor-pointer border-b border-line transition-colors last:border-b-0 ${
-        isCurrentUser ? "bg-accent/[0.07] shadow-[inset_4px_0_0_var(--accent)]" : "hover:bg-foreground/[0.03]"
-      }`}
+      data-current-user={isCurrentUser}
+      style={isLastRow ? undefined : { borderBottom: "1px solid var(--color-border-default)" }}
     >
-      <td className="w-px py-2.5 pr-3 pl-3 whitespace-nowrap sm:pl-6">
-        <span className={`font-mono text-sm font-bold tabular-nums sm:text-base ${rankColor[user.rank] ?? "text-muted"}`}>#{user.rank}</span>
-      </td>
-      <td className="w-px py-2.5 pr-3 pl-1 whitespace-nowrap">
-        <div className="flex items-center gap-2 sm:gap-3">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
+      <TableCell className="rank-cell">
+        <RankBadge data-rank={user.rank <= 3 ? user.rank : undefined}>
+          #{user.rank}
+        </RankBadge>
+      </TableCell>
+      <TableCell>
+        <UserContainer>
           <img
             src={user.avatarUrl || `https://github.com/${user.username}.png`}
             alt={user.username}
             width={40}
             height={40}
-            className="h-9 w-9 shrink-0 rounded-full object-cover ring-1 ring-line sm:h-10 sm:w-10"
+            style={{ borderRadius: "50%", objectFit: "cover", flexShrink: 0, boxShadow: "0 0 0 1px rgba(255, 255, 255, 0.1)" }}
           />
-          <div className="min-w-0 max-w-[160px] sm:max-w-[240px]">
-            <p className="truncate text-sm font-medium text-foreground sm:text-base">{user.displayName || user.username}</p>
-            <p className="truncate font-mono text-xs text-muted sm:text-sm">@{user.username}</p>
-          </div>
-        </div>
-      </td>
-      <td aria-hidden="true" className="w-full" />
-      <td className="w-px px-4 py-2.5 text-right whitespace-nowrap max-[560px]:hidden">
-        <span className="font-mono text-sm font-medium text-foreground tabular-nums sm:text-base" title={formattedCost}>
+          <UserInfo>
+            <UserDisplayName>
+              {user.displayName || user.username}
+            </UserDisplayName>
+            <Username>
+              @{user.username}
+            </Username>
+          </UserInfo>
+        </UserContainer>
+      </TableCell>
+      <TableCell className="text-right hidden-cost-mobile">
+        <StatSpan title={formattedCost}>
           {formatCurrency(user.totalCost)}
-        </span>
-      </td>
-      <td className="w-px px-4 py-2.5 text-right whitespace-nowrap">
-        <div className="flex flex-col items-end gap-0.5 min-[561px]:block">
-          <span className="font-mono text-sm font-semibold text-accent tabular-nums transition-colors sm:text-base" title={formattedTokens}>
-            <span className="hidden md:inline">{formattedTokens}</span>
-            <span className="md:hidden">{formatNumber(user.totalTokens)}</span>
-          </span>
-          <span className="font-mono text-xs font-normal text-muted tabular-nums min-[561px]:hidden" title={formattedCost}>
+        </StatSpan>
+      </TableCell>
+      <TableCell className="text-right">
+        <CombinedValueContainer>
+          <TokenValue title={formattedTokens}>
+            <TokenValueFull>{formattedTokens}</TokenValueFull>
+            <TokenValueAbbrev>{formatNumber(user.totalTokens)}</TokenValueAbbrev>
+          </TokenValue>
+          <CostValue title={formattedCost}>
             {formatCurrency(user.totalCost)}
-          </span>
-        </div>
-      </td>
+          </CostValue>
+        </CombinedValueContainer>
+      </TableCell>
       {showTime && (
-        <td className="w-px px-4 py-2.5 text-right whitespace-nowrap max-md:hidden">
-          <span className="font-mono text-sm font-medium text-foreground tabular-nums sm:text-base">{formatDuration(user.totalActiveTimeMs)}</span>
-        </td>
+        <TableCell className="text-right hidden-mobile w-24">
+          <StatSpan>{formatDuration(user.totalActiveTimeMs)}</StatSpan>
+        </TableCell>
       )}
       {showSubmissionCount && (
-        <td className="w-px px-4 py-2.5 text-right whitespace-nowrap max-md:hidden sm:pr-6">
-          <span className="font-mono text-sm text-muted tabular-nums">{user.submissionCount ?? "—"}</span>
-        </td>
+        <TableCell className="text-right hidden-mobile w-24">
+          <SubmitCount>{user.submissionCount ?? "—"}</SubmitCount>
+        </TableCell>
       )}
-    </tr>
+    </TableRow>
   );
 });
 
@@ -159,9 +1015,8 @@ function parsePeriodParam(value: string | null): Period | null {
   return VALID_PERIODS.includes(value as Period) ? (value as Period) : null;
 }
 
-// The viewer's local calendar date as YYYY-MM-DD. Daily usage is bucketed by
-// each submitter's local date, so "today" is timezone-relative to whoever is
-// looking: my Jun 5 and a US user's Jun 5 are both "today" in their own clocks.
+// Daily usage is bucketed by each submitter's local date, so "today" is
+// timezone-relative to whoever is looking.
 function getLocalTodayDate(): string {
   const now = new Date();
   const year = now.getFullYear();
@@ -169,9 +1024,6 @@ function getLocalTodayDate(): string {
   const day = String(now.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
 }
-
-const dateInputClass =
-  "min-w-[140px] rounded-lg border border-line bg-surface-secondary px-3 py-2 text-sm text-foreground outline-none transition focus:border-accent focus:ring-2 focus:ring-accent/30 [&::-webkit-calendar-picker-indicator]:cursor-pointer [&::-webkit-calendar-picker-indicator]:invert-[0.7]";
 
 export default function LeaderboardClient({ initialData, currentUser, initialSortBy, initialUserRank }: LeaderboardClientProps) {
   const router = useRouter();
@@ -189,6 +1041,12 @@ export default function LeaderboardClient({ initialData, currentUser, initialSor
 
   const [data, setData] = useState<LeaderboardData>(initialData);
   const [error, setError] = useState<string | null>(null);
+  const [copiedCommand, setCopiedCommand] = useState<string | null>(null);
+  // Server/client divergence note: when ?period=custom&from=BAD&to=BAD is
+  // requested, the server falls back to period="all" (see page.tsx) while the
+  // client keeps period="custom" from the URL. This is intentionally safe
+  // because the client will not fire a fetch until the user applies a valid
+  // date range (isCustomWithoutDates guard), so no mismatched data is shown.
   const [period, setPeriod] = useState<Period>(initialData.period);
   const [page, setPage] = useState(urlPage || initialData.pagination.page);
   const [currentUserRank, setCurrentUserRank] = useState<LeaderboardUser | null>(initialUserRank);
@@ -200,8 +1058,7 @@ export default function LeaderboardClient({ initialData, currentUser, initialSor
   const [customTo, setCustomTo] = useState(initialCustomDateRange?.to || "");
   const [appliedFrom, setAppliedFrom] = useState(initialCustomDateRange?.from || "");
   const [appliedTo, setAppliedTo] = useState(initialCustomDateRange?.to || "");
-  // Null until mounted so SSR (which only knows UTC) and the first client render
-  // agree; once known, a mismatch with the resolved request drives a refetch.
+  // Null until mounted so SSR (UTC) and the first client render agree.
   const [localToday, setLocalToday] = useState<string | null>(null);
   const [resolvedRequest, setResolvedRequest] = useState({
     period: initialData.period,
@@ -219,25 +1076,30 @@ export default function LeaderboardClient({ initialData, currentUser, initialSor
 
   const { leaderboardSortBy, setLeaderboardSort, mounted } = useSettings();
 
-  // URL `?sortBy=` wins on first paint; once the user clicks, their persisted
-  // choice takes over. Clearing `urlSortOverride` on click is required.
+  // Precedence for the active sort column:
+  //   1. URL `?sortBy=` on first paint wins (preserves shareable links), but
+  //   2. the moment the user clicks a SortOption, their choice takes over and
+  //      stays sticky from the persisted setting (`leaderboardSortBy`).
+  // `urlSortOverride` is cleared on user clicks; do not remove that state reset
+  // when refactoring or the URL param will silently override every click.
   const [urlSortOverride, setUrlSortOverride] = useState<LeaderboardSortBy | null>(urlSortBy);
-  const effectiveSortBy = urlSortOverride ? urlSortOverride : mounted ? leaderboardSortBy : initialSortBy;
-  const requestedPage = data.pagination.totalPages > 0 ? Math.min(page, data.pagination.totalPages) : page;
+  const effectiveSortBy = urlSortOverride
+    ? urlSortOverride
+    : (mounted ? leaderboardSortBy : initialSortBy);
+  const requestedPage = data.pagination.totalPages > 0
+    ? Math.min(page, data.pagination.totalPages)
+    : page;
   const isCustomWithoutDates = period === "custom" && (!appliedFrom || !appliedTo);
-  // Before the local date is known (SSR / pre-hydration) we can't resolve the
-  // viewer's "today", so hold off rather than fetch the UTC fallback.
   const isTodayPendingLocalDate = period === "today" && localToday === null;
-  const isLoading =
-    !isCustomWithoutDates &&
-    !isTodayPendingLocalDate &&
-    (period !== resolvedRequest.period ||
-      requestedPage !== resolvedRequest.page ||
-      effectiveSortBy !== resolvedRequest.sortBy ||
-      debouncedSearch !== resolvedRequest.search ||
-      retryToken !== resolvedRequest.retryToken ||
-      (period === "custom" && (appliedFrom !== resolvedRequest.customFrom || appliedTo !== resolvedRequest.customTo)) ||
-      (period === "today" && localToday !== resolvedRequest.customFrom));
+  const isLoading = !isCustomWithoutDates && !isTodayPendingLocalDate && (
+    period !== resolvedRequest.period
+    || requestedPage !== resolvedRequest.page
+    || effectiveSortBy !== resolvedRequest.sortBy
+    || debouncedSearch !== resolvedRequest.search
+    || retryToken !== resolvedRequest.retryToken
+    || (period === "custom" && (appliedFrom !== resolvedRequest.customFrom || appliedTo !== resolvedRequest.customTo))
+    || (period === "today" && localToday !== resolvedRequest.customFrom)
+  );
 
   const isFirstRankFetch = useRef(true);
   const isFirstUrlSync = useRef(true);
@@ -248,6 +1110,7 @@ export default function LeaderboardClient({ initialData, currentUser, initialSor
       return;
     }
     const params = new URLSearchParams();
+    // Preserve ?view= when it's present (e.g. view=users navigated explicitly)
     const currentView = searchParams.get("view");
     if (currentView) params.set("view", currentView);
     if (period !== "all") params.set("period", period);
@@ -257,9 +1120,12 @@ export default function LeaderboardClient({ initialData, currentUser, initialSor
     if (period === "custom" && appliedTo) params.set("to", appliedTo);
     if (debouncedSearch) params.set("search", debouncedSearch);
     const qs = params.toString();
-    window.history.replaceState(null, "", qs ? `${pathname}?${qs}` : pathname);
-  }, [period, requestedPage, effectiveSortBy, appliedFrom, appliedTo, pathname, debouncedSearch, searchParams]);
+    const url = qs ? `${pathname}?${qs}` : pathname;
+    window.history.replaceState(null, "", url);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [period, requestedPage, effectiveSortBy, appliedFrom, appliedTo, pathname, debouncedSearch]);
 
+  // Debounce search input so URL/search sync updates after typing stops.
   const isSearchMounted = useRef(false);
   useEffect(() => {
     if (!isSearchMounted.current) {
@@ -274,13 +1140,21 @@ export default function LeaderboardClient({ initialData, currentUser, initialSor
   }, [searchQuery]);
 
   useEffect(() => {
-    if (!currentUser) return;
+    if (!currentUser) {
+      return;
+    }
+
     if (isFirstRankFetch.current) {
       isFirstRankFetch.current = false;
       return;
     }
-    if (period === "today" && !localToday) return;
+
+    if (period === "today" && !localToday) {
+      return;
+    }
+
     const abortController = new AbortController();
+
     const customParams =
       period === "custom"
         ? `&from=${appliedFrom}&to=${appliedTo}`
@@ -304,66 +1178,75 @@ export default function LeaderboardClient({ initialData, currentUser, initialSor
           setCurrentUserRankError(true);
         }
       });
+
     return () => abortController.abort();
   }, [currentUser, period, effectiveSortBy, appliedFrom, appliedTo, localToday]);
 
-  const fetchData = useCallback(
-    (
-      targetPeriod: Period,
-      targetPage: number,
-      targetSortBy: LeaderboardSortBy,
-      targetSearch: string,
-      targetRetryToken: number,
-      signal?: AbortSignal,
-      targetCustomFrom?: string,
-      targetCustomTo?: string,
-    ) => {
-      const searchParam = targetSearch ? `&search=${encodeURIComponent(targetSearch)}` : "";
-      const customParams =
-        (targetPeriod === "custom" || targetPeriod === "today") && targetCustomFrom && targetCustomTo
-          ? `&from=${targetCustomFrom}&to=${targetCustomTo}`
-          : "";
-      fetch(`/api/leaderboard?period=${targetPeriod}&page=${targetPage}&limit=50&sortBy=${targetSortBy}${searchParam}${customParams}`, { signal })
-        .then((res) => {
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          return res.json();
-        })
-        .then((result) => {
-          if (!isValidLeaderboardData(result)) throw new Error("Invalid response format");
-          setData(result);
-          setError(null);
+  const fetchData = useCallback((
+    targetPeriod: Period,
+    targetPage: number,
+    targetSortBy: LeaderboardSortBy,
+    targetSearch: string,
+    targetRetryToken: number,
+    signal?: AbortSignal,
+    targetCustomFrom?: string,
+    targetCustomTo?: string,
+  ) => {
+    const searchParam = targetSearch ? `&search=${encodeURIComponent(targetSearch)}` : "";
+    const customParams =
+      (targetPeriod === "custom" || targetPeriod === "today") && targetCustomFrom && targetCustomTo
+        ? `&from=${targetCustomFrom}&to=${targetCustomTo}`
+        : "";
+    fetch(`/api/leaderboard?period=${targetPeriod}&page=${targetPage}&limit=50&sortBy=${targetSortBy}${searchParam}${customParams}`, { signal })
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then((result) => {
+        if (!isValidLeaderboardData(result)) {
+          throw new Error("Invalid response format");
+        }
+        setData(result);
+        setError(null);
+        setResolvedRequest({
+          period: targetPeriod,
+          page: result.pagination.page,
+          sortBy: targetSortBy,
+          search: targetSearch,
+          retryToken: targetRetryToken,
+          customFrom: targetCustomFrom || "",
+          customTo: targetCustomTo || "",
+        });
+      })
+      .catch((err) => {
+        if (err.name !== "AbortError") {
+          setError(err.message || "Failed to load");
           setResolvedRequest({
             period: targetPeriod,
-            page: result.pagination.page,
+            page: targetPage,
             sortBy: targetSortBy,
             search: targetSearch,
             retryToken: targetRetryToken,
             customFrom: targetCustomFrom || "",
             customTo: targetCustomTo || "",
           });
-        })
-        .catch((err) => {
-          if (err.name !== "AbortError") {
-            setError(err.message || "Failed to load");
-            setResolvedRequest({
-              period: targetPeriod,
-              page: targetPage,
-              sortBy: targetSortBy,
-              search: targetSearch,
-              retryToken: targetRetryToken,
-              customFrom: targetCustomFrom || "",
-              customTo: targetCustomTo || "",
-            });
-          }
-        });
-    },
-    [],
-  );
+        }
+      });
+  }, []);
 
   useEffect(() => {
-    if (!isLoading) return;
-    if (period === "custom" && (!appliedFrom || !appliedTo)) return;
-    if (period === "today" && !localToday) return;
+    if (!isLoading) {
+      return;
+    }
+
+    if (period === "custom" && (!appliedFrom || !appliedTo)) {
+      return;
+    }
+
+    if (period === "today" && !localToday) {
+      return;
+    }
+
     const requestFrom = period === "today" ? localToday ?? undefined : appliedFrom;
     const requestTo = period === "today" ? localToday ?? undefined : appliedTo;
     const abortController = new AbortController();
@@ -375,67 +1258,97 @@ export default function LeaderboardClient({ initialData, currentUser, initialSor
   const showSubmissionCount = period === "all";
   const showTime = true;
 
-  const handleRowClick = useCallback((username: string) => router.push(`/u/${username}`), [router]);
+  const handleCopyCommand = (command: string) => {
+    navigator.clipboard.writeText(command);
+    setCopiedCommand(command);
+    setTimeout(() => setCopiedCommand(null), 2000);
+  };
 
-  const sortOptions: { id: LeaderboardSortBy; label: string }[] = [
-    { id: "tokens", label: "Tokens" },
-    { id: "cost", label: "Cost" },
-    { id: "time", label: "Time" },
-  ];
-
-  const totalTokensFull = data.stats.totalTokens.toLocaleString("en-US");
-  const totalCostFull = data.stats.totalCost.toLocaleString("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2 });
+  const handleRowClick = useCallback((username: string) => {
+    router.push(`/u/${username}`);
+  }, [router]);
 
   return (
     <>
-      <section className="mt-6 mb-8">
-        <StatGrid cols={3}>
-          <StatTile label="Users" value={data.stats.uniqueUsers} />
-          <StatTile label="Total Tokens" value={formatNumber(data.stats.totalTokens)} title={totalTokensFull} accent />
-          <StatTile label="Total Cost" value={formatCurrency(data.stats.totalCost)} title={totalCostFull} />
-        </StatGrid>
-      </section>
+      <Section>
+        <Description>See who&apos;s using the most tokens</Description>
+
+        <StatsGrid>
+          <StatCard>
+            <StatLabel>Users</StatLabel>
+            <StatValue>{data.stats.uniqueUsers}</StatValue>
+          </StatCard>
+          <StatCard>
+            <StatLabel>Total Tokens</StatLabel>
+            <StatValuePrimary>
+              <HoverTooltip data-tooltip={data.stats.totalTokens.toLocaleString('en-US')}>
+                {formatNumber(data.stats.totalTokens)}
+              </HoverTooltip>
+            </StatValuePrimary>
+          </StatCard>
+          <StatCard>
+            <StatLabel>Total Cost</StatLabel>
+            <StatValue>
+              <HoverTooltip data-tooltip={data.stats.totalCost.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2 })}>
+                {formatCurrency(data.stats.totalCost)}
+              </HoverTooltip>
+            </StatValue>
+          </StatCard>
+        </StatsGrid>
+      </Section>
 
       {currentUser && currentUserRankError && (
-        <div className="mb-6 flex items-center gap-2 rounded-lg border border-danger/40 bg-danger/10 px-4 py-3 text-sm text-danger">
+        <ErrorBanner>
           <span>⚠️</span>
           <span>Unable to load your ranking. Please refresh the page.</span>
-        </div>
+        </ErrorBanner>
       )}
 
       {currentUser && currentUserRank && (
-        <div className="mb-6 flex items-center justify-between gap-4 rounded-xl border border-accent/40 bg-accent/[0.06] p-4 ring-1 ring-accent/10 max-[640px]:flex-col max-[640px]:items-stretch">
-          <div className="flex min-w-0 flex-1 items-center gap-3">
-            <span className="font-mono text-sm font-semibold text-accent tabular-nums">#{currentUserRank.rank}</span>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
+        <CurrentUserCard>
+          <CurrentUserInfo>
             <img
               src={currentUser.avatarUrl || `https://github.com/${currentUser.username}.png`}
               alt={currentUser.username}
-              width={44}
-              height={44}
-              className="h-11 w-11 shrink-0 rounded-full object-cover ring-1 ring-line"
+              width={48}
+              height={48}
+              style={{ borderRadius: "50%", objectFit: "cover", flexShrink: 0, boxShadow: "0 0 0 1px rgba(255, 255, 255, 0.1)" }}
             />
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-semibold text-foreground">{currentUser.displayName || currentUser.username}</p>
-              <p className="truncate font-mono text-xs text-muted">@{currentUser.username}</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-6 max-[640px]:justify-between">
-            <div className="text-right max-[640px]:text-left">
-              <p className="mb-0.5 text-[11px] font-semibold tracking-wider text-muted uppercase">Tokens</p>
-              <p className="font-mono text-base font-semibold text-accent tabular-nums" title={currentUserRank.totalTokens.toLocaleString("en-US")}>
-                {formatNumber(currentUserRank.totalTokens)}
-              </p>
-            </div>
-            <div className="text-right max-[640px]:text-left">
-              <p className="mb-0.5 text-[11px] font-semibold tracking-wider text-muted uppercase">Cost</p>
-              <p className="font-mono text-base font-semibold text-foreground tabular-nums">{formatCurrency(currentUserRank.totalCost)}</p>
-            </div>
-          </div>
-        </div>
+            <CurrentUserDetails>
+              <CurrentUserName>
+                {currentUser.displayName || currentUser.username}
+              </CurrentUserName>
+              <CurrentUserUsername>
+                @{currentUser.username}
+              </CurrentUserUsername>
+            </CurrentUserDetails>
+          </CurrentUserInfo>
+          <CurrentUserStats>
+            <CurrentUserStat>
+              <CurrentUserStatLabel>Your Rank</CurrentUserStatLabel>
+              <CurrentUserStatValue>#{currentUserRank.rank}</CurrentUserStatValue>
+            </CurrentUserStat>
+            <CurrentUserStat>
+              <CurrentUserStatLabel>Tokens</CurrentUserStatLabel>
+              <CurrentUserStatValue>
+                <HoverTooltip data-tooltip={currentUserRank.totalTokens.toLocaleString('en-US')}>
+                  {formatNumber(currentUserRank.totalTokens)}
+                </HoverTooltip>
+              </CurrentUserStatValue>
+            </CurrentUserStat>
+            <CurrentUserStat>
+              <CurrentUserStatLabel>Cost</CurrentUserStatLabel>
+              <CurrentUserStatValue>
+                <HoverTooltip data-tooltip={currentUserRank.totalCost.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2 })}>
+                  {formatCurrency(currentUserRank.totalCost)}
+                </HoverTooltip>
+              </CurrentUserStatValue>
+            </CurrentUserStat>
+          </CurrentUserStats>
+        </CurrentUserCard>
       )}
 
-      <div className="mb-6">
+      <TabSection>
         <TabBar
           tabs={[
             { id: "all" as Period, label: "All Time" },
@@ -457,220 +1370,261 @@ export default function LeaderboardClient({ initialData, currentUser, initialSor
             }
           }}
         />
-      </div>
+      </TabSection>
 
       {period === "custom" && (
-        <div className="mb-4 flex flex-wrap items-center gap-2">
-          <input type="date" value={customFrom} onChange={(e) => setCustomFrom(e.target.value)} max={customTo || undefined} className={dateInputClass} />
-          <span className="text-sm text-muted">~</span>
-          <input type="date" value={customTo} onChange={(e) => setCustomTo(e.target.value)} min={customFrom || undefined} className={dateInputClass} />
-          <Button
-            isDisabled={!parseCustomDateRange(customFrom, customTo)}
-            onPress={() => {
+        <DateRangeRow>
+          <DateInput
+            type="date"
+            value={customFrom}
+            onChange={(e) => setCustomFrom(e.target.value)}
+            max={customTo || undefined}
+          />
+          <DateSeparator>~</DateSeparator>
+          <DateInput
+            type="date"
+            value={customTo}
+            onChange={(e) => setCustomTo(e.target.value)}
+            min={customFrom || undefined}
+          />
+          <DateApplyButton
+            disabled={!parseCustomDateRange(customFrom, customTo)}
+            onClick={() => {
               const parsed = parseCustomDateRange(customFrom, customTo);
-              if (!parsed) return;
+              if (!parsed) {
+                return;
+              }
               setAppliedFrom(parsed.from);
               setAppliedTo(parsed.to);
               setPage(1);
             }}
-            className="bg-accent text-accent-foreground"
           >
             Apply
-          </Button>
-        </div>
+          </DateApplyButton>
+        </DateRangeRow>
       )}
 
-      <div className="mb-4 flex items-center justify-between gap-3 max-[560px]:flex-col max-[560px]:items-stretch">
-        <div className="relative max-w-80 flex-1 max-[560px]:max-w-none">
-          <span className="pointer-events-none absolute top-1/2 left-3 flex -translate-y-1/2 items-center text-muted">
+      <SearchSortRow>
+        <SearchInputWrapper>
+          <SearchInputIcon>
             <SearchIcon size={16} />
-          </span>
-          <input
+          </SearchInputIcon>
+          <SearchInput
             type="text"
             placeholder="Search users..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full rounded-lg border border-line bg-surface px-9 py-2 text-sm text-foreground outline-none transition placeholder:text-muted focus:border-accent focus:ring-2 focus:ring-accent/25"
           />
           {searchQuery && (
-            <button onClick={() => setSearchQuery("")} aria-label="Clear search" className="absolute top-1/2 right-2 flex -translate-y-1/2 items-center rounded p-1 text-muted hover:text-foreground">
+            <ClearSearchButton onClick={() => setSearchQuery("")} aria-label="Clear search">
               <XIcon size={16} />
-            </button>
+            </ClearSearchButton>
           )}
-        </div>
-        <div className="flex shrink-0 items-center gap-2 max-[560px]:justify-between">
-          <span className="text-xs font-medium text-muted">Sort by</span>
-          <TabBar<LeaderboardSortBy>
-            aria-label="Sort leaderboard"
-            size="sm"
-            tabs={sortOptions}
-            activeTab={effectiveSortBy}
-            onTabChange={(id) => {
-              setUrlSortOverride(null);
-              setLeaderboardSort(id);
-            }}
-          />
-        </div>
-      </div>
+        </SearchInputWrapper>
+        <SortToggleInner>
+          <SortLabel>Sort by:</SortLabel>
+          <SortOptions>
+            <SortOption
+              $active={effectiveSortBy === 'tokens'}
+              onClick={() => {
+                setUrlSortOverride(null);
+                setLeaderboardSort('tokens');
+              }}
+            >
+              Tokens
+            </SortOption>
+            <SortOption
+              $active={effectiveSortBy === 'cost'}
+              onClick={() => {
+                setUrlSortOverride(null);
+                setLeaderboardSort('cost');
+              }}
+            >
+              Cost
+            </SortOption>
+            <SortOption
+              $active={effectiveSortBy === 'time'}
+              onClick={() => {
+                setUrlSortOverride(null);
+                setLeaderboardSort('time');
+              }}
+            >
+              Time
+            </SortOption>
+          </SortOptions>
+        </SortToggleInner>
+      </SearchSortRow>
 
       {isLoading ? (
         <LeaderboardSkeleton />
       ) : error ? (
-        <Panel className="p-8 text-center">
-          <p className="mb-4 text-muted">Failed to load leaderboard</p>
-          <p className="text-sm text-muted">{error}</p>
-          <Button onPress={() => setRetryToken((p) => p + 1)} className="mt-4 bg-accent text-accent-foreground">
-            Retry
-          </Button>
-        </Panel>
+        <TableContainer>
+          <EmptyState>
+            <EmptyMessage>Failed to load leaderboard</EmptyMessage>
+            <EmptyHint>{error}</EmptyHint>
+            <RetryButton onClick={() => setRetryToken((prev) => prev + 1)}>
+              Retry
+            </RetryButton>
+          </EmptyState>
+        </TableContainer>
       ) : (
-        <Panel className="overflow-hidden">
+        <TableContainer>
           {data.users.length === 0 ? (
-            <div className="p-8 text-center">
+            <EmptyState>
               {debouncedSearch ? (
                 <>
-                  <p className="mb-4 text-muted">No users found for &ldquo;{debouncedSearch}&rdquo;</p>
-                  <p className="text-sm text-muted">Try a different search term</p>
+                  <EmptyMessage>No users found for &ldquo;{debouncedSearch}&rdquo;</EmptyMessage>
+                  <EmptyHint>Try a different search term</EmptyHint>
                 </>
               ) : (
                 <>
-                  <p className="mb-4 text-muted">No submissions yet. Be the first!</p>
-                  <p className="text-sm text-muted">
-                    Run <code className="rounded bg-surface-secondary px-2 py-1 font-mono">tokens login &amp;&amp; tokens submit</code>
-                  </p>
+                  <EmptyMessage>No submissions yet. Be the first!</EmptyMessage>
+                  <EmptyHint>
+                    Run <CodeSnippet>{"tokens login && tokens submit"}</CodeSnippet>
+                  </EmptyHint>
                 </>
               )}
-            </div>
+            </EmptyState>
           ) : (
             <>
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[500px] max-[560px]:min-w-0">
-                  <thead className="border-b border-line bg-surface-secondary">
+              <TableWrapper>
+                <Table>
+                  <TableHead>
                     <tr>
-                      <th className="w-px py-3 pr-3 pl-3 text-left text-xs font-medium tracking-wider whitespace-nowrap text-muted uppercase sm:pl-6">Rank</th>
-                      <th className="w-px py-3 pr-3 pl-1 text-left text-xs font-medium tracking-wider whitespace-nowrap text-muted uppercase">User</th>
-                      {/* Flexible spacer: absorbs slack so the User column hugs its content and the numeric columns group tightly on the right. */}
-                      <th aria-hidden="true" className="w-full" />
-                      <th className="w-px px-4 py-3 text-right text-xs font-medium tracking-wider whitespace-nowrap text-muted uppercase max-[560px]:hidden">Cost</th>
-                      <th className="w-px px-4 py-3 text-right text-xs font-medium tracking-wider whitespace-nowrap text-muted uppercase">Tokens</th>
-                      {showTime && <th className="w-px px-4 py-3 text-right text-xs font-medium tracking-wider whitespace-nowrap text-muted uppercase max-md:hidden">Time</th>}
-                      {showSubmissionCount && <th className="w-px px-4 py-3 text-right text-xs font-medium tracking-wider whitespace-nowrap text-muted uppercase max-md:hidden sm:pr-6">Submits</th>}
+                      <TableHeaderCell className="rank-cell">Rank</TableHeaderCell>
+                      <TableHeaderCell>User</TableHeaderCell>
+                      <TableHeaderCell className="text-right hidden-cost-mobile">Cost</TableHeaderCell>
+                      <TableHeaderCell className="text-right">Tokens</TableHeaderCell>
+                      {showTime && (
+                        <TableHeaderCell className="text-right hidden-mobile w-24">Time</TableHeaderCell>
+                      )}
+                      {showSubmissionCount && (
+                        <TableHeaderCell className="text-right hidden-mobile w-24">Submits</TableHeaderCell>
+                      )}
                     </tr>
-                  </thead>
-                  <tbody>
-                    {sortedUsers.map((user) => (
+                  </TableHead>
+                  <TableBody>
+                    {sortedUsers.map((user, index) => (
                       <LeaderboardRow
                         key={user.userId}
                         user={user}
                         isCurrentUser={!!(currentUser && user.username === currentUser.username)}
+                        isLastRow={index === sortedUsers.length - 1}
                         showSubmissionCount={showSubmissionCount}
                         showTime={showTime}
                         onRowClick={handleRowClick}
                       />
                     ))}
-                  </tbody>
-                </table>
-              </div>
+                  </TableBody>
+                </Table>
+              </TableWrapper>
 
               {data.pagination.totalPages > 1 && (
-                <div className="flex flex-col items-center justify-between gap-3 border-t border-line px-3 py-3 sm:flex-row sm:px-6 sm:py-4">
-                  <p className="text-center text-xs text-muted sm:text-left sm:text-sm">
+                <PaginationContainer>
+                  <PaginationText>
                     Showing {(data.pagination.page - 1) * data.pagination.limit + 1}-
-                    {Math.min(data.pagination.page * data.pagination.limit, data.pagination.totalUsers)} of {data.pagination.totalUsers}
-                  </p>
-                  <nav className="flex items-center gap-1">
-                    <PageButton disabled={data.pagination.page <= 1} onClick={() => setPage(data.pagination.page - 1)} aria-label="Previous page">
+                    {Math.min(data.pagination.page * data.pagination.limit, data.pagination.totalUsers)} of{" "}
+                    {data.pagination.totalUsers}
+                  </PaginationText>
+                  <PaginationNav>
+                    <PageButton
+                      disabled={data.pagination.page <= 1}
+                      onClick={() => setPage(data.pagination.page - 1)}
+                      aria-label="Previous page"
+                    >
                       ←
                     </PageButton>
-                    <div className="hidden gap-1 md:flex">
-                      {buildPageList(data.pagination.totalPages, data.pagination.page).map((p, idx) =>
-                        p === "…" ? (
-                          <span key={`e${idx}`} className="flex h-8 w-8 items-center justify-center text-sm text-muted">…</span>
-                        ) : (
-                          <PageButton key={p} active={p === data.pagination.page} onClick={() => setPage(p)}>
-                            {p}
-                          </PageButton>
-                        ),
-                      )}
-                    </div>
-                    <PageButton disabled={data.pagination.page >= data.pagination.totalPages} onClick={() => setPage(data.pagination.page + 1)} aria-label="Next page">
+                    <PaginationPages>
+                      {(() => {
+                        const pages: React.ReactNode[] = [];
+                        const total = data.pagination.totalPages;
+                        const current = data.pagination.page;
+                        const delta = 2;
+                        const visible = new Set<number>();
+                        visible.add(1);
+                        visible.add(total);
+                        for (let i = Math.max(2, current - delta); i <= Math.min(total - 1, current + delta); i++) {
+                          visible.add(i);
+                        }
+
+                        const sorted = Array.from(visible).sort((a, b) => a - b);
+                        let last = 0;
+                        for (const p of sorted) {
+                          if (last && p - last > 1) {
+                            pages.push(<PageEllipsis key={`e${p}`}>…</PageEllipsis>);
+                          }
+                          pages.push(
+                            <PageButton key={p} $active={p === current} onClick={() => setPage(p)}>
+                              {p}
+                            </PageButton>
+                          );
+                          last = p;
+                        }
+                        return pages;
+                      })()}
+                    </PaginationPages>
+                    <PageButton
+                      disabled={data.pagination.page >= data.pagination.totalPages}
+                      onClick={() => setPage(data.pagination.page + 1)}
+                      aria-label="Next page"
+                    >
                       →
                     </PageButton>
-                  </nav>
-                </div>
+                  </PaginationNav>
+                </PaginationContainer>
               )}
             </>
           )}
-        </Panel>
+        </TableContainer>
       )}
 
-      <Panel className="mt-8 p-6">
-        <h2 className="text-base font-semibold text-foreground">Join the Leaderboard</h2>
-        <p className="mt-1 mb-5 text-sm text-muted">
-          Install the CLI, sign in once, and your usage submits automatically in the background.
-        </p>
-        <div className="flex flex-col gap-4">
-          <div>
-            <p className="mb-1.5 text-[11px] font-semibold tracking-wider text-muted uppercase">1 · Install (macOS)</p>
-            <CommandSnippet command="brew install owo-network/brew/tokens" />
-          </div>
-          <div>
-            <p className="mb-1.5 text-[11px] font-semibold tracking-wider text-muted uppercase">2 · Sign in</p>
-            <CommandSnippet command="tokens login" />
-          </div>
-          <div>
-            <p className="mb-1.5 text-[11px] font-semibold tracking-wider text-muted uppercase">3 · Auto-submit in the background</p>
-            <CommandSnippet command="brew services start tokens" />
-          </div>
-        </div>
-        <p className="mt-4 text-xs leading-relaxed text-muted">
-          Prefer a one-off? Run{" "}
-          <code className="rounded bg-surface-secondary px-1.5 py-0.5 font-mono text-foreground">tokens submit</code>{" "}
-          anytime. On Linux:{" "}
-          <code className="break-all rounded bg-surface-secondary px-1.5 py-0.5 font-mono text-foreground">curl -fsSL https://s.ee/tokens | bash</code>
-        </p>
-      </Panel>
+      <CTASection>
+        <CTATitle>Join the Leaderboard</CTATitle>
+        <CTADescription>Install Tokens CLI and submit your usage data:</CTADescription>
+        <CodeBlock>
+          {mounted && typeof window !== "undefined" && window.location.hostname !== "tokens.ci" && (
+            <CodeLine>
+              <CommandPrompt>$</CommandPrompt>
+              <CommandPrefix>export</CommandPrefix>
+              <CommandName>TOKENS_API_URL</CommandName>
+              <CommandArg>={`${window.location.origin}`}</CommandArg>
+              <CopyIconButton
+                onClick={() => handleCopyCommand(`export TOKENS_API_URL=${window.location.origin}`)}
+                className={copiedCommand === `export TOKENS_API_URL=${window.location.origin}` ? "copied" : ""}
+                aria-label="Copy command"
+              >
+                {copiedCommand === `export TOKENS_API_URL=${window.location.origin}` ? <CheckIcon size={16} /> : <CopyIcon size={16} />}
+              </CopyIconButton>
+            </CodeLine>
+          )}
+          <CodeLine>
+            <CommandPrompt>$</CommandPrompt>
+            <CommandPrefix>bunx</CommandPrefix>
+            <CommandName>tokens-cli@latest</CommandName>
+            <CommandArg>login</CommandArg>
+            <CopyIconButton
+              onClick={() => handleCopyCommand("bunx tokens-cli@latest login")}
+              className={copiedCommand === "bunx tokens-cli@latest login" ? "copied" : ""}
+              aria-label="Copy command"
+            >
+              {copiedCommand === "bunx tokens-cli@latest login" ? <CheckIcon size={16} /> : <CopyIcon size={16} />}
+            </CopyIconButton>
+          </CodeLine>
+          <CodeLine>
+            <CommandPrompt>$</CommandPrompt>
+            <CommandPrefix>bunx</CommandPrefix>
+            <CommandName>tokens-cli@latest</CommandName>
+            <CommandArg>submit</CommandArg>
+            <CopyIconButton
+              onClick={() => handleCopyCommand("bunx tokens-cli@latest submit")}
+              className={copiedCommand === "bunx tokens-cli@latest submit" ? "copied" : ""}
+              aria-label="Copy command"
+            >
+              {copiedCommand === "bunx tokens-cli@latest submit" ? <CheckIcon size={16} /> : <CopyIcon size={16} />}
+            </CopyIconButton>
+          </CodeLine>
+        </CodeBlock>
+      </CTASection>
     </>
-  );
-}
-
-function buildPageList(total: number, current: number): (number | "…")[] {
-  const delta = 2;
-  const visible = new Set<number>([1, total]);
-  for (let i = Math.max(2, current - delta); i <= Math.min(total - 1, current + delta); i++) visible.add(i);
-  const sorted = Array.from(visible).sort((a, b) => a - b);
-  const out: (number | "…")[] = [];
-  let last = 0;
-  for (const p of sorted) {
-    if (last && p - last > 1) out.push("…");
-    out.push(p);
-    last = p;
-  }
-  return out;
-}
-
-function PageButton({
-  children,
-  active,
-  disabled,
-  onClick,
-  ...rest
-}: {
-  children: React.ReactNode;
-  active?: boolean;
-  disabled?: boolean;
-  onClick?: () => void;
-} & React.ButtonHTMLAttributes<HTMLButtonElement>) {
-  return (
-    <button
-      disabled={disabled}
-      onClick={onClick}
-      className={`flex h-8 min-w-8 items-center justify-center rounded-md border px-2 text-[13px] transition disabled:cursor-default disabled:opacity-40 ${
-        active ? "border-accent bg-accent text-accent-foreground" : "border-line text-muted hover:border-accent hover:text-foreground"
-      }`}
-      {...rest}
-    >
-      {children}
-    </button>
   );
 }
