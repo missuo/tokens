@@ -97,8 +97,18 @@ public enum GraphCompanionAdapter {
 
     private struct UsageProvider: Decodable {
         let provider: String
+        let account: Account?
         let plan: String?
         let metrics: [Metric]
+        let status: String?
+
+        struct Account: Decodable {
+            let isActive: Bool
+
+            enum CodingKeys: String, CodingKey {
+                case isActive = "is_active"
+            }
+        }
 
         struct Metric: Decodable {
             let label: String
@@ -291,7 +301,8 @@ public enum GraphCompanionAdapter {
     public static func patchedQuota(
         companionData: Data,
         usageData: Data,
-        quotaRefreshedAt: String
+        quotaRefreshedAt: String,
+        authoritative: Bool = false
     ) -> Data? {
         guard var dict = (try? JSONSerialization.jsonObject(with: companionData)) as? [String: Any],
             let usage = try? JSONDecoder().decode([UsageProvider].self, from: usageData)
@@ -299,8 +310,31 @@ public enum GraphCompanionAdapter {
             return nil
         }
         let quota = quotaBreakdown(usage)
-        guard !quota.isEmpty else { return nil }
-        dict["quota"] = quota
+        let hasDetailedStatus = !usage.isEmpty && usage.allSatisfy { $0.status != nil }
+        let isAuthoritative = authoritative || hasDetailedStatus
+        guard isAuthoritative || !quota.isEmpty else { return nil }
+        var previous = [String: [String: Any]]()
+        for row in dict["quota"] as? [[String: Any]] ?? [] {
+            guard let provider = row["provider"] as? String else { continue }
+            previous[canonicalQuotaProviderID(provider)] = row
+        }
+        var merged = isAuthoritative ? [:] : previous
+        for refreshed in quota {
+            guard let provider = refreshed["provider"] as? String else { continue }
+            let id = canonicalQuotaProviderID(provider)
+            let status = refreshed["status"] as? String
+            let windows = refreshed["windows"] as? [[String: Any]] ?? []
+            if status != nil, windows.isEmpty, var cached = previous[id] {
+                cached["provider"] = quotaProviderDisplayName(provider)
+                cached["status"] = status
+                merged[id] = cached
+            } else {
+                merged[id] = refreshed
+            }
+        }
+        dict["quota"] = merged.values.sorted {
+            ($0["provider"] as? String ?? "") < ($1["provider"] as? String ?? "")
+        }
         if var health = dict["health"] as? [String: Any] {
             health["quotaRefreshedAt"] = quotaRefreshedAt
             dict["health"] = health
@@ -703,6 +737,7 @@ public enum GraphCompanionAdapter {
             provider["todayCostUsd"] = doubleValue(next?["todayCostUsd"])
             provider["todayTokens"] = int64Value(next?["todayTokens"])
             provider["todayMessages"] = intValue(next?["todayMessages"])
+            provider["todayCacheHitPercent"] = doubleValue(next?["todayCacheHitPercent"])
             provider["workTimeMs"] = int64Value(next?["workTimeMs"])
             provider["models"] = patchedModels(
                 provider["models"] as? [[String: Any]] ?? [],
@@ -815,6 +850,7 @@ public enum GraphCompanionAdapter {
         provider["costUsd"] = 0.0
         provider["tokens"] = Int64(0)
         provider["messages"] = 0
+        provider["cacheHitPercent"] = 0.0
         provider["models"] = (provider["models"] as? [[String: Any]] ?? [])
             .map(presentationOnlyModel)
         return provider
@@ -885,6 +921,9 @@ public enum GraphCompanionAdapter {
             var cacheRead: Int64 = 0
             var freshInput: Int64 = 0
             var cacheWrite: Int64 = 0
+            var todayCacheRead: Int64 = 0
+            var todayFreshInput: Int64 = 0
+            var todayCacheWrite: Int64 = 0
             var models: [String: ModelAcc] = [:]
         }
         struct ModelAcc {
@@ -915,6 +954,9 @@ public enum GraphCompanionAdapter {
                     acc.todayCost += client.cost
                     acc.todayTokens += tokenCount
                     acc.todayMessages += client.messages
+                    acc.todayCacheRead += client.tokens.cacheRead
+                    acc.todayFreshInput += client.tokens.input
+                    acc.todayCacheWrite += client.tokens.cacheWrite
                     model.todayCost += client.cost
                     model.todayTokens += tokenCount
                     model.todayMessages += client.messages
@@ -954,6 +996,12 @@ public enum GraphCompanionAdapter {
                     readTotal > 0
                     ? Double(acc.cacheRead) / Double(readTotal) * 100
                     : 0
+                let todayReadTotal =
+                    acc.todayCacheRead + acc.todayFreshInput + acc.todayCacheWrite
+                let todayCacheHitPercent =
+                    todayReadTotal > 0
+                    ? Double(acc.todayCacheRead) / Double(todayReadTotal) * 100
+                    : 0
                 var row: [String: Any] = [
                     "client": client,
                     "costUsd": acc.cost,
@@ -963,6 +1011,7 @@ public enum GraphCompanionAdapter {
                     "todayTokens": acc.todayTokens,
                     "todayMessages": acc.todayMessages,
                     "cacheHitPercent": cacheHitPercent,
+                    "todayCacheHitPercent": todayCacheHitPercent,
                     "workTimeMs": graph.todayWorkTime?[client] ?? 0,
                 ]
                 row["models"] = models
@@ -981,7 +1030,16 @@ public enum GraphCompanionAdapter {
     }
 
     private static func quotaBreakdown(_ usage: [UsageProvider]) -> [[String: Any]] {
-        usage
+        var selected = [String: UsageProvider]()
+        for output in usage {
+            let id = canonicalQuotaProviderID(output.provider)
+            if selected[id] == nil
+                || (output.account?.isActive == true && selected[id]?.account?.isActive != true)
+            {
+                selected[id] = output
+            }
+        }
+        return selected.values
             .compactMap { output -> [String: Any]? in
                 let windows: [[String: Any]] = output.metrics.map { metric in
                     var window: [String: Any] = [
@@ -997,15 +1055,31 @@ public enum GraphCompanionAdapter {
                     }
                     return window
                 }
-                if windows.isEmpty { return nil }
+                let status = output.status == "live" ? nil : output.status
+                if windows.isEmpty, status == nil { return nil }
                 var provider: [String: Any] = [
-                    "provider": output.provider,
+                    "provider": quotaProviderDisplayName(output.provider),
                     "windows": windows,
                 ]
                 if let plan = output.plan { provider["plan"] = plan }
+                if let status { provider["status"] = status }
                 return provider
             }
             .sorted { ($0["provider"] as? String ?? "") < ($1["provider"] as? String ?? "") }
+    }
+
+    private static func canonicalQuotaProviderID(_ provider: String) -> String {
+        let normalized = provider.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if normalized == "grok build" || normalized == "grok" {
+            return "grok"
+        }
+        return normalized
+    }
+
+    private static func quotaProviderDisplayName(_ provider: String) -> String {
+        canonicalQuotaProviderID(provider) == "grok"
+            ? "Grok"
+            : provider.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private static func historyBreakdown(_ graph: Graph) -> [[String: Any]] {

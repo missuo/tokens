@@ -7,13 +7,13 @@ use super::{UsageMetric, UsageOutput};
 const CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 const BETA_HEADER: &str = "oauth-2025-04-20";
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct Credentials {
     #[serde(rename = "claudeAiOauth")]
     claude_ai_oauth: Option<Oauth>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct Oauth {
     #[serde(rename = "accessToken")]
     access_token: Option<String>,
@@ -44,10 +44,16 @@ struct TokenRefresh {
     refresh_token: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CredentialSource {
     File,
     Keychain,
+}
+
+#[derive(Debug, Clone)]
+struct CredentialCandidate {
+    source: CredentialSource,
+    oauth: Oauth,
 }
 
 fn read_keychain() -> Result<String> {
@@ -60,19 +66,41 @@ pub fn has_credentials() -> bool {
         || super::helpers::read_keychain("Claude Code-credentials").is_ok()
 }
 
-fn read_credentials() -> Result<(Credentials, CredentialSource)> {
+fn credential_candidates_from_raw(
+    keychain: Option<&str>,
+    file: Option<&str>,
+) -> Vec<CredentialCandidate> {
+    let mut seen = std::collections::HashSet::new();
+    [
+        (CredentialSource::Keychain, keychain),
+        (CredentialSource::File, file),
+    ]
+    .into_iter()
+    .filter_map(|(source, raw)| {
+        let creds = serde_json::from_str::<Credentials>(raw?).ok()?;
+        let oauth = creds.claude_ai_oauth?;
+        let access_token = oauth.access_token.as_deref()?.trim();
+        let refresh_token = oauth.refresh_token.as_deref().map(str::trim);
+        if access_token.is_empty()
+            || !seen.insert((access_token.to_string(), refresh_token.map(str::to_string)))
+        {
+            return None;
+        }
+        Some(CredentialCandidate { source, oauth })
+    })
+    .collect()
+}
+
+fn read_credential_candidates() -> Result<Vec<CredentialCandidate>> {
     let home = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
     let path = home.join(".claude").join(".credentials.json");
-    if path.exists() {
-        if let Ok(content) = std::fs::read_to_string(&path) {
-            if let Ok(creds) = serde_json::from_str::<Credentials>(&content) {
-                return Ok((creds, CredentialSource::File));
-            }
-        }
+    let keychain = read_keychain().ok();
+    let file = std::fs::read_to_string(path).ok();
+    let candidates = credential_candidates_from_raw(keychain.as_deref(), file.as_deref());
+    if candidates.is_empty() {
+        anyhow::bail!("NEEDS_AUTH");
     }
-    let content = read_keychain()?;
-    let creds: Credentials = serde_json::from_str(&content)?;
-    Ok((creds, CredentialSource::Keychain))
+    Ok(candidates)
 }
 
 fn save_credentials(
@@ -139,8 +167,11 @@ async fn fetch_usage(client: &reqwest::Client, token: &str) -> Result<UsageRespo
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
         anyhow::bail!("NEEDS_AUTH");
     }
+    if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        anyhow::bail!("RATE_LIMITED");
+    }
     if !status.is_success() {
-        anyhow::bail!("Claude usage request failed (HTTP {status})");
+        anyhow::bail!("UNAVAILABLE");
     }
     Ok(resp.json().await?)
 }
@@ -161,68 +192,155 @@ pub fn fetch() -> Result<UsageOutput> {
         .enable_all()
         .build()?;
     rt.block_on(async {
-        let (creds, _source) = read_credentials()?;
-        let oauth = creds.claude_ai_oauth.ok_or_else(|| {
-            anyhow::anyhow!("No Claude OAuth credentials. Run 'claude' to log in.")
-        })?;
-        let access_token = oauth
-            .access_token
-            .clone()
-            .ok_or_else(|| anyhow::anyhow!("No Claude access token."))?;
-        let plan = oauth.subscription_type.as_ref().map(|s| {
-            let tier = oauth
-                .rate_limit_tier
-                .as_deref()
-                .and_then(|t| t.rsplit('_').next());
-            match tier {
-                Some(mult) => format!("{} {}", capitalize(s), mult),
-                None => capitalize(s),
-            }
-        });
-
         let client = reqwest::Client::new();
-        let resp = match fetch_usage(&client, &access_token).await {
-            Ok(r) => r,
-            Err(e) if e.to_string().contains("NEEDS_AUTH") => {
-                let rt = oauth
-                    .refresh_token
-                    .as_ref()
-                    .ok_or_else(|| anyhow::anyhow!("No refresh token."))?;
-                let refreshed = refresh_token(&client, rt).await?;
-                let new = refreshed
-                    .access_token
-                    .clone()
-                    .ok_or_else(|| anyhow::anyhow!("Refresh returned no token."))?;
-                if let Some(new_rt) = refreshed.refresh_token.as_deref() {
-                    save_credentials(
-                        &new,
-                        new_rt,
-                        oauth.subscription_type.as_deref(),
-                        oauth.rate_limit_tier.as_deref(),
-                    );
+        let mut saw_rate_limit = false;
+        let mut saw_auth_failure = false;
+        for candidate in read_credential_candidates()? {
+            let Some(access_token) = candidate.oauth.access_token.as_deref() else {
+                continue;
+            };
+            let mut response = fetch_usage(&client, access_token).await;
+            if response
+                .as_ref()
+                .is_err_and(|error| error.to_string().contains("NEEDS_AUTH"))
+            {
+                saw_auth_failure = true;
+                if let Some(refresh) = candidate.oauth.refresh_token.as_deref() {
+                    if let Ok(refreshed) = refresh_token(&client, refresh).await {
+                        if let Some(new_access) = refreshed.access_token.as_deref() {
+                            if candidate.source == CredentialSource::File {
+                                save_credentials(
+                                    new_access,
+                                    refreshed.refresh_token.as_deref().unwrap_or(refresh),
+                                    candidate.oauth.subscription_type.as_deref(),
+                                    candidate.oauth.rate_limit_tier.as_deref(),
+                                );
+                            }
+                            response = fetch_usage(&client, new_access).await;
+                        }
+                    }
                 }
-                fetch_usage(&client, &new).await?
             }
-            Err(e) => return Err(e),
-        };
-
-        let mut metrics = Vec::new();
-        if let Some(ref w) = resp.five_hour {
-            metrics.push(window_metric("Session", w));
+            let resp = match response {
+                Ok(response) => response,
+                Err(error) => {
+                    let marker = error.to_string();
+                    saw_rate_limit |= marker.contains("RATE_LIMITED");
+                    saw_auth_failure |= marker.contains("NEEDS_AUTH");
+                    continue;
+                }
+            };
+            let plan = candidate
+                .oauth
+                .subscription_type
+                .as_ref()
+                .map(|subscription| {
+                    let tier = candidate
+                        .oauth
+                        .rate_limit_tier
+                        .as_deref()
+                        .and_then(|value| value.rsplit('_').next());
+                    match tier {
+                        Some(multiplier) => format!("{} {}", capitalize(subscription), multiplier),
+                        None => capitalize(subscription),
+                    }
+                });
+            let mut metrics = Vec::new();
+            if let Some(ref window) = resp.five_hour {
+                metrics.push(window_metric("Session", window));
+            }
+            if let Some(ref window) = resp.seven_day {
+                metrics.push(window_metric("Weekly", window));
+            }
+            if let Some(ref window) = resp.seven_day_opus {
+                metrics.push(window_metric("Opus", window));
+            }
+            return Ok(UsageOutput {
+                provider: "Claude".into(),
+                account: None,
+                plan,
+                email: None,
+                metrics,
+            });
         }
-        if let Some(ref w) = resp.seven_day {
-            metrics.push(window_metric("Weekly", w));
+        if saw_rate_limit {
+            anyhow::bail!("RATE_LIMITED");
         }
-        if let Some(ref w) = resp.seven_day_opus {
-            metrics.push(window_metric("Opus", w));
+        if saw_auth_failure {
+            anyhow::bail!("NEEDS_AUTH");
         }
-
-        Ok(UsageOutput {
-            provider: "Claude".into(),
-            account: None,
-            plan,
-            email: None,
-            metrics,
-        })
+        anyhow::bail!("UNAVAILABLE")
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const KEYCHAIN: &str = r#"{
+        "claudeAiOauth": {
+            "accessToken": "keychain-token",
+            "refreshToken": "keychain-refresh",
+            "subscriptionType": "max"
+        }
+    }"#;
+    const FILE: &str = r#"{
+        "claudeAiOauth": {
+            "accessToken": "file-token",
+            "refreshToken": "file-refresh",
+            "subscriptionType": "pro"
+        }
+    }"#;
+
+    #[test]
+    fn credential_candidates_prefer_keychain_then_file() {
+        let candidates = credential_candidates_from_raw(Some(KEYCHAIN), Some(FILE));
+
+        assert_eq!(candidates.len(), 2);
+        assert_eq!(candidates[0].source, CredentialSource::Keychain);
+        assert_eq!(candidates[1].source, CredentialSource::File);
+        assert_eq!(
+            candidates[0].oauth.access_token.as_deref(),
+            Some("keychain-token")
+        );
+        assert_eq!(
+            candidates[1].oauth.access_token.as_deref(),
+            Some("file-token")
+        );
+    }
+
+    #[test]
+    fn credential_candidates_use_file_when_keychain_is_invalid() {
+        let candidates = credential_candidates_from_raw(Some("not-json"), Some(FILE));
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].source, CredentialSource::File);
+    }
+
+    #[test]
+    fn credential_candidates_dedupe_identical_tokens_preferring_keychain() {
+        let candidates = credential_candidates_from_raw(Some(KEYCHAIN), Some(KEYCHAIN));
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].source, CredentialSource::Keychain);
+    }
+
+    #[test]
+    fn credential_candidates_keep_distinct_refresh_fallbacks() {
+        let file = KEYCHAIN.replace("keychain-refresh", "file-refresh");
+        let candidates = credential_candidates_from_raw(Some(KEYCHAIN), Some(&file));
+
+        assert_eq!(candidates.len(), 2);
+        assert_eq!(candidates[0].source, CredentialSource::Keychain);
+        assert_eq!(candidates[1].source, CredentialSource::File);
+    }
+
+    #[test]
+    fn credential_candidates_skip_missing_access_token() {
+        let missing = r#"{"claudeAiOauth":{"refreshToken":"refresh-only"}}"#;
+        let candidates = credential_candidates_from_raw(Some(missing), Some(FILE));
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].source, CredentialSource::File);
+    }
 }

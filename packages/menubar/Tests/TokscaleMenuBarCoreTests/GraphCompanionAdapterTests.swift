@@ -398,6 +398,30 @@ final class GraphCompanionAdapterTests: XCTestCase {
         XCTAssertNil(patched)
     }
 
+    func testAuthoritativeEmptyQuotaClearsPreviousProviders() throws {
+        let base = try GraphCompanionAdapter.companionJSON(
+            graphData: Data(graphJSON.utf8),
+            usageData: Data(usageJSON.utf8),
+            todayDate: "2026-06-07",
+            summaryPath: "/tmp/companion-summary.json",
+            lastScanDurationMs: 1,
+            quotaRefreshedAt: "2026-06-07T03:01:00+00:00"
+        )
+
+        let patched = try XCTUnwrap(
+            GraphCompanionAdapter.patchedQuota(
+                companionData: base,
+                usageData: Data("[]".utf8),
+                quotaRefreshedAt: "2026-06-07T04:00:00+00:00",
+                authoritative: true
+            )
+        )
+        let summary = try TokscaleSummary.decode(patched)
+
+        XCTAssertTrue(summary.quota.isEmpty)
+        XCTAssertEqual(summary.health.quotaRefreshedAt, "2026-06-07T04:00:00+00:00")
+    }
+
     func testPatchedQuotaReplacesWindowsWhenUsagePresent() throws {
         let base = try GraphCompanionAdapter.companionJSON(
             graphData: Data(graphJSON.utf8),
@@ -418,6 +442,106 @@ final class GraphCompanionAdapterTests: XCTestCase {
         XCTAssertEqual(summary.quota.count, 1)
         XCTAssertEqual(summary.quota[0].provider, "Claude")
         XCTAssertEqual(summary.health.quotaRefreshedAt, "2026-06-07T04:00:00+00:00")
+    }
+
+    func testPatchedQuotaPreservesFailedProvidersWhileUpdatingSuccessfulOnes() throws {
+        let initialUsage = Data(
+            """
+            [
+              { "provider": "Claude", "plan": "Max", "metrics": [
+                { "label": "Session", "used_percent": 12.0, "remaining_percent": 88.0,
+                  "remaining_label": "88% left", "resets_at": null }
+              ] },
+              { "provider": "Grok Build", "plan": "SuperGrok", "metrics": [
+                { "label": "Credits", "used_percent": 15.0, "remaining_percent": 85.0,
+                  "remaining_label": "85% left", "resets_at": null }
+              ] },
+              { "provider": "Gemini", "plan": null, "metrics": [
+                { "label": "Pro", "used_percent": 2.0, "remaining_percent": 98.0,
+                  "remaining_label": "98% left", "resets_at": null }
+              ] }
+            ]
+            """.utf8
+        )
+        let base = try GraphCompanionAdapter.companionJSON(
+            graphData: Data(graphJSON.utf8),
+            usageData: initialUsage,
+            todayDate: "2026-06-07",
+            summaryPath: "/tmp/companion-summary.json",
+            lastScanDurationMs: 1,
+            quotaRefreshedAt: "2026-06-07T03:01:00+00:00"
+        )
+        let refresh = Data(
+            """
+            [
+              { "provider": "Claude", "plan": null, "metrics": [], "status": "rate-limited" },
+              { "provider": "Grok Build", "plan": null, "metrics": [], "status": "auth-expired" },
+              { "provider": "Codex", "plan": "Pro", "status": "live", "metrics": [
+                { "label": "Session", "used_percent": 8.0, "remaining_percent": 92.0,
+                  "remaining_label": "92% left", "resets_at": null }
+              ] }
+            ]
+            """.utf8
+        )
+
+        let patched = try XCTUnwrap(
+            GraphCompanionAdapter.patchedQuota(
+                companionData: base,
+                usageData: refresh,
+                quotaRefreshedAt: "2026-06-07T04:00:00+00:00"
+            )
+        )
+        let summary = try TokscaleSummary.decode(patched)
+        let claude = try XCTUnwrap(summary.quota.first { $0.provider == "Claude" })
+        let grok = try XCTUnwrap(summary.quota.first { $0.provider == "Grok" })
+        let codex = try XCTUnwrap(summary.quota.first { $0.provider == "Codex" })
+
+        XCTAssertEqual(claude.windows.count, 1)
+        XCTAssertEqual(claude.status, "rate-limited")
+        XCTAssertEqual(grok.windows.count, 1)
+        XCTAssertEqual(grok.status, "auth-expired")
+        XCTAssertEqual(codex.windows.count, 1)
+        XCTAssertNil(codex.status)
+        XCTAssertFalse(summary.quota.contains { $0.provider == "Gemini" })
+    }
+
+    func testGrokBuildQuotaCanonicalizesToGrok() throws {
+        let usage = Data(
+            """
+            [{ "provider": "Grok Build", "plan": "SuperGrok", "metrics": [
+              { "label": "Credits", "used_percent": 15.0, "remaining_percent": 85.0,
+                "remaining_label": "85% left", "resets_at": null }
+            ] }]
+            """.utf8
+        )
+
+        let summary = try makeSummary(usage: usage)
+
+        XCTAssertEqual(summary.quota.first?.provider, "Grok")
+    }
+
+    func testQuotaUsesActiveCodexAccountWhenMultipleAccountsAreReturned() throws {
+        let usage = Data(
+            """
+            [
+              { "provider": "Codex", "account": { "id": "active", "is_active": true },
+                "plan": "Pro", "status": "live", "metrics": [
+                  { "label": "Session", "used_percent": 20.0, "remaining_percent": 80.0,
+                    "remaining_label": "80% left", "resets_at": null }
+                ] },
+              { "provider": "Codex", "account": { "id": "inactive", "is_active": false },
+                "plan": "Pro", "status": "live", "metrics": [
+                  { "label": "Session", "used_percent": 80.0, "remaining_percent": 20.0,
+                    "remaining_label": "20% left", "resets_at": null }
+                ] }
+            ]
+            """.utf8
+        )
+
+        let summary = try makeSummary(usage: usage)
+        let codex = try XCTUnwrap(summary.quota.first { $0.provider == "Codex" })
+
+        XCTAssertEqual(codex.windows.first?.usedPercent, 20.0)
     }
 
     func testRemoteProfileKeepsAccountAggregatesWhileLocalTodayWinsPresentation() throws {
@@ -1109,6 +1233,92 @@ final class GraphCompanionAdapterTests: XCTestCase {
         let summary = try TokscaleSummary.decode(companion)
         let claude = try XCTUnwrap(summary.providers.first { $0.client == "claude" })
         XCTAssertEqual(claude.cacheHitPercent, 90.0, accuracy: 0.01)
+    }
+
+    func testTodayCacheHitDoesNotReuseLifetimeOrYesterdayValues() throws {
+        let graph = """
+        {
+          "meta": { "generatedAt": "2026-06-07T03:00:00+00:00", "version": "3.0.3",
+                    "dateRange": { "start": "2026-06-06", "end": "2026-06-07" } },
+          "summary": {
+            "totalTokens": 1100, "totalCost": 11.0, "activeDays": 2,
+            "averagePerDay": 5.5, "maxCostInSingleDay": 10.0,
+            "clients": ["grok", "claude"], "models": ["grok-build", "claude-sonnet"]
+          },
+          "years": [],
+          "contributions": [
+            {
+              "date": "2026-06-06", "intensity": 4,
+              "totals": { "tokens": 1000, "cost": 10.0, "messages": 4 },
+              "clients": [
+                { "client": "grok", "modelId": "grok-build", "providerId": "xai",
+                  "cost": 10.0, "messages": 4,
+                  "tokens": { "input": 100, "output": 0, "cacheRead": 900,
+                              "cacheWrite": 0, "reasoning": 0 } }
+              ]
+            },
+            {
+              "date": "2026-06-07", "intensity": 2,
+              "totals": { "tokens": 100, "cost": 1.0, "messages": 1 },
+              "clients": [
+                { "client": "claude", "modelId": "claude-sonnet", "providerId": "anthropic",
+                  "cost": 1.0, "messages": 1,
+                  "tokens": { "input": 50, "output": 0, "cacheRead": 50,
+                              "cacheWrite": 0, "reasoning": 0 } }
+              ]
+            }
+          ]
+        }
+        """
+        let companion = try GraphCompanionAdapter.companionJSON(
+            graphData: Data(graph.utf8),
+            usageData: nil,
+            todayDate: "2026-06-07",
+            summaryPath: "/tmp/companion-summary.json",
+            lastScanDurationMs: 1,
+            quotaRefreshedAt: nil
+        )
+        let initial = try TokscaleSummary.decode(companion)
+        let initialGrok = try XCTUnwrap(initial.providers.first { $0.client == "grok" })
+        let initialClaude = try XCTUnwrap(initial.providers.first { $0.client == "claude" })
+
+        XCTAssertEqual(initialGrok.cacheHitPercent, 90.0, accuracy: 0.01)
+        XCTAssertEqual(initialGrok.todayCacheHitPercent, 0.0, accuracy: 0.01)
+        XCTAssertEqual(initialClaude.todayCacheHitPercent, 50.0, accuracy: 0.01)
+
+        let todayGraph = """
+        {
+          "meta": { "generatedAt": "2026-06-07T09:00:00+00:00", "version": "3.0.3",
+                    "dateRange": { "start": "2026-06-07", "end": "2026-06-07" } },
+          "summary": { "totalTokens": 100, "totalCost": 2.0, "activeDays": 1,
+                       "averagePerDay": 2.0, "maxCostInSingleDay": 2.0,
+                       "clients": ["claude"], "models": ["claude-sonnet"] },
+          "years": [],
+          "contributions": [
+            { "date": "2026-06-07", "intensity": 2,
+              "totals": { "tokens": 100, "cost": 2.0, "messages": 1 },
+              "clients": [
+                { "client": "claude", "modelId": "claude-sonnet", "providerId": "anthropic",
+                  "cost": 2.0, "messages": 1,
+                  "tokens": { "input": 20, "output": 0, "cacheRead": 80,
+                              "cacheWrite": 0, "reasoning": 0 } }
+              ] }
+          ]
+        }
+        """
+        let patched = try XCTUnwrap(
+            GraphCompanionAdapter.patchTodayData(
+                companionData: companion,
+                todayGraphData: Data(todayGraph.utf8),
+                todayDate: "2026-06-07"
+            )
+        )
+        let refreshed = try TokscaleSummary.decode(patched)
+        let refreshedGrok = try XCTUnwrap(refreshed.providers.first { $0.client == "grok" })
+        let refreshedClaude = try XCTUnwrap(refreshed.providers.first { $0.client == "claude" })
+
+        XCTAssertEqual(refreshedGrok.todayCacheHitPercent, 0.0, accuracy: 0.01)
+        XCTAssertEqual(refreshedClaude.todayCacheHitPercent, 80.0, accuracy: 0.01)
     }
 
     // `graph --work-time` adds a top-level todayWorkTime map (client → active ms).
