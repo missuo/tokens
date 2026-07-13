@@ -334,11 +334,7 @@ final class MenuBarModel: ObservableObject {
         guard let graphData else {
             return .failure("Refresh failed: \(graphFailure)")
         }
-        let usage = runCapturing(
-            executableURL: binary,
-            arguments: ["usage", "--json"],
-            timeout: 45
-        )
+        let usage = runUsageCapturing(binary: binary)
         let usageData = (usage.ok ? usage.data : nil).flatMap { $0.isEmpty ? nil : $0 }
         let scanMs = Int(Date().timeIntervalSince(started) * 1000)
         let nowISO = ISO8601DateFormatter().string(from: Date())
@@ -457,11 +453,7 @@ final class MenuBarModel: ObservableObject {
         guard let binary = tokensBinaryURL() else {
             return "Refresh failed: tokens command unavailable"
         }
-        let usage = runCapturing(
-            executableURL: binary,
-            arguments: ["usage", "--json"],
-            timeout: 45
-        )
+        let usage = runUsageCapturing(binary: binary)
         guard usage.ok, let usageData = usage.data, !usageData.isEmpty else {
             return "Quota unavailable (kept previous)."
         }
@@ -470,7 +462,8 @@ final class MenuBarModel: ObservableObject {
             GraphCompanionAdapter.patchedQuota(
                 companionData: latest,
                 usageData: usageData,
-                quotaRefreshedAt: nowISO
+                quotaRefreshedAt: nowISO,
+                authoritative: usage.authoritative
             )
         }
         return wrote ? "Refresh finished." : "Quota unavailable (kept previous)."
@@ -534,6 +527,47 @@ final class MenuBarModel: ObservableObject {
     nonisolated private static func dedupePaths(_ paths: [String]) -> [String] {
         var seen = Set<String>()
         return paths.filter { seen.insert($0).inserted }
+    }
+
+    nonisolated private static func runUsageCapturing(
+        binary: URL
+    ) -> UsageCapture {
+        let detailed = runCapturing(
+            executableURL: binary,
+            arguments: ["usage", "--json", "--include-status"],
+            timeout: 45
+        )
+        if detailed.ok {
+            return UsageCapture(
+                data: detailed.data,
+                ok: true,
+                message: detailed.message,
+                authoritative: true
+            )
+        }
+        let message = detailed.message?.lowercased() ?? ""
+        guard message.contains("--include-status"),
+            message.contains("unexpected argument") || message.contains("unknown argument")
+                || message.contains("unrecognized option")
+        else {
+            return UsageCapture(
+                data: detailed.data,
+                ok: false,
+                message: detailed.message,
+                authoritative: false
+            )
+        }
+        let legacy = runCapturing(
+            executableURL: binary,
+            arguments: ["usage", "--json"],
+            timeout: 45
+        )
+        return UsageCapture(
+            data: legacy.data,
+            ok: legacy.ok,
+            message: legacy.message,
+            authoritative: false
+        )
     }
 
     nonisolated private static func runCapturing(
@@ -619,6 +653,13 @@ private final class NetworkBox: @unchecked Sendable {
     var data: Data?
     var statusCode: Int?
     var failed = false
+}
+
+private struct UsageCapture: Sendable {
+    let data: Data?
+    let ok: Bool
+    let message: String?
+    let authoritative: Bool
 }
 
 private struct GraphCommand: Sendable {

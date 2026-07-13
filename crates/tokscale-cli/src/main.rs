@@ -307,6 +307,8 @@ enum Commands {
         json: bool,
         #[arg(long, help = "Light terminal output (no TUI)")]
         light: bool,
+        #[arg(long, hide = true)]
+        include_status: bool,
     },
     #[command(about = "Codex account integration commands")]
     Codex {
@@ -809,9 +811,13 @@ fn main() -> Result<()> {
             reject_unsupported_home_override(&cli.home, "antigravity")?;
             run_antigravity_command(subcommand)
         }
-        Some(Commands::Usage { json, light }) => {
+        Some(Commands::Usage {
+            json,
+            light,
+            include_status,
+        }) => {
             reject_unsupported_home_override(&cli.home, "usage")?;
-            commands::usage::run(json, light)
+            commands::usage::run(json, light, include_status)
         }
         Some(Commands::Codex { subcommand }) => {
             reject_unsupported_home_override(&cli.home, "codex")?;

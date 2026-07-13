@@ -224,6 +224,7 @@ public struct TokscaleDashboardModel: Equatable {
     private let summaryStale: Bool
     private let quotaWasRefreshed: Bool
     private let providerDetailsById: [String: ProviderDetails]
+    private let quotaProviders: [TokscaleSummary.QuotaProvider]
 
     private static let quotaBoardProviderIds = ["claude", "codex", "gemini", "grok"]
 
@@ -256,6 +257,7 @@ public struct TokscaleDashboardModel: Equatable {
         let hasLiveQuotaRefresh = Self.isQuotaRefreshRecent(summary.health.quotaRefreshedAt, now: now)
         quotaWasRefreshed = hasLiveQuotaRefresh
         summaryStale = summary.stale
+        quotaProviders = summary.quota
         clientLabels = providerRows.map { clientDisplayName($0.client) }
         providers = Self.providerSummaries(rows: providerRows, totalCost: providerTotalCost)
         providerDetailsById = Dictionary(
@@ -273,7 +275,7 @@ public struct TokscaleDashboardModel: Equatable {
                         models: row.models,
                         share: Self.providerShare(row.costUsd, totalCost: providerTotalCost),
                         hasLiveQuotaRefresh: hasLiveQuotaRefresh,
-                        cacheHitPercent: row.cacheHitPercent,
+                        cacheHitPercent: row.todayCacheHitPercent,
                         workTimeMs: row.workTimeMs
                     )
                 )
@@ -375,6 +377,9 @@ public struct TokscaleDashboardModel: Equatable {
     }
 
     public func providerFocus(for id: String?) -> ProviderFocus {
+        if let id, let focus = providerFocusIfAvailable(for: id) {
+            return focus
+        }
         let details = providerDetails(for: id)
         return providerFocus(details: details)
     }
@@ -384,9 +389,8 @@ public struct TokscaleDashboardModel: Equatable {
             return providerFocus(details: details)
         }
         let title = clientDisplayName(id)
-        let hasQuota = quotaWindows.contains { window in
-            let provider = window.provider.lowercased()
-            return provider == id || provider == title.lowercased()
+        let hasQuota = quotaProviders.contains {
+            canonicalQuotaProviderID($0.provider) == canonicalQuotaProviderID(id)
         }
         guard hasQuota else {
             return nil
@@ -410,13 +414,21 @@ public struct TokscaleDashboardModel: Equatable {
     }
 
     private func providerFocus(details: ProviderDetails) -> ProviderFocus {
-        let normalized = details.id.lowercased()
+        let normalized = canonicalQuotaProviderID(details.id)
         let quota = quotaWindows.filter { window in
-            let provider = window.provider.lowercased()
-            return provider == details.title.lowercased() || provider == normalized
+            canonicalQuotaProviderID(window.provider) == normalized
+        }
+        let provider = quotaProviders.first {
+            canonicalQuotaProviderID($0.provider) == normalized
         }
         let primary = quota.first { Self.isFiveHourQuotaTitle($0.title) } ?? quota.first
         let weekly = quota.first { Self.isWeeklyQuotaTitle($0.title) }
+        let quotaPresentation = Self.quotaPresentation(
+            status: provider?.status,
+            hasWindows: !quota.isEmpty,
+            providerID: normalized,
+            isCached: summaryStale && !details.hasLiveQuotaRefresh
+        )
 
         return ProviderFocus(
             id: details.id,
@@ -431,7 +443,8 @@ public struct TokscaleDashboardModel: Equatable {
             quotaWindows: quota,
             primaryQuota: primary,
             weeklyQuota: weekly,
-            quotaStatus: quota.isEmpty ? "No live quota" : (summaryStale && !details.hasLiveQuotaRefresh ? "Cached" : "Live"),
+            quotaStatus: quotaPresentation.status,
+            quotaStatusDetail: quotaPresentation.detail,
             workTime: formatWorkTime(details.workTimeMs),
             focusedModelTime: Self.focusedModelTimeLabel(providerId: details.id, model: details.model),
             cacheHitPercent: details.cacheHitPercent
@@ -502,6 +515,39 @@ public struct TokscaleDashboardModel: Equatable {
                     remainingPercent: remainingPercent
                 )
             }
+        }
+    }
+
+    private static func quotaPresentation(
+        status: String?,
+        hasWindows: Bool,
+        providerID: String,
+        isCached: Bool
+    ) -> (status: String, detail: String) {
+        switch status {
+        case "auth-expired", "needs-auth":
+            if hasWindows {
+                return ("Cached", "Auth expired; kept last successful quota.")
+            }
+            let detail = providerID == "grok"
+                ? "Sign in to Grok to refresh credits."
+                : "Sign in again to refresh quota."
+            return ("Auth expired", detail)
+        case "rate-limited":
+            return hasWindows
+                ? ("Cached", "Rate limited; kept last successful quota.")
+                : ("Rate limited", "Live quota is temporarily unavailable.")
+        case "unavailable":
+            return hasWindows
+                ? ("Cached", "Live refresh failed; kept last successful quota.")
+                : ("Unavailable", "Local usage remains available.")
+        default:
+            if hasWindows {
+                return isCached
+                    ? ("Cached", "Last successful quota snapshot.")
+                    : ("Live", "Live subscription quota.")
+            }
+            return ("No live quota", "Local usage remains available.")
         }
     }
 
@@ -807,6 +853,7 @@ public extension TokscaleDashboardModel {
         public let primaryQuota: QuotaWindowSummary?
         public let weeklyQuota: QuotaWindowSummary?
         public let quotaStatus: String
+        public let quotaStatusDetail: String
         public let workTime: String
         public let focusedModelTime: String
         public let cacheHitPercent: Double
@@ -888,11 +935,13 @@ public extension TokscaleSummary {
         public let topModel: String?
         public let models: [ProviderModel]
         public let cacheHitPercent: Double
+        public let todayCacheHitPercent: Double
         public let workTimeMs: Int64
 
         enum CodingKeys: String, CodingKey {
             case client, costUsd, tokens, messages
             case todayCostUsd, todayTokens, todayMessages, topModel, models, cacheHitPercent
+            case todayCacheHitPercent
             case workTimeMs
         }
 
@@ -908,6 +957,7 @@ public extension TokscaleSummary {
             topModel = try c.decodeIfPresent(String.self, forKey: .topModel)
             models = try c.decodeIfPresent([ProviderModel].self, forKey: .models) ?? []
             cacheHitPercent = try c.decodeIfPresent(Double.self, forKey: .cacheHitPercent) ?? 0
+            todayCacheHitPercent = try c.decodeIfPresent(Double.self, forKey: .todayCacheHitPercent) ?? 0
             workTimeMs = try c.decodeIfPresent(Int64.self, forKey: .workTimeMs) ?? 0
         }
 
@@ -922,6 +972,7 @@ public extension TokscaleSummary {
             topModel: String?,
             models: [ProviderModel] = [],
             cacheHitPercent: Double = 0,
+            todayCacheHitPercent: Double = 0,
             workTimeMs: Int64 = 0
         ) {
             self.client = client
@@ -934,6 +985,7 @@ public extension TokscaleSummary {
             self.topModel = topModel
             self.models = models
             self.cacheHitPercent = cacheHitPercent
+            self.todayCacheHitPercent = todayCacheHitPercent
             self.workTimeMs = workTimeMs
         }
     }
@@ -970,6 +1022,19 @@ public extension TokscaleSummary {
         public let provider: String
         public let plan: String?
         public let windows: [QuotaWindow]
+        public let status: String?
+
+        public init(
+            provider: String,
+            plan: String?,
+            windows: [QuotaWindow],
+            status: String? = nil
+        ) {
+            self.provider = provider
+            self.plan = plan
+            self.windows = windows
+            self.status = status
+        }
     }
 
     struct QuotaWindow: Decodable, Equatable {
@@ -1049,6 +1114,14 @@ private func clientDisplayName(_ value: String) -> String {
     default:
         return value.prefix(1).uppercased() + value.dropFirst()
     }
+}
+
+private func canonicalQuotaProviderID(_ value: String) -> String {
+    let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    if normalized == "grok build" || normalized == "grok" {
+        return "grok"
+    }
+    return normalized
 }
 
 private func formatUSD(_ value: Double) -> String {

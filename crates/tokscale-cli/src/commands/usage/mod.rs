@@ -163,6 +163,27 @@ pub fn load_cache() -> Option<Vec<UsageOutput>> {
 
 type UsageProvider = (&'static str, fn() -> bool, fn() -> Result<Vec<UsageOutput>>);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+enum UsageFailureStatus {
+    AuthExpired,
+    NeedsAuth,
+    RateLimited,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct UsageFailure {
+    provider: String,
+    status: UsageFailureStatus,
+}
+
+#[derive(Debug, Default)]
+struct UsageFetchReport {
+    outputs: Vec<UsageOutput>,
+    failures: Vec<UsageFailure>,
+}
+
 fn fetch_amp() -> Result<Vec<UsageOutput>> {
     amp::fetch().map(|output| vec![output])
 }
@@ -199,8 +220,8 @@ fn fetch_zai() -> Result<Vec<UsageOutput>> {
     zai::fetch().map(|output| vec![output])
 }
 
-pub fn fetch_all() -> Vec<UsageOutput> {
-    let providers: Vec<UsageProvider> = vec![
+fn usage_providers() -> Vec<UsageProvider> {
+    vec![
         ("Claude", claude::has_credentials, fetch_claude),
         ("Codex", codex::has_credentials, codex::fetch_all),
         ("Gemini", gemini::has_credentials, fetch_gemini),
@@ -211,24 +232,83 @@ pub fn fetch_all() -> Vec<UsageOutput> {
         ("Kimi", kimi::has_credentials, fetch_kimi),
         ("MiniMax", minimax::has_credentials, fetch_minimax),
         ("Warp/Oz", warp::has_credentials, fetch_warp),
-    ];
+    ]
+}
 
-    let active: Vec<_> = providers.into_iter().filter(|(_, has, _)| has()).collect();
+fn classify_provider_failure(_provider: &str, error: &str) -> UsageFailureStatus {
+    if error.contains("AUTH_EXPIRED") {
+        UsageFailureStatus::AuthExpired
+    } else if error.contains("RATE_LIMITED") || error.contains("HTTP 429") {
+        UsageFailureStatus::RateLimited
+    } else if error.contains("NEEDS_AUTH") {
+        UsageFailureStatus::NeedsAuth
+    } else {
+        UsageFailureStatus::Unavailable
+    }
+}
+
+fn fetch_report() -> UsageFetchReport {
+    let active: Vec<_> = usage_providers()
+        .into_iter()
+        .filter(|(_, has, _)| has())
+        .collect();
 
     if active.is_empty() {
-        return vec![];
+        return UsageFetchReport::default();
     }
 
     std::thread::scope(|s| {
-        active
+        let handles = active
             .into_iter()
-            .map(|(_, _, fetch)| s.spawn(move || fetch().ok()))
-            .collect::<Vec<_>>()
-            .into_iter()
-            .filter_map(|h| h.join().ok().flatten())
-            .flatten()
-            .collect()
+            .map(|(provider, _, fetch)| (provider, s.spawn(fetch)))
+            .collect::<Vec<_>>();
+        let mut report = UsageFetchReport::default();
+        for (provider, handle) in handles {
+            match handle.join() {
+                Ok(Ok(outputs)) => report.outputs.extend(outputs),
+                Ok(Err(error)) => report.failures.push(UsageFailure {
+                    provider: provider.to_string(),
+                    status: classify_provider_failure(provider, &error.to_string()),
+                }),
+                Err(_) => report.failures.push(UsageFailure {
+                    provider: provider.to_string(),
+                    status: UsageFailureStatus::Unavailable,
+                }),
+            }
+        }
+        report
     })
+}
+
+pub fn fetch_all() -> Vec<UsageOutput> {
+    fetch_report().outputs
+}
+
+fn usage_json(report: &UsageFetchReport, include_status: bool) -> Result<String> {
+    if !include_status {
+        return Ok(serde_json::to_string_pretty(&report.outputs)?);
+    }
+    let mut rows = report
+        .outputs
+        .iter()
+        .map(|output| {
+            let mut value = serde_json::to_value(output)?;
+            if let Some(object) = value.as_object_mut() {
+                object.insert("status".to_string(), serde_json::json!("live"));
+            }
+            Ok::<serde_json::Value, serde_json::Error>(value)
+        })
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    rows.extend(report.failures.iter().map(|failure| {
+        serde_json::json!({
+            "provider": failure.provider,
+            "plan": null,
+            "email": null,
+            "metrics": [],
+            "status": failure.status,
+        })
+    }));
+    Ok(serde_json::to_string_pretty(&rows)?)
 }
 
 // ── Light-mode rendering ──
@@ -283,12 +363,19 @@ fn render_light(output: &UsageOutput) {
     println!("╰{}╯", "─".repeat(CARD_WIDTH));
 }
 
-pub fn run(json: bool, _light: bool) -> Result<()> {
-    let outputs = fetch_all();
-    if json {
-        println!("{}", serde_json::to_string_pretty(&outputs)?);
+pub fn run(json: bool, _light: bool, include_status: bool) -> Result<()> {
+    let report = if include_status {
+        fetch_report()
     } else {
-        for o in &outputs {
+        UsageFetchReport {
+            outputs: fetch_all(),
+            failures: Vec::new(),
+        }
+    };
+    if json {
+        println!("{}", usage_json(&report, include_status)?);
+    } else {
+        for o in &report.outputs {
             render_light(o);
         }
     }
@@ -363,6 +450,56 @@ mod tests {
 
         assert!(output.account.is_none());
         assert_eq!(output.display_name(), "Codex");
+        Ok(())
+    }
+
+    #[test]
+    fn provider_failure_statuses_are_classified_without_raw_errors() {
+        assert_eq!(
+            classify_provider_failure("Grok Build", "AUTH_EXPIRED token=secret"),
+            UsageFailureStatus::AuthExpired
+        );
+        assert_eq!(
+            classify_provider_failure("Claude", "RATE_LIMITED bearer=secret"),
+            UsageFailureStatus::RateLimited
+        );
+        assert_eq!(
+            classify_provider_failure("Claude", "NEEDS_AUTH refresh=secret"),
+            UsageFailureStatus::NeedsAuth
+        );
+        assert_eq!(
+            classify_provider_failure("Grok Build", "network token=secret"),
+            UsageFailureStatus::Unavailable
+        );
+    }
+
+    #[test]
+    fn status_json_keeps_successes_and_safe_failure_placeholders() -> Result<()> {
+        let report = UsageFetchReport {
+            outputs: vec![UsageOutput {
+                provider: "Codex".to_string(),
+                account: None,
+                plan: Some("Plus".to_string()),
+                email: None,
+                metrics: vec![],
+            }],
+            failures: vec![UsageFailure {
+                provider: "Grok Build".to_string(),
+                status: UsageFailureStatus::AuthExpired,
+            }],
+        };
+
+        let json = usage_json(&report, true)?;
+        let value: serde_json::Value = serde_json::from_str(&json)?;
+        let rows = value.as_array().expect("top-level usage array");
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["provider"], "Codex");
+        assert_eq!(rows[0]["status"], "live");
+        assert_eq!(rows[1]["provider"], "Grok Build");
+        assert_eq!(rows[1]["status"], "auth-expired");
+        assert_eq!(rows[1]["metrics"], serde_json::json!([]));
+        assert!(!json.contains("secret"));
         Ok(())
     }
 }

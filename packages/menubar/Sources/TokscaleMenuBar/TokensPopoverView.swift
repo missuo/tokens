@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import SwiftUI
 import TokscaleMenuBarCore
@@ -32,7 +33,7 @@ struct TokensPopoverView: View {
             .padding(.top, 14)
             .padding(.bottom, 12)
         }
-        .frame(width: 488, height: 720, alignment: .top)
+        .frame(width: popoverSize.width, height: popoverSize.height, alignment: .top)
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
@@ -75,6 +76,14 @@ struct TokensPopoverView: View {
             return providerColor(provider.id)
         }
         return providerColor("gemini")
+    }
+
+    private var popoverSize: CGSize {
+        let visible = NSScreen.main?.visibleFrame.size ?? CGSize(width: 632, height: 896)
+        return CGSize(
+            width: min(600, max(420, visible.width - 32)),
+            height: min(864, max(560, visible.height - 32))
+        )
     }
 }
 
@@ -200,8 +209,8 @@ private struct SummaryContent: View {
 
         ContributionHeatmap(days: summary.contribution, endDate: summary.today.date)
 
-        Text("Dollar amounts are API-equivalent value, not subscription spend.")
-            .font(.system(size: 9, weight: .medium))
+        Text("Est. API-equivalent value · not subscription spend")
+            .font(.system(size: 11, weight: .medium))
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.bottom, 4)
@@ -229,9 +238,9 @@ private struct CompanionHeader: View {
             LiveDot(stale: summary.stale, active: isRefreshing)
             VStack(alignment: .leading, spacing: 1) {
                 Text("Tokens")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.system(size: 17, weight: .semibold))
                 Text(headerSubtitle)
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
@@ -259,7 +268,7 @@ private struct CompanionHeader: View {
                 )
             }
         }
-        .frame(height: 30)
+        .frame(height: 40)
     }
 
     private var headerSubtitle: String {
@@ -312,7 +321,7 @@ private struct TodayGlanceCard: View {
             )
             Rectangle()
                 .fill(Color.primary.opacity(0.08))
-                .frame(width: 1, height: 44)
+                .frame(width: 1, height: 54)
             stat(
                 value: formatTokens(summary.today.tokens),
                 label: "Local today tokens",
@@ -321,7 +330,7 @@ private struct TodayGlanceCard: View {
             )
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 12)
+        .padding(.vertical, 14)
         .frame(maxWidth: .infinity)
         .background(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -348,20 +357,20 @@ private struct TodayGlanceCard: View {
     private func stat(value: String, label: String, tint: Color, momentum: (text: String, high: Bool)?) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(value)
-                .font(.system(size: 24, weight: .semibold, design: .rounded))
+                .font(.system(size: 30, weight: .semibold, design: .rounded))
                 .monospacedDigit()
                 .lineLimit(1)
-                .minimumScaleFactor(0.5)
+                .minimumScaleFactor(0.8)
                 .foregroundStyle(tint)
             Text(label.uppercased())
-                .font(.system(size: 9, weight: .semibold))
+                .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.secondary)
             if let momentum {
                 Text(momentum.text)
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(momentum.high ? Color.green : Color.secondary)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.7)
+                    .minimumScaleFactor(0.8)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -380,9 +389,9 @@ private struct PageTabSwitcher: View {
             ForEach(Array(tabs.enumerated()), id: \.offset) { index, title in
                 Button(action: { onSelect(index) }) {
                     Text(title)
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.system(size: 13, weight: .semibold))
                         .frame(maxWidth: .infinity)
-                        .frame(height: 27)
+                        .frame(height: 34)
                         .foregroundStyle(index == page ? Color.primary : Color.secondary)
                         .background(
                             RoundedRectangle(cornerRadius: 7, style: .continuous)
@@ -452,9 +461,9 @@ private struct QuotaModeToggle: View {
             ForEach(TokscaleDashboardModel.QuotaDisplayMode.allCases, id: \.self) { option in
                 Button(action: { onChange(option) }) {
                     Text(option.title)
-                        .font(.system(size: 10, weight: .bold))
+                        .font(.system(size: 12, weight: .bold))
                         .lineLimit(1)
-                        .frame(width: 46, height: 26)
+                        .frame(width: 56, height: 32)
                         .foregroundStyle(option == mode ? Color.primary : Color.secondary)
                         .background(
                             RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -488,27 +497,31 @@ private struct ProviderQuotaRow: View {
                 HStack(spacing: 6) {
                     ProviderDot(color: color)
                     Text(focus.title)
-                        .font(.system(size: prominent ? 14 : 12, weight: .bold))
+                        .font(.system(size: prominent ? 17 : 15, weight: .bold))
                         .lineLimit(1)
                     Spacer(minLength: 0)
                 }
                 Text("LOCAL TODAY · \(focus.today)")
-                    .font(.system(size: 9, weight: .medium))
+                    .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.72)
+                    .minimumScaleFactor(0.8)
                 Text("\(focus.total) · \(focus.tokens)")
-                    .font(.system(size: 8, weight: .medium))
+                    .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.64)
+                    .minimumScaleFactor(0.8)
                 QuotaSourceBadge(status: focus.quotaStatus, color: color)
             }
-            .frame(width: 116, alignment: .leading)
+            .frame(width: 145, alignment: .leading)
 
             VStack(spacing: 7) {
                 if focus.quotaWindows.isEmpty {
-                    QuotaUnavailableLine(providerColor: color)
+                    QuotaUnavailableLine(
+                        status: focus.quotaStatus,
+                        detail: focus.quotaStatusDetail,
+                        providerColor: color
+                    )
                 } else {
                     ForEach(Array(focus.quotaWindows.enumerated()), id: \.offset) { _, window in
                         QuotaBarLine(
@@ -518,6 +531,12 @@ private struct ProviderQuotaRow: View {
                             isCached: focus.quotaStatus == "Cached",
                             prominent: prominent
                         )
+                    }
+                    if focus.quotaStatus != "Live" {
+                        Text(focus.quotaStatusDetail)
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
                     }
                 }
             }
@@ -548,41 +567,41 @@ private struct QuotaBarLine: View {
             let unavailable = isCached || expired
             HStack(spacing: 8) {
                 Text(quota.title)
-                    .font(.system(size: 10, weight: .bold))
+                    .font(.system(size: 12, weight: .bold))
                     .foregroundStyle(.secondary)
-                    .frame(width: 38, alignment: .leading)
+                    .frame(width: 52, alignment: .leading)
                 QuotaProgressBar(
-                    progress: unavailable ? 0 : quota.progress(for: displayMode),
+                    progress: expired ? 0 : quota.progress(for: displayMode),
                     color: unavailable ? companionOrange : quotaHealthColor(quota)
                 )
                 VStack(alignment: .trailing, spacing: 1) {
                     Text(quotaValueText(quota: quota, displayMode: displayMode, isCached: isCached, expired: expired))
-                        .font(.system(size: prominent ? 21 : 15, weight: .bold, design: .rounded))
+                        .font(.system(size: prominent ? 23 : 18, weight: .bold, design: .rounded))
                         .monospacedDigit()
                         .lineLimit(1)
-                        .minimumScaleFactor(0.72)
+                        .minimumScaleFactor(0.8)
                     Text(quotaDetailText(quota: quota, displayMode: displayMode, isCached: isCached, expired: expired))
-                        .font(.system(size: prominent ? 9 : 8, weight: .medium))
+                        .font(.system(size: prominent ? 11 : 10, weight: .medium))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
-                        .minimumScaleFactor(0.70)
+                        .minimumScaleFactor(0.8)
                 }
-                .frame(width: prominent ? 106 : 92, alignment: .trailing)
+                .frame(width: prominent ? 128 : 112, alignment: .trailing)
             }
-            .frame(height: prominent ? 34 : 28)
+            .frame(height: prominent ? 40 : 36)
         } else {
             HStack(spacing: 8) {
                 Text(fallbackTitle)
-                    .font(.system(size: 10, weight: .bold))
+                    .font(.system(size: 12, weight: .bold))
                     .foregroundStyle(.secondary)
-                    .frame(width: 38, alignment: .leading)
+                    .frame(width: 52, alignment: .leading)
                 QuotaProgressBar(progress: 0, color: .secondary)
                 Text("N/A")
-                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                    .font(.system(size: 15, weight: .bold, design: .rounded))
                     .foregroundStyle(.secondary)
-                    .frame(width: 92, alignment: .trailing)
+                    .frame(width: 112, alignment: .trailing)
             }
-            .frame(height: 28)
+            .frame(height: 36)
         }
     }
 }
@@ -605,7 +624,7 @@ private func quotaValueText(
         return "Expired"
     }
     if isCached {
-        return "Cached"
+        return stripQuotaWord(quota.value(for: displayMode))
     }
     return stripQuotaWord(quota.value(for: displayMode))
 }
@@ -620,7 +639,7 @@ private func quotaDetailText(
         return "refresh needed"
     }
     if isCached {
-        return "refresh for live"
+        return "last snapshot"
     }
     return stripQuotaWord(resetLabel(quota.reset) ?? quota.detail(for: displayMode))
 }
@@ -636,23 +655,29 @@ private struct ProviderGlanceCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            HStack(spacing: 8) {
-                ProviderDot(color: color)
-                Text(focus.title)
-                    .font(.system(size: 13, weight: .semibold))
-                    .lineLimit(1)
+        VStack(alignment: .leading, spacing: 11) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    ProviderDot(color: color)
+                    Text(focus.title)
+                        .font(.system(size: 16, weight: .semibold))
+                        .lineLimit(1)
+                    Spacer(minLength: 8)
+                    QuotaSourceBadge(status: focus.quotaStatus, color: color)
+                }
                 Text("LOCAL TODAY · \(focus.today)")
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.6)
-                Spacer(minLength: 6)
-                QuotaSourceBadge(status: focus.quotaStatus, color: color)
+                    .minimumScaleFactor(0.8)
             }
 
             if focus.quotaWindows.isEmpty {
-                QuotaUnavailableLine(providerColor: color)
+                QuotaUnavailableLine(
+                    status: focus.quotaStatus,
+                    detail: focus.quotaStatusDetail,
+                    providerColor: color
+                )
             } else {
                 // Render every quota window the provider actually exposes — Claude/
                 // Codex have Session + Weekly; Gemini has per-tier daily limits
@@ -666,6 +691,12 @@ private struct ProviderGlanceCard: View {
                         color: color
                     )
                 }
+                if focus.quotaStatus != "Live" {
+                    Label(focus.quotaStatusDetail, systemImage: "exclamationmark.circle.fill")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
             }
 
             if focus.workTime != "—" || focus.cacheHitPercent > 0.5 {
@@ -673,40 +704,40 @@ private struct ProviderGlanceCard: View {
                     if focus.workTime != "—" {
                         HStack(spacing: 5) {
                             Image(systemName: "clock.fill")
-                                .font(.system(size: 10, weight: .semibold))
+                                .font(.system(size: 12, weight: .semibold))
                                 .foregroundStyle(color)
                             Text("Active \(focus.workTime)")
-                                .font(.system(size: 10, weight: .medium))
+                                .font(.system(size: 12, weight: .medium))
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
-                                .minimumScaleFactor(0.7)
+                                .minimumScaleFactor(0.8)
                         }
                     }
                     Spacer(minLength: 4)
                     if focus.cacheHitPercent > 0.5 {
                         HStack(spacing: 5) {
                             Image(systemName: "bolt.fill")
-                                .font(.system(size: 9, weight: .semibold))
+                                .font(.system(size: 11, weight: .semibold))
                                 .foregroundStyle(color)
-                            Text("Cache hit \(Int(focus.cacheHitPercent.rounded()))%")
-                                .font(.system(size: 10, weight: .medium))
+                            Text("Today cache hit \(Int(focus.cacheHitPercent.rounded()))%")
+                                .font(.system(size: 12, weight: .medium))
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
-                                .minimumScaleFactor(0.7)
+                                .minimumScaleFactor(0.8)
                         }
                     }
                 }
             }
         }
-        .padding(.horizontal, 11)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 13)
         .background(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(companionWarmGlassColor)
+                .fill(color.opacity(0.055))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(companionBorderColor, lineWidth: 1)
+                .stroke(color.opacity(0.24), lineWidth: 1)
         )
     }
 }
@@ -724,65 +755,67 @@ private struct GlanceQuotaLine: View {
             let unavailable = isCached || expired
             HStack(spacing: 8) {
                 Text(quota.title)
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.secondary)
-                    .frame(width: 42, alignment: .leading)
+                    .frame(width: 52, alignment: .leading)
                 QuotaProgressBar(
-                    progress: unavailable ? 0 : quota.progress(for: displayMode),
+                    progress: expired ? 0 : quota.progress(for: displayMode),
                     color: unavailable ? companionOrange : quotaHealthColor(quota)
                 )
                 VStack(alignment: .trailing, spacing: 1) {
                     Text(quotaValueText(quota: quota, displayMode: displayMode, isCached: isCached, expired: expired))
-                        .font(.system(size: 17, weight: .semibold, design: .rounded))
+                        .font(.system(size: 21, weight: .semibold, design: .rounded))
                         .monospacedDigit()
                         .lineLimit(1)
-                        .minimumScaleFactor(0.65)
+                        .minimumScaleFactor(0.8)
                         .foregroundStyle(unavailable ? Color.secondary : Color.primary)
                     Text(quotaDetailText(quota: quota, displayMode: displayMode, isCached: isCached, expired: expired))
-                        .font(.system(size: 8, weight: .medium))
+                        .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
-                .frame(width: 92, alignment: .trailing)
+                .frame(width: 118, alignment: .trailing)
             }
-            .frame(height: 28)
+            .frame(height: 36)
         } else {
             HStack(spacing: 8) {
                 Text(fallbackTitle)
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.secondary)
-                    .frame(width: 42, alignment: .leading)
+                    .frame(width: 52, alignment: .leading)
                 QuotaProgressBar(progress: 0, color: .secondary)
                 Text("N/A")
-                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .font(.system(size: 15, weight: .semibold, design: .rounded))
                     .foregroundStyle(.secondary)
-                    .frame(width: 92, alignment: .trailing)
+                    .frame(width: 118, alignment: .trailing)
             }
-            .frame(height: 28)
+            .frame(height: 36)
         }
     }
 }
 
 private struct QuotaUnavailableLine: View {
+    let status: String
+    let detail: String
     let providerColor: Color
 
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "lock.open.trianglebadge.exclamationmark")
-                .font(.system(size: 13, weight: .bold))
+                .font(.system(size: 16, weight: .bold))
                 .foregroundStyle(providerColor)
             VStack(alignment: .leading, spacing: 1) {
-                Text("No live quota")
-                    .font(.system(size: 11, weight: .bold))
-                Text("Local usage is available, official 5h/Week limits are not.")
-                    .font(.system(size: 9, weight: .medium))
+                Text(status)
+                    .font(.system(size: 14, weight: .bold))
+                Text(detail)
+                    .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.72)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.8)
             }
             Spacer(minLength: 0)
         }
-        .frame(height: 59)
+        .frame(minHeight: 72)
         .padding(.horizontal, 9)
         .background(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
@@ -806,7 +839,7 @@ private struct QuotaProgressBar: View {
                     .frame(width: max(7, proxy.size.width * clampedProgress))
             }
         }
-        .frame(height: 7)
+        .frame(height: 9)
     }
 }
 
@@ -816,10 +849,10 @@ private struct QuotaSourceBadge: View {
 
     var body: some View {
         Text(status)
-            .font(.system(size: 8, weight: .bold))
+            .font(.system(size: 10, weight: .bold))
             .lineLimit(1)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 3)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
             .foregroundStyle(status == "No live quota" ? Color.secondary : color)
             .background(
                 Capsule()
@@ -1122,13 +1155,13 @@ private struct HistorySection: View {
         VStack(alignment: .leading, spacing: 11) {
             HStack(spacing: 7) {
                 Image(systemName: "chart.bar.fill")
-                    .font(.system(size: 11, weight: .bold))
+                    .font(.system(size: 13, weight: .bold))
                     .foregroundStyle(companionOrange)
                 Text("History")
-                    .font(.system(size: 15, weight: .bold))
+                    .font(.system(size: 18, weight: .bold))
                 Spacer(minLength: 0)
-                Text("est. API value")
-                    .font(.system(size: 11, weight: .medium))
+                Text("Est. API equivalent")
+                    .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(.secondary)
             }
 
@@ -1174,31 +1207,31 @@ private struct HistoryTotalCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("All-time")
-                .font(.system(size: 10, weight: .bold))
+                .font(.system(size: 12, weight: .bold))
                 .foregroundStyle(.secondary)
             HStack(alignment: .firstTextBaseline, spacing: 14) {
                 Text(cost)
-                    .font(.system(size: 28, weight: .bold, design: .rounded))
+                    .font(.system(size: 34, weight: .bold, design: .rounded))
                     .monospacedDigit()
                     .foregroundStyle(companionOrange)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.6)
+                    .minimumScaleFactor(0.8)
                 HStack(alignment: .firstTextBaseline, spacing: 3) {
                     Text(tokens)
-                        .font(.system(size: 28, weight: .bold, design: .rounded))
+                        .font(.system(size: 34, weight: .bold, design: .rounded))
                         .monospacedDigit()
                         .lineLimit(1)
-                        .minimumScaleFactor(0.6)
+                        .minimumScaleFactor(0.8)
                     Text("tokens")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(.secondary)
                 }
             }
             Text(days)
-                .font(.system(size: 10, weight: .medium))
+                .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
-                .minimumScaleFactor(0.72)
+                .minimumScaleFactor(0.8)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 13)
@@ -1218,18 +1251,18 @@ private struct HistoryStatPill: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(title)
-                .font(.system(size: 10, weight: .bold))
+                .font(.system(size: 12, weight: .bold))
                 .foregroundStyle(.secondary)
             Text(value)
-                .font(.system(size: 23, weight: .bold, design: .rounded))
+                .font(.system(size: 28, weight: .bold, design: .rounded))
                 .monospacedDigit()
                 .lineLimit(1)
-                .minimumScaleFactor(0.70)
+                .minimumScaleFactor(0.8)
             Text(detail)
-                .font(.system(size: 9, weight: .medium))
+                .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
-                .minimumScaleFactor(0.72)
+                .minimumScaleFactor(0.8)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 9)
@@ -1327,10 +1360,10 @@ private struct QuotaModeRow: View {
         HStack(spacing: 7) {
             HStack(spacing: 6) {
                 Image(systemName: "percent")
-                    .font(.system(size: 11, weight: .bold))
+                    .font(.system(size: 13, weight: .bold))
                     .foregroundStyle(color)
                 Text("Quota shows")
-                    .font(.system(size: 10, weight: .bold))
+                    .font(.system(size: 12, weight: .bold))
                     .lineLimit(1)
             }
             Spacer(minLength: 0)
@@ -1357,10 +1390,10 @@ private struct LayoutModeRow: View {
         HStack(spacing: 7) {
             HStack(spacing: 6) {
                 Image(systemName: "rectangle.split.1x2")
-                    .font(.system(size: 11, weight: .bold))
+                    .font(.system(size: 13, weight: .bold))
                     .foregroundStyle(color)
                 Text("Layout")
-                    .font(.system(size: 10, weight: .bold))
+                    .font(.system(size: 12, weight: .bold))
                     .lineLimit(1)
             }
             Spacer(minLength: 0)
@@ -1392,10 +1425,10 @@ private struct RefreshCadenceRow: View {
         HStack(spacing: 7) {
             HStack(spacing: 6) {
                 Image(systemName: "clock.arrow.circlepath")
-                    .font(.system(size: 11, weight: .bold))
+                    .font(.system(size: 13, weight: .bold))
                     .foregroundStyle(color)
                 Text("Refresh on open")
-                    .font(.system(size: 10, weight: .bold))
+                    .font(.system(size: 12, weight: .bold))
                     .lineLimit(1)
             }
             Spacer(minLength: 0)
@@ -1422,9 +1455,9 @@ private struct RefreshCadenceToggle: View {
             ForEach(RefreshCadence.allCases, id: \.self) { option in
                 Button(action: { onChange(option) }) {
                     Text(option.title)
-                        .font(.system(size: 10, weight: .bold))
+                        .font(.system(size: 12, weight: .bold))
                         .lineLimit(1)
-                        .frame(width: 46, height: 24)
+                        .frame(width: 56, height: 32)
                         .foregroundStyle(option == selected ? Color.primary : Color.secondary)
                         .background(
                             RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -1455,10 +1488,10 @@ private struct AutoRefreshRow: View {
         HStack(spacing: 7) {
             HStack(spacing: 6) {
                 Image(systemName: "arrow.triangle.2.circlepath")
-                    .font(.system(size: 11, weight: .bold))
+                    .font(.system(size: 13, weight: .bold))
                     .foregroundStyle(color)
                 Text("Auto-refresh")
-                    .font(.system(size: 10, weight: .bold))
+                    .font(.system(size: 12, weight: .bold))
                     .lineLimit(1)
             }
             Spacer(minLength: 0)
@@ -1490,10 +1523,10 @@ private struct ThemeRow: View {
         HStack(spacing: 7) {
             HStack(spacing: 6) {
                 Image(systemName: "paintpalette.fill")
-                    .font(.system(size: 11, weight: .bold))
+                    .font(.system(size: 13, weight: .bold))
                     .foregroundStyle(color)
                 Text("Theme")
-                    .font(.system(size: 10, weight: .bold))
+                    .font(.system(size: 12, weight: .bold))
                     .lineLimit(1)
             }
             Spacer(minLength: 0)
@@ -1524,9 +1557,9 @@ private struct SettingsSegment: View {
             ForEach(Array(titles.enumerated()), id: \.offset) { index, title in
                 Button(action: { onSelect(index) }) {
                     Text(title)
-                        .font(.system(size: 10, weight: .bold))
+                        .font(.system(size: 12, weight: .bold))
                         .lineLimit(1)
-                        .frame(width: 44, height: 24)
+                        .frame(width: 54, height: 32)
                         .foregroundStyle(index == selectedIndex ? Color.primary : Color.secondary)
                         .background(
                             RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -1555,10 +1588,10 @@ private struct SettingsStatusPill: View {
             ProviderDot(color: color)
             VStack(alignment: .leading, spacing: 1) {
                 Text(title)
-                    .font(.system(size: 10, weight: .bold))
+                    .font(.system(size: 12, weight: .bold))
                     .lineLimit(1)
                 Text(value)
-                    .font(.system(size: 9, weight: .medium))
+                    .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
@@ -1585,8 +1618,8 @@ private struct HeaderIconButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: systemName)
-                .font(.system(size: 12, weight: .bold))
-                .frame(width: 26, height: 26)
+                .font(.system(size: 14, weight: .bold))
+                .frame(width: 34, height: 34)
                 .foregroundStyle(disabled ? .secondary.opacity(0.5) : tint)
                 .background(Circle().fill(tint.opacity(active ? 0.14 : 0.075)))
                 .contentShape(Rectangle())
@@ -1606,8 +1639,8 @@ private struct ToolbarIconButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: systemName)
-                .font(.system(size: 12, weight: .bold))
-                .frame(width: 28, height: 28)
+                .font(.system(size: 14, weight: .bold))
+                .frame(width: 34, height: 34)
                 .foregroundStyle(tint)
                 .background(
                     RoundedRectangle(cornerRadius: 9, style: .continuous)
@@ -1714,16 +1747,16 @@ private struct CompactEmptyMessage: View {
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: icon)
-                .font(.system(size: 13, weight: .bold))
+                .font(.system(size: 16, weight: .bold))
                 .foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 1) {
                 Text(title)
-                    .font(.system(size: 10, weight: .bold))
+                    .font(.system(size: 13, weight: .bold))
                 Text(detail)
-                    .font(.system(size: 9, weight: .medium))
+                    .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.72)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.8)
             }
             Spacer(minLength: 0)
         }
@@ -1794,12 +1827,12 @@ private struct HistoryBars: View {
                             bar(previous?.costUsd ?? 0, maxCost: maxCost, color: lastWeekColor)
                             bar(day.costUsd, maxCost: maxCost, color: companionOrange)
                         }
-                        .frame(maxHeight: 96, alignment: .bottom)
+                        .frame(maxHeight: 112, alignment: .bottom)
                         Text(String(day.date.suffix(2)))
-                            .font(.system(size: 10, weight: .bold))
+                            .font(.system(size: 12, weight: .bold))
                             .foregroundStyle(.secondary)
                     }
-                    .frame(maxWidth: .infinity, maxHeight: 116, alignment: .bottom)
+                    .frame(maxWidth: .infinity, maxHeight: 136, alignment: .bottom)
                     .help(historyHelp(day: day, previous: previous))
                 }
             }
@@ -1809,7 +1842,7 @@ private struct HistoryBars: View {
     private func bar(_ cost: Double, maxCost: Double, color: Color) -> some View {
         RoundedRectangle(cornerRadius: 3, style: .continuous)
             .fill(color)
-            .frame(width: 13, height: max(3, 96 * min(max(cost / maxCost, 0), 1)))
+            .frame(width: 13, height: max(3, 112 * min(max(cost / maxCost, 0), 1)))
     }
 
     private func legend(color: Color, label: String) -> some View {
@@ -1818,7 +1851,7 @@ private struct HistoryBars: View {
                 .fill(color)
                 .frame(width: 9, height: 9)
             Text(label)
-                .font(.system(size: 10, weight: .semibold))
+                .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(.secondary)
         }
     }
@@ -1856,13 +1889,13 @@ private struct SubagentCard: View {
         VStack(alignment: .leading, spacing: 11) {
             HStack(spacing: 7) {
                 Image(systemName: "rectangle.stack.person.crop.fill")
-                    .font(.system(size: 11, weight: .bold))
+                    .font(.system(size: 13, weight: .bold))
                     .foregroundStyle(companionOrange)
                 Text("Subagents")
-                    .font(.system(size: 13, weight: .bold))
+                    .font(.system(size: 16, weight: .bold))
                 Spacer(minLength: 0)
                 Text("\(Int((subagents.share * 100).rounded()))% of all tokens")
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(.secondary)
             }
 
@@ -1892,12 +1925,12 @@ private struct SubagentCard: View {
                                 .fill(companionOrange.opacity(0.7))
                                 .frame(width: 5, height: 5)
                             Text(agent.name)
-                                .font(.system(size: 11, weight: .semibold))
+                                .font(.system(size: 13, weight: .semibold))
                                 .lineLimit(1)
                                 .minimumScaleFactor(0.8)
                             Spacer(minLength: 6)
                             Text("\(formatTokens(agent.tokens)) · \(agent.invocations) runs")
-                                .font(.system(size: 10, weight: .medium))
+                                .font(.system(size: 12, weight: .medium))
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
                         }
@@ -1932,13 +1965,13 @@ private struct ContributionHeatmap: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 7) {
                 Image(systemName: "square.grid.3x3.fill")
-                    .font(.system(size: 11, weight: .bold))
+                    .font(.system(size: 13, weight: .bold))
                     .foregroundStyle(companionOrange)
                 Text("Activity")
-                    .font(.system(size: 13, weight: .bold))
+                    .font(.system(size: 16, weight: .bold))
                 Spacer(minLength: 0)
                 Text("\(days.count) active days")
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(.secondary)
             }
             if grid.isEmpty {
@@ -1972,16 +2005,16 @@ private struct ContributionHeatmap: View {
                             }
                         }
                     }
-                    .frame(height: 72)
+                    .frame(height: 84)
                     .accessibilityLabel("Activity over the last year")
                     HStack(spacing: 4) {
-                        Text("Less").font(.system(size: 8)).foregroundStyle(.secondary)
+                        Text("Less").font(.system(size: 10)).foregroundStyle(.secondary)
                         ForEach(0...4, id: \.self) { level in
                             RoundedRectangle(cornerRadius: 2, style: .continuous)
                                 .fill(color(level))
                                 .frame(width: 8, height: 8)
                         }
-                        Text("More").font(.system(size: 8)).foregroundStyle(.secondary)
+                        Text("More").font(.system(size: 10)).foregroundStyle(.secondary)
                     }
                 }
             }
@@ -2169,14 +2202,14 @@ private struct StatusCapsule: View {
     var body: some View {
         HStack(spacing: 5) {
             Image(systemName: icon)
-                .font(.system(size: 10, weight: .bold))
+                .font(.system(size: 12, weight: .bold))
             Text(title)
-                .font(.system(size: 10, weight: .bold))
+                .font(.system(size: 12, weight: .bold))
                 .lineLimit(1)
         }
         .foregroundStyle(color)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
         .background(Capsule().fill(color.opacity(0.12)))
     }
 }

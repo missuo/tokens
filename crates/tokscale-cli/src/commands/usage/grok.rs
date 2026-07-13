@@ -4,7 +4,7 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use chrono::{TimeZone, Utc};
+use chrono::{DateTime, TimeZone, Utc};
 use serde_json::Value;
 
 use super::{UsageMetric, UsageOutput};
@@ -50,28 +50,53 @@ fn read_credentials() -> Result<Vec<Credentials>> {
 }
 
 fn credential_candidates_from_value(doc: &Value) -> Result<Vec<Credentials>> {
+    credential_candidates_from_value_at(doc, Utc::now())
+}
+
+fn credential_candidates_from_value_at(
+    doc: &Value,
+    now: DateTime<Utc>,
+) -> Result<Vec<Credentials>> {
     let entries = doc
         .as_object()
         .ok_or_else(|| anyhow::anyhow!("Grok auth.json must contain an object."))?;
 
-    let mut candidates: Vec<_> = entries
-        .iter()
-        .filter_map(|(scope, value)| {
-            let entry = value.as_object()?;
-            let token = entry
-                .get("key")
-                .and_then(Value::as_str)
-                .filter(|value| !value.is_empty())?
-                .to_string();
-            let email = entry
-                .get("email")
-                .and_then(Value::as_str)
-                .filter(|value| !value.is_empty())
-                .map(ToString::to_string);
-            let priority = if scope.contains("auth.x.ai") { 0 } else { 1 };
-            Some((priority, Credentials { token, email }))
-        })
-        .collect();
+    let mut candidates = Vec::new();
+    let mut expired_count = 0;
+    for (scope, value) in entries {
+        let Some(entry) = value.as_object() else {
+            continue;
+        };
+        let Some(token) = entry
+            .get("key")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+        else {
+            continue;
+        };
+        let expired = entry
+            .get("expires_at")
+            .and_then(Value::as_str)
+            .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
+            .is_some_and(|expires_at| expires_at.with_timezone(&Utc) <= now);
+        if expired {
+            expired_count += 1;
+            continue;
+        }
+        let email = entry
+            .get("email")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string);
+        let priority = if scope.contains("auth.x.ai") { 0 } else { 1 };
+        candidates.push((
+            priority,
+            Credentials {
+                token: token.to_string(),
+                email,
+            },
+        ));
+    }
 
     candidates.sort_by_key(|(priority, _)| *priority);
     let credentials: Vec<_> = candidates
@@ -80,6 +105,9 @@ fn credential_candidates_from_value(doc: &Value) -> Result<Vec<Credentials>> {
         .collect();
 
     if credentials.is_empty() {
+        if expired_count > 0 {
+            anyhow::bail!("AUTH_EXPIRED");
+        }
         anyhow::bail!("No Grok token found. Run 'grok login'.");
     }
     Ok(credentials)
@@ -794,6 +822,47 @@ mod tests {
             credentials[1].email.as_deref(),
             Some("secondary@example.com")
         );
+    }
+
+    #[test]
+    fn rejects_auth_file_when_every_credential_is_expired() {
+        let value = serde_json::json!({
+            "https://auth.x.ai": {
+                "key": "expired-token",
+                "expires_at": "2026-07-09T23:53:15Z"
+            }
+        });
+
+        let error = credential_candidates_from_value_at(
+            &value,
+            Utc.with_ymd_and_hms(2026, 7, 13, 0, 0, 0).unwrap(),
+        )
+        .expect_err("expired credentials must fail");
+
+        assert_eq!(error.to_string(), "AUTH_EXPIRED");
+    }
+
+    #[test]
+    fn keeps_unexpired_credentials_and_skips_expired_candidates() {
+        let value = serde_json::json!({
+            "https://auth.x.ai::old": {
+                "key": "expired-token",
+                "expires_at": "2026-07-09T23:53:15Z"
+            },
+            "https://auth.x.ai::current": {
+                "key": "current-token",
+                "expires_at": "2026-07-20T23:53:15Z"
+            }
+        });
+
+        let credentials = credential_candidates_from_value_at(
+            &value,
+            Utc.with_ymd_and_hms(2026, 7, 13, 0, 0, 0).unwrap(),
+        )
+        .expect("one credential is current");
+
+        assert_eq!(credentials.len(), 1);
+        assert_eq!(credentials[0].token, "current-token");
     }
 
     #[test]

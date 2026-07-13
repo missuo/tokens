@@ -381,6 +381,60 @@ final class TokscaleSummaryTests: XCTestCase {
         XCTAssertEqual(grok.primaryQuota?.detail(for: .remaining), "15% used")
     }
 
+    func testDashboardMatchesGrokBuildAndShowsExpiredAuthStatus() throws {
+        let data = sampleSummaryJSON(
+            topJSON: #""client":"codex","model":"gpt-5.5""#,
+            accuracyJSON: #""confidence":"medium","sourceKinds":["local-scan"],"warnings":[]"#,
+            quotaJSON: """
+            [
+              {
+                "provider": "Grok Build",
+                "plan": null,
+                "status": "auth-expired",
+                "windows": []
+              }
+            ]
+            """
+        ).data(using: .utf8)!
+        let summary = try TokscaleSummary.decode(data)
+
+        let grok = TokscaleDashboardModel(summary: summary).providerFocus(for: "grok")
+
+        XCTAssertEqual(grok.quotaStatus, "Auth expired")
+        XCTAssertEqual(grok.quotaStatusDetail, "Sign in to Grok to refresh credits.")
+    }
+
+    func testDashboardShowsCachedQuotaWhenRefreshIsRateLimited() throws {
+        let data = sampleSummaryJSON(
+            topJSON: #""client":"claude","model":"claude-sonnet""#,
+            accuracyJSON: #""confidence":"medium","sourceKinds":["local-scan"],"warnings":[]"#,
+            quotaJSON: """
+            [
+              {
+                "provider": "Claude",
+                "plan": "Max",
+                "status": "rate-limited",
+                "windows": [
+                  {
+                    "label": "Session",
+                    "usedPercent": 8.0,
+                    "remainingPercent": 92.0,
+                    "resetsAt": null
+                  }
+                ]
+              }
+            ]
+            """
+        ).data(using: .utf8)!
+        let summary = try TokscaleSummary.decode(data)
+
+        let claude = TokscaleDashboardModel(summary: summary).providerFocus(for: "claude")
+
+        XCTAssertEqual(claude.quotaStatus, "Cached")
+        XCTAssertEqual(claude.quotaStatusDetail, "Rate limited; kept last successful quota.")
+        XCTAssertEqual(claude.primaryQuota?.title, "5h")
+    }
+
     func testDashboardModelUsesSingleSharedGrokCreditQuota() throws {
         let data = """
         {
@@ -462,6 +516,23 @@ final class TokscaleSummaryTests: XCTestCase {
         XCTAssertEqual(grok.primaryQuota?.title, "Credits")
         XCTAssertEqual(grok.primaryQuota?.value(for: .remaining), "80.0% left")
         XCTAssertEqual(grok.modelCostDetail, "grok $3.00 / composer $1.00")
+    }
+
+    func testProviderFocusUsesTodayCacheHitInsteadOfLifetimeValue() throws {
+        var dictionary = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: sampleSummaryData()) as? [String: Any]
+        )
+        var providers = try XCTUnwrap(dictionary["providers"] as? [[String: Any]])
+        let index = try XCTUnwrap(providers.firstIndex { ($0["client"] as? String) == "claude" })
+        providers[index]["cacheHitPercent"] = 97.6
+        providers[index]["todayCacheHitPercent"] = 42.5
+        dictionary["providers"] = providers
+        let data = try JSONSerialization.data(withJSONObject: dictionary)
+        let summary = try TokscaleSummary.decode(data)
+
+        let claude = TokscaleDashboardModel(summary: summary).providerFocus(for: "claude")
+
+        XCTAssertEqual(claude.cacheHitPercent, 42.5, accuracy: 0.01)
     }
 
     func testDashboardTreatsQuotaRefreshAsLiveWhenHistoryIsStale() throws {
