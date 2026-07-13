@@ -41,8 +41,6 @@ final class MenuBarModel: ObservableObject {
         ) as? Date {
             lastHistoryAttempt = storedAttempt
         }
-        // Land on today's usage right away — don't wait for the first tick or for
-        // the panel to open. Cheap local-only scan, no quota API.
         if summary != nil {
             backgroundTodayScan()
         }
@@ -77,10 +75,6 @@ final class MenuBarModel: ObservableObject {
 
     private func tick() {
         reload()
-        // Keep usage fresh without the panel ever opening: a cheap local today-only
-        // scan (~2s, no quota API) every ~10 min, plus a daily full history scan.
-        // These run regardless of the quota auto-refresh setting below, so today's
-        // figures never silently freeze on yesterday.
         if !isRefreshing, !isBackgroundScanning {
             let now = Date()
             switch BackgroundScanPolicy.nextAction(
