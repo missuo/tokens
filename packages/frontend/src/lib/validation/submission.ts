@@ -25,6 +25,7 @@ const COST_ABSOLUTE_TOLERANCE = 0.1;
 const LEGACY_COST_FLOAT_EPSILON = 1e-6;
 const TOKEN_RELATIVE_TOLERANCE = 0.01;
 const TOKEN_ABSOLUTE_TOLERANCE = 100;
+const MAX_SUPPORTED_CLIENT_PROVENANCE_SCHEMA_VERSION = 2;
 
 const NonNegativeIntegerSchema = z.number().finite().int().min(0).max(Number.MAX_SAFE_INTEGER);
 const NonNegativeNumberSchema = z.number().finite().min(0);
@@ -38,7 +39,9 @@ const TokenBreakdownSchema = z.object({
 });
 
 const ClientContributionProvenanceSchema = z.object({
-  schemaVersion: NonNegativeIntegerSchema.min(1),
+  schemaVersion: NonNegativeIntegerSchema.min(1).max(
+    MAX_SUPPORTED_CLIENT_PROVENANCE_SCHEMA_VERSION
+  ),
   messageCount: NonNegativeIntegerSchema,
   modelCount: NonNegativeIntegerSchema,
 });

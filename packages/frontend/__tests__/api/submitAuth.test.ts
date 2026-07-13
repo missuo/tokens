@@ -112,7 +112,8 @@ vi.mock("@/lib/validation/submission", () => ({
   generateSubmissionHash: mockState.generateSubmissionHash,
 }));
 
-vi.mock("@/lib/db/helpers", () => ({
+vi.mock("@/lib/db/helpers", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/lib/db/helpers")>()),
   mergeClientBreakdowns: mockState.mergeClientBreakdowns,
   mergeClientBreakdownsWithRegressionGuard: mockState.mergeClientBreakdownsWithRegressionGuard,
   recalculateDayTotals: mockState.recalculateDayTotals,
@@ -347,6 +348,11 @@ describe("POST /api/submit auth path", () => {
                 cacheWrite: 0,
                 reasoning: 0,
                 messages: 1,
+                provenance: {
+                  schemaVersion: 2,
+                  messageCount: 1,
+                  modelCount: 1,
+                },
               },
             ],
           },
@@ -497,6 +503,15 @@ describe("POST /api/submit auth path", () => {
         submissionId: "submission-1",
         submittedDeviceId: "submitted-device-1",
         date: "2026-04-30",
+        sourceBreakdown: expect.objectContaining({
+          codex: expect.objectContaining({
+            provenance: {
+              schemaVersion: 2,
+              messageCount: 1,
+              modelCount: 1,
+            },
+          }),
+        }),
       }),
     ]);
     expect(submissionUpdateValues).toEqual(
@@ -512,7 +527,7 @@ describe("POST /api/submit auth path", () => {
     expect(mockState.revalidateUsernamePaths).toHaveBeenCalledWith("Alice");
   });
 
-  it("replaces same-device daily rows without inserting duplicate dates", async () => {
+  it("applies the stored revision floor to new same-device days", async () => {
     mockState.authenticatePersonalToken.mockResolvedValue({
       status: "valid",
       tokenId: "token-1",
@@ -531,7 +546,7 @@ describe("POST /api/submit auth path", () => {
         },
         meta: {
           version: "2.0.0",
-          dateRange: { start: "2026-04-30", end: "2026-04-30" },
+          dateRange: { start: "2026-04-30", end: "2026-05-03" },
         },
         summary: {
           clients: ["codex"],
@@ -552,6 +567,97 @@ describe("POST /api/submit auth path", () => {
                 cacheWrite: 0,
                 reasoning: 0,
                 messages: 1,
+                provenance: {
+                  schemaVersion: 2,
+                  messageCount: 1,
+                  modelCount: 1,
+                },
+              },
+            ],
+          },
+          {
+            date: "2026-05-01",
+            timestampMs: 789,
+            clients: [
+              {
+                client: "codex",
+                modelId: "gpt-5.5",
+                tokens: 15,
+                cost: 0.75,
+                input: 10,
+                output: 5,
+                cacheRead: 0,
+                cacheWrite: 0,
+                reasoning: 0,
+                messages: 1,
+                provenance: {
+                  schemaVersion: 1,
+                  messageCount: 1,
+                  modelCount: 1,
+                },
+              },
+              {
+                client: "claude",
+                modelId: "claude-sonnet-4",
+                tokens: 15,
+                cost: 0.75,
+                input: 10,
+                output: 5,
+                cacheRead: 0,
+                cacheWrite: 0,
+                reasoning: 0,
+                messages: 1,
+                provenance: {
+                  schemaVersion: 1,
+                  messageCount: 1,
+                  modelCount: 1,
+                },
+              },
+            ],
+          },
+          {
+            date: "2026-05-02",
+            timestampMs: 999,
+            clients: [
+              {
+                client: "codex",
+                modelId: "gpt-5.5",
+                tokens: 15,
+                cost: 0.75,
+                input: 10,
+                output: 5,
+                cacheRead: 0,
+                cacheWrite: 0,
+                reasoning: 0,
+                messages: 1,
+                provenance: {
+                  schemaVersion: 2,
+                  messageCount: 1,
+                  modelCount: 1,
+                },
+              },
+            ],
+          },
+          {
+            date: "2026-05-03",
+            timestampMs: 1_111,
+            clients: [
+              {
+                client: "codex",
+                modelId: "gpt-5.5",
+                tokens: 15,
+                cost: 0.75,
+                input: 10,
+                output: 5,
+                cacheRead: 0,
+                cacheWrite: 0,
+                reasoning: 0,
+                messages: 1,
+                provenance: {
+                  schemaVersion: 1,
+                  messageCount: 1,
+                  modelCount: 1,
+                },
               },
             ],
           },
@@ -582,6 +688,11 @@ describe("POST /api/submit auth path", () => {
         reasoning: 0,
         messages: 1,
         models: { "gpt-5.5": { tokens: 12 } },
+        provenance: {
+          schemaVersion: 2,
+          messageCount: 1,
+          modelCount: 1,
+        },
       },
     };
     const mergedBreakdown = {
@@ -625,6 +736,7 @@ describe("POST /api/submit auth path", () => {
       [{ sourceBreakdown: mergedBreakdown }],
     ];
 
+    let dailyInsertValues: Array<Record<string, unknown>> | undefined;
     const tx = {
       update: vi.fn(() => {
         const builder = {
@@ -634,7 +746,15 @@ describe("POST /api/submit auth path", () => {
         return builder;
       }),
       select: vi.fn(() => makeAwaitableBuilder(selectResults.shift() ?? [])),
-      insert: vi.fn(() => {
+      insert: vi.fn((table: unknown) => {
+        if ((table as { id?: unknown }).id === "dailyBreakdown.id") {
+          return {
+            values: vi.fn((values: Array<Record<string, unknown>>) => {
+              dailyInsertValues = values;
+              return Promise.resolve();
+            }),
+          };
+        }
         const builder = {
           values: vi.fn(() => builder),
           onConflictDoUpdate: vi.fn(() => builder),
@@ -668,18 +788,35 @@ describe("POST /api/submit auth path", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(tx.insert).toHaveBeenCalledTimes(1);
+    expect(tx.insert).toHaveBeenCalledTimes(2);
     expect(tx.insert).toHaveBeenCalledWith(expect.objectContaining({
       id: "submittedDevices.id",
     }));
     expect(tx.execute).toHaveBeenCalledTimes(1);
+    expect(dailyInsertValues).toHaveLength(2);
+    expect(dailyInsertValues?.[0]).toEqual(expect.objectContaining({
+      date: "2026-05-01",
+      sourceBreakdown: {
+        claude: expect.objectContaining({
+          provenance: expect.objectContaining({ schemaVersion: 1 }),
+        }),
+      },
+    }));
+    expect(dailyInsertValues?.[1]).toEqual(expect.objectContaining({
+      date: "2026-05-02",
+      sourceBreakdown: {
+        codex: expect.objectContaining({
+          provenance: expect.objectContaining({ schemaVersion: 2 }),
+        }),
+      },
+    }));
     expect(mockState.mergeClientBreakdownsWithRegressionGuard).toHaveBeenCalledWith(
       existingBreakdown,
       {
         codex: {
           ...mergedBreakdown.codex,
           provenance: {
-            schemaVersion: 1,
+            schemaVersion: 2,
             messageCount: 1,
             modelCount: 1,
           },
@@ -694,6 +831,10 @@ describe("POST /api/submit auth path", () => {
         activeDays: 1,
       }),
       mode: "merge",
+      warnings: [
+        "Day 2026-05-01: Ignored codex parser revision 1 because this device already stored revision 2.",
+        "Day 2026-05-03: Ignored codex parser revision 1 because this device already stored revision 2.",
+      ],
     }));
   });
 

@@ -4158,6 +4158,16 @@ struct TsSourceContribution {
     tokens: TsTokenBreakdown,
     cost: f64,
     messages: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    provenance: Option<TsClientContributionProvenance>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TsClientContributionProvenance {
+    schema_version: u32,
+    message_count: i32,
+    model_count: u32,
 }
 
 #[derive(serde::Serialize)]
@@ -4252,6 +4262,8 @@ fn to_ts_token_contribution_data(
     graph: &tokscale_core::GraphResult,
     device: Option<&device::SubmitDevice>,
 ) -> TsTokenContributionData {
+    let include_submit_provenance = device.is_some();
+
     TsTokenContributionData {
         meta: TsExportMeta {
             generated_at: graph.meta.generated_at.clone(),
@@ -4326,6 +4338,13 @@ fn to_ts_token_contribution_data(
                         },
                         cost: s.cost,
                         messages: s.messages,
+                        provenance: include_submit_provenance.then(|| {
+                            TsClientContributionProvenance {
+                                schema_version: if s.client == "codex" { 2 } else { 1 },
+                                message_count: s.messages,
+                                model_count: 1,
+                            }
+                        }),
                     })
                     .collect(),
                 active_time_ms: d.active_time_ms,
@@ -7364,6 +7383,49 @@ mod tests {
             payload.device.as_ref().unwrap().name.as_deref(),
             Some("Test device")
         );
+    }
+
+    #[test]
+    fn test_submit_payload_versions_client_parser_provenance_without_changing_graph_json() {
+        let graph = graph_result_with_contributions(vec![day_with_clients(
+            "2026-12-31",
+            30,
+            vec![
+                client_contribution("codex", "gpt-5.5", "openai", 20, 2.0, 2),
+                client_contribution("claude", "claude-sonnet-4", "anthropic", 10, 1.0, 1),
+            ],
+        )]);
+        let device = device::SubmitDevice {
+            id: "dev_test".to_string(),
+            name: None,
+        };
+
+        let submit_json =
+            serde_json::to_value(to_ts_token_contribution_data(&graph, Some(&device))).unwrap();
+        let submit_clients = submit_json["contributions"][0]["clients"]
+            .as_array()
+            .unwrap();
+        let codex = submit_clients
+            .iter()
+            .find(|client| client["client"] == "codex")
+            .unwrap();
+        let claude = submit_clients
+            .iter()
+            .find(|client| client["client"] == "claude")
+            .unwrap();
+
+        assert_eq!(codex["provenance"]["schemaVersion"], 2);
+        assert_eq!(codex["provenance"]["messageCount"], 2);
+        assert_eq!(codex["provenance"]["modelCount"], 1);
+        assert_eq!(claude["provenance"]["schemaVersion"], 1);
+
+        let graph_json = serde_json::to_value(to_ts_token_contribution_data(&graph, None)).unwrap();
+        for client in graph_json["contributions"][0]["clients"]
+            .as_array()
+            .unwrap()
+        {
+            assert!(client.get("provenance").is_none());
+        }
     }
 
     #[test]

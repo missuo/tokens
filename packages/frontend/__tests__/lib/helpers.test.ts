@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { mergeClientBreakdownsWithRegressionGuard } from "../../src/lib/db/helpers";
+import {
+  aggregateIncomingClientBreakdowns,
+  deriveStoredClientRevisionFloors,
+  filterClientBreakdownsByRevisionFloor,
+  mergeClientBreakdownsWithRegressionGuard,
+} from "../../src/lib/db/helpers";
 
 // Minimal client breakdown fixture
 function makeClient(tokens: number, messages: number, modelCount: number) {
@@ -17,6 +22,20 @@ function makeClient(tokens: number, messages: number, modelCount: number) {
     reasoning: 0,
     messages,
     models,
+  };
+}
+
+function withRevision(
+  client: ReturnType<typeof makeClient>,
+  schemaVersion: number
+) {
+  return {
+    ...client,
+    provenance: {
+      schemaVersion,
+      messageCount: client.messages,
+      modelCount: Object.keys(client.models).length,
+    },
   };
 }
 
@@ -98,5 +117,135 @@ describe("mergeClientBreakdownsWithRegressionGuard", () => {
     expect(result.merged.cursor.tokens).toBe(500);
     expect(result.warnings).toHaveLength(1);
     expect(result.warnings[0]).toContain("cursor");
+  });
+
+  it("accepts a lower corrected value from a newer parser revision", () => {
+    const existing = { codex: withRevision(makeClient(14_000, 80, 2), 1) };
+    const incoming = { codex: withRevision(makeClient(950, 12, 2), 2) };
+
+    const result = mergeClientBreakdownsWithRegressionGuard(
+      existing,
+      incoming,
+      new Set(["codex"])
+    );
+
+    expect(result.merged.codex.tokens).toBe(950);
+    expect(result.merged.codex.provenance?.schemaVersion).toBe(2);
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("rejects an older parser revision even when it reports more tokens", () => {
+    const existing = { codex: withRevision(makeClient(950, 12, 2), 2) };
+    const incoming = { codex: withRevision(makeClient(14_000, 80, 2), 1) };
+
+    const result = mergeClientBreakdownsWithRegressionGuard(
+      existing,
+      incoming,
+      new Set(["codex"])
+    );
+
+    expect(result.merged.codex.tokens).toBe(950);
+    expect(result.merged.codex.provenance?.schemaVersion).toBe(2);
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toContain("revision 1");
+    expect(result.warnings[0]).toContain("revision 2");
+  });
+
+  it("keeps the same-revision token regression guard", () => {
+    const existing = { codex: withRevision(makeClient(1_000, 12, 2), 2) };
+    const incoming = { codex: withRevision(makeClient(900, 12, 2), 2) };
+
+    const result = mergeClientBreakdownsWithRegressionGuard(
+      existing,
+      incoming,
+      new Set(["codex"])
+    );
+
+    expect(result.merged.codex.tokens).toBe(1_000);
+    expect(result.merged.codex.provenance?.schemaVersion).toBe(2);
+    expect(result.warnings).toHaveLength(1);
+  });
+});
+
+describe("aggregateIncomingClientBreakdowns", () => {
+  it("aggregates multiple models while preserving the incoming parser revision", () => {
+    const result = aggregateIncomingClientBreakdowns([
+      {
+        client: "codex",
+        modelId: "gpt-5.5",
+        breakdown: makeClient(600, 7, 1).models["model-0"],
+        provenance: { schemaVersion: 2, messageCount: 7, modelCount: 1 },
+      },
+      {
+        client: "codex",
+        modelId: "gpt-5.5-mini",
+        breakdown: makeClient(350, 5, 1).models["model-0"],
+        provenance: { schemaVersion: 2, messageCount: 5, modelCount: 1 },
+      },
+    ]);
+
+    expect(result.codex.tokens).toBe(950);
+    expect(result.codex.messages).toBe(12);
+    expect(Object.keys(result.codex.models)).toEqual(["gpt-5.5", "gpt-5.5-mini"]);
+    expect(result.codex.provenance).toEqual({
+      schemaVersion: 2,
+      messageCount: 12,
+      modelCount: 2,
+    });
+  });
+
+  it("uses the lowest parser revision when one client mixes model revisions", () => {
+    const result = aggregateIncomingClientBreakdowns([
+      {
+        client: "codex",
+        modelId: "gpt-5.5",
+        breakdown: makeClient(600, 7, 1).models["model-0"],
+        provenance: { schemaVersion: 2, messageCount: 7, modelCount: 1 },
+      },
+      {
+        client: "codex",
+        modelId: "gpt-5.5-mini",
+        breakdown: makeClient(350, 5, 1).models["model-0"],
+        provenance: { schemaVersion: 1, messageCount: 5, modelCount: 1 },
+      },
+    ]);
+
+    expect(result.codex.provenance?.schemaVersion).toBe(1);
+  });
+});
+
+describe("client revision floors", () => {
+  const storedRevisionFloors = deriveStoredClientRevisionFloors([
+    {
+      codex: withRevision(makeClient(950, 12, 2), 2),
+      claude: withRevision(makeClient(500, 5, 1), 1),
+    },
+  ]);
+
+  it("rejects an older revision on a new day without blocking other clients", () => {
+    const result = filterClientBreakdownsByRevisionFloor(
+      {
+        codex: withRevision(makeClient(14_000, 80, 2), 1),
+        claude: withRevision(makeClient(600, 6, 1), 1),
+      },
+      storedRevisionFloors
+    );
+
+    expect(result.accepted.codex).toBeUndefined();
+    expect(result.accepted.claude.tokens).toBe(600);
+    expect(result.rejected).toEqual([
+      { client: "codex", incomingRevision: 1, storedRevision: 2 },
+    ]);
+  });
+
+  it("accepts the stored revision on a new day", () => {
+    const result = filterClientBreakdownsByRevisionFloor(
+      { codex: withRevision(makeClient(1_100, 14, 2), 2) },
+      storedRevisionFloors
+    );
+
+    expect(result.accepted.codex.tokens).toBe(1_100);
+    expect(result.accepted.codex.provenance?.schemaVersion).toBe(2);
+    expect(result.rejected).toEqual([]);
   });
 });

@@ -233,7 +233,7 @@ describe('POST /api/submit - Client-Level Merge', () => {
         provenance?: { schemaVersion: number; messageCount: number; modelCount: number };
       };
       client.provenance = {
-        schemaVersion: 1,
+        schemaVersion: 2,
         messageCount: 7,
         modelCount: 1,
       };
@@ -242,10 +242,27 @@ describe('POST /api/submit - Client-Level Merge', () => {
 
       expect(result.valid).toBe(true);
       expect(result.data?.contributions[0].clients[0].provenance).toEqual({
-        schemaVersion: 1,
+        schemaVersion: 2,
         messageCount: 7,
         modelCount: 1,
       });
+    });
+
+    it('rejects client provenance newer than the server supports', () => {
+      const payload = createMockSubmissionData({ clients: ['codex'] });
+      const client = payload.contributions[0].clients[0] as {
+        provenance?: { schemaVersion: number; messageCount: number; modelCount: number };
+      };
+      client.provenance = {
+        schemaVersion: 999,
+        messageCount: 7,
+        modelCount: 1,
+      };
+
+      const result = validateSubmission(payload);
+
+      expect(result.valid).toBe(false);
+      expect(result.errors.some((error) => error.includes('schemaVersion'))).toBe(true);
     });
   });
 
