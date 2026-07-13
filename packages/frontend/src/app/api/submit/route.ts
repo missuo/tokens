@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { revalidateTag } from "next/cache";
 import { db, apiTokens, submissions, submittedDevices, dailyBreakdown } from "@/lib/db";
-import { and, eq, sql } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import {
   validateSubmission,
   generateSubmissionHash,
@@ -13,7 +13,10 @@ import {
   mergeClientBreakdownsWithRegressionGuard,
   recalculateDayTotals,
   clientContributionToBreakdownData,
-  deriveClientBreakdownProvenance,
+  aggregateIncomingClientBreakdowns,
+  deriveStoredClientRevisionFloors,
+  filterClientBreakdownsByRevisionFloor,
+  applyAuthoritativeClientCoverage,
   mergeTimestampMs,
   type ClientBreakdownData,
 } from "@/lib/db/helpers";
@@ -276,25 +279,24 @@ export async function POST(request: Request) {
       // ------------------------------------------
       // STEP 3b: Fetch existing daily breakdown for merge
       // ------------------------------------------
-      const fetchExistingDeviceDays = () =>
+      const fetchExistingSubmissionDays = () =>
         tx
           .select({
             id: dailyBreakdown.id,
+            submittedDeviceId: dailyBreakdown.submittedDeviceId,
             date: dailyBreakdown.date,
             timestampMs: dailyBreakdown.timestampMs,
             activeTimeMs: dailyBreakdown.activeTimeMs,
             sourceBreakdown: dailyBreakdown.sourceBreakdown,
           })
           .from(dailyBreakdown)
-          .where(
-            and(
-              eq(dailyBreakdown.submissionId, submissionId),
-              eq(dailyBreakdown.submittedDeviceId, submittedDevice.id)
-            )
-          )
+          .where(eq(dailyBreakdown.submissionId, submissionId))
           .for('update');
 
-      let existingDays = await fetchExistingDeviceDays();
+      let allExistingDays = await fetchExistingSubmissionDays();
+      let existingDays = allExistingDays.filter(
+        (day) => day.submittedDeviceId === submittedDevice.id
+      );
 
       if (
         existingDays.length === 0 &&
@@ -359,12 +361,32 @@ export async function POST(request: Request) {
           // re-adopt.
           console.warn("Legacy adoption conflict (concurrent submit), falling through:", adoptionErr);
         }
-        existingDays = await fetchExistingDeviceDays();
+        allExistingDays = await fetchExistingSubmissionDays();
+        existingDays = allExistingDays.filter(
+          (day) => day.submittedDeviceId === submittedDevice.id
+        );
       }
 
       const existingDaysMap = new Map(
         existingDays.map((d) => [d.date, d])
       );
+      const storedClientRevisionFloors = deriveStoredClientRevisionFloors(
+        allExistingDays.map((day) =>
+          (day.sourceBreakdown || {}) as Record<string, ClientBreakdownData>
+        )
+      );
+      const authoritativeCoverages = (data.clientManifest?.clients ?? [])
+        .filter(
+          (entry) =>
+            entry.coverage &&
+            entry.parserRevision >= (storedClientRevisionFloors.get(entry.client) ?? 1)
+        )
+        .map((entry) => ({
+          client: entry.client,
+          parserRevision: entry.parserRevision,
+          start: entry.coverage!.start,
+          end: entry.coverage!.end,
+        }));
 
       // ------------------------------------------
       // STEP 3c: Compute merge results in memory, then batch write
@@ -392,63 +414,69 @@ export async function POST(request: Request) {
         activeTimeMs: number | null;
         sourceBreakdown: Record<string, ClientBreakdownData>;
       }> = [];
+      const toDelete: string[] = [];
+      const incomingDates = new Set(data.contributions.map((day) => day.date));
 
       for (const incomingDay of data.contributions) {
-        const incomingClientBreakdown: Record<string, ClientBreakdownData> = {};
-        for (const client_contrib of incomingDay.clients) {
-          const modelData = clientContributionToBreakdownData(client_contrib);
-          const existing = incomingClientBreakdown[client_contrib.client];
-          if (existing) {
-            existing.tokens += modelData.tokens;
-            existing.cost += modelData.cost;
-            existing.input += modelData.input;
-            existing.output += modelData.output;
-            existing.cacheRead += modelData.cacheRead;
-            existing.cacheWrite += modelData.cacheWrite;
-            existing.reasoning = (existing.reasoning || 0) + modelData.reasoning;
-            existing.messages += modelData.messages;
-            const existingModel = existing.models[client_contrib.modelId];
-            if (existingModel) {
-              existingModel.tokens += modelData.tokens;
-              existingModel.cost += modelData.cost;
-              existingModel.input += modelData.input;
-              existingModel.output += modelData.output;
-              existingModel.cacheRead += modelData.cacheRead;
-              existingModel.cacheWrite += modelData.cacheWrite;
-              existingModel.reasoning = (existingModel.reasoning || 0) + modelData.reasoning;
-              existingModel.messages += modelData.messages;
-            } else {
-              existing.models[client_contrib.modelId] = modelData;
-            }
-            existing.provenance = deriveClientBreakdownProvenance(existing);
-          } else {
-            const clientBreakdown = {
-              ...modelData,
-              models: { [client_contrib.modelId]: modelData },
-            };
-            incomingClientBreakdown[client_contrib.client] = {
-              ...clientBreakdown,
-              provenance: deriveClientBreakdownProvenance(clientBreakdown),
-            };
-          }
-        }
+        const aggregatedIncomingClientBreakdown = aggregateIncomingClientBreakdowns(
+          incomingDay.clients.map((clientContribution) => ({
+            client: clientContribution.client,
+            modelId: clientContribution.modelId,
+            breakdown: clientContributionToBreakdownData(clientContribution),
+            provenance: clientContribution.provenance,
+          }))
+        );
+        const revisionFilter = filterClientBreakdownsByRevisionFloor(
+          aggregatedIncomingClientBreakdown,
+          storedClientRevisionFloors
+        );
+        const incomingClientBreakdown = revisionFilter.accepted;
+        const rejectedClients = new Set(
+          revisionFilter.rejected.map((rejected) => rejected.client)
+        );
+        warnings.push(
+          ...revisionFilter.rejected.map(
+            (rejected) =>
+              `Day ${incomingDay.date}: Ignored ${rejected.client} parser revision ${rejected.incomingRevision} because this account already stored revision ${rejected.storedRevision}.`
+          )
+        );
 
         const existingDay = existingDaysMap.get(incomingDay.date);
 
         if (existingDay) {
-          const existingClientBreakdown = (existingDay.sourceBreakdown || {}) as Record<
+          const storedClientBreakdown = (existingDay.sourceBreakdown || {}) as Record<
             string,
             ClientBreakdownData
           >;
-          const mergeResult = mergeClientBreakdownsWithRegressionGuard(
-            existingClientBreakdown,
+          const coverageResult = applyAuthoritativeClientCoverage(
+            storedClientBreakdown,
             incomingClientBreakdown,
-            submittedClients
+            incomingDay.date,
+            authoritativeCoverages
+          );
+          warnings.push(
+            ...coverageResult.tombstonedClients.map(
+              (client) =>
+                `Day ${incomingDay.date}: Removed stale ${client} data under authoritative replacement coverage.`
+            )
+          );
+          const mergeResult = mergeClientBreakdownsWithRegressionGuard(
+            coverageResult.mergeBase,
+            incomingClientBreakdown,
+            new Set(
+              Array.from(submittedClients).filter(
+                (client) => !rejectedClients.has(client)
+              )
+            )
           );
           warnings.push(
             ...mergeResult.warnings.map((warning) => `Day ${incomingDay.date}: ${warning}`)
           );
           const mergedClientBreakdown = mergeResult.merged;
+          if (Object.keys(mergedClientBreakdown).length === 0) {
+            toDelete.push(existingDay.id);
+            continue;
+          }
           const dayTotals = recalculateDayTotals(mergedClientBreakdown);
 
           toUpdate.push({
@@ -461,7 +489,7 @@ export async function POST(request: Request) {
             activeTimeMs: incomingDay.activeTimeMs ?? existingDay.activeTimeMs ?? null,
             sourceBreakdown: mergedClientBreakdown,
           });
-        } else {
+        } else if (Object.keys(incomingClientBreakdown).length > 0) {
           const dayTotals = recalculateDayTotals(incomingClientBreakdown);
 
           toInsert.push({
@@ -479,9 +507,50 @@ export async function POST(request: Request) {
         }
       }
 
+      for (const existingDay of existingDays) {
+        if (incomingDates.has(existingDay.date)) continue;
+        const storedClientBreakdown = (existingDay.sourceBreakdown || {}) as Record<
+          string,
+          ClientBreakdownData
+        >;
+        const coverageResult = applyAuthoritativeClientCoverage(
+          storedClientBreakdown,
+          {},
+          existingDay.date,
+          authoritativeCoverages
+        );
+        if (coverageResult.tombstonedClients.length === 0) continue;
+
+        warnings.push(
+          ...coverageResult.tombstonedClients.map(
+            (client) =>
+              `Day ${existingDay.date}: Removed stale ${client} data under authoritative replacement coverage.`
+          )
+        );
+        if (Object.keys(coverageResult.mergeBase).length === 0) {
+          toDelete.push(existingDay.id);
+          continue;
+        }
+        const dayTotals = recalculateDayTotals(coverageResult.mergeBase);
+        toUpdate.push({
+          id: existingDay.id,
+          tokens: dayTotals.tokens,
+          cost: dayTotals.cost.toFixed(4),
+          inputTokens: dayTotals.inputTokens,
+          outputTokens: dayTotals.outputTokens,
+          timestampMs: existingDay.timestampMs ?? null,
+          activeTimeMs: existingDay.activeTimeMs ?? null,
+          sourceBreakdown: coverageResult.mergeBase,
+        });
+      }
+
       // Batch INSERT new days
       if (toInsert.length > 0) {
         await tx.insert(dailyBreakdown).values(toInsert);
+      }
+
+      if (toDelete.length > 0) {
+        await tx.delete(dailyBreakdown).where(inArray(dailyBreakdown.id, toDelete));
       }
 
       // Batch UPDATE existing days via raw SQL VALUES list
