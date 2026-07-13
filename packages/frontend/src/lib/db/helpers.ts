@@ -39,6 +39,13 @@ export interface MergeClientBreakdownsResult {
   warnings: string[];
 }
 
+export interface IncomingClientModelBreakdown {
+  client: string;
+  modelId: string;
+  breakdown: ModelBreakdownData;
+  provenance?: ClientBreakdownProvenanceData;
+}
+
 export interface DayTotals {
   tokens: number;
   cost: number;
@@ -112,6 +119,74 @@ function withDerivedProvenance(breakdown: ClientBreakdownData): ClientBreakdownD
   };
 }
 
+export function aggregateIncomingClientBreakdowns(
+  contributions: IncomingClientModelBreakdown[]
+): Record<string, ClientBreakdownData> {
+  const aggregated: Record<string, ClientBreakdownData> = {};
+
+  for (const contribution of contributions) {
+    const { client, modelId, breakdown, provenance } = contribution;
+    const existing = aggregated[client];
+
+    if (!existing) {
+      const clientBreakdown: ClientBreakdownData = {
+        ...breakdown,
+        models: { [modelId]: { ...breakdown } },
+        provenance: {
+          schemaVersion: Math.max(1, provenance?.schemaVersion ?? 1),
+          messageCount: Math.max(0, provenance?.messageCount ?? 0),
+          modelCount: Math.max(0, provenance?.modelCount ?? 0),
+        },
+      };
+      aggregated[client] = withDerivedProvenance(clientBreakdown);
+      continue;
+    }
+
+    existing.tokens += breakdown.tokens;
+    existing.cost += breakdown.cost;
+    existing.input += breakdown.input;
+    existing.output += breakdown.output;
+    existing.cacheRead += breakdown.cacheRead;
+    existing.cacheWrite += breakdown.cacheWrite;
+    existing.reasoning = (existing.reasoning || 0) + breakdown.reasoning;
+    existing.messages += breakdown.messages;
+
+    const existingModel = existing.models[modelId];
+    if (existingModel) {
+      existingModel.tokens += breakdown.tokens;
+      existingModel.cost += breakdown.cost;
+      existingModel.input += breakdown.input;
+      existingModel.output += breakdown.output;
+      existingModel.cacheRead += breakdown.cacheRead;
+      existingModel.cacheWrite += breakdown.cacheWrite;
+      existingModel.reasoning = (existingModel.reasoning || 0) + breakdown.reasoning;
+      existingModel.messages += breakdown.messages;
+    } else {
+      existing.models[modelId] = { ...breakdown };
+    }
+
+    existing.provenance = deriveClientBreakdownProvenance({
+      ...existing,
+      provenance: {
+        schemaVersion: Math.max(
+          existing.provenance?.schemaVersion ?? 1,
+          provenance?.schemaVersion ?? 1
+        ),
+        messageCount: Math.max(
+          existing.provenance?.messageCount ?? 0,
+          provenance?.messageCount ?? 0
+        ),
+        modelCount: Math.max(
+          existing.provenance?.modelCount ?? 0,
+          provenance?.modelCount ?? 0
+        ),
+      },
+    });
+  }
+
+  return aggregated;
+}
+
 export function mergeClientBreakdowns(
   existing: Record<string, ClientBreakdownData> | null | undefined,
   incoming: Record<string, ClientBreakdownData>,
@@ -155,14 +230,30 @@ export function mergeClientBreakdownsWithRegressionGuard(
     }
 
     const nextClient = withDerivedProvenance(incomingClient);
-    if (existingClient && nextClient.tokens < existingClient.tokens) {
-      // A token decrease alone signals a parser regression (e.g. the CLI
-      // re-parsed only a subset of history). Preserve the existing row even
-      // when coverage metrics are equal, because equal coverage + fewer tokens
-      // still indicates data loss. The old AND-gate (tokens < existing AND lower
-      // coverage) let equal-coverage regressions slip through undetected.
-      merged[clientName] = withDerivedProvenance(existingClient);
-      const existingTokens = formatTokens(existingClient.tokens);
+    const existingWithProvenance = existingClient
+      ? withDerivedProvenance(existingClient)
+      : undefined;
+    const existingSchemaVersion = existingWithProvenance?.provenance?.schemaVersion ?? 1;
+    const incomingSchemaVersion = nextClient.provenance?.schemaVersion ?? 1;
+
+    if (existingWithProvenance && incomingSchemaVersion < existingSchemaVersion) {
+      merged[clientName] = existingWithProvenance;
+      warnings.push(
+        `Preserved ${clientName} because parser revision ${incomingSchemaVersion} is older than stored revision ${existingSchemaVersion}.`
+      );
+      continue;
+    }
+
+    if (
+      existingWithProvenance &&
+      incomingSchemaVersion === existingSchemaVersion &&
+      nextClient.tokens < existingWithProvenance.tokens
+    ) {
+      // Within one parser revision, a token decrease signals a regression
+      // (e.g. the CLI re-parsed only a subset of history). A newer revision is
+      // allowed to submit a deliberate lower correction before reaching here.
+      merged[clientName] = existingWithProvenance;
+      const existingTokens = formatTokens(existingWithProvenance.tokens);
       const nextTokens = formatTokens(nextClient.tokens);
       warnings.push(
         `Preserved ${clientName} because this same-device resubmit would reduce ${existingTokens} tokens to ${nextTokens}.`

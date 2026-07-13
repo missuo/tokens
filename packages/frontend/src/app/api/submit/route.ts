@@ -13,7 +13,7 @@ import {
   mergeClientBreakdownsWithRegressionGuard,
   recalculateDayTotals,
   clientContributionToBreakdownData,
-  deriveClientBreakdownProvenance,
+  aggregateIncomingClientBreakdowns,
   mergeTimestampMs,
   type ClientBreakdownData,
 } from "@/lib/db/helpers";
@@ -394,44 +394,14 @@ export async function POST(request: Request) {
       }> = [];
 
       for (const incomingDay of data.contributions) {
-        const incomingClientBreakdown: Record<string, ClientBreakdownData> = {};
-        for (const client_contrib of incomingDay.clients) {
-          const modelData = clientContributionToBreakdownData(client_contrib);
-          const existing = incomingClientBreakdown[client_contrib.client];
-          if (existing) {
-            existing.tokens += modelData.tokens;
-            existing.cost += modelData.cost;
-            existing.input += modelData.input;
-            existing.output += modelData.output;
-            existing.cacheRead += modelData.cacheRead;
-            existing.cacheWrite += modelData.cacheWrite;
-            existing.reasoning = (existing.reasoning || 0) + modelData.reasoning;
-            existing.messages += modelData.messages;
-            const existingModel = existing.models[client_contrib.modelId];
-            if (existingModel) {
-              existingModel.tokens += modelData.tokens;
-              existingModel.cost += modelData.cost;
-              existingModel.input += modelData.input;
-              existingModel.output += modelData.output;
-              existingModel.cacheRead += modelData.cacheRead;
-              existingModel.cacheWrite += modelData.cacheWrite;
-              existingModel.reasoning = (existingModel.reasoning || 0) + modelData.reasoning;
-              existingModel.messages += modelData.messages;
-            } else {
-              existing.models[client_contrib.modelId] = modelData;
-            }
-            existing.provenance = deriveClientBreakdownProvenance(existing);
-          } else {
-            const clientBreakdown = {
-              ...modelData,
-              models: { [client_contrib.modelId]: modelData },
-            };
-            incomingClientBreakdown[client_contrib.client] = {
-              ...clientBreakdown,
-              provenance: deriveClientBreakdownProvenance(clientBreakdown),
-            };
-          }
-        }
+        const incomingClientBreakdown = aggregateIncomingClientBreakdowns(
+          incomingDay.clients.map((clientContribution) => ({
+            client: clientContribution.client,
+            modelId: clientContribution.modelId,
+            breakdown: clientContributionToBreakdownData(clientContribution),
+            provenance: clientContribution.provenance,
+          }))
+        );
 
         const existingDay = existingDaysMap.get(incomingDay.date);
 

@@ -112,7 +112,8 @@ vi.mock("@/lib/validation/submission", () => ({
   generateSubmissionHash: mockState.generateSubmissionHash,
 }));
 
-vi.mock("@/lib/db/helpers", () => ({
+vi.mock("@/lib/db/helpers", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/lib/db/helpers")>()),
   mergeClientBreakdowns: mockState.mergeClientBreakdowns,
   mergeClientBreakdownsWithRegressionGuard: mockState.mergeClientBreakdownsWithRegressionGuard,
   recalculateDayTotals: mockState.recalculateDayTotals,
@@ -347,6 +348,11 @@ describe("POST /api/submit auth path", () => {
                 cacheWrite: 0,
                 reasoning: 0,
                 messages: 1,
+                provenance: {
+                  schemaVersion: 2,
+                  messageCount: 1,
+                  modelCount: 1,
+                },
               },
             ],
           },
@@ -497,6 +503,15 @@ describe("POST /api/submit auth path", () => {
         submissionId: "submission-1",
         submittedDeviceId: "submitted-device-1",
         date: "2026-04-30",
+        sourceBreakdown: expect.objectContaining({
+          codex: expect.objectContaining({
+            provenance: {
+              schemaVersion: 2,
+              messageCount: 1,
+              modelCount: 1,
+            },
+          }),
+        }),
       }),
     ]);
     expect(submissionUpdateValues).toEqual(
