@@ -11,12 +11,6 @@ final class MenuBarModel: ObservableObject {
     @Published var isRefreshing = false
     @Published private(set) var isBackgroundScanning = false
     @Published var refreshStatus: String?
-    // The MenuBarExtra(.window) content view stays alive while the panel is
-    // closed, so its repeat-forever animations would keep driving full-rate
-    // render passes forever (~13% CPU measured idle). Views gate their looping
-    // animations on this so a hidden panel costs nothing.
-    @Published private(set) var isPanelVisible = false
-
     private let store = TokscaleSummaryStore()
     private var refreshTimer: Timer?
     private var lastAutoRefresh = Date()
@@ -26,9 +20,32 @@ final class MenuBarModel: ObservableObject {
     // bumps both stamps.
     private var lastTodayScan = Date.distantPast
     private var lastHistoryScan = Date.distantPast
+    private var lastHistoryAttempt = Date.distantPast
+    private var lastQuotaOpenAttempt = Date.distantPast
+    private static let lastHistoryAttemptKey = "tokens.menubar.lastHistoryAttempt"
+    nonisolated private static let summaryMutations = SummaryMutationCoordinator()
 
     init() {
         reload()
+        if let restored = summary.flatMap({
+            BackgroundScanPolicy.restoredScanDates(
+                generatedAt: $0.generatedAt,
+                historyGeneratedAt: $0.health.historyGeneratedAt
+            )
+        }) {
+            lastTodayScan = restored.today
+            lastHistoryScan = restored.history
+        }
+        if let storedAttempt = UserDefaults.standard.object(
+            forKey: Self.lastHistoryAttemptKey
+        ) as? Date {
+            lastHistoryAttempt = storedAttempt
+        }
+        // Land on today's usage right away — don't wait for the first tick or for
+        // the panel to open. Cheap local-only scan, no quota API.
+        if summary != nil {
+            backgroundTodayScan()
+        }
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tick() }
         }
@@ -37,24 +54,13 @@ final class MenuBarModel: ObservableObject {
         refreshTimer?.tolerance = 10
     }
 
-    func panelDidShow() {
-        isPanelVisible = true
-    }
-
-    func panelDidHide() {
-        isPanelVisible = false
-    }
-
     func reload() {
         do {
             let loaded = try store.load()
             // Skip the dashboard rebuild + badge re-render when the data version is
             // unchanged — the 60s tick reloads even when nothing was scanned, and
             // rebuilding the model + rendering the NSImage every minute is wasteful.
-            if let loaded, let current = summary, errorMessage == nil,
-                loaded.generatedAt == current.generatedAt,
-                loaded.health.quotaRefreshedAt == current.health.quotaRefreshedAt
-            {
+            if let loaded, let current = summary, errorMessage == nil, loaded == current {
                 return
             }
             summary = loaded
@@ -71,7 +77,28 @@ final class MenuBarModel: ObservableObject {
 
     private func tick() {
         reload()
-        let auto = AutoRefresh(storedValue: UserDefaults.standard.string(forKey: AutoRefresh.storageKey))
+        // Keep usage fresh without the panel ever opening: a cheap local today-only
+        // scan (~2s, no quota API) every ~10 min, plus a daily full history scan.
+        // These run regardless of the quota auto-refresh setting below, so today's
+        // figures never silently freeze on yesterday.
+        if !isRefreshing, !isBackgroundScanning {
+            let now = Date()
+            switch BackgroundScanPolicy.nextAction(
+                now: now,
+                lastHistorySuccess: lastHistoryScan,
+                lastHistoryAttempt: lastHistoryAttempt,
+                lastTodayScan: lastTodayScan
+            ) {
+            case .full:
+                backgroundHistoryRefresh()
+            case .today:
+                backgroundTodayScan()
+            case .none:
+                break
+            }
+        }
+        let auto = AutoRefresh(
+            storedValue: UserDefaults.standard.string(forKey: AutoRefresh.storageKey))
         guard !isRefreshing, let interval = auto.interval else {
             return
         }
@@ -83,13 +110,16 @@ final class MenuBarModel: ObservableObject {
     }
 
     func refreshScan() {
-        let summaryPath = store.summaryURL.path
-        runRefresh(status: "Scanning all AI sessions...") {
-            MenuBarModel.runFullScan(summaryPath: summaryPath)
-        }
+        refreshStatus =
+            summary == nil
+            ? "Building local history cache..."
+            : "Syncing compact history..."
+        backgroundHistoryRefresh()
     }
 
-    func refreshQuota(status: String = "Refreshing live quota...", completion: (@MainActor () -> Void)? = nil) {
+    func refreshQuota(
+        status: String = "Refreshing live quota...", completion: (@MainActor () -> Void)? = nil
+    ) {
         let summaryURL = store.summaryURL
         runRefresh(status: status, completion: completion) {
             MenuBarModel.runQuotaRefresh(summaryURL: summaryURL)
@@ -102,13 +132,19 @@ final class MenuBarModel: ObservableObject {
     private func backgroundFullScan() {
         guard !isBackgroundScanning else { return }
         isBackgroundScanning = true
+        recordHistoryAttempt()
         let summaryPath = store.summaryURL.path
         DispatchQueue.global(qos: .background).async { [weak self] in
-            _ = MenuBarModel.runFullScan(summaryPath: summaryPath)
+            let result = MenuBarModel.runFullScan(summaryPath: summaryPath)
             Task { @MainActor in
                 guard let self else { return }
                 self.isBackgroundScanning = false
+                guard result.succeeded else {
+                    self.refreshStatus = result.message
+                    return
+                }
                 self.lastHistoryScan = Date()
+                self.refreshStatus = "Local history refreshed."
                 // The merged history scan owns all-time/history, but its per-client
                 // today work time can be noisy (cross-machine duplicates / stray
                 // timestamps). Chain a local today-only scan to fill in accurate
@@ -119,6 +155,50 @@ final class MenuBarModel: ObservableObject {
         }
     }
 
+    private func backgroundHistoryRefresh() {
+        if summary == nil {
+            backgroundFullScan()
+        } else {
+            backgroundRemoteHistorySync()
+        }
+    }
+
+    private func backgroundRemoteHistorySync() {
+        guard !isBackgroundScanning else { return }
+        isBackgroundScanning = true
+        recordHistoryAttempt()
+        let summaryURL = store.summaryURL
+        DispatchQueue.global(qos: .background).async { [weak self] in
+            let result = MenuBarModel.runRemoteHistorySync(summaryURL: summaryURL)
+            Task { @MainActor in
+                guard let self else { return }
+                self.isBackgroundScanning = false
+                if result.succeeded {
+                    self.lastHistoryScan = Date()
+                    self.refreshStatus = "History refreshed."
+                } else {
+                    self.refreshStatus = result.message
+                }
+                switch BackgroundScanPolicy.actionAfterRemoteHistorySync(
+                    succeeded: result.succeeded
+                ) {
+                case .full:
+                    self.backgroundFullScan()
+                case .today:
+                    self.backgroundTodayScan()
+                case .none:
+                    break
+                }
+            }
+        }
+    }
+
+    private func recordHistoryAttempt() {
+        let now = Date()
+        lastHistoryAttempt = now
+        UserDefaults.standard.set(now, forKey: Self.lastHistoryAttemptKey)
+    }
+
     // Cheap today-only rescan: re-reads just today's files (~2s) and patches the
     // today figures + work time over the existing summary, leaving history alone.
     private func backgroundTodayScan() {
@@ -126,11 +206,15 @@ final class MenuBarModel: ObservableObject {
         isBackgroundScanning = true
         let summaryURL = store.summaryURL
         DispatchQueue.global(qos: .background).async { [weak self] in
-            _ = MenuBarModel.runTodayScan(summaryURL: summaryURL)
+            let result = MenuBarModel.runTodayScan(summaryURL: summaryURL)
             Task { @MainActor in
                 guard let self else { return }
                 self.isBackgroundScanning = false
-                self.lastTodayScan = Date()
+                if result.succeeded {
+                    self.lastTodayScan = Date()
+                } else {
+                    self.refreshStatus = result.message
+                }
                 self.reload()
             }
         }
@@ -140,7 +224,7 @@ final class MenuBarModel: ObservableObject {
         // No cache yet: do the first full scan in the background so the popover stays
         // responsive while it runs.
         if summary == nil {
-            backgroundFullScan()
+            backgroundHistoryRefresh()
             return
         }
         // First page wins: always refresh live quota right away (fast, local), even
@@ -152,20 +236,39 @@ final class MenuBarModel: ObservableObject {
         let cadence = RefreshCadence(
             storedValue: UserDefaults.standard.string(forKey: RefreshCadence.storageKey)
         )
-        // First page wins: quota refreshes immediately on every open (fast, local),
-        // even while a scan runs. Then pick the cheapest scan that's due: a daily
-        // full history scan, otherwise a throttled today-only scan (~2s). With
-        // "Refresh on open = Off" only quota refreshes, never a background scan.
-        refreshQuota { [weak self] in
+        let refreshUsageIfNeeded: @MainActor () -> Void = { [weak self] in
             guard let self, cadence.minimumInterval != nil, !self.isBackgroundScanning else {
                 return
             }
             let now = Date()
-            if now.timeIntervalSince(self.lastHistoryScan) > 86_400 {
-                self.backgroundFullScan()
-            } else if now.timeIntervalSince(self.lastTodayScan) > 600 {
+            switch BackgroundScanPolicy.nextAction(
+                now: now,
+                lastHistorySuccess: self.lastHistoryScan,
+                lastHistoryAttempt: self.lastHistoryAttempt,
+                lastTodayScan: self.lastTodayScan
+            ) {
+            case .full:
+                self.backgroundHistoryRefresh()
+            case .today:
                 self.backgroundTodayScan()
+            case .none:
+                break
             }
+        }
+        let now = Date()
+        if BackgroundScanPolicy.shouldRefreshQuotaOnOpen(
+            needsRefresh: summary?.needsRefreshOnOpen(
+                now: now,
+                minimumInterval: BackgroundScanPolicy.quotaOpenRefreshInterval
+            ) == true,
+            isRefreshing: isRefreshing,
+            now: now,
+            lastAttempt: lastQuotaOpenAttempt
+        ) {
+            lastQuotaOpenAttempt = now
+            refreshQuota(completion: refreshUsageIfNeeded)
+        } else {
+            refreshUsageIfNeeded()
         }
     }
 
@@ -211,19 +314,31 @@ final class MenuBarModel: ObservableObject {
 
     /// Full scan: `tokens graph --subagents` for usage/history/subagents, `tokens
     /// usage` for live quota, adapted into the companion summary the store reads.
-    nonisolated private static func runFullScan(summaryPath: String) -> String {
+    nonisolated private static func runFullScan(summaryPath: String) -> FullScanResult {
         guard let binary = tokensBinaryURL() else {
-            return "Refresh failed: tokens command unavailable"
+            return .failure("Refresh failed: tokens command unavailable")
         }
         let started = Date()
-        let (graphExec, graphArgs) = graphCommand(binary: binary)
-        let graph = runCapturing(
-            executableURL: graphExec,
-            arguments: graphArgs,
-            timeout: 300
-        )
-        guard graph.ok, let graphData = graph.data, !graphData.isEmpty else {
-            return "Refresh failed: \(graph.message ?? "graph scan")"
+        var graphData: Data?
+        var graphFailure = "graph scan"
+        for command in graphCommands(binary: binary) {
+            let graph = runCapturing(
+                executableURL: command.executableURL,
+                arguments: command.arguments,
+                timeout: 300
+            )
+            if graph.ok, let data = graph.data, !data.isEmpty,
+                GraphCompanionAdapter.isValidGraphData(data)
+            {
+                graphData = data
+                break
+            }
+            graphFailure = graph.ok
+                ? "invalid graph output"
+                : graph.message ?? "graph scan"
+        }
+        guard let graphData else {
+            return .failure("Refresh failed: \(graphFailure)")
         }
         let usage = runCapturing(
             executableURL: binary,
@@ -242,23 +357,86 @@ final class MenuBarModel: ObservableObject {
                 lastScanDurationMs: scanMs,
                 quotaRefreshedAt: usageData != nil ? nowISO : nil
             )
-            try writeAtomic(companion, to: URL(fileURLWithPath: summaryPath))
-            return "Refresh finished."
+            return summaryMutations.replace(
+                summaryURL: URL(fileURLWithPath: summaryPath),
+                with: companion
+            ) ? .success : .failure("Refresh failed: summary write")
         } catch {
-            return "Refresh failed: \(error)"
+            return .failure("Refresh failed: \(error)")
         }
+    }
+
+    nonisolated private static func runRemoteHistorySync(summaryURL: URL) -> FullScanResult {
+        guard let binary = tokensBinaryURL() else {
+            return .failure("History sync failed: tokens command unavailable")
+        }
+        let started = Date()
+        let status = runCapturing(
+            executableURL: binary,
+            arguments: ["status", "--json"],
+            timeout: 15
+        )
+        guard status.ok, let statusData = status.data,
+            let statusJSON = (try? JSONSerialization.jsonObject(with: statusData))
+                as? [String: Any],
+            let apiURLString = statusJSON["apiUrl"] as? String,
+            let auth = statusJSON["auth"] as? [String: Any],
+            let username = auth["username"] as? String,
+            !username.isEmpty,
+            var profileURL = URL(string: apiURLString),
+            profileURL.scheme == "https" || profileURL.scheme == "http"
+        else {
+            return .failure("History sync unavailable: tokens.ci login not found")
+        }
+        if !profileURL.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            .hasSuffix("api")
+        {
+            profileURL.appendPathComponent("api")
+        }
+        profileURL.appendPathComponent("users")
+        profileURL.appendPathComponent(username)
+        guard var profileComponents = URLComponents(
+            url: profileURL,
+            resolvingAgainstBaseURL: false
+        ) else {
+            return .failure("History sync failed: invalid profile URL")
+        }
+        var queryItems = profileComponents.queryItems ?? []
+        queryItems.removeAll { $0.name == "history" }
+        queryItems.append(URLQueryItem(name: "history", value: "all"))
+        profileComponents.queryItems = queryItems
+        guard let fullHistoryURL = profileComponents.url else {
+            return .failure("History sync failed: invalid profile URL")
+        }
+
+        let fetch = fetch(fullHistoryURL, timeout: 30)
+        guard fetch.ok, let profileData = fetch.data, !profileData.isEmpty else {
+            return .failure("History sync failed; kept local cache")
+        }
+        let elapsedMs = Int(Date().timeIntervalSince(started) * 1000)
+        let syncedAt = ISO8601DateFormatter().string(from: Date())
+        let wrote = summaryMutations.mutate(summaryURL: summaryURL) { latest in
+            GraphCompanionAdapter.patchRemoteProfile(
+                companionData: latest,
+                profileData: profileData,
+                todayDate: localDateString(),
+                syncedAt: syncedAt,
+                lastScanDurationMs: elapsedMs
+            )
+        }
+        guard wrote else {
+            return .failure("Remote history rejected; kept corrected local cache")
+        }
+        return .success
     }
 
     /// Cheap today-only refresh: rescan just today's files (`graph --today-only`,
     /// ~2s) and patch today's spend + work time over the existing summary, leaving
     /// the slow-to-scan history untouched. Stays on the local binary (today's data
     /// is all local), so it skips the merged-home wrapper the full scan uses.
-    nonisolated private static func runTodayScan(summaryURL: URL) -> String {
+    nonisolated private static func runTodayScan(summaryURL: URL) -> FullScanResult {
         guard let binary = tokensBinaryURL() else {
-            return "Refresh failed: tokens command unavailable"
-        }
-        guard let existing = try? Data(contentsOf: summaryURL), !existing.isEmpty else {
-            return "Today refresh skipped: no summary yet"
+            return .failure("Refresh failed: tokens command unavailable")
         }
         let graph = runCapturing(
             executableURL: binary,
@@ -266,23 +444,16 @@ final class MenuBarModel: ObservableObject {
             timeout: 60
         )
         guard graph.ok, let graphData = graph.data, !graphData.isEmpty else {
-            return "Today refresh failed: \(graph.message ?? "graph scan")"
+            return .failure("Today refresh failed: \(graph.message ?? "graph scan")")
         }
-        guard
-            let patched = GraphCompanionAdapter.patchTodayData(
-                companionData: existing,
+        let wrote = summaryMutations.mutate(summaryURL: summaryURL) { latest in
+            GraphCompanionAdapter.patchTodayData(
+                companionData: latest,
                 todayGraphData: graphData,
                 todayDate: localDateString()
             )
-        else {
-            return "Today refresh failed: patch"
         }
-        do {
-            try writeAtomic(patched, to: summaryURL)
-            return "Refresh finished."
-        } catch {
-            return "Today refresh failed: \(error)"
-        }
+        return wrote ? .success : .failure("Today refresh failed: patch or write")
     }
 
     /// Quota-only refresh: run `tokens usage` and patch the existing summary. Keeps
@@ -291,10 +462,6 @@ final class MenuBarModel: ObservableObject {
     nonisolated private static func runQuotaRefresh(summaryURL: URL) -> String {
         guard let binary = tokensBinaryURL() else {
             return "Refresh failed: tokens command unavailable"
-        }
-        guard let existing = try? Data(contentsOf: summaryURL) else {
-            // No summary yet — a quota-only refresh has nothing to patch.
-            return "Refresh skipped: no summary yet"
         }
         let usage = runCapturing(
             executableURL: binary,
@@ -305,25 +472,14 @@ final class MenuBarModel: ObservableObject {
             return "Quota unavailable (kept previous)."
         }
         let nowISO = ISO8601DateFormatter().string(from: Date())
-        guard let patched = GraphCompanionAdapter.patchedQuota(
-            companionData: existing,
-            usageData: usageData,
-            quotaRefreshedAt: nowISO
-        ) else {
-            return "Quota unavailable (kept previous)."
+        let wrote = summaryMutations.mutate(summaryURL: summaryURL) { latest in
+            GraphCompanionAdapter.patchedQuota(
+                companionData: latest,
+                usageData: usageData,
+                quotaRefreshedAt: nowISO
+            )
         }
-        do {
-            try writeAtomic(patched, to: summaryURL)
-            return "Refresh finished."
-        } catch {
-            return "Refresh failed: \(error)"
-        }
-    }
-
-    nonisolated private static func writeAtomic(_ data: Data, to url: URL) throws {
-        let tmp = url.appendingPathExtension("tmp")
-        try data.write(to: tmp, options: .atomic)
-        _ = try FileManager.default.replaceItemAt(url, withItemAt: tmp)
+        return wrote ? "Refresh finished." : "Quota unavailable (kept previous)."
     }
 
     nonisolated private static func localDateString() -> String {
@@ -338,13 +494,31 @@ final class MenuBarModel: ObservableObject {
     /// installed (it folds in cross-machine history and scans the merged home),
     /// otherwise a plain local `graph --subagents`. Either way the output is the same
     /// graph JSON the adapter consumes, so the app stays portable without the wrapper.
-    nonisolated private static func graphCommand(binary: URL) -> (URL, [String]) {
-        let wrapper = FileManager.default.homeDirectoryForCurrentUser
+    nonisolated private static func graphCommands(binary: URL) -> [GraphCommand] {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let wrapper =
+            home
             .appendingPathComponent(".local/bin/tokens-graph-merged", isDirectory: false)
-        if FileManager.default.isExecutableFile(atPath: wrapper.path) {
-            return (wrapper, [])
+        let mergedHome = home.appendingPathComponent(".cache/tokscale-merged", isDirectory: true)
+        var mergedHomeIsDirectory: ObjCBool = false
+        let canUseMergedWrapper =
+            FileManager.default.isExecutableFile(atPath: wrapper.path)
+            && FileManager.default.fileExists(
+                atPath: mergedHome.path,
+                isDirectory: &mergedHomeIsDirectory
+            )
+            && mergedHomeIsDirectory.boolValue
+        var commands: [GraphCommand] = []
+        if canUseMergedWrapper {
+            commands.append(GraphCommand(executableURL: wrapper, arguments: []))
         }
-        return (binary, ["graph", "--subagents", "--work-time", "--no-spinner"])
+        commands.append(
+            GraphCommand(
+                executableURL: binary,
+                arguments: ["graph", "--subagents", "--work-time", "--no-spinner"]
+            )
+        )
+        return commands
     }
 
     nonisolated private static func tokensBinaryURL() -> URL? {
@@ -415,10 +589,56 @@ final class MenuBarModel: ObservableObject {
         }
         return (box.data, true, nil)
     }
+
+    nonisolated private static func fetch(
+        _ url: URL,
+        timeout: TimeInterval
+    ) -> (data: Data?, ok: Bool) {
+        var request = URLRequest(url: url)
+        request.timeoutInterval = timeout
+        request.cachePolicy = .reloadRevalidatingCacheData
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        let finished = DispatchSemaphore(value: 0)
+        let box = NetworkBox()
+        let task = URLSession.shared.dataTask(with: request) { data, response, error in
+            box.data = data
+            box.statusCode = (response as? HTTPURLResponse)?.statusCode
+            box.failed = error != nil
+            finished.signal()
+        }
+        task.resume()
+        if finished.wait(timeout: .now() + timeout + 1) == .timedOut {
+            task.cancel()
+            return (nil, false)
+        }
+        return (box.data, !box.failed && box.statusCode == 200)
+    }
 }
 
 /// Reference box so the background read closure can hand the captured bytes back
 /// without a captured `var` data race.
 private final class DataBox: @unchecked Sendable {
     var data = Data()
+}
+
+private final class NetworkBox: @unchecked Sendable {
+    var data: Data?
+    var statusCode: Int?
+    var failed = false
+}
+
+private struct GraphCommand: Sendable {
+    let executableURL: URL
+    let arguments: [String]
+}
+
+private struct FullScanResult: Sendable {
+    let message: String
+    let succeeded: Bool
+
+    static let success = FullScanResult(message: "Refresh finished.", succeeded: true)
+
+    static func failure(_ message: String) -> FullScanResult {
+        FullScanResult(message: message, succeeded: false)
+    }
 }

@@ -2,22 +2,6 @@ import Foundation
 import SwiftUI
 import TokscaleMenuBarCore
 
-// Whether the menu bar panel is currently on screen. The content view outlives
-// the panel (MenuBarExtra(.window) keeps it alive across open/close), so
-// repeat-forever animations must stop while this is false or they keep burning
-// CPU at full frame rate with the panel closed. Defaults to true so previews
-// and tests behave as before.
-private struct PanelVisibleKey: EnvironmentKey {
-    static let defaultValue = true
-}
-
-extension EnvironmentValues {
-    var panelVisible: Bool {
-        get { self[PanelVisibleKey.self] }
-        set { self[PanelVisibleKey.self] = newValue }
-    }
-}
-
 struct TokensPopoverView: View {
     @ObservedObject var model: MenuBarModel
     // Observed so changing the theme re-renders the whole popover and the accent
@@ -44,15 +28,15 @@ struct TokensPopoverView: View {
                     EmptyContent(errorMessage: errorMessage)
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 18)
-            .padding(.bottom, 14)
+            .padding(.horizontal, 14)
+            .padding(.top, 14)
+            .padding(.bottom, 12)
         }
-        .frame(width: 560, height: 920, alignment: .top)
-        .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
+        .frame(width: 488, height: 720, alignment: .top)
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 26, style: .continuous)
-                .stroke(companionOrange.opacity(0.28), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(companionBorderColor, lineWidth: 1)
         )
         .background {
             Button("Refresh") { model.refreshScan() }
@@ -169,7 +153,7 @@ private struct SummaryContent: View {
             }
 
             ScrollView(.vertical, showsIndicators: false) {
-                VStack(spacing: 8) {
+                LazyVStack(spacing: 8) {
                     if layout == .paged {
                         if page == 0 {
                             glanceSection
@@ -214,7 +198,7 @@ private struct SummaryContent: View {
             SubagentCard(subagents: subagents)
         }
 
-        ContributionHeatmap(days: summary.contribution)
+        ContributionHeatmap(days: summary.contribution, endDate: summary.today.date)
 
         Text("Dollar amounts are API-equivalent value, not subscription spend.")
             .font(.system(size: 9, weight: .medium))
@@ -241,11 +225,11 @@ private struct CompanionHeader: View {
     let onToggleSettings: () -> Void
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 9) {
             LiveDot(stale: summary.stale, active: isRefreshing)
             VStack(alignment: .leading, spacing: 1) {
                 Text("Tokens")
-                    .font(.system(size: 14, weight: .bold, design: .rounded))
+                    .font(.system(size: 14, weight: .semibold))
                 Text(headerSubtitle)
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(.secondary)
@@ -275,7 +259,7 @@ private struct CompanionHeader: View {
                 )
             }
         }
-        .frame(height: 32)
+        .frame(height: 30)
     }
 
     private var headerSubtitle: String {
@@ -292,65 +276,89 @@ private struct TodayGlanceCard: View {
     let summary: TokscaleSummary
     let color: Color
 
-    private var days: Int { summary.totals.activeDays }
+    private var usesRollingBreakdown: Bool {
+        summary.accuracy.sourceKinds.contains("tokens-ci-rolling-breakdown")
+    }
+
+    private var days: Int {
+        usesRollingBreakdown
+            ? summary.history.filter { $0.tokens > 0 }.count
+            : summary.totals.activeDays
+    }
+
+    private var costTotal: Double {
+        usesRollingBreakdown
+            ? summary.history.reduce(0) { $0 + $1.costUsd }
+            : summary.totals.costUsd
+    }
+
+    private var tokenTotal: Double {
+        usesRollingBreakdown
+            ? summary.history.reduce(0) { $0 + Double($1.tokens) }
+            : Double(summary.totals.tokens)
+    }
+
+    private var averageLabel: String {
+        usesRollingBreakdown ? "last-year avg" : "account avg"
+    }
 
     var body: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 12) {
             stat(
                 value: formatUSD(summary.today.costUsd),
-                label: "Cost today",
+                label: "Local today cost",
                 tint: color,
-                momentum: momentum(today: summary.today.costUsd, total: summary.totals.costUsd)
+                momentum: momentum(today: summary.today.costUsd, total: costTotal)
             )
             Rectangle()
                 .fill(Color.primary.opacity(0.08))
-                .frame(width: 1, height: 56)
+                .frame(width: 1, height: 44)
             stat(
                 value: formatTokens(summary.today.tokens),
-                label: "Tokens today",
-                tint: providerColor("gemini"),
-                momentum: momentum(today: Double(summary.today.tokens), total: Double(summary.totals.tokens))
+                label: "Local today tokens",
+                tint: Color.primary,
+                momentum: momentum(today: Double(summary.today.tokens), total: tokenTotal)
             )
         }
-        .padding(16)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
         .frame(maxWidth: .infinity)
         .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(companionWarmGlassColor)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(color.opacity(0.20), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(companionBorderColor, lineWidth: 1)
         )
     }
 
-    // Today against the all-time daily average — a real reference so a single
-    // day's number isn't read in a vacuum. >=1x is a high-output day (highlighted).
+    // Local today against the matching account-history scope. >=1x is highlighted.
     private func momentum(today: Double, total: Double) -> (text: String, high: Bool)? {
         guard days > 0, total > 0, today > 0 else { return nil }
         let average = total / Double(days)
         guard average > 0 else { return nil }
         let ratio = today / average
         if ratio >= 1 {
-            return (String(format: "↑ %.1f× avg", ratio), true)
+            return (String(format: "↑ %.1f× %@", ratio, averageLabel), true)
         }
-        return (String(format: "%.0f%% of avg", ratio * 100), false)
+        return (String(format: "%.0f%% of %@", ratio * 100, averageLabel), false)
     }
 
     private func stat(value: String, label: String, tint: Color, momentum: (text: String, high: Bool)?) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(value)
-                .font(.system(size: 30, weight: .heavy, design: .rounded))
+                .font(.system(size: 24, weight: .semibold, design: .rounded))
                 .monospacedDigit()
                 .lineLimit(1)
                 .minimumScaleFactor(0.5)
                 .foregroundStyle(tint)
             Text(label.uppercased())
-                .font(.system(size: 10, weight: .bold))
+                .font(.system(size: 9, weight: .semibold))
                 .foregroundStyle(.secondary)
             if let momentum {
                 Text(momentum.text)
-                    .font(.system(size: 10, weight: .bold))
+                    .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(momentum.high ? Color.green : Color.secondary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
@@ -368,30 +376,30 @@ private struct PageTabSwitcher: View {
     private let tabs = ["Glance", "History"]
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 3) {
             ForEach(Array(tabs.enumerated()), id: \.offset) { index, title in
                 Button(action: { onSelect(index) }) {
                     Text(title)
-                        .font(.system(size: 12, weight: .bold))
+                        .font(.system(size: 11, weight: .semibold))
                         .frame(maxWidth: .infinity)
-                        .frame(height: 30)
+                        .frame(height: 27)
                         .foregroundStyle(index == page ? Color.primary : Color.secondary)
                         .background(
-                            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                .fill(index == page ? color.opacity(0.16) : Color.clear)
+                            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                .fill(index == page ? companionSelectedSurfaceColor : Color.clear)
                         )
                         .overlay(
-                            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                .stroke(index == page ? color.opacity(0.32) : Color.clear, lineWidth: 1)
+                            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                .stroke(index == page ? companionBorderStrongColor : Color.clear, lineWidth: 1)
                         )
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }
         }
-        .padding(4)
+        .padding(3)
         .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
                 .fill(companionWarmGlassColor)
         )
     }
@@ -404,8 +412,8 @@ private struct QuotaBoardSection: View {
     var prominent: Bool = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            VStack(spacing: 9) {
+        VStack(alignment: .leading, spacing: 8) {
+            VStack(spacing: 7) {
                 if model.quotaBoardProviders.isEmpty {
                     CompactEmptyMessage(
                         title: "No live quota",
@@ -423,16 +431,15 @@ private struct QuotaBoardSection: View {
                 }
             }
         }
-        .padding(15)
+        .padding(10)
         .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(companionGlassPanelColor)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(companionOrange.opacity(0.18), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(companionBorderColor, lineWidth: 1)
         )
-        .shadow(color: companionOrange.opacity(0.09), radius: 18, x: 0, y: 8)
     }
 }
 
@@ -485,7 +492,7 @@ private struct ProviderQuotaRow: View {
                         .lineLimit(1)
                     Spacer(minLength: 0)
                 }
-                Text(focus.today)
+                Text("LOCAL TODAY · \(focus.today)")
                     .font(.system(size: 9, weight: .medium))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -499,7 +506,7 @@ private struct ProviderQuotaRow: View {
             }
             .frame(width: 116, alignment: .leading)
 
-            VStack(spacing: 8) {
+            VStack(spacing: 7) {
                 if focus.quotaWindows.isEmpty {
                     QuotaUnavailableLine(providerColor: color)
                 } else {
@@ -629,18 +636,15 @@ private struct ProviderGlanceCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 9) {
             HStack(spacing: 8) {
                 ProviderDot(color: color)
                 Text(focus.title)
-                    .font(.system(size: 16, weight: .bold))
+                    .font(.system(size: 13, weight: .semibold))
                     .lineLimit(1)
-                // This provider's own spend today, right next to its name — same
-                // size, full-strength color — so the three models aren't blurred
-                // into one combined number and it's readable at a glance.
-                Text(focus.today)
-                    .font(.system(size: 16, weight: .bold))
-                    .foregroundStyle(.primary)
+                Text("LOCAL TODAY · \(focus.today)")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.6)
                 Spacer(minLength: 6)
@@ -665,15 +669,15 @@ private struct ProviderGlanceCard: View {
             }
 
             if focus.workTime != "—" || focus.cacheHitPercent > 0.5 {
-                HStack(spacing: 8) {
+                HStack(spacing: 10) {
                     if focus.workTime != "—" {
                         HStack(spacing: 5) {
                             Image(systemName: "clock.fill")
-                                .font(.system(size: 12, weight: .bold))
+                                .font(.system(size: 10, weight: .semibold))
                                 .foregroundStyle(color)
                             Text("Active \(focus.workTime)")
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundStyle(.primary)
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(.secondary)
                                 .lineLimit(1)
                                 .minimumScaleFactor(0.7)
                         }
@@ -682,11 +686,11 @@ private struct ProviderGlanceCard: View {
                     if focus.cacheHitPercent > 0.5 {
                         HStack(spacing: 5) {
                             Image(systemName: "bolt.fill")
-                                .font(.system(size: 11, weight: .bold))
-                                .foregroundStyle(.green)
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(color)
                             Text("Cache hit \(Int(focus.cacheHitPercent.rounded()))%")
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundStyle(.primary)
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(.secondary)
                                 .lineLimit(1)
                                 .minimumScaleFactor(0.7)
                         }
@@ -694,14 +698,15 @@ private struct ProviderGlanceCard: View {
                 }
             }
         }
-        .padding(15)
+        .padding(.horizontal, 11)
+        .padding(.vertical, 10)
         .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .fill(companionWarmGlassColor)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(color.opacity(0.22), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(companionBorderColor, lineWidth: 1)
         )
     }
 }
@@ -717,44 +722,43 @@ private struct GlanceQuotaLine: View {
         if let quota {
             let expired = resetIsExpired(quota.reset)
             let unavailable = isCached || expired
-            VStack(alignment: .leading, spacing: 7) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(quota.title)
-                        .font(.system(size: 13, weight: .bold))
-                        .foregroundStyle(.secondary)
-                    Spacer(minLength: 0)
-                    Text(quotaValueText(quota: quota, displayMode: displayMode, isCached: isCached, expired: expired))
-                        .font(.system(size: 36, weight: .heavy, design: .rounded))
-                        .monospacedDigit()
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.5)
-                        .foregroundStyle(unavailable ? Color.secondary : Color.primary)
-                }
+            HStack(spacing: 8) {
+                Text(quota.title)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 42, alignment: .leading)
                 QuotaProgressBar(
                     progress: unavailable ? 0 : quota.progress(for: displayMode),
                     color: unavailable ? companionOrange : quotaHealthColor(quota)
                 )
-                .frame(height: 15)
-                Text(quotaDetailText(quota: quota, displayMode: displayMode, isCached: isCached, expired: expired))
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-            }
-        } else {
-            VStack(alignment: .leading, spacing: 7) {
-                HStack(alignment: .firstTextBaseline) {
-                    Text(fallbackTitle)
-                        .font(.system(size: 13, weight: .bold))
+                VStack(alignment: .trailing, spacing: 1) {
+                    Text(quotaValueText(quota: quota, displayMode: displayMode, isCached: isCached, expired: expired))
+                        .font(.system(size: 17, weight: .semibold, design: .rounded))
+                        .monospacedDigit()
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.65)
+                        .foregroundStyle(unavailable ? Color.secondary : Color.primary)
+                    Text(quotaDetailText(quota: quota, displayMode: displayMode, isCached: isCached, expired: expired))
+                        .font(.system(size: 8, weight: .medium))
                         .foregroundStyle(.secondary)
-                    Spacer(minLength: 0)
-                    Text("N/A")
-                        .font(.system(size: 36, weight: .heavy, design: .rounded))
-                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
-                QuotaProgressBar(progress: 0, color: .secondary)
-                    .frame(height: 15)
+                .frame(width: 92, alignment: .trailing)
             }
+            .frame(height: 28)
+        } else {
+            HStack(spacing: 8) {
+                Text(fallbackTitle)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 42, alignment: .leading)
+                QuotaProgressBar(progress: 0, color: .secondary)
+                Text("N/A")
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 92, alignment: .trailing)
+            }
+            .frame(height: 28)
         }
     }
 }
@@ -800,10 +804,9 @@ private struct QuotaProgressBar: View {
                 RoundedRectangle(cornerRadius: 5, style: .continuous)
                     .fill(color)
                     .frame(width: max(7, proxy.size.width * clampedProgress))
-                    .shadow(color: color.opacity(0.16), radius: 5, x: 0, y: 0)
             }
         }
-        .frame(height: 11)
+        .frame(height: 7)
     }
 }
 
@@ -935,7 +938,7 @@ private struct FocusHeroCard: View {
             let reset = resetLabel(primaryQuota.reset).map { " · reset \($0)" } ?? ""
             return "\(primaryQuota.detail)\(reset)"
         }
-        return focus.topModel
+        return focus.modelCostDetail
     }
 
     private var gaugeTitle: String {
@@ -1073,7 +1076,7 @@ private struct OverviewSection: View {
                     VisualMetricPill(
                         title: focus.title,
                         value: focus.today.replacingOccurrences(of: " today", with: ""),
-                        detail: focus.topModel,
+                        detail: providerMetricDetail(focus),
                         progress: focus.share,
                         color: providerColor(focus.id)
                     )
@@ -1150,14 +1153,14 @@ private struct HistorySection: View {
 
             HistoryBars(previousDays: model.previousWeekTrend, currentDays: model.currentWeekTrend)
         }
-        .padding(15)
+        .padding(12)
         .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(companionGlassPanelColor)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(companionOrange.opacity(0.16), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(companionBorderColor, lineWidth: 1)
         )
     }
 
@@ -1202,7 +1205,7 @@ private struct HistoryTotalCard: View {
         .padding(.vertical, 11)
         .background(
             RoundedRectangle(cornerRadius: 13, style: .continuous)
-                .fill(companionOrange.opacity(0.13))
+                .fill(companionWarmGlassColor)
         )
     }
 }
@@ -1902,26 +1905,30 @@ private struct SubagentCard: View {
                 }
             }
         }
-        .padding(15)
+        .padding(12)
         .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(companionGlassPanelColor)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(companionOrange.opacity(0.16), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(companionBorderColor, lineWidth: 1)
         )
     }
 }
 
 private struct ContributionHeatmap: View {
     let days: [TokscaleSummary.ContributionDay]
+    let endDate: String
 
     private let cell: CGFloat = 9
     private let spacing: CGFloat = 2
 
     var body: some View {
-        let grid = Self.buildGrid(days)
+        let grid = ContributionCalendarGrid.build(
+            days: days.map { (date: $0.date, costUsd: $0.costUsd) },
+            endDate: endDate
+        )
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 7) {
                 Image(systemName: "square.grid.3x3.fill")
@@ -1942,17 +1949,31 @@ private struct ContributionHeatmap: View {
                 )
             } else {
                 VStack(alignment: .leading, spacing: 6) {
-                    HStack(alignment: .top, spacing: spacing) {
-                        ForEach(Array(grid.enumerated()), id: \.offset) { _, week in
-                            VStack(spacing: spacing) {
-                                ForEach(Array(week.enumerated()), id: \.offset) { _, level in
-                                    RoundedRectangle(cornerRadius: 2, style: .continuous)
-                                        .fill(color(level))
-                                        .frame(width: cell, height: cell)
-                                }
+                    Canvas { context, size in
+                        let columnCount = max(grid.count, 1)
+                        let totalSpacing = CGFloat(columnCount - 1) * spacing
+                        let resolvedCell = max(
+                            1,
+                            min(cell, max(0, size.width - totalSpacing) / CGFloat(columnCount))
+                        )
+                        let gridHeight = resolvedCell * 7 + spacing * 6
+                        let top = max(0, (size.height - gridHeight) / 2)
+                        for (column, week) in grid.enumerated() {
+                            for (row, level) in week.enumerated() {
+                                let origin = CGPoint(
+                                    x: CGFloat(column) * (resolvedCell + spacing),
+                                    y: top + CGFloat(row) * (resolvedCell + spacing)
+                                )
+                                let rect = CGRect(origin: origin, size: CGSize(width: resolvedCell, height: resolvedCell))
+                                context.fill(
+                                    Path(roundedRect: rect, cornerRadius: min(2, resolvedCell / 3)),
+                                    with: .color(color(level))
+                                )
                             }
                         }
                     }
+                    .frame(height: 72)
+                    .accessibilityLabel("Activity over the last year")
                     HStack(spacing: 4) {
                         Text("Less").font(.system(size: 8)).foregroundStyle(.secondary)
                         ForEach(0...4, id: \.self) { level in
@@ -1965,14 +1986,14 @@ private struct ContributionHeatmap: View {
                 }
             }
         }
-        .padding(15)
+        .padding(12)
         .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(companionGlassPanelColor)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(companionOrange.opacity(0.16), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(companionBorderColor, lineWidth: 1)
         )
     }
 
@@ -1987,69 +2008,6 @@ private struct ContributionHeatmap: View {
         }
     }
 
-    // Calendar grid as columns of 7 (Sun..Sat). -1 pads days outside the data range,
-    // 0 is an in-range day with no usage, 1-4 are intensity buckets.
-    static func buildGrid(_ days: [TokscaleSummary.ContributionDay]) -> [[Int]] {
-        guard let firstDay = days.first, let lastDay = days.last else {
-            return []
-        }
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(identifier: "UTC") ?? .current
-        let formatter = DateFormatter()
-        formatter.calendar = calendar
-        formatter.timeZone = calendar.timeZone
-        formatter.dateFormat = "yyyy-MM-dd"
-
-        let byDate = Dictionary(days.map { ($0.date, $0.costUsd) }, uniquingKeysWith: { first, _ in first })
-        // Bucket by quartiles of active-day cost so shades spread evenly instead of
-        // clumping at the faintest level under a few outlier days.
-        let sortedCosts = days.map(\.costUsd).filter { $0 > 0 }.sorted()
-        func bucket(_ cost: Double) -> Int {
-            guard cost > 0 else { return 0 }
-            guard !sortedCosts.isEmpty else { return 1 }
-            func threshold(_ p: Double) -> Double {
-                sortedCosts[min(sortedCosts.count - 1, Int((Double(sortedCosts.count) - 1) * p))]
-            }
-            if cost <= threshold(0.25) { return 1 }
-            if cost <= threshold(0.50) { return 2 }
-            if cost <= threshold(0.75) { return 3 }
-            return 4
-        }
-        guard let first = formatter.date(from: firstDay.date),
-            let last = formatter.date(from: lastDay.date)
-        else {
-            return []
-        }
-
-        let firstWeekday = calendar.component(.weekday, from: first) - 1
-        guard let gridStart = calendar.date(byAdding: .day, value: -firstWeekday, to: first) else {
-            return []
-        }
-
-        var columns: [[Int]] = []
-        var current: [Int] = []
-        var day = gridStart
-        while day <= last {
-            let weekday = calendar.component(.weekday, from: day) - 1
-            let level = day < first ? -1 : bucket(byDate[formatter.string(from: day)] ?? 0)
-            current.append(level)
-            if weekday == 6 {
-                columns.append(current)
-                current = []
-            }
-            guard let next = calendar.date(byAdding: .day, value: 1, to: day) else {
-                break
-            }
-            day = next
-        }
-        if !current.isEmpty {
-            while current.count < 7 {
-                current.append(-1)
-            }
-            columns.append(current)
-        }
-        return columns
-    }
 }
 
 private extension Array {
@@ -2068,15 +2026,7 @@ private struct UsageArcGauge: View {
     let centerSubtitle: String
     let active: Bool
 
-    @Environment(\.panelVisible) private var panelVisible
     @State private var visibleProgress = 0.0
-
-    // Repeat-forever animations are additive in SwiftUI — changing the driving
-    // value never cancels one that's already attached, so the render loop keeps
-    // ticking at full frame rate even with the panel closed. Hosting the loop in
-    // a separate child view and removing it from the tree is the only reliable
-    // teardown: the animation dies with the view's identity.
-    private var breathing: Bool { active && panelVisible }
 
     var body: some View {
         ZStack {
@@ -2094,10 +2044,6 @@ private struct UsageArcGauge: View {
             Circle()
                 .fill(color.opacity(active ? 0.09 : 0.045))
                 .frame(width: 64, height: 64)
-                .opacity(breathing ? 0 : 1)
-            if breathing {
-                BreathingHalo(color: color)
-            }
 
             VStack(spacing: 1) {
                 Text(centerTitle)
@@ -2118,22 +2064,6 @@ private struct UsageArcGauge: View {
                 visibleProgress = min(max(newValue, 0), 1)
             }
         }
-    }
-}
-
-private struct BreathingHalo: View {
-    let color: Color
-    @State private var grown = false
-
-    var body: some View {
-        Circle()
-            .fill(color.opacity(0.09))
-            .frame(width: grown ? 82 : 64, height: grown ? 82 : 64)
-            .onAppear {
-                withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) {
-                    grown = true
-                }
-            }
     }
 }
 
@@ -2254,42 +2184,16 @@ private struct StatusCapsule: View {
 private struct LiveDot: View {
     let stale: Bool
     let active: Bool
-    @Environment(\.panelVisible) private var panelVisible
 
     var body: some View {
-        ZStack {
-            // Same identity-teardown trick as BreathingHalo: the looping ring
-            // only exists in the tree while it's watchable, because removing
-            // the view is the only way to cancel its repeat-forever animation.
-            if active && panelVisible {
-                PulsingRing(color: dotColor)
-            }
-            Circle()
-                .fill(dotColor)
-                .frame(width: 8, height: 8)
-        }
+        Circle()
+            .fill(dotColor)
+            .frame(width: 8, height: 8)
         .frame(width: 19, height: 19)
     }
 
     private var dotColor: Color {
         active ? providerColor("openclaw") : (stale ? providerColor("claude") : providerColor("codex"))
-    }
-}
-
-private struct PulsingRing: View {
-    let color: Color
-    @State private var expanded = false
-
-    var body: some View {
-        Circle()
-            .stroke(color.opacity(0.35), lineWidth: 2)
-            .frame(width: expanded ? 19 : 9, height: expanded ? 19 : 9)
-            .opacity(expanded ? 0 : 1)
-            .onAppear {
-                withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: false)) {
-                    expanded = true
-                }
-            }
     }
 }
 
@@ -2300,7 +2204,6 @@ private struct ProviderDot: View {
         Circle()
             .fill(color)
             .frame(width: 7, height: 7)
-            .shadow(color: color.opacity(0.25), radius: 3)
     }
 }
 
@@ -2372,13 +2275,12 @@ private struct CompanionBackdrop: View {
 
             LinearGradient(
                 colors: [
-                    companionOrange.opacity(0.18),
-                    accent.opacity(0.06),
-                    companionPanelColor.opacity(0.44),
-                    companionSurfaceColor
+                    accent.opacity(0.055),
+                    companionPanelColor.opacity(0.30),
+                    companionSurfaceColor,
                 ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
+                startPoint: .top,
+                endPoint: .bottom
             )
         }
     }
@@ -2393,45 +2295,63 @@ private var companionOrange: Color {
 private let companionSurfaceColor = Color(
     nsColor: NSColor(name: nil) { appearance in
         if appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua {
-            return NSColor(calibratedRed: 0.075, green: 0.062, blue: 0.052, alpha: 1.0)
+            return NSColor(calibratedRed: 0.030, green: 0.034, blue: 0.041, alpha: 1.0)
         }
-        return NSColor(calibratedRed: 0.985, green: 0.955, blue: 0.920, alpha: 1.0)
+        return NSColor(calibratedRed: 0.965, green: 0.969, blue: 0.975, alpha: 1.0)
     }
 )
 
 private let companionPanelColor = Color(
     nsColor: NSColor(name: nil) { appearance in
         if appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua {
-            return NSColor(calibratedRed: 0.135, green: 0.112, blue: 0.095, alpha: 1.0)
+            return NSColor(calibratedRed: 0.060, green: 0.066, blue: 0.078, alpha: 1.0)
         }
-        return NSColor(calibratedRed: 1.0, green: 0.975, blue: 0.945, alpha: 1.0)
+        return NSColor(calibratedRed: 1.0, green: 1.0, blue: 1.0, alpha: 1.0)
     }
 )
 
 private let companionSelectedSurfaceColor = Color(
     nsColor: NSColor(name: nil) { appearance in
         if appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua {
-            return NSColor(calibratedRed: 0.245, green: 0.158, blue: 0.110, alpha: 1.0)
+            return NSColor(calibratedRed: 0.120, green: 0.130, blue: 0.155, alpha: 1.0)
         }
-        return NSColor(calibratedRed: 1.0, green: 0.895, blue: 0.800, alpha: 1.0)
+        return NSColor(calibratedRed: 0.925, green: 0.934, blue: 0.950, alpha: 1.0)
     }
 )
 
 private let companionGlassPanelColor = Color(
     nsColor: NSColor(name: nil) { appearance in
         if appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua {
-            return NSColor(calibratedRed: 0.155, green: 0.130, blue: 0.112, alpha: 0.92)
+            return NSColor(calibratedRed: 0.068, green: 0.075, blue: 0.090, alpha: 0.96)
         }
-        return NSColor(calibratedRed: 1.0, green: 0.972, blue: 0.938, alpha: 0.92)
+        return NSColor(calibratedRed: 1.0, green: 1.0, blue: 1.0, alpha: 0.94)
     }
 )
 
 private let companionWarmGlassColor = Color(
     nsColor: NSColor(name: nil) { appearance in
         if appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua {
-            return NSColor(calibratedRed: 0.235, green: 0.172, blue: 0.125, alpha: 0.58)
+            return NSColor(calibratedRed: 0.082, green: 0.090, blue: 0.108, alpha: 0.96)
         }
-        return NSColor(calibratedRed: 1.0, green: 0.910, blue: 0.830, alpha: 0.58)
+        return NSColor(calibratedRed: 0.985, green: 0.987, blue: 0.992, alpha: 0.96)
+    }
+)
+
+private let companionBorderColor = Color(
+    nsColor: NSColor(name: nil) { appearance in
+        if appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua {
+            return NSColor.white.withAlphaComponent(0.075)
+        }
+        return NSColor.black.withAlphaComponent(0.085)
+    }
+)
+
+private let companionBorderStrongColor = Color(
+    nsColor: NSColor(name: nil) { appearance in
+        if appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua {
+            return NSColor.white.withAlphaComponent(0.14)
+        }
+        return NSColor.black.withAlphaComponent(0.14)
     }
 )
 
@@ -2444,6 +2364,13 @@ private func panelBackground(color: Color, intensity: Double) -> some View {
 
 private func formatToday(_ summary: TokscaleSummary) -> String {
     formatUSD(summary.today.costUsd)
+}
+
+private func providerMetricDetail(_ focus: TokscaleDashboardModel.ProviderFocus) -> String {
+    if focus.id.lowercased() == "grok", focus.primaryQuota != nil {
+        return "Shared credits"
+    }
+    return focus.modelCostDetail
 }
 
 private func formatUSD(_ value: Double) -> String {
@@ -2534,6 +2461,8 @@ private func providerColor(_ id: String) -> Color {
         return Color(hue: 0.40, saturation: 0.76, brightness: 0.84)
     case "gemini":
         return Color(hue: 0.60, saturation: 0.76, brightness: 0.96)
+    case "grok":
+        return Color(hue: 0.45, saturation: 0.82, brightness: 0.82)
     case "openclaw":
         return Color(hue: 0.74, saturation: 0.90, brightness: 0.96)
     case "copilot":

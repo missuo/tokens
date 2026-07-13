@@ -23,6 +23,8 @@ interface RouteParams {
 export async function GET(_request: Request, { params }: RouteParams) {
   try {
     const { username } = await params;
+    const includeAllHistory =
+      new URL(_request.url).searchParams.get("history") === "all";
 
     // Find user
     const matchingUsers = await db
@@ -43,7 +45,9 @@ export async function GET(_request: Request, { params }: RouteParams) {
     }
 
     if (username !== user.username) {
-      return NextResponse.redirect(new URL(`/api/users/${user.username}`, _request.url), 308);
+      const canonicalUrl = new URL(_request.url);
+      canonicalUrl.pathname = `/api/users/${user.username}`;
+      return NextResponse.redirect(canonicalUrl, 308);
     }
 
     const oneYearAgo = new Date();
@@ -112,10 +116,12 @@ export async function GET(_request: Request, { params }: RouteParams) {
         .from(dailyBreakdown)
         .innerJoin(submissions, eq(dailyBreakdown.submissionId, submissions.id))
         .where(
-          and(
-            eq(submissions.userId, user.id),
-            gte(dailyBreakdown.date, oneYearAgo.toISOString().split("T")[0])
-          )
+          includeAllHistory
+            ? eq(submissions.userId, user.id)
+            : and(
+                eq(submissions.userId, user.id),
+                gte(dailyBreakdown.date, oneYearAgo.toISOString().split("T")[0])
+              )
         )
         .orderBy(dailyBreakdown.date),
     ]);

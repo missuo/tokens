@@ -7,7 +7,7 @@ public enum LayoutMode: String, CaseIterable, Sendable {
     case single
     case paged
 
-    public static let `default`: LayoutMode = .single
+    public static let `default`: LayoutMode = .paged
     public static let storageKey = "popoverLayoutMode"
 
     public init(storedValue: String?) {
