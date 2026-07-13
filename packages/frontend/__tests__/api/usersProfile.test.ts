@@ -208,13 +208,15 @@ describe("GET /api/users/[username]", () => {
     mockState.pushExecuteResult([]);
 
     const response = await GET(
-      new Request("http://localhost:3000/api/users/imlunahey"),
+      new Request("http://localhost:3000/api/users/imlunahey?history=all"),
       { params: Promise.resolve({ username: "imlunahey" }) }
     );
     const sqlTexts = serializeSqlCalls();
 
     expect(response.status).toBe(308);
-    expect(response.headers.get("location")).toBe("http://localhost:3000/api/users/ImLunaHey");
+    expect(response.headers.get("location")).toBe(
+      "http://localhost:3000/api/users/ImLunaHey?history=all"
+    );
     expect(mockState.limitCalls[0]).toBe(2);
     expect(sqlTexts.some((text) =>
       text.toLowerCase().includes("lower(users.username) = imlunahey")
@@ -430,6 +432,68 @@ describe("GET /api/users/[username]", () => {
         percentage: 100,
       }),
     ]);
+    expect(mockState.gte).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns full daily history when history=all is requested", async () => {
+    mockState.pushSelectResult([
+      {
+        id: "user-1",
+        username: "alice",
+        displayName: "Alice",
+        avatarUrl: null,
+        createdAt: "2024-01-01T00:00:00.000Z",
+      },
+    ]);
+    mockState.pushSelectResult([
+      {
+        totalTokens: 10,
+        totalCost: 0.1,
+        inputTokens: 10,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+        reasoningTokens: 0,
+        submissionCount: 1,
+        earliestDate: "2024-01-01",
+        latestDate: "2024-01-01",
+        totalActiveTimeMs: 0,
+        sessionCount: 0,
+      },
+    ]);
+    mockState.pushSelectResult([
+      {
+        sourcesUsed: ["codex"],
+        modelsUsed: ["gpt-5.5"],
+        updatedAt: new Date("2024-01-01T12:00:00.000Z"),
+        cliVersion: "2.0.0",
+        schemaVersion: 2,
+      },
+    ]);
+    mockState.pushSelectResult([
+      {
+        date: "2024-01-01",
+        timestampMs: 100,
+        tokens: 10,
+        cost: "0.1000",
+        inputTokens: 10,
+        outputTokens: 0,
+        sourceBreakdown: {},
+      },
+    ]);
+    mockState.pushExecuteResult([{ rank: 1 }]);
+
+    const response = await GET(
+      new Request("http://localhost:3000/api/users/alice?history=all"),
+      { params: Promise.resolve({ username: "alice" }) }
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.contributions).toEqual([
+      expect.objectContaining({ date: "2024-01-01" }),
+    ]);
+    expect(mockState.gte).not.toHaveBeenCalled();
   });
 
   it("returns submission freshness metadata for the latest submission", async () => {

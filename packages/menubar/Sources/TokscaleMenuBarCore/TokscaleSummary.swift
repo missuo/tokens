@@ -106,6 +106,15 @@ public struct TokscaleSummary: Decodable, Equatable {
         if today.date != localDateString(now: now, calendar: calendar) {
             markStale(reason: "summary-date-mismatch")
         }
+        if let historyGeneratedAt = health.historyGeneratedAt {
+            guard let historyGeneratedAtDate = parseISODate(historyGeneratedAt) else {
+                markStale(reason: "invalid-history-generated-at")
+                return
+            }
+            if now.timeIntervalSince(historyGeneratedAtDate) > 26 * 60 * 60 {
+                markStale(reason: "history-older-than-26h")
+            }
+        }
     }
 
     public func needsRefreshOnOpen(
@@ -129,9 +138,9 @@ public struct TokscaleSummary: Decodable, Equatable {
 
     /// Whether locally-scanned usage (tokens, contribution, daily history) is stale
     /// enough to warrant a full re-scan when the popover opens. Unlike
-    /// `needsRefreshOnOpen`, this looks only at `generatedAt` and ignores quota-only
-    /// refreshes — those never re-scan usage, so frequent background quota updates
-    /// must not mask stale usage data.
+    /// `needsRefreshOnOpen`, this looks at the full-history scan timestamp and ignores
+    /// quota-only and today-only refreshes, so frequent lightweight updates must not
+    /// mask stale history data.
     public func needsScanOnOpen(
         now: Date = Date(),
         minimumInterval: TimeInterval = 60
@@ -139,7 +148,8 @@ public struct TokscaleSummary: Decodable, Equatable {
         if stale {
             return true
         }
-        guard let generatedAtDate = parseISODate(generatedAt) else {
+        let scanGeneratedAt = health.historyGeneratedAt ?? generatedAt
+        guard let generatedAtDate = parseISODate(scanGeneratedAt) else {
             return true
         }
         return now.timeIntervalSince(generatedAtDate) >= minimumInterval
@@ -215,7 +225,7 @@ public struct TokscaleDashboardModel: Equatable {
     private let quotaWasRefreshed: Bool
     private let providerDetailsById: [String: ProviderDetails]
 
-    private static let quotaBoardProviderIds = ["claude", "codex", "gemini"]
+    private static let quotaBoardProviderIds = ["claude", "codex", "gemini", "grok"]
 
     /// Live only when the quota was actually fetched recently; an old timestamp from a
     /// past success (e.g. later refreshes failing) must not keep reading as "Live".
@@ -230,11 +240,24 @@ public struct TokscaleDashboardModel: Equatable {
         let providerRows = Self.providerRows(summary: summary)
         let historyRows = Self.historyRows(summary: summary)
         let weekTrends = Self.weekTrends(historyRows: historyRows)
+        let usesRollingBreakdown = summary.accuracy.sourceKinds.contains(
+            "tokens-ci-rolling-breakdown"
+        )
+        let averageTotalCost = usesRollingBreakdown
+            ? historyRows.reduce(0) { $0 + $1.costUsd }
+            : summary.totals.costUsd
+        let averageActiveDays = usesRollingBreakdown
+            ? summary.history.filter { $0.tokens > 0 }.count
+            : summary.totals.activeDays
+        let averageScope = usesRollingBreakdown ? "last-year account" : "account"
+        let providerTotalCost = usesRollingBreakdown
+            ? providerRows.reduce(0) { $0 + $1.costUsd }
+            : summary.totals.costUsd
         let hasLiveQuotaRefresh = Self.isQuotaRefreshRecent(summary.health.quotaRefreshedAt, now: now)
         quotaWasRefreshed = hasLiveQuotaRefresh
         summaryStale = summary.stale
         clientLabels = providerRows.map { clientDisplayName($0.client) }
-        providers = Self.providerSummaries(rows: providerRows, totalCost: summary.totals.costUsd)
+        providers = Self.providerSummaries(rows: providerRows, totalCost: providerTotalCost)
         providerDetailsById = Dictionary(
             uniqueKeysWithValues: providerRows.map { row in
                 (
@@ -244,10 +267,11 @@ public struct TokscaleDashboardModel: Equatable {
                         title: clientDisplayName(row.client),
                         model: row.topModel ?? "No model data",
                         today: "\(formatUSD(row.todayCostUsd)) · \(formatTokens(row.todayTokens))",
-                        total: "\(formatUSD(row.costUsd)) total",
+                        total: "\(formatUSD(row.costUsd)) \(usesRollingBreakdown ? "last year" : "total")",
                         tokens: formatTokens(row.tokens),
                         messages: "\(row.messages) messages",
-                        share: Self.providerShare(row.costUsd, totalCost: summary.totals.costUsd),
+                        models: row.models,
+                        share: Self.providerShare(row.costUsd, totalCost: providerTotalCost),
                         hasLiveQuotaRefresh: hasLiveQuotaRefresh,
                         cacheHitPercent: row.cacheHitPercent,
                         workTimeMs: row.workTimeMs
@@ -259,8 +283,17 @@ public struct TokscaleDashboardModel: Equatable {
             title: summary.statusTitle,
             subtitle: "\(clientLabels.count) AI clients - local cache",
             state: summary.collapsed.state,
-            progress: Self.progressAgainstDailyAverage(summary: summary),
-            progressLabel: Self.progressLabelAgainstDailyAverage(summary: summary)
+            progress: Self.progressAgainstDailyAverage(
+                todayCost: summary.today.costUsd,
+                totalCost: averageTotalCost,
+                activeDays: averageActiveDays
+            ),
+            progressLabel: Self.progressLabelAgainstDailyAverage(
+                todayCost: summary.today.costUsd,
+                totalCost: averageTotalCost,
+                activeDays: averageActiveDays,
+                scope: averageScope
+            )
         )
         metrics = [
             Panel(
@@ -297,10 +330,16 @@ public struct TokscaleDashboardModel: Equatable {
             return left.costUsd < right.costUsd
         }
         spendHighlights = Self.spendHighlights(summary: summary, currentWeekTrend: weekTrends.current, previousWeekTrend: weekTrends.previous)
-        dailyAverage = Self.dailyAveragePanel(summary: summary)
+        dailyAverage = Self.dailyAveragePanel(
+            totalCost: averageTotalCost,
+            activeDays: averageActiveDays,
+            scope: averageScope
+        )
         allTimeCost = formatUSD(summary.totals.costUsd)
         allTimeTokens = formatTokens(summary.totals.tokens)
-        allTimeDays = "across \(summary.totals.activeDays) active days"
+        allTimeDays = usesRollingBreakdown
+            ? "\(averageActiveDays) active days in the last year"
+            : "across \(summary.totals.activeDays) active days"
         health = HealthStatus(
             title: summary.stale ? "Stale" : "Fresh",
             detail: "Last scan \(formatDuration(milliseconds: summary.health.lastScanDurationMs))",
@@ -327,6 +366,7 @@ public struct TokscaleDashboardModel: Equatable {
             total: "$0.00 total",
             tokens: "0",
             messages: "0 messages",
+            models: [],
             share: 0,
             hasLiveQuotaRefresh: false,
             cacheHitPercent: 0,
@@ -360,6 +400,7 @@ public struct TokscaleDashboardModel: Equatable {
                 total: "$0.00 total",
                 tokens: "0",
                 messages: "0 messages",
+                models: [],
                 share: 0,
                 hasLiveQuotaRefresh: quotaWasRefreshed,
                 cacheHitPercent: 0,
@@ -381,6 +422,7 @@ public struct TokscaleDashboardModel: Equatable {
             id: details.id,
             title: details.title,
             topModel: details.model,
+            modelCostDetail: Self.modelCostDetail(models: details.models, fallback: details.model),
             today: details.today,
             total: details.total,
             tokens: details.tokens,
@@ -414,7 +456,8 @@ public struct TokscaleDashboardModel: Equatable {
                 todayCostUsd: 0,
                 todayTokens: 0,
                 todayMessages: 0,
-                topModel: nil
+                topModel: nil,
+                models: []
             )
         }
     }
@@ -531,13 +574,16 @@ public struct TokscaleDashboardModel: Equatable {
         ]
     }
 
-    private static func dailyAveragePanel(summary: TokscaleSummary) -> Panel {
-        let days = max(summary.totals.activeDays, 1)
-        let average = summary.totals.costUsd / Double(days)
+    private static func dailyAveragePanel(
+        totalCost: Double,
+        activeDays: Int,
+        scope: String
+    ) -> Panel {
+        let average = activeDays > 0 ? totalCost / Double(activeDays) : 0
         return Panel(
             title: "Avg / day",
             value: formatUSD(average),
-            detail: "across \(summary.totals.activeDays) active days"
+            detail: "\(scope) · \(activeDays) active days"
         )
     }
 
@@ -552,27 +598,36 @@ public struct TokscaleDashboardModel: Equatable {
         return "\(percent)% vs prior 7d"
     }
 
-    private static func progressAgainstDailyAverage(summary: TokscaleSummary) -> Double {
-        guard summary.totals.activeDays > 0, summary.totals.costUsd > 0 else {
+    private static func progressAgainstDailyAverage(
+        todayCost: Double,
+        totalCost: Double,
+        activeDays: Int
+    ) -> Double {
+        guard activeDays > 0, totalCost > 0 else {
             return 0
         }
-        let dailyAverage = summary.totals.costUsd / Double(summary.totals.activeDays)
+        let dailyAverage = totalCost / Double(activeDays)
         guard dailyAverage > 0 else {
             return 0
         }
-        return min(summary.today.costUsd / dailyAverage / 2, 1)
+        return min(todayCost / dailyAverage / 2, 1)
     }
 
-    private static func progressLabelAgainstDailyAverage(summary: TokscaleSummary) -> String {
-        guard summary.totals.activeDays > 0, summary.totals.costUsd > 0 else {
+    private static func progressLabelAgainstDailyAverage(
+        todayCost: Double,
+        totalCost: Double,
+        activeDays: Int,
+        scope: String
+    ) -> String {
+        guard activeDays > 0, totalCost > 0 else {
             return "No daily average yet"
         }
-        let dailyAverage = summary.totals.costUsd / Double(summary.totals.activeDays)
+        let dailyAverage = totalCost / Double(activeDays)
         guard dailyAverage > 0 else {
             return "No daily average yet"
         }
-        let percent = Int((summary.today.costUsd / dailyAverage * 100).rounded())
-        return "\(percent)% of daily average"
+        let percent = Int((todayCost / dailyAverage * 100).rounded())
+        return "\(percent)% of \(scope) avg"
     }
 
     private static func focusedModelTimeLabel(providerId: String, model: String) -> String {
@@ -580,6 +635,38 @@ public struct TokscaleDashboardModel: Equatable {
             return "Sonnet-only unavailable"
         }
         return "Model time unavailable"
+    }
+
+    private static func modelCostDetail(models: [TokscaleSummary.ProviderModel], fallback: String) -> String {
+        let activeToday = models
+            .filter { $0.todayCostUsd > 0 || $0.todayTokens > 0 || $0.todayMessages > 0 }
+            .sorted { left, right in
+                if left.todayCostUsd == right.todayCostUsd {
+                    return left.model < right.model
+                }
+                return left.todayCostUsd > right.todayCostUsd
+            }
+        guard let first = activeToday.first else {
+            return fallback
+        }
+        if activeToday.count == 1 {
+            return modelDisplayName(first.model)
+        }
+        return activeToday
+            .prefix(3)
+            .map { "\(modelDisplayName($0.model)) \(formatUSD($0.todayCostUsd))" }
+            .joined(separator: " / ")
+    }
+
+    private static func modelDisplayName(_ model: String) -> String {
+        let normalized = model.lowercased()
+        if normalized.contains("composer") {
+            return "composer"
+        }
+        if normalized == "grok-build" {
+            return "grok"
+        }
+        return model
     }
 }
 
@@ -699,6 +786,7 @@ public extension TokscaleDashboardModel {
         public let total: String
         public let tokens: String
         public let messages: String
+        public let models: [TokscaleSummary.ProviderModel]
         public let share: Double
         public let hasLiveQuotaRefresh: Bool
         public let cacheHitPercent: Double
@@ -709,6 +797,7 @@ public extension TokscaleDashboardModel {
         public let id: String
         public let title: String
         public let topModel: String
+        public let modelCostDetail: String
         public let today: String
         public let total: String
         public let tokens: String
@@ -797,12 +886,13 @@ public extension TokscaleSummary {
         public let todayTokens: Int64
         public let todayMessages: Int
         public let topModel: String?
+        public let models: [ProviderModel]
         public let cacheHitPercent: Double
         public let workTimeMs: Int64
 
         enum CodingKeys: String, CodingKey {
             case client, costUsd, tokens, messages
-            case todayCostUsd, todayTokens, todayMessages, topModel, cacheHitPercent
+            case todayCostUsd, todayTokens, todayMessages, topModel, models, cacheHitPercent
             case workTimeMs
         }
 
@@ -816,6 +906,7 @@ public extension TokscaleSummary {
             todayTokens = try c.decode(Int64.self, forKey: .todayTokens)
             todayMessages = try c.decode(Int.self, forKey: .todayMessages)
             topModel = try c.decodeIfPresent(String.self, forKey: .topModel)
+            models = try c.decodeIfPresent([ProviderModel].self, forKey: .models) ?? []
             cacheHitPercent = try c.decodeIfPresent(Double.self, forKey: .cacheHitPercent) ?? 0
             workTimeMs = try c.decodeIfPresent(Int64.self, forKey: .workTimeMs) ?? 0
         }
@@ -829,6 +920,7 @@ public extension TokscaleSummary {
             todayTokens: Int64,
             todayMessages: Int,
             topModel: String?,
+            models: [ProviderModel] = [],
             cacheHitPercent: Double = 0,
             workTimeMs: Int64 = 0
         ) {
@@ -840,8 +932,37 @@ public extension TokscaleSummary {
             self.todayTokens = todayTokens
             self.todayMessages = todayMessages
             self.topModel = topModel
+            self.models = models
             self.cacheHitPercent = cacheHitPercent
             self.workTimeMs = workTimeMs
+        }
+    }
+
+    struct ProviderModel: Decodable, Equatable {
+        public let model: String
+        public let costUsd: Double
+        public let tokens: Int64
+        public let messages: Int
+        public let todayCostUsd: Double
+        public let todayTokens: Int64
+        public let todayMessages: Int
+
+        public init(
+            model: String,
+            costUsd: Double,
+            tokens: Int64,
+            messages: Int,
+            todayCostUsd: Double,
+            todayTokens: Int64,
+            todayMessages: Int
+        ) {
+            self.model = model
+            self.costUsd = costUsd
+            self.tokens = tokens
+            self.messages = messages
+            self.todayCostUsd = todayCostUsd
+            self.todayTokens = todayTokens
+            self.todayMessages = todayMessages
         }
     }
 
@@ -886,6 +1007,7 @@ public extension TokscaleSummary {
     struct Health: Decodable, Equatable {
         public let summaryPath: String
         public let lastScanDurationMs: Int
+        public let historyGeneratedAt: String?
         public let quotaRefreshedAt: String?
         public let warnings: [String]
     }
