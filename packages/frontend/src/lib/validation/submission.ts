@@ -25,6 +25,8 @@ const COST_ABSOLUTE_TOLERANCE = 0.1;
 const LEGACY_COST_FLOAT_EPSILON = 1e-6;
 const TOKEN_RELATIVE_TOLERANCE = 0.01;
 const TOKEN_ABSOLUTE_TOLERANCE = 100;
+const MAX_SUPPORTED_CODEX_PROVENANCE_SCHEMA_VERSION = 2;
+const MAX_SUPPORTED_NON_CODEX_PROVENANCE_SCHEMA_VERSION = 1;
 
 const NonNegativeIntegerSchema = z.number().finite().int().min(0).max(Number.MAX_SAFE_INTEGER);
 const NonNegativeNumberSchema = z.number().finite().min(0);
@@ -38,7 +40,9 @@ const TokenBreakdownSchema = z.object({
 });
 
 const ClientContributionProvenanceSchema = z.object({
-  schemaVersion: NonNegativeIntegerSchema.min(1),
+  schemaVersion: NonNegativeIntegerSchema.min(1).max(
+    MAX_SUPPORTED_CODEX_PROVENANCE_SCHEMA_VERSION
+  ),
   messageCount: NonNegativeIntegerSchema,
   modelCount: NonNegativeIntegerSchema,
 });
@@ -57,6 +61,18 @@ const ClientContributionSchema = z.object({
   cost: NonNegativeNumberSchema,
   messages: NonNegativeIntegerSchema,
   provenance: ClientContributionProvenanceSchema.optional(),
+}).superRefine((contribution, ctx) => {
+  const maxRevision = contribution.client === "codex"
+    ? MAX_SUPPORTED_CODEX_PROVENANCE_SCHEMA_VERSION
+    : MAX_SUPPORTED_NON_CODEX_PROVENANCE_SCHEMA_VERSION;
+
+  if ((contribution.provenance?.schemaVersion ?? 1) > maxRevision) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["provenance", "schemaVersion"],
+      message: `${contribution.client} provenance schemaVersion must be at most ${maxRevision}`,
+    });
+  }
 });
 
 const DailyContributionSchema = z.object({
@@ -106,6 +122,46 @@ const ExportMetaSchema = z.object({
 const SubmitDeviceSchema = z.object({
   id: z.string().trim().min(1).max(96).regex(/^[A-Za-z0-9._:-]+$/),
   name: z.string().trim().min(1).max(120).optional(),
+});
+
+const ClientManifestCoverageSchema = z.object({
+  mode: z.literal("full"),
+  start: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  end: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  missingData: z.literal("tombstone"),
+}).superRefine((coverage, ctx) => {
+  if (coverage.start > coverage.end) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["end"],
+      message: "coverage end must be on or after start",
+    });
+  }
+});
+
+const ClientManifestEntrySchema = z.object({
+  client: SourceSchema,
+  parserRevision: NonNegativeIntegerSchema.min(1).max(
+    MAX_SUPPORTED_CODEX_PROVENANCE_SCHEMA_VERSION
+  ),
+  coverage: ClientManifestCoverageSchema.optional(),
+}).superRefine((entry, ctx) => {
+  const maxRevision = entry.client === "codex"
+    ? MAX_SUPPORTED_CODEX_PROVENANCE_SCHEMA_VERSION
+    : MAX_SUPPORTED_NON_CODEX_PROVENANCE_SCHEMA_VERSION;
+
+  if (entry.parserRevision > maxRevision) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["parserRevision"],
+      message: `${entry.client} parserRevision must be at most ${maxRevision}`,
+    });
+  }
+});
+
+const ClientManifestSchema = z.object({
+  schemaVersion: z.literal(1),
+  clients: z.array(ClientManifestEntrySchema).min(1),
 });
 
 const LEGACY_CLIENT_ALIASES: Record<string, string> = {
@@ -168,6 +224,21 @@ function normalizeLegacySources(data: unknown): unknown {
     });
   }
 
+  if (d.clientManifest && typeof d.clientManifest === "object") {
+    const clientManifest = { ...(d.clientManifest as Record<string, unknown>) };
+    if (Array.isArray(clientManifest.clients)) {
+      clientManifest.clients = (clientManifest.clients as Record<string, unknown>[]).map(
+        (entry) => {
+          if (entry && typeof entry === "object" && "client" in entry) {
+            return { ...entry, client: normalizeLegacyClientId(entry.client) };
+          }
+          return entry;
+        }
+      );
+    }
+    d.clientManifest = clientManifest;
+  }
+
   return d;
 }
 
@@ -178,14 +249,114 @@ const TimeMetricsSchema = z.object({
   sessionCount: z.number().int().min(0),
 });
 
-const SubmissionDataSchema = z.preprocess(normalizeLegacySources, z.object({
-  meta: ExportMetaSchema,
-  device: SubmitDeviceSchema.optional(),
-  summary: DataSummarySchema,
-  years: z.array(YearSummarySchema),
-  contributions: z.array(DailyContributionSchema),
-  timeMetrics: TimeMetricsSchema.optional(),
-}));
+const SubmissionDataSchema = z.preprocess(
+  normalizeLegacySources,
+  z.object({
+    meta: ExportMetaSchema,
+    device: SubmitDeviceSchema.optional(),
+    summary: DataSummarySchema,
+    years: z.array(YearSummarySchema),
+    contributions: z.array(DailyContributionSchema),
+    timeMetrics: TimeMetricsSchema.optional(),
+    clientManifest: ClientManifestSchema.optional(),
+  }).superRefine((submission, ctx) => {
+    const clientRevisions = new Map<string, number>();
+
+    submission.contributions.forEach((day, dayIndex) => {
+      day.clients.forEach((client, clientIndex) => {
+        const revision = client.provenance?.schemaVersion ?? 1;
+        const existingRevision = clientRevisions.get(client.client);
+
+        if (existingRevision == null) {
+          clientRevisions.set(client.client, revision);
+        } else if (existingRevision !== revision) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [
+              "contributions",
+              dayIndex,
+              "clients",
+              clientIndex,
+              "provenance",
+              "schemaVersion",
+            ],
+            message: `${client.client} provenance schemaVersion must be consistent across the submission`,
+          });
+        }
+      });
+    });
+
+    const manifestClients = new Map<string, number>();
+    if (submission.clientManifest) {
+      if (!submission.device) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["clientManifest"],
+          message: "clientManifest requires device metadata",
+        });
+      }
+
+      submission.clientManifest.clients.forEach((entry, manifestIndex) => {
+        if (manifestClients.has(entry.client)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["clientManifest", "clients", manifestIndex, "client"],
+            message: `clientManifest contains duplicate client ${entry.client}`,
+          });
+          return;
+        }
+        manifestClients.set(entry.client, entry.parserRevision);
+
+        const clientContributions = submission.contributions.flatMap((day, dayIndex) =>
+          day.clients
+            .filter((client) => client.client === entry.client)
+            .map((client) => ({ client, date: day.date, dayIndex }))
+        );
+
+        if (entry.coverage && clientContributions.length === 0) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["clientManifest", "clients", manifestIndex, "coverage"],
+            message: `full coverage for ${entry.client} requires at least one submitted contribution`,
+          });
+        }
+
+        for (const contribution of clientContributions) {
+          const revision = contribution.client.provenance?.schemaVersion ?? 1;
+          if (revision !== entry.parserRevision) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ["clientManifest", "clients", manifestIndex, "parserRevision"],
+              message: `${entry.client} manifest revision must match contribution revision ${revision}`,
+            });
+            break;
+          }
+          if (
+            entry.coverage &&
+            (contribution.date < entry.coverage.start || contribution.date > entry.coverage.end)
+          ) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ["clientManifest", "clients", manifestIndex, "coverage"],
+              message: `${entry.client} contribution ${contribution.date} is outside declared coverage`,
+            });
+            break;
+          }
+        }
+      });
+    }
+
+    for (const [client, revision] of clientRevisions) {
+      if (revision > 1 && manifestClients.get(client) !== revision) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["clientManifest", "clients"],
+          message: `${client} revision ${revision} requires a matching clientManifest entry`,
+        });
+      }
+    }
+  })
+);
 
 export type SubmissionData = z.infer<typeof SubmissionDataSchema>;
 
