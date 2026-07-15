@@ -55,4 +55,19 @@ jobs:
             git pull --ff-only
             cd packages/frontend
             docker compose up -d --build
+
+            cache_dir=/www/server/nginx/proxy_cache_dir
+            if [ -d "${cache_dir}" ]; then
+              app_upstream="$(docker compose port app 3000)"
+              cache_key="KEY: http://${app_upstream}/"
+              find "${cache_dir}" -type f -exec sh -c '
+                key="$1"
+                shift
+                for cache_file do
+                  if grep -aFq "${key}" "${cache_file}"; then
+                    rm -f -- "${cache_file}"
+                  fi
+                done
+              ' sh "${cache_key}" {} +
+            fi
           EOF
