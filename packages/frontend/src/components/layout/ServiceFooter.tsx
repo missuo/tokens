@@ -31,38 +31,37 @@ export function ServiceFooter() {
 
 const Footer = styled.footer`
   width: 100%;
-  border-top: 1px solid var(--service-border);
-  background: var(--service-surface);
 `;
 
 const Inner = styled.div`
   width: 100%;
-  max-width: 1500px;
+  max-width: 1200px;
   margin: 0 auto;
-  padding: 18px 32px;
+  padding: 10px 24px 24px;
   text-align: center;
 
   @media (max-width: 520px) {
-    padding: 16px;
+    padding: 8px 16px 20px;
   }
 `;
 
 const Statement = styled.p`
   margin: 0;
   color: var(--service-text-muted);
-  font-size: 0.8125rem;
-  line-height: 1.5;
+  font-size: 0.75rem;
+  line-height: 1.6;
 `;
 
 const ProjectLink = styled.a`
-  color: var(--service-text);
-  font-weight: 600;
-  text-decoration: none;
+  color: inherit;
+  font-weight: 500;
+  text-decoration: underline;
+  text-decoration-color: var(--service-border-strong);
+  text-underline-offset: 3px;
 
   &:hover {
-    color: var(--service-accent-hover);
-    text-decoration: underline;
-    text-underline-offset: 3px;
+    color: var(--service-text);
+    text-decoration-color: currentColor;
   }
 
   &:focus-visible {
