@@ -4,6 +4,7 @@ import NextTopLoader from "nextjs-toploader";
 import { Analytics } from "@vercel/analytics/next";
 import { Providers } from "@/lib/providers";
 import { Navigation } from "@/components/layout/Navigation";
+import { ServiceFooter } from "@/components/layout/ServiceFooter";
 import { StyledComponentsRegistry } from "@/components/layout/StyledComponentsRegistry";
 import { ThemedToastContainer } from "@/components/layout/ThemedToastContainer";
 import "./globals.css";
@@ -78,6 +79,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
                 client-side transition. */}
             <Navigation />
             {children}
+            <ServiceFooter />
             <ThemedToastContainer />
           </Providers>
           <Analytics />

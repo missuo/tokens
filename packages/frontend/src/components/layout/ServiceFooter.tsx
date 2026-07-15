@@ -1,24 +1,29 @@
 "use client";
 
-import Link from "next/link";
 import styled from "styled-components";
 
 export function ServiceFooter() {
   return (
-    <Footer>
+    <Footer aria-label="About tokens.ci">
       <Inner>
-        <Product>Tokens</Product>
-        <Links aria-label="Footer links">
-          <Link href="/leaderboard">Leaderboard</Link>
-          <Link href="/leaderboard?view=groups">Groups</Link>
-          <a
+        <Statement>
+          <ProjectLink
             href="https://github.com/missuo/tokens"
             target="_blank"
             rel="noopener noreferrer"
           >
-            Source
-          </a>
-        </Links>
+            tokens.ci
+          </ProjectLink>{" "}
+          is an open-source project built on top of{" "}
+          <ProjectLink
+            href="https://github.com/junhoyeo/tokscale"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Tokscale
+          </ProjectLink>
+          .
+        </Statement>
       </Inner>
     </Footer>
   );
@@ -27,46 +32,40 @@ export function ServiceFooter() {
 const Footer = styled.footer`
   width: 100%;
   border-top: 1px solid var(--service-border);
+  background: var(--service-surface);
 `;
 
 const Inner = styled.div`
   width: 100%;
   max-width: 1500px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
   margin: 0 auto;
-  padding: 20px 32px;
+  padding: 18px 32px;
+  text-align: center;
 
   @media (max-width: 520px) {
-    padding-right: 16px;
-    padding-left: 16px;
+    padding: 16px;
   }
 `;
 
-const Product = styled.span`
+const Statement = styled.p`
+  margin: 0;
   color: var(--service-text-muted);
   font-size: 0.8125rem;
-  font-weight: 500;
+  line-height: 1.5;
 `;
 
-const Links = styled.nav`
-  display: flex;
-  align-items: center;
-  gap: 16px;
+const ProjectLink = styled.a`
+  color: var(--service-text);
+  font-weight: 600;
+  text-decoration: none;
 
-  a {
-    color: var(--service-text-muted);
-    font-size: 0.8125rem;
-    text-decoration: none;
+  &:hover {
+    color: var(--service-accent-hover);
+    text-decoration: underline;
+    text-underline-offset: 3px;
   }
 
-  a:hover {
-    color: var(--service-text);
-  }
-
-  a:focus-visible {
+  &:focus-visible {
     border-radius: 4px;
     outline: 2px solid var(--service-focus);
     outline-offset: 3px;
