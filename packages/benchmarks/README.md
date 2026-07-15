@@ -1,6 +1,6 @@
 # Benchmark Infrastructure
 
-This directory contains tools for measuring and comparing the performance of the Tokscale CLI.
+This directory contains tools for measuring and comparing the performance of the Tokens CLI.
 
 ## Overview
 

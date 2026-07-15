@@ -4,36 +4,58 @@
 
 pub mod amp;
 pub mod antigravity;
+pub mod antigravity_cli;
 pub mod claudecode;
 pub mod cline;
+pub mod codebuddy;
 pub mod codebuff;
 pub mod codex;
+pub mod commandcode;
 pub mod copilot;
+pub mod copilot_desktop;
+pub mod copilot_vscode;
 pub mod crush;
 pub mod cursor;
+pub mod devin;
 pub mod droid;
 pub mod gemini;
 pub mod gjc;
 pub mod goose;
 pub mod grok;
 pub mod hermes;
+pub mod jcode;
+pub mod junie;
 pub mod kilo;
 pub mod kilocode;
 pub mod kimi;
 pub mod kiro;
+pub mod micode;
 pub mod mux;
 pub mod openclaw;
 pub mod opencode;
+pub mod opencodereview;
 pub mod pi;
 pub mod qwen;
 pub mod roocode;
 pub mod synthetic;
+pub(crate) mod tencent_buddy;
 pub mod trae;
 pub(crate) mod utils;
 pub mod warp;
+pub mod workbuddy;
+pub mod zcode;
 pub mod zed;
 
 use crate::TokenBreakdown;
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CostSource {
+    #[default]
+    Unknown,
+    ProviderReported,
+    Estimated,
+}
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct UnifiedMessage {
@@ -47,6 +69,8 @@ pub struct UnifiedMessage {
     pub date: String,
     pub tokens: TokenBreakdown,
     pub cost: f64,
+    #[serde(default)]
+    pub cost_source: CostSource,
     #[serde(default)]
     pub duration_ms: Option<i64>,
     #[serde(default = "default_message_count")]
@@ -106,6 +130,42 @@ pub fn normalize_opencode_agent_name(agent: &str) -> String {
     }
 
     normalize_agent_name(&canonical)
+}
+
+pub fn normalize_copilot_agent_name(agent: &str) -> String {
+    // Hardcoded brand name for the default native agent
+    if agent.eq_ignore_ascii_case("github.copilot.default") {
+        return "GitHub Copilot".to_string();
+    }
+
+    // Native github.copilot.* agents: strip prefix, titlecase remainder
+    const GITHUB_COPILOT_PREFIX: &str = "github.copilot.";
+    if agent
+        .get(..GITHUB_COPILOT_PREFIX.len())
+        .is_some_and(|head| head.eq_ignore_ascii_case(GITHUB_COPILOT_PREFIX))
+    {
+        let remainder = &agent[GITHUB_COPILOT_PREFIX.len()..];
+        let hyphenated = remainder.replace('.', "-");
+        return titlecase_agent(&hyphenated);
+    }
+
+    // Plugin:team:slug format — titlecase each colon-separated part, join with ": "
+    const PLUGIN_PREFIX: &str = "Plugin:";
+    if agent
+        .get(..PLUGIN_PREFIX.len())
+        .is_some_and(|head| head.eq_ignore_ascii_case(PLUGIN_PREFIX))
+    {
+        let rest = &agent[PLUGIN_PREFIX.len()..];
+        let parts: Vec<&str> = rest.splitn(2, ':').collect();
+        if parts.len() == 2 {
+            let team = titlecase_agent(parts[0]);
+            let slug = titlecase_agent(parts[1]);
+            return format!("{}: {}", team, slug);
+        }
+        return titlecase_agent(rest);
+    }
+
+    normalize_agent_name(agent)
 }
 
 fn normalize_oh_my_opencode_agent_name(agent_lower: &str) -> Option<String> {
@@ -297,6 +357,7 @@ impl UnifiedMessage {
             date,
             tokens,
             cost,
+            cost_source: CostSource::Unknown,
             duration_ms: None,
             message_count: default_message_count(),
             agent,
@@ -322,6 +383,18 @@ impl UnifiedMessage {
     pub(crate) fn set_timestamp(&mut self, timestamp: i64) {
         self.timestamp = timestamp;
         self.refresh_derived_fields();
+    }
+
+    pub fn mark_provider_reported_cost(&mut self) {
+        self.cost_source = CostSource::ProviderReported;
+    }
+
+    pub(crate) fn mark_estimated_cost(&mut self) {
+        self.cost_source = CostSource::Estimated;
+    }
+
+    pub(crate) fn has_authoritative_cost(&self) -> bool {
+        self.cost_source == CostSource::ProviderReported
     }
 }
 
@@ -631,6 +704,35 @@ mod tests {
         assert_eq!(
             normalize_agent_name("oh-my-claudecode:code-reviewer"),
             "Code Reviewer"
+        );
+    }
+
+    #[test]
+    fn test_normalize_copilot_agent_name() {
+        assert_eq!(
+            normalize_copilot_agent_name("github.copilot.default"),
+            "GitHub Copilot"
+        );
+        assert_eq!(
+            normalize_copilot_agent_name("GITHUB.COPILOT.DEFAULT"),
+            "GitHub Copilot"
+        );
+        assert_eq!(normalize_copilot_agent_name("github.copilot.chat"), "Chat");
+        assert_eq!(
+            normalize_copilot_agent_name("Plugin:software-engineering-team:se-ux-ui-designer"),
+            "Software Engineering Team: Se UX UI Designer"
+        );
+        assert_eq!(
+            normalize_copilot_agent_name("plugin:my-team:my-agent"),
+            "My Team: My Agent"
+        );
+        assert_eq!(
+            normalize_copilot_agent_name("Plugin:code-review-team:api-reviewer"),
+            "Code Review Team: API Reviewer"
+        );
+        assert_eq!(
+            normalize_copilot_agent_name("some-custom-agent"),
+            "Some Custom Agent"
         );
         assert_eq!(normalize_agent_name("oh-my-codex:librarian"), "Librarian");
         assert_eq!(normalize_agent_name("astrape:executor"), "Executor");

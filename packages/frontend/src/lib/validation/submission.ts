@@ -293,8 +293,8 @@ export function validateSubmission(data: unknown): ValidationResult {
   //   3. Clock skew between client and server
   // Security note: allows submitting "tomorrow's" data, but trust model already
   // relies on self-reported data without cryptographic proof.
-  // See: https://github.com/junhoyeo/tokscale/issues/318
-  // See: https://github.com/junhoyeo/tokscale/issues/334
+  // See: https://github.com/missuo/tokens/issues/318
+  // See: https://github.com/missuo/tokens/issues/334
   const now = new Date();
   const maxDate = new Date(now.getTime() + 2 * 24 * 60 * 60 * 1000);
   const maxDateStr = maxDate.toISOString().split("T")[0];

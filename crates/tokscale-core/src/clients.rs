@@ -31,7 +31,7 @@ impl PathRoot {
 
                     #[cfg(target_os = "linux")]
                     if let Ok(xdg_config_home) = std::env::var("XDG_CONFIG_HOME") {
-                        return format!("{xdg_config_home}/tokscale");
+                        return format!("{xdg_config_home}/tokens");
                     }
                 }
 
@@ -40,7 +40,7 @@ impl PathRoot {
                 // get_antigravity_cache_dir) targets. Hardcoding
                 // `{home}/.config/tokens` everywhere would diverge from
                 // dirs::config_dir() on Windows (where it resolves to
-                // %APPDATA%\tokscale), causing synced data to land in
+                // %APPDATA%\tokens), causing synced data to land in
                 // %APPDATA% while the scanner looks in %USERPROFILE%.
                 #[cfg(target_os = "windows")]
                 {
@@ -438,6 +438,117 @@ define_clients!(
         headless: false,
         parse_local: true,
         submit_default: true
+    },
+    Jcode = 28 => {
+        id: "jcode",
+        root: PathRoot::EnvVar {
+            var: "JCODE_HOME",
+            fallback_relative: ".jcode",
+        },
+        relative: "sessions",
+        pattern: "session_*.json",
+        headless: false,
+        parse_local: true,
+        submit_default: true
+    },
+    CommandCode = 29 => {
+        id: "commandcode",
+        root: PathRoot::Home,
+        relative: ".commandcode/projects",
+        pattern: "*.jsonl",
+        headless: false,
+        parse_local: true,
+        submit_default: true
+    },
+    MiMoCode = 30 => {
+        id: "micode",
+        root: PathRoot::XdgData,
+        relative: "mimocode",
+        pattern: "*.db",
+        headless: false,
+        parse_local: true,
+        submit_default: true
+    },
+    // Antigravity CLI stores each conversation as a SQLite `.db` under
+    // `~/.gemini/antigravity-cli/conversations/`. Unlike the IDE-backed
+    // `Antigravity` client (which pulls usage from a running language server
+    // over RPC and caches JSONL under the config dir), the CLI usage sits on
+    // disk and is read directly — no RPC, no `antigravity sync` needed. Honors
+    // `GEMINI_CLI_HOME` so a relocated Gemini home is picked up.
+    AntigravityCli = 31 => {
+        id: "antigravity-cli",
+        root: PathRoot::EnvVar {
+            var: "GEMINI_CLI_HOME",
+            fallback_relative: ".gemini",
+        },
+        relative: "antigravity-cli/conversations",
+        pattern: "*.db",
+        headless: false,
+        parse_local: true,
+        submit_default: true
+    },
+    Junie = 32 => {
+        id: "junie",
+        root: PathRoot::Home,
+        relative: ".junie/sessions",
+        pattern: "events.jsonl",
+        headless: false,
+        parse_local: true,
+        submit_default: true
+    },
+    Zcode = 33 => {
+        id: "zcode",
+        root: PathRoot::Home,
+        relative: ".zcode/projects",
+        pattern: "*.jsonl",
+        headless: false,
+        parse_local: true,
+        submit_default: true
+    },
+    OpenCodeReview = 34 => {
+        id: "opencodereview",
+        root: PathRoot::Home,
+        relative: ".opencodereview/sessions",
+        pattern: "*.jsonl",
+        headless: false,
+        parse_local: true,
+        submit_default: true
+    },
+    CodeBuddy = 35 => {
+        id: "codebuddy",
+        root: PathRoot::Home,
+        relative: ".codebuddy/projects",
+        pattern: "*.jsonl",
+        headless: false,
+        parse_local: true,
+        submit_default: true
+    },
+    WorkBuddy = 36 => {
+        id: "workbuddy",
+        root: PathRoot::Home,
+        relative: ".workbuddy",
+        pattern: "workbuddy.db",
+        headless: false,
+        parse_local: true,
+        submit_default: true
+    },
+    DevinCli = 37 => {
+        id: "devin-cli",
+        root: PathRoot::XdgData,
+        relative: "devin/cli/sessions.db",
+        pattern: "sessions.db",
+        headless: false,
+        parse_local: true,
+        submit_default: true
+    },
+    DevinDesktop = 38 => {
+        id: "devin-desktop",
+        root: PathRoot::Home,
+        relative: "Library/Application Support/Devin/User/acp-events",
+        pattern: "*.ndjson",
+        headless: false,
+        parse_local: true,
+        submit_default: true
     }
 );
 
@@ -490,7 +601,87 @@ mod tests {
 
     #[test]
     fn test_client_id_count() {
-        assert_eq!(ClientId::COUNT, 28);
+        assert_eq!(ClientId::COUNT, 39);
+    }
+
+    #[test]
+    fn test_codebuddy_client_registered_as_local_session_source() {
+        let client =
+            ClientId::from_str("codebuddy").expect("codebuddy client should be registered");
+        assert_eq!(
+            client.data().resolve_path("/tmp/home"),
+            "/tmp/home/.codebuddy/projects"
+        );
+        assert_eq!(client.data().pattern, "*.jsonl");
+        assert!(client.data().parse_local);
+        assert!(client.data().submit_default);
+        assert!(!client.data().headless);
+    }
+
+    #[test]
+    fn test_workbuddy_client_registered_as_local_sqlite_source() {
+        let client =
+            ClientId::from_str("workbuddy").expect("workbuddy client should be registered");
+        assert_eq!(
+            client.data().resolve_path("/tmp/home"),
+            "/tmp/home/.workbuddy"
+        );
+        assert_eq!(client.data().pattern, "workbuddy.db");
+        assert!(client.data().parse_local);
+        assert!(client.data().submit_default);
+        assert!(!client.data().headless);
+    }
+
+    #[test]
+    fn test_devincli_client_registered_as_local_session_source() {
+        let client =
+            ClientId::from_str("devin-cli").expect("devin-cli client should be registered");
+        assert_eq!(client.data().relative_path, "devin/cli/sessions.db");
+        assert_eq!(client.data().pattern, "sessions.db");
+        assert!(client.data().parse_local);
+        assert!(client.data().submit_default);
+        assert!(!client.data().headless);
+    }
+
+    #[test]
+    fn test_devindesktop_client_registered_as_local_session_source() {
+        let client =
+            ClientId::from_str("devin-desktop").expect("devin-desktop client should be registered");
+        assert_eq!(
+            client.data().relative_path,
+            "Library/Application Support/Devin/User/acp-events"
+        );
+        assert_eq!(client.data().pattern, "*.ndjson");
+        assert!(client.data().parse_local);
+        assert!(client.data().submit_default);
+        assert!(!client.data().headless);
+    }
+
+    #[test]
+    fn test_commandcode_client_registered_as_local_session_source() {
+        let client =
+            ClientId::from_str("commandcode").expect("commandcode client should be registered");
+        assert_eq!(
+            client.data().resolve_path("/tmp/home"),
+            "/tmp/home/.commandcode/projects"
+        );
+        assert_eq!(client.data().pattern, "*.jsonl");
+        assert!(client.data().parse_local);
+        assert!(client.data().submit_default);
+        assert!(!client.data().headless);
+    }
+
+    #[test]
+    fn test_junie_client_registered_as_local_session_source() {
+        let client = ClientId::from_str("junie").expect("junie client should be registered");
+        assert_eq!(
+            client.data().resolve_path("/tmp/home"),
+            "/tmp/home/.junie/sessions"
+        );
+        assert_eq!(client.data().pattern, "events.jsonl");
+        assert!(client.data().parse_local);
+        assert!(client.data().submit_default);
+        assert!(!client.data().headless);
     }
 
     #[test]
@@ -520,6 +711,15 @@ mod tests {
         let client = ClientId::from_str("grok").expect("grok client should be registered");
         assert_eq!(client.data().relative_path, "sessions");
         assert_eq!(client.data().pattern, "updates.jsonl");
+        assert!(client.data().parse_local);
+        assert!(client.data().submit_default);
+    }
+
+    #[test]
+    fn test_jcode_client_registered_as_local_session_source() {
+        let client = ClientId::from_str("jcode").expect("jcode client should be registered");
+        assert_eq!(client.data().relative_path, "sessions");
+        assert_eq!(client.data().pattern, "session_*.json");
         assert!(client.data().parse_local);
         assert!(client.data().submit_default);
     }
@@ -595,7 +795,7 @@ mod tests {
         }
 
         let resolved = PathRoot::Config.resolve("/tmp/home");
-        assert_eq!(resolved, "/tmp/xdg-config-home/tokscale");
+        assert_eq!(resolved, "/tmp/xdg-config-home/tokens");
 
         restore_env("TOKENS_CONFIG_DIR", previous_override);
         restore_env("XDG_CONFIG_HOME", previous_xdg);
@@ -606,7 +806,7 @@ mod tests {
     fn test_path_root_config_uses_dirs_config_dir_on_windows() {
         // Windows must resolve PathRoot::Config to the same root that
         // paths::get_config_dir() and get_antigravity_cache_dir() use,
-        // i.e. dirs::config_dir() (= %APPDATA%\tokscale). Hardcoding
+        // i.e. dirs::config_dir() (= %APPDATA%\tokens). Hardcoding
         // {home}/.config/tokens would diverge from the writer side
         // and silently hide synced Antigravity data from reports.
         let _guard = env_lock().lock().unwrap();
@@ -623,7 +823,7 @@ mod tests {
             .into_owned();
         assert_eq!(
             resolved, expected,
-            "PathRoot::Config on Windows must match dirs::config_dir().join('tokscale') so the scanner agrees with the writer"
+            "PathRoot::Config on Windows must match dirs::config_dir().join('tokens') so the scanner agrees with the writer"
         );
 
         restore_env("TOKENS_CONFIG_DIR", previous_override);

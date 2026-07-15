@@ -384,17 +384,20 @@ impl DayAccumulator {
             .saturating_add(msg.tokens.reasoning);
 
         // Update client contribution
+        // Canonical (alias-free) id: this contribution is serialized into the
+        // submit/upload/export payload, so a machine-local `modelAliases` config
+        // must not rewrite the model identity that leaves the machine.
         let key = format!(
             "{}:{}",
             msg.client,
-            crate::normalize_model_for_grouping(&msg.model_id)
+            crate::canonical_model_id(&msg.model_id)
         );
         let client_entry = self
             .clients
             .entry(key)
             .or_insert_with(|| ClientContribution {
                 client: msg.client.clone(),
-                model_id: crate::normalize_model_for_grouping(&msg.model_id),
+                model_id: crate::canonical_model_id(&msg.model_id),
                 provider_id: msg.provider_id.clone(),
                 tokens: TokenBreakdown::default(),
                 cost: 0.0,
@@ -619,7 +622,9 @@ impl SessionAccumulator {
             .saturating_add(msg.tokens.reasoning);
 
         // Track tightest (client, provider, model) by cost contribution.
-        let normalized_model = crate::normalize_model_for_grouping(&msg.model_id);
+        // Canonical (alias-free) id — this feeds the submitted/exported payload,
+        // so machine-local aliases must not rewrite it (see `add_message`).
+        let normalized_model = crate::canonical_model_id(&msg.model_id);
         let key = format!("{}:{}:{}", msg.client, msg.provider_id, normalized_model);
         let client_entry = self
             .clients
@@ -873,6 +878,7 @@ mod tests {
                 reasoning: 0,
             },
             cost,
+            cost_source: Default::default(),
             duration_ms: None,
             message_count: 1,
             agent: None,
@@ -921,7 +927,8 @@ mod tests {
         b.agent = Some("Explore".to_string());
         b.agent_run_id = Some("agent-run-b".to_string());
 
-        let mut legacy = mock_unified_message("2024-01-01", 600, 0.03, "claude-sonnet-4-5", "claude");
+        let mut legacy =
+            mock_unified_message("2024-01-01", 600, 0.03, "claude-sonnet-4-5", "claude");
         legacy.session_id = "legacy-parent".to_string();
         legacy.agent = Some("Explore".to_string());
 
@@ -1529,6 +1536,7 @@ mod tests {
             date: date.to_string(),
             tokens,
             cost,
+            cost_source: Default::default(),
             message_count: 1,
             agent: None,
             agent_run_id: None,

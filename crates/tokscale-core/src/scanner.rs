@@ -44,7 +44,7 @@ pub struct ScannerSettings {
     ///
     /// Use this when the opencode binary was launched with `OPENCODE_DB`
     /// pointing at a location outside the default `~/.local/share/opencode`
-    /// data directory, so tokscale's auto-discovery can't find it.
+    /// data directory, so Tokens' auto-discovery can't find it.
     ///
     /// Paths are merged into the auto-discovered
     /// [`ScanResult::opencode_dbs`] list; duplicates (by canonical path)
@@ -81,6 +81,7 @@ pub struct ScanResult {
     /// `opencode-nightly.db`, etc. See upstream logic in opencode's
     /// `packages/opencode/src/storage/db.ts` (`getChannelPath`).
     pub opencode_dbs: Vec<PathBuf>,
+    pub copilot_desktop_db: Option<PathBuf>,
     pub synthetic_db: Option<PathBuf>,
     pub kilo_db: Option<PathBuf>,
     pub hermes_db: Option<PathBuf>,
@@ -88,8 +89,18 @@ pub struct ScanResult {
     pub zed_db: Option<PathBuf>,
     pub kiro_db: Option<PathBuf>,
     pub crush_dbs: Vec<CrushDbSource>,
+    /// ZCode v2 CLI usage database at `~/.zcode/cli/db/db.sqlite`.
+    pub zcode_db: Option<PathBuf>,
+    /// MiMo Code SQLite databases discovered under the data dir.
+    pub micode_dbs: Vec<PathBuf>,
     /// Path to the OpenCode legacy JSON directory (for migration cache stat checks)
     pub opencode_json_dir: Option<PathBuf>,
+    /// Devin CLI SQLite databases, including the default data path and any
+    /// user-configured scan roots.
+    pub devin_dbs: Vec<PathBuf>,
+    /// VS Code Copilot chat session JSONL files discovered under
+    /// `workspaceStorage/*/chatSessions/*.jsonl`.
+    pub copilot_vscode_sessions: Vec<PathBuf>,
 }
 
 impl Default for ScanResult {
@@ -97,6 +108,7 @@ impl Default for ScanResult {
         Self {
             files: std::array::from_fn(|_| Vec::new()),
             opencode_dbs: Vec::new(),
+            copilot_desktop_db: None,
             synthetic_db: None,
             kilo_db: None,
             hermes_db: None,
@@ -104,7 +116,11 @@ impl Default for ScanResult {
             zed_db: None,
             kiro_db: None,
             crush_dbs: Vec::new(),
+            zcode_db: None,
+            micode_dbs: Vec::new(),
             opencode_json_dir: None,
+            devin_dbs: Vec::new(),
+            copilot_vscode_sessions: Vec::new(),
         }
     }
 }
@@ -125,8 +141,9 @@ impl ScanResult {
     /// dropped.
     pub fn retain_files_modified_since(&mut self, since_ms: i64) {
         for client_files in &mut self.files {
-            client_files
-                .retain(|path| crate::sessions::utils::file_modified_timestamp_ms(path) >= since_ms);
+            client_files.retain(|path| {
+                crate::sessions::utils::file_modified_timestamp_ms(path) >= since_ms
+            });
         }
     }
 
@@ -257,7 +274,13 @@ pub fn scan_directory(root: &str, pattern: &str) -> Vec<PathBuf> {
         .filter_map(|e| e.ok())
         .filter(|e| {
             let path = e.path();
-            if !path.is_file() {
+            // WalkDir already knows the entry type from the directory read, so
+            // trust it for the common regular-file case and avoid a redundant
+            // stat() per file (warm scans over huge trees were stat-bound).
+            // Symlinks still fall back to a following stat to preserve behavior.
+            let file_type = e.file_type();
+            let is_file = file_type.is_file() || (file_type.is_symlink() && path.is_file());
+            if !is_file {
                 return false;
             }
 
@@ -273,6 +296,17 @@ pub fn scan_directory(root: &str, pattern: &str) -> Vec<PathBuf> {
                 "*.json" => file_name.ends_with(".json"),
                 "*.json|*.jsonl" => file_name.ends_with(".json") || file_name.ends_with(".jsonl"),
                 "*.jsonl" => file_name.ends_with(".jsonl"),
+                "*.ndjson" => file_name.ends_with(".ndjson"),
+                "*.log" => file_name.ends_with(".log"),
+                "codebuddy-extension-log" => {
+                    file_name.ends_with(".log")
+                        && path.components().any(|component| {
+                            component
+                                .as_os_str()
+                                .to_string_lossy()
+                                .eq_ignore_ascii_case("Tencent-Cloud.coding-copilot")
+                        })
+                }
                 // OpenClaw: also match archived transcripts
                 // (<uuid>.jsonl.deleted.<ts>, <uuid>.jsonl.reset.<ts>)
                 "*.jsonl*" => {
@@ -324,16 +358,47 @@ pub fn scan_directory(root: &str, pattern: &str) -> Vec<PathBuf> {
                 "session-*.json" => {
                     file_name.starts_with("session-") && file_name.ends_with(".json")
                 }
+                "session_*.json" => {
+                    file_name.starts_with("session_") && file_name.ends_with(".json")
+                }
                 "T-*.json" => file_name.starts_with("T-") && file_name.ends_with(".json"),
                 "*.settings.json" => file_name.ends_with(".settings.json"),
+                "kiro-globalstorage" => {
+                    file_name.ends_with(".chat")
+                        || file_name.ends_with(".json")
+                        || path.extension().is_none()
+                }
+                // Kiro IDE (VS Code-based) session layout on disk:
+                //   ~/.kiro/sessions/<workspace>/sess_<uuid>/session.json
+                //   ~/.kiro/sessions/<workspace>/sess_<uuid>/messages.jsonl
+                // Anchor discovery on `session.json` (the metadata file); the
+                // parser reads the sibling `messages.jsonl` itself. Requiring a
+                // `sess_*` parent keeps this from colliding with the CLI layout
+                // (`~/.kiro/sessions/cli/*.json`) that shares the same tree.
+                "kiro-ide-session" => {
+                    file_name == "session.json"
+                        && path
+                            .parent()
+                            .and_then(|parent| parent.file_name())
+                            .and_then(|name| name.to_str())
+                            .map(|name| name.starts_with("sess_"))
+                            .unwrap_or(false)
+                }
                 "sessions.json" => file_name == "sessions.json",
                 "wire.jsonl" => file_name == "wire.jsonl",
                 "updates.jsonl" => file_name == "updates.jsonl",
+                "events.jsonl" => file_name == "events.jsonl",
                 "ui_messages.json" => file_name == "ui_messages.json",
                 "session-usage.json" => file_name == "session-usage.json",
                 "chat-messages.json" => file_name == "chat-messages.json",
+                "workbuddy.db" => file_name == "workbuddy.db",
+                "sessions.db" => file_name == "sessions.db",
                 "state.db" => file_name == "state.db",
                 "threads.db" => file_name == "threads.db",
+                // Antigravity CLI conversation databases. `ends_with(".db")`
+                // naturally rejects the `.db-wal`/`.db-shm`/`.db-journal`
+                // sidecars SQLite writes alongside the main file.
+                "*.db" => file_name.ends_with(".db"),
                 _ => false,
             }
         })
@@ -422,6 +487,93 @@ pub fn built_in_extra_scan_paths_for(
     paths
 }
 
+/// Discover Hermes profile databases under a Hermes home directory.
+///
+/// Hermes stores the default profile at `<hermes-home>/state.db` and named
+/// profiles at `<hermes-home>/profiles/<profile>/state.db`.
+///
+/// Data-isolation rule: sibling and default profiles are ONLY discovered when
+/// scanning from the *root* Hermes home. When `HERMES_HOME` points at a
+/// specific named profile (for example `<root>/profiles/coder`, i.e. its parent
+/// directory is `profiles/`), the user has expressed intent to isolate that one
+/// profile, so we scan ONLY that profile. We deliberately do NOT climb up to
+/// sibling profiles under `<root>/profiles/*` or the default profile at
+/// `<root>/state.db`. Auto-discovering (and therefore making uploadable via
+/// `tokens submit`) sibling/default profiles from a profile-scoped
+/// `HERMES_HOME` would silently break the isolation boundary the user set up.
+/// The active profile's own `state.db` is resolved separately as the primary
+/// Hermes database, so this function returns no extra paths in that case.
+///
+/// `read_dir` keeps profile discovery intentionally shallow: each immediate
+/// child of the root home's `profiles/` directory is treated as one profile
+/// directory, matching Hermes' profile layout without walking arbitrary user
+/// data.
+pub(crate) fn discover_hermes_profile_state_dbs(hermes_home: &Path) -> Vec<PathBuf> {
+    // Profile-scoped `HERMES_HOME` (parent directory is `profiles/`): isolate to
+    // this single profile and perform no sibling/default discovery.
+    if hermes_home
+        .parent()
+        .and_then(Path::file_name)
+        .is_some_and(|name| name == "profiles")
+    {
+        return Vec::new();
+    }
+
+    // Root Hermes home: discover every named profile under `profiles/`.
+    let mut dbs: Vec<PathBuf> = std::fs::read_dir(hermes_home.join("profiles"))
+        .into_iter()
+        .flat_map(|entries| entries.filter_map(|entry| entry.ok()))
+        .filter_map(|entry| {
+            let state_db = entry.path().join("state.db");
+            state_db.is_file().then_some(state_db)
+        })
+        .collect();
+    dbs.sort_unstable();
+    dbs.dedup();
+    dbs
+}
+
+/// Candidate Hermes home directories to scan for `state.db` and profiles.
+///
+/// Resolution order mirrors the Crush discovery's Windows rigor
+/// ([`crush_registry_candidates`]):
+/// 1. `HERMES_HOME` when set, otherwise `~/.hermes` — the `PathRoot::EnvVar`
+///    strategy for [`ClientId::Hermes`].
+/// 2. `%LOCALAPPDATA%\hermes` on native Windows (env roots enabled).
+/// 3. `<home>/AppData/Local/hermes` — the literal Windows fallback, always
+///    appended so it is exercised cross-platform (matching Crush's
+///    `AppData/Local` fallback).
+///
+/// The native Windows roots are only consulted when `HERMES_HOME` is *not* set:
+/// an explicit `HERMES_HOME` is authoritative and may be profile-scoped for data
+/// isolation, so widening discovery to the default Windows home in that case
+/// would reintroduce the isolation leak that the profile-scoping rule prevents.
+fn hermes_home_candidates(home_dir: &str, use_env_roots: bool) -> Vec<PathBuf> {
+    let mut homes = vec![PathBuf::from(
+        ClientId::Hermes
+            .data()
+            .root
+            .resolve_with_env_strategy(home_dir, use_env_roots),
+    )];
+
+    let hermes_home_set = use_env_roots
+        && std::env::var("HERMES_HOME")
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false);
+    if !hermes_home_set {
+        if cfg!(target_os = "windows") && use_env_roots {
+            if let Some(local_app_data) =
+                std::env::var_os("LOCALAPPDATA").filter(|value| !value.is_empty())
+            {
+                homes.push(PathBuf::from(local_app_data).join("hermes"));
+            }
+        }
+        homes.push(PathBuf::from(home_dir).join("AppData/Local/hermes"));
+    }
+
+    homes
+}
+
 #[derive(Debug, Deserialize, Default)]
 struct CrushProjectList {
     #[serde(default)]
@@ -504,6 +656,80 @@ fn is_opencode_db_filename(name: &str) -> bool {
         .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
 }
 
+/// Discover MiMo Code SQLite databases under the given data directory.
+///
+/// Matches `mimocode.db` and `mimocode-<channel>.db` (channel names
+/// sanitized with the same `[a-zA-Z0-9._-]` character class that MiMo
+/// Code's `getChannelPath` normalizes to). Ignores WAL/SHM sidecar files.
+pub(crate) fn discover_micode_dbs(data_dir: &Path) -> Vec<PathBuf> {
+    let entries = match std::fs::read_dir(data_dir) {
+        Ok(entries) => entries,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut dbs: Vec<PathBuf> = entries
+        .filter_map(|entry| entry.ok())
+        .filter_map(|entry| {
+            let file_type = entry.file_type().ok()?;
+            if !file_type.is_file() && !entry.path().is_file() {
+                return None;
+            }
+            let path = entry.path();
+            let name = path.file_name()?.to_str()?;
+            if !is_micode_db_filename(name) {
+                return None;
+            }
+            Some(path)
+        })
+        .collect();
+
+    dbs.sort_unstable();
+    dbs
+}
+
+/// Discover Devin CLI `sessions.db` files from the default path and any
+/// configured extra scan roots. Extra roots preserve the generic scanner's
+/// behavior: a root may be the database itself or a directory containing one
+/// or more `sessions.db` files.
+fn discover_devin_cli_dbs(roots: impl IntoIterator<Item = PathBuf>) -> Vec<PathBuf> {
+    let mut seen = HashSet::new();
+    let mut dbs = Vec::new();
+
+    for root in roots {
+        for db_path in scan_directory(&root.to_string_lossy(), "sessions.db") {
+            let key = std::fs::canonicalize(&db_path).unwrap_or_else(|_| db_path.clone());
+            if seen.insert(key) {
+                dbs.push(db_path);
+            }
+        }
+    }
+
+    dbs.sort_unstable();
+    dbs
+}
+
+/// Returns true if `name` matches the MiMo Code db naming rule:
+/// `mimocode.db` or `mimocode-<channel>.db`.
+fn is_micode_db_filename(name: &str) -> bool {
+    let stem = match name.strip_suffix(".db") {
+        Some(stem) => stem,
+        None => return false,
+    };
+    if stem == "mimocode" {
+        return true;
+    }
+    let channel = match stem.strip_prefix("mimocode-") {
+        Some(channel) => channel,
+        None => return false,
+    };
+    if channel.is_empty() {
+        return false;
+    }
+    channel
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+}
+
 fn crush_db_path(data_dir: &Path) -> Option<PathBuf> {
     let candidate = data_dir.join("crush.db");
     candidate.is_file().then_some(candidate)
@@ -545,13 +771,48 @@ fn scan_crush_registry(registry_path: &Path) -> Vec<CrushDbSource> {
         .collect()
 }
 
-fn discover_crush_dbs(home_dir: &str, use_env_roots: bool) -> Vec<CrushDbSource> {
-    let registry_path = PathBuf::from(
+/// Candidate locations for Crush's `projects.json` registry, mirroring
+/// Crush's own resolution order (`internal/config/load.go::GlobalConfigData`):
+/// `$CRUSH_GLOBAL_DATA` first, then `$XDG_DATA_HOME/crush`, then
+/// `%LOCALAPPDATA%\crush` on Windows, then `~/.local/share/crush`.
+fn crush_registry_candidates(home_dir: &str, use_env_roots: bool) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+
+    if use_env_roots {
+        if let Some(global_data) =
+            std::env::var_os("CRUSH_GLOBAL_DATA").filter(|value| !value.is_empty())
+        {
+            candidates.push(PathBuf::from(global_data).join("projects.json"));
+        }
+    }
+
+    candidates.push(PathBuf::from(
         ClientId::Crush
             .data()
             .resolve_path_with_env_strategy(home_dir, use_env_roots),
-    );
-    let mut dbs = scan_crush_registry(&registry_path);
+    ));
+
+    if cfg!(target_os = "windows") && use_env_roots {
+        if let Some(local_app_data) =
+            std::env::var_os("LOCALAPPDATA").filter(|value| !value.is_empty())
+        {
+            candidates.push(
+                PathBuf::from(local_app_data)
+                    .join("crush")
+                    .join("projects.json"),
+            );
+        }
+    }
+    candidates.push(PathBuf::from(home_dir).join("AppData/Local/crush/projects.json"));
+
+    candidates
+}
+
+fn discover_crush_dbs(home_dir: &str, use_env_roots: bool) -> Vec<CrushDbSource> {
+    let mut dbs = Vec::new();
+    for registry_path in crush_registry_candidates(home_dir, use_env_roots) {
+        dbs.extend(scan_crush_registry(&registry_path));
+    }
     dbs.sort_by(|a, b| a.db_path.cmp(&b.db_path));
     dbs.dedup_by(|a, b| a.db_path == b.db_path);
     dbs
@@ -582,6 +843,23 @@ fn cline_additional_vscode_task_roots(home_dir: &str, use_env_roots: bool) -> Ve
     roots
 }
 
+fn devin_desktop_additional_roots(home_dir: &str, use_env_roots: bool) -> Vec<PathBuf> {
+    let mut roots = vec![
+        PathBuf::from(home_dir).join(".config/Devin/User/acp-events"),
+        PathBuf::from(home_dir).join(".config/devin/User/acp-events"),
+    ];
+
+    if cfg!(target_os = "windows") && use_env_roots {
+        if let Some(app_data) = std::env::var_os("APPDATA").filter(|value| !value.is_empty()) {
+            roots.push(PathBuf::from(app_data).join("Devin/User/acp-events"));
+        }
+    }
+
+    roots.push(PathBuf::from(home_dir).join("AppData/Roaming/Devin/User/acp-events"));
+
+    roots
+}
+
 fn supports_extra_dir_scanning(client_id: ClientId) -> bool {
     // Kilo CLI currently loads a single SQLite DB via `scan_result.kilo_db`
     // Roo/KiloCode require local + remote and server task roots, and Crush
@@ -600,6 +878,43 @@ fn push_unique_scan_task(
     client_id: ClientId,
     raw_path: impl Into<PathBuf>,
 ) {
+    push_unique_scan_task_with_pattern(tasks, seen, client_id, raw_path, client_id.data().pattern);
+}
+
+/// Additional Codex-compatible homes owned by desktop wrappers that isolate
+/// their runtime from the shell's `CODEX_HOME`. Orca stores standard Codex
+/// rollout JSONL under this macOS application-support path, so a standalone
+/// `tokens` process would otherwise miss those sessions entirely.
+fn discover_codex_compat_homes(
+    home_dir: &str,
+    use_env_roots: bool,
+    codex_home_is_explicit: bool,
+) -> Vec<PathBuf> {
+    if !use_env_roots || codex_home_is_explicit {
+        return Vec::new();
+    }
+
+    let orca_home = PathBuf::from(home_dir)
+        .join("Library")
+        .join("Application Support")
+        .join("orca")
+        .join("codex-runtime-home")
+        .join("home");
+
+    if orca_home.join("sessions").is_dir() || orca_home.join("archived_sessions").is_dir() {
+        vec![orca_home]
+    } else {
+        Vec::new()
+    }
+}
+
+fn push_unique_scan_task_with_pattern(
+    tasks: &mut Vec<(ClientId, String, &'static str)>,
+    seen: &mut HashSet<(ClientId, PathBuf)>,
+    client_id: ClientId,
+    raw_path: impl Into<PathBuf>,
+    pattern: &'static str,
+) {
     let raw_path = raw_path.into();
     if raw_path.as_os_str().is_empty() {
         return;
@@ -607,9 +922,49 @@ fn push_unique_scan_task(
 
     let key = std::fs::canonicalize(&raw_path).unwrap_or_else(|_| raw_path.clone());
     if seen.insert((client_id, key)) {
-        let pattern = client_id.data().pattern;
         tasks.push((client_id, raw_path.to_string_lossy().to_string(), pattern));
     }
+}
+
+fn kiro_global_storage_roots(home_dir: &str, use_env_roots: bool) -> Vec<PathBuf> {
+    let mut roots = vec![
+        PathBuf::from(format!(
+            "{}/Library/Application Support/Kiro/User/globalStorage/kiro.kiroagent",
+            home_dir
+        )),
+        PathBuf::from(format!(
+            "{}/Library/Application Support/kiro/User/globalStorage/kiro.kiroagent",
+            home_dir
+        )),
+        PathBuf::from(format!(
+            "{}/.config/Kiro/User/globalStorage/kiro.kiroagent",
+            home_dir
+        )),
+        PathBuf::from(format!(
+            "{}/.config/kiro/User/globalStorage/kiro.kiroagent",
+            home_dir
+        )),
+    ];
+
+    if cfg!(target_os = "windows") {
+        if use_env_roots {
+            if let Some(app_data) = std::env::var_os("APPDATA").filter(|value| !value.is_empty()) {
+                roots.push(PathBuf::from(&app_data).join("Kiro/User/globalStorage/kiro.kiroagent"));
+                roots.push(PathBuf::from(&app_data).join("kiro/User/globalStorage/kiro.kiroagent"));
+            }
+        }
+
+        roots.push(PathBuf::from(format!(
+            "{}/AppData/Roaming/Kiro/User/globalStorage/kiro.kiroagent",
+            home_dir
+        )));
+        roots.push(PathBuf::from(format!(
+            "{}/AppData/Roaming/kiro/User/globalStorage/kiro.kiroagent",
+            home_dir
+        )));
+    }
+
+    roots
 }
 
 /// Merge user-configured OpenCode db paths from [`ScannerSettings`] into the
@@ -658,6 +1013,63 @@ pub(crate) fn merge_user_opencode_db_paths(discovered: &mut Vec<PathBuf>, extra_
             discovered.push(raw.clone());
         }
     }
+}
+
+fn discover_copilot_vscode_sessions(home_dir: &str, use_env_roots: bool) -> Vec<PathBuf> {
+    let mut roots: Vec<PathBuf> = Vec::new();
+
+    roots.push(PathBuf::from(format!(
+        "{}/Library/Application Support/Code/User/workspaceStorage",
+        home_dir
+    )));
+    roots.push(PathBuf::from(format!(
+        "{}/.config/Code/User/workspaceStorage",
+        home_dir
+    )));
+
+    if cfg!(target_os = "windows") && use_env_roots {
+        if let Some(app_data) = std::env::var_os("APPDATA").filter(|v| !v.is_empty()) {
+            roots.push(PathBuf::from(app_data).join("Code/User/workspaceStorage"));
+        }
+    }
+    roots.push(PathBuf::from(home_dir).join("AppData/Roaming/Code/User/workspaceStorage"));
+
+    let mut files: Vec<PathBuf> = Vec::new();
+    let mut seen: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+
+    for workspace_storage in &roots {
+        let hash_dirs = match std::fs::read_dir(workspace_storage) {
+            Ok(rd) => rd,
+            Err(_) => continue,
+        };
+        for entry in hash_dirs.filter_map(|e| e.ok()) {
+            let chat_sessions_dir = entry.path().join("chatSessions");
+            if !chat_sessions_dir.is_dir() {
+                continue;
+            }
+            let chat_entries = match std::fs::read_dir(&chat_sessions_dir) {
+                Ok(rd) => rd,
+                Err(_) => continue,
+            };
+            for chat_entry in chat_entries.filter_map(|e| e.ok()) {
+                let path = chat_entry.path();
+                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                if !name.ends_with(".jsonl") {
+                    continue;
+                }
+                if !path.is_file() {
+                    continue;
+                }
+                let key = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+                if seen.insert(key) {
+                    files.push(path);
+                }
+            }
+        }
+    }
+
+    files.sort_unstable();
+    files
 }
 
 /// Scan all session client directories in parallel, with user-controlled
@@ -711,11 +1123,20 @@ fn scan_all_clients_with_env_strategy_inner(
             .collect()
     };
 
+    // Desktop ACP filenames need Devin CLI database titles to recover their
+    // session/model/workspace metadata. Treat configured CLI roots as lookup
+    // inputs for a Desktop-only scan without enabling CLI usage output.
+    let mut enabled_with_devin_lookup = enabled.clone();
+    if enabled.contains(&ClientId::DevinDesktop) {
+        enabled_with_devin_lookup.insert(ClientId::DevinCli);
+    }
+
     let headless_roots = headless_roots_with_env_strategy(home_dir, use_env_roots);
 
     // Define scan tasks
     let mut tasks: Vec<(ClientId, String, &str)> = Vec::new();
     let mut seen_scan_roots: HashSet<(ClientId, PathBuf)> = HashSet::new();
+    let mut devin_cli_roots: Vec<PathBuf> = Vec::new();
 
     for client_id in &enabled {
         if matches!(
@@ -734,6 +1155,8 @@ fn scan_all_clients_with_env_strategy_inner(
                 | ClientId::Codebuff
                 | ClientId::Kimi
                 | ClientId::Gjc
+                | ClientId::MiMoCode
+                | ClientId::DevinCli
         ) {
             continue;
         }
@@ -743,22 +1166,110 @@ fn scan_all_clients_with_env_strategy_inner(
         push_unique_scan_task(&mut tasks, &mut seen_scan_roots, *client_id, path);
     }
 
-    for (client_id, path) in extra_scan_paths_for(scanner_settings, &enabled) {
+    for (client_id, path) in extra_scan_paths_for(scanner_settings, &enabled_with_devin_lookup) {
         warn_if_escapes_home(client_id, &path);
-        push_unique_scan_task(&mut tasks, &mut seen_scan_roots, client_id, path);
+        if client_id == ClientId::DevinCli {
+            devin_cli_roots.push(path);
+        } else {
+            push_unique_scan_task(&mut tasks, &mut seen_scan_roots, client_id, path);
+        }
     }
 
     for (client_id, path) in built_in_extra_scan_paths_for(home_dir, &enabled) {
         push_unique_scan_task(&mut tasks, &mut seen_scan_roots, client_id, path);
     }
 
+    if enabled.contains(&ClientId::CodeBuddy) {
+        let home_path = PathBuf::from(home_dir);
+        let mut codebuddy_log_roots = vec![(
+            home_path
+                .join("AppData")
+                .join("Local")
+                .join("CodeBuddyExtension")
+                .join("Logs"),
+            "*.log",
+        )];
+        let roaming_codebuddy_roots = [
+            home_path
+                .join("AppData")
+                .join("Roaming")
+                .join("CodeBuddy CN")
+                .join("logs"),
+            home_path
+                .join("AppData")
+                .join("Roaming")
+                .join("Code")
+                .join("logs"),
+        ];
+        codebuddy_log_roots.extend(
+            roaming_codebuddy_roots
+                .into_iter()
+                .map(|root| (root, "codebuddy-extension-log")),
+        );
+        if use_env_roots {
+            if let Some(local_app_data) = dirs::data_local_dir() {
+                codebuddy_log_roots.push((
+                    local_app_data.join("CodeBuddyExtension").join("Logs"),
+                    "*.log",
+                ));
+            }
+            if let Some(roaming_app_data) = dirs::config_dir() {
+                codebuddy_log_roots.push((
+                    roaming_app_data.join("CodeBuddy CN").join("logs"),
+                    "codebuddy-extension-log",
+                ));
+                codebuddy_log_roots.push((
+                    roaming_app_data.join("Code").join("logs"),
+                    "codebuddy-extension-log",
+                ));
+            }
+        }
+
+        for (log_root, pattern) in codebuddy_log_roots {
+            if pattern == "*.log" {
+                for root in ["CodeBuddyIDE", "VSCode"] {
+                    push_unique_scan_task_with_pattern(
+                        &mut tasks,
+                        &mut seen_scan_roots,
+                        ClientId::CodeBuddy,
+                        log_root.join(root),
+                        pattern,
+                    );
+                }
+                continue;
+            }
+
+            push_unique_scan_task_with_pattern(
+                &mut tasks,
+                &mut seen_scan_roots,
+                ClientId::CodeBuddy,
+                log_root,
+                pattern,
+            );
+        }
+    }
+
+    if enabled.contains(&ClientId::WorkBuddy) {
+        push_unique_scan_task_with_pattern(
+            &mut tasks,
+            &mut seen_scan_roots,
+            ClientId::WorkBuddy,
+            PathBuf::from(home_dir).join(".workbuddy/projects"),
+            "*.jsonl",
+        );
+    }
+
     // Extra scan directories are part of the caller's environment, so they are
     // intentionally ignored when an explicit --home override disables env roots.
     if use_env_roots {
         let extra_dirs_val = std::env::var("TOKENS_EXTRA_DIRS").unwrap_or_default();
-        for (client_id, path) in parse_extra_dirs(&extra_dirs_val, &enabled) {
+        for (client_id, path) in parse_extra_dirs(&extra_dirs_val, &enabled_with_devin_lookup) {
             warn_if_escapes_home(client_id, &PathBuf::from(&path));
-            push_unique_scan_task(&mut tasks, &mut seen_scan_roots, client_id, path);
+            if client_id == ClientId::DevinCli {
+                devin_cli_roots.push(PathBuf::from(path));
+            } else {
+                push_unique_scan_task(&mut tasks, &mut seen_scan_roots, client_id, path);
+            }
         }
     }
 
@@ -805,6 +1316,20 @@ fn scan_all_clients_with_env_strategy_inner(
             ClientId::OpenCode,
             opencode_path,
         );
+    }
+
+    // MiMo Code: SQLite database(s) at ~/.local/share/mimocode/mimocode*.db
+    if enabled.contains(&ClientId::MiMoCode) {
+        // Derive the data dir from the client metadata so the scan path stays
+        // in sync with `ClientId::MiMoCode` (XdgData root + `mimocode`) rather
+        // than duplicating it here.
+        let micode_data_dir = PathBuf::from(
+            ClientId::MiMoCode
+                .data()
+                .resolve_path_with_env_strategy(home_dir, use_env_roots),
+        );
+        // `discover_micode_dbs` already returns a sorted list.
+        result.micode_dbs = discover_micode_dbs(&micode_data_dir);
     }
 
     if enabled.contains(&ClientId::Kimi) {
@@ -854,6 +1379,29 @@ fn scan_all_clients_with_env_strategy_inner(
             ClientId::Codex,
             codex_archived_path,
         );
+
+        // Orca launches Codex with a private CODEX_HOME that is not inherited
+        // when `tokens` runs later from a shell. Its files use the normal Codex
+        // rollout format, and the downstream dedup-key pass collapses sessions
+        // mirrored in both Orca and ~/.codex without double-counting them.
+        let codex_home_is_explicit =
+            use_env_roots && std::env::var_os("CODEX_HOME").is_some_and(|value| !value.is_empty());
+        for compat_home in
+            discover_codex_compat_homes(home_dir, use_env_roots, codex_home_is_explicit)
+        {
+            push_unique_scan_task(
+                &mut tasks,
+                &mut seen_scan_roots,
+                ClientId::Codex,
+                compat_home.join("sessions"),
+            );
+            push_unique_scan_task(
+                &mut tasks,
+                &mut seen_scan_roots,
+                ClientId::Codex,
+                compat_home.join("archived_sessions"),
+            );
+        }
 
         // Codex headless: <headless_root>/codex/*.jsonl
         for root in &headless_roots {
@@ -984,6 +1532,27 @@ fn scan_all_clients_with_env_strategy_inner(
         }
     }
 
+    if enabled.contains(&ClientId::DevinDesktop) {
+        let local_path = ClientId::DevinDesktop
+            .data()
+            .resolve_path_with_env_strategy(home_dir, use_env_roots);
+        push_unique_scan_task(
+            &mut tasks,
+            &mut seen_scan_roots,
+            ClientId::DevinDesktop,
+            local_path,
+        );
+
+        for root in devin_desktop_additional_roots(home_dir, use_env_roots) {
+            push_unique_scan_task(
+                &mut tasks,
+                &mut seen_scan_roots,
+                ClientId::DevinDesktop,
+                root,
+            );
+        }
+    }
+
     if enabled.contains(&ClientId::Kilo) {
         let kilo_db_path = ClientId::Kilo
             .data()
@@ -993,13 +1562,35 @@ fn scan_all_clients_with_env_strategy_inner(
         }
     }
 
-    if enabled.contains(&ClientId::Hermes) {
-        let hermes_db_path = ClientId::Hermes
+    if enabled.contains(&ClientId::DevinCli) || enabled.contains(&ClientId::DevinDesktop) {
+        let devin_db_path = ClientId::DevinCli
             .data()
             .resolve_path_with_env_strategy(home_dir, use_env_roots);
-        if std::path::Path::new(&hermes_db_path).exists() {
-            result.hermes_db = Some(PathBuf::from(hermes_db_path));
+        devin_cli_roots.push(PathBuf::from(devin_db_path));
+        result.devin_dbs = discover_devin_cli_dbs(devin_cli_roots);
+    }
+
+    if enabled.contains(&ClientId::Hermes) {
+        // Scan each candidate Hermes home (primary root plus native Windows
+        // fallbacks). The first candidate whose `state.db` exists becomes the
+        // primary `hermes_db`; every other default/profile db is collected as an
+        // extra path. Profile-scoped homes contribute only their own profile
+        // (see `discover_hermes_profile_state_dbs`).
+        let mut extra_dbs: Vec<PathBuf> = Vec::new();
+        for hermes_home in hermes_home_candidates(home_dir, use_env_roots) {
+            let default_db = hermes_home.join("state.db");
+            if default_db.is_file() {
+                if result.hermes_db.is_none() {
+                    result.hermes_db = Some(default_db);
+                } else if result.hermes_db.as_ref() != Some(&default_db) {
+                    extra_dbs.push(default_db);
+                }
+            }
+            extra_dbs.extend(discover_hermes_profile_state_dbs(&hermes_home));
         }
+        extra_dbs.sort_unstable();
+        extra_dbs.dedup();
+        result.get_mut(ClientId::Hermes).extend(extra_dbs);
     }
 
     if enabled.contains(&ClientId::Goose) {
@@ -1085,7 +1676,49 @@ fn scan_all_clients_with_env_strategy_inner(
         result.crush_dbs = discover_crush_dbs(home_dir, use_env_roots);
     }
 
+    if enabled.contains(&ClientId::Zcode) {
+        let zcode_db_path = PathBuf::from(format!("{}/.zcode/cli/db/db.sqlite", home_dir));
+        if zcode_db_path.is_file() {
+            result.zcode_db = Some(zcode_db_path);
+        }
+    }
+
     if enabled.contains(&ClientId::Kiro) {
+        let kiro_cli_path = ClientId::Kiro
+            .data()
+            .resolve_path_with_env_strategy(home_dir, use_env_roots);
+        push_unique_scan_task_with_pattern(
+            &mut tasks,
+            &mut seen_scan_roots,
+            ClientId::Kiro,
+            kiro_cli_path,
+            "*.json",
+        );
+
+        for root in kiro_global_storage_roots(home_dir, use_env_roots) {
+            push_unique_scan_task_with_pattern(
+                &mut tasks,
+                &mut seen_scan_roots,
+                ClientId::Kiro,
+                root,
+                "kiro-globalstorage",
+            );
+        }
+
+        // Kiro IDE (VS Code-based) writes per-workspace sessions under
+        // ~/.kiro/sessions/<workspace>/sess_<uuid>/ (session.json + messages.jsonl),
+        // NOT the ~/.kiro/sessions/cli/*.json layout the base client path targets.
+        // Scan the sessions root and match session.json inside sess_* dirs. This
+        // resolves via home_dir on Windows too (Kiro IDE uses ~/.kiro there).
+        let kiro_ide_sessions_root = PathBuf::from(format!("{}/.kiro/sessions", home_dir));
+        push_unique_scan_task_with_pattern(
+            &mut tasks,
+            &mut seen_scan_roots,
+            ClientId::Kiro,
+            kiro_ide_sessions_root,
+            "kiro-ide-session",
+        );
+
         let xdg_path = PathBuf::from(format!("{}/.local/share/kiro-cli/data.sqlite3", home_dir));
         if xdg_path.is_file() {
             result.kiro_db = Some(xdg_path);
@@ -1211,6 +1844,13 @@ fn scan_all_clients_with_env_strategy_inner(
     }
 
     if enabled.contains(&ClientId::Copilot) {
+        let desktop_db = PathBuf::from(format!("{}/.copilot/data.db", home_dir));
+        if desktop_db.is_file() {
+            result.copilot_desktop_db = Some(desktop_db);
+        }
+
+        result.copilot_vscode_sessions = discover_copilot_vscode_sessions(home_dir, use_env_roots);
+
         if let Some(path) = copilot_exporter_path_with_env_strategy(use_env_roots) {
             if path.is_file() && seen.insert(path.clone()) {
                 let copilot_files = result.get_mut(ClientId::Copilot);
@@ -1369,6 +2009,34 @@ mod tests {
     }
 
     #[test]
+    fn test_scan_directory_log_pattern() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path();
+
+        File::create(path.join("ide.log")).unwrap();
+        File::create(path.join("vscode.log")).unwrap();
+        File::create(path.join("session.jsonl")).unwrap();
+
+        let log_files = scan_directory(path.to_str().unwrap(), "*.log");
+        assert_eq!(log_files.len(), 2);
+        assert!(log_files.iter().all(|p| p.extension().unwrap() == "log"));
+    }
+
+    #[test]
+    fn test_scan_directory_workbuddy_db_pattern() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path();
+
+        File::create(path.join("workbuddy.db")).unwrap();
+        File::create(path.join("workbuddy.db-wal")).unwrap();
+        File::create(path.join("workbuddy.db-shm")).unwrap();
+
+        let db_files = scan_directory(path.to_str().unwrap(), "workbuddy.db");
+
+        assert_eq!(db_files, vec![path.join("workbuddy.db")]);
+    }
+
+    #[test]
     fn test_scan_directory_updates_jsonl_pattern() {
         let dir = TempDir::new().unwrap();
         let path = dir.path();
@@ -1482,9 +2150,140 @@ mod tests {
     }
 
     #[test]
+    fn test_scan_directory_kiro_globalstorage_pattern() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path();
+
+        let root = path.join("Library/Application Support/Kiro/User/globalStorage/kiro.kiroagent");
+        let workspace = root.join("workspace-a");
+        fs::create_dir_all(&workspace).unwrap();
+        File::create(workspace.join("execution.chat")).unwrap();
+        File::create(workspace.join("session.json")).unwrap();
+        File::create(workspace.join("execution")).unwrap();
+        File::create(workspace.join("index.sqlite")).unwrap();
+
+        let files = scan_directory(root.to_str().unwrap(), "kiro-globalstorage");
+        let names: Vec<_> = files
+            .iter()
+            .map(|path| path.file_name().unwrap().to_str().unwrap())
+            .collect();
+
+        assert_eq!(names, vec!["execution", "execution.chat", "session.json"]);
+    }
+
+    #[test]
+    fn test_scan_directory_kiro_ide_session_pattern() {
+        let dir = TempDir::new().unwrap();
+        let sessions_root = dir.path().join(".kiro/sessions");
+
+        // IDE layout: <workspace>/sess_<uuid>/{session.json,messages.jsonl}.
+        let sess_dir = sessions_root.join("workspace-a/sess_02f1c107");
+        fs::create_dir_all(&sess_dir).unwrap();
+        File::create(sess_dir.join("session.json")).unwrap();
+        File::create(sess_dir.join("messages.jsonl")).unwrap();
+
+        // CLI layout under the same tree must NOT be matched by this pattern
+        // (it is scanned separately as *.json), and a stray session.json outside
+        // a sess_* dir must be ignored.
+        let cli_dir = sessions_root.join("cli");
+        fs::create_dir_all(&cli_dir).unwrap();
+        File::create(cli_dir.join("session-001.json")).unwrap();
+        File::create(sessions_root.join("workspace-a/session.json")).unwrap();
+
+        let files = scan_directory(sessions_root.to_str().unwrap(), "kiro-ide-session");
+        let names: Vec<_> = files
+            .iter()
+            .map(|path| {
+                path.parent()
+                    .and_then(|p| p.file_name())
+                    .and_then(|n| n.to_str())
+                    .unwrap()
+                    .to_string()
+            })
+            .collect();
+
+        // Exactly one match: the session.json inside sess_02f1c107.
+        assert_eq!(files.len(), 1);
+        assert_eq!(names, vec!["sess_02f1c107"]);
+    }
+
+    #[test]
     fn test_scan_directory_nonexistent() {
         let files = scan_directory("/nonexistent/path/that/does/not/exist", "*.json");
         assert!(files.is_empty());
+    }
+
+    #[test]
+    fn test_scan_all_clients_discovers_zcode_v2_sqlite() {
+        let dir = TempDir::new().unwrap();
+        let db_dir = dir.path().join(".zcode/cli/db");
+        fs::create_dir_all(&db_dir).unwrap();
+        let db_path = db_dir.join("db.sqlite");
+        File::create(&db_path).unwrap();
+
+        let result = scan_all_clients_with_env_strategy(
+            dir.path().to_str().unwrap(),
+            &["zcode".to_string()],
+            false,
+        );
+
+        assert_eq!(result.zcode_db.as_deref(), Some(db_path.as_path()));
+    }
+
+    #[test]
+    fn test_scan_all_clients_discovers_codebuddy_extension_logs() {
+        let dir = TempDir::new().unwrap();
+        let ide_dir = dir
+            .path()
+            .join("AppData")
+            .join("Local")
+            .join("CodeBuddyExtension")
+            .join("Logs")
+            .join("CodeBuddyIDE")
+            .join("2026-07-01");
+        let vscode_dir = dir
+            .path()
+            .join("AppData")
+            .join("Local")
+            .join("CodeBuddyExtension")
+            .join("Logs")
+            .join("VSCode")
+            .join("2026-07-01");
+        fs::create_dir_all(&ide_dir).unwrap();
+        fs::create_dir_all(&vscode_dir).unwrap();
+        let ide_log = ide_dir.join("ide.log");
+        let vscode_log = vscode_dir.join("vscode.log");
+        File::create(&ide_log).unwrap();
+        File::create(&vscode_log).unwrap();
+
+        let result = scan_all_clients_with_env_strategy(
+            dir.path().to_str().unwrap(),
+            &["codebuddy".to_string()],
+            false,
+        );
+
+        let files = result.get(ClientId::CodeBuddy);
+        assert_eq!(files.len(), 2);
+        assert!(files.contains(&ide_log));
+        assert!(files.contains(&vscode_log));
+    }
+
+    #[test]
+    fn test_scan_all_clients_discovers_workbuddy_project_jsonl() {
+        let dir = TempDir::new().unwrap();
+        let project_dir = dir.path().join(".workbuddy/projects/project-a");
+        fs::create_dir_all(&project_dir).unwrap();
+        let session = project_dir.join("session.jsonl");
+        File::create(&session).unwrap();
+
+        let result = scan_all_clients_with_env_strategy(
+            dir.path().to_str().unwrap(),
+            &["workbuddy".to_string()],
+            false,
+        );
+
+        let files = result.get(ClientId::WorkBuddy);
+        assert_eq!(files.as_slice(), std::slice::from_ref(&session));
     }
 
     #[test]
@@ -1572,6 +2371,21 @@ mod tests {
         file.write_all(b"{}").unwrap();
     }
 
+    fn setup_mock_kiro_dir(base: &std::path::Path) {
+        let kiro_path = base.join(".kiro/sessions/cli");
+        fs::create_dir_all(&kiro_path).unwrap();
+        File::create(kiro_path.join("session-001.json")).unwrap();
+    }
+
+    fn setup_mock_kiro_global_storage_dir(base: &std::path::Path) {
+        let root = base.join("Library/Application Support/Kiro/User/globalStorage/kiro.kiroagent");
+        let workspace = root.join("workspace-a");
+        fs::create_dir_all(&workspace).unwrap();
+        File::create(workspace.join("execution.chat")).unwrap();
+        File::create(workspace.join("session.json")).unwrap();
+        File::create(workspace.join("execution")).unwrap();
+    }
+
     fn setup_mock_omp_dir(base: &std::path::Path) {
         let omp_path = base.join(".omp/agent/sessions/--omp-test--");
         fs::create_dir_all(&omp_path).unwrap();
@@ -1609,6 +2423,13 @@ mod tests {
         let mut file = File::create(grok_session.join("updates.jsonl")).unwrap();
         file.write_all(b"{\"method\":\"session/update\"}\n")
             .unwrap();
+    }
+
+    fn setup_mock_jcode_dir(base: &std::path::Path) {
+        let jcode_sessions = base.join(".jcode/sessions");
+        fs::create_dir_all(&jcode_sessions).unwrap();
+        File::create(jcode_sessions.join("session_fixture.json")).unwrap();
+        File::create(jcode_sessions.join("not-a-session.json")).unwrap();
     }
 
     fn setup_mock_openclaw_dir(base: &std::path::Path) {
@@ -1810,6 +2631,17 @@ mod tests {
         assert!(!is_opencode_db_filename("opencode-stable/beta.db"));
         assert!(!is_opencode_db_filename("auth.json"));
         assert!(!is_opencode_db_filename("other.db"));
+    }
+
+    #[test]
+    fn test_is_micode_db_filename_accepts_default_and_channel_rejects_sidecars() {
+        // Default and channel-suffixed db names are accepted.
+        assert!(is_micode_db_filename("mimocode.db"));
+        assert!(is_micode_db_filename("mimocode-stable.db"));
+        assert!(is_micode_db_filename("mimocode-nightly.db"));
+        // WAL/SHM sidecar files share the prefix — must be ignored.
+        assert!(!is_micode_db_filename("mimocode.db-wal"));
+        assert!(!is_micode_db_filename("mimocode.db-shm"));
     }
 
     #[test]
@@ -2032,6 +2864,65 @@ mod tests {
     }
 
     #[test]
+    fn test_scan_all_clients_with_scanner_settings_discovers_devin_cli_extra_databases() {
+        let dir = TempDir::new().unwrap();
+        let home = dir.path();
+
+        let default_db = home.join(".local/share/devin/cli/sessions.db");
+        fs::create_dir_all(default_db.parent().unwrap()).unwrap();
+        File::create(&default_db).unwrap();
+
+        let extra_root = home.join("imports/devin");
+        let extra_db = extra_root.join("profile/sessions.db");
+        fs::create_dir_all(extra_db.parent().unwrap()).unwrap();
+        File::create(&extra_db).unwrap();
+
+        let settings: ScannerSettings = serde_json::from_value(serde_json::json!({
+            "extraScanPaths": {
+                "devin-cli": [extra_root]
+            }
+        }))
+        .unwrap();
+        let result = scan_all_clients_with_scanner_settings(
+            home.to_str().unwrap(),
+            &["devin-cli".to_string()],
+            false,
+            &settings,
+        );
+
+        assert_eq!(result.devin_dbs, vec![default_db, extra_db]);
+        assert!(
+            result.get(ClientId::DevinCli).is_empty(),
+            "Devin SQLite databases should use the dedicated scan result"
+        );
+    }
+
+    #[test]
+    fn test_devin_desktop_scan_includes_configured_cli_lookup_databases() {
+        let dir = TempDir::new().unwrap();
+        let home = dir.path();
+        let extra_root = home.join("imports/devin");
+        let extra_db = extra_root.join("profile/sessions.db");
+        fs::create_dir_all(extra_db.parent().unwrap()).unwrap();
+        File::create(&extra_db).unwrap();
+
+        let settings: ScannerSettings = serde_json::from_value(serde_json::json!({
+            "extraScanPaths": {
+                "devin-cli": [extra_root]
+            }
+        }))
+        .unwrap();
+        let result = scan_all_clients_with_scanner_settings(
+            home.to_str().unwrap(),
+            &["devin-desktop".to_string()],
+            false,
+            &settings,
+        );
+
+        assert_eq!(result.devin_dbs, vec![extra_db]);
+    }
+
+    #[test]
     #[serial]
     fn test_scan_all_clients_with_scanner_settings_merges_hermes_extra_profile_db() {
         let dir = TempDir::new().unwrap();
@@ -2060,9 +2951,193 @@ mod tests {
         let result = scan_all_clients_with_scanner_settings(
             home.to_str().unwrap(),
             &["hermes".to_string()],
-            true,
+            false,
             &settings,
         );
+
+        assert_eq!(result.hermes_db.as_ref(), Some(&default_db));
+        assert_eq!(result.hermes_db_paths(), vec![default_db, profile_db]);
+    }
+
+    #[test]
+    #[serial]
+    fn test_scan_all_clients_with_scanner_settings_auto_discovers_hermes_profile_dbs() {
+        let dir = TempDir::new().unwrap();
+        let home = dir.path();
+
+        let default_dir = home.join(".hermes");
+        fs::create_dir_all(&default_dir).unwrap();
+        let default_db = default_dir.join("state.db");
+        File::create(&default_db).unwrap();
+
+        let profile_a_dir = home.join(".hermes/profiles/director_planning");
+        fs::create_dir_all(&profile_a_dir).unwrap();
+        let profile_a_db = profile_a_dir.join("state.db");
+        File::create(&profile_a_db).unwrap();
+
+        let profile_b_dir = home.join(".hermes/profiles/research");
+        fs::create_dir_all(&profile_b_dir).unwrap();
+        let profile_b_db = profile_b_dir.join("state.db");
+        File::create(&profile_b_db).unwrap();
+
+        // Shallow discovery should not pick up arbitrary nested state.db files.
+        let nested_dir = home.join(".hermes/profiles/research/archive");
+        fs::create_dir_all(&nested_dir).unwrap();
+        File::create(nested_dir.join("state.db")).unwrap();
+
+        let result = scan_all_clients_with_scanner_settings(
+            home.to_str().unwrap(),
+            &["hermes".to_string()],
+            false,
+            &ScannerSettings::default(),
+        );
+
+        assert_eq!(result.hermes_db.as_ref(), Some(&default_db));
+        assert_eq!(
+            result.hermes_db_paths(),
+            vec![default_db, profile_a_db, profile_b_db]
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_scan_all_clients_with_scanner_settings_auto_discovers_hermes_profiles_without_default_db(
+    ) {
+        let dir = TempDir::new().unwrap();
+        let home = dir.path();
+
+        let profile_dir = home.join(".hermes/profiles/research");
+        fs::create_dir_all(&profile_dir).unwrap();
+        let profile_db = profile_dir.join("state.db");
+        File::create(&profile_db).unwrap();
+
+        let result = scan_all_clients_with_scanner_settings(
+            home.to_str().unwrap(),
+            &["hermes".to_string()],
+            false,
+            &ScannerSettings::default(),
+        );
+
+        assert_eq!(result.hermes_db, None);
+        assert_eq!(result.hermes_db_paths(), vec![profile_db]);
+    }
+
+    #[test]
+    #[serial]
+    fn test_scan_all_clients_with_scanner_settings_auto_discovers_hermes_profiles_under_env_home() {
+        let previous = std::env::var("HERMES_HOME").ok();
+        let dir = TempDir::new().unwrap();
+        let home = dir.path();
+        let hermes_home = home.join("custom-hermes-home");
+
+        fs::create_dir_all(&hermes_home).unwrap();
+        let default_db = hermes_home.join("state.db");
+        File::create(&default_db).unwrap();
+
+        let profile_dir = hermes_home.join("profiles/research");
+        fs::create_dir_all(&profile_dir).unwrap();
+        let profile_db = profile_dir.join("state.db");
+        File::create(&profile_db).unwrap();
+
+        unsafe { std::env::set_var("HERMES_HOME", &hermes_home) };
+        let result = scan_all_clients_with_scanner_settings(
+            home.to_str().unwrap(),
+            &["hermes".to_string()],
+            true,
+            &ScannerSettings::default(),
+        );
+        restore_env("HERMES_HOME", previous);
+
+        assert_eq!(result.hermes_db.as_ref(), Some(&default_db));
+        assert_eq!(result.hermes_db_paths(), vec![default_db, profile_db]);
+    }
+
+    #[test]
+    #[serial]
+    fn test_scan_all_clients_with_scanner_settings_profile_scoped_hermes_home_isolates_to_own_profile(
+    ) {
+        // Data-isolation guarantee: a profile-scoped `HERMES_HOME` must NOT pull
+        // in sibling profiles under `<root>/profiles/*` or the default profile at
+        // `<root>/state.db`. Only the scoped profile's own `state.db` is scanned.
+        let previous = std::env::var("HERMES_HOME").ok();
+        let dir = TempDir::new().unwrap();
+        let home = dir.path();
+
+        let profile_root = home.join(".hermes/profiles");
+        let default_db = home.join(".hermes/state.db");
+        fs::create_dir_all(default_db.parent().unwrap()).unwrap();
+        File::create(&default_db).unwrap();
+
+        let coder_dir = profile_root.join("coder");
+        fs::create_dir_all(&coder_dir).unwrap();
+        let coder_db = coder_dir.join("state.db");
+        File::create(&coder_db).unwrap();
+
+        let research_dir = profile_root.join("research");
+        fs::create_dir_all(&research_dir).unwrap();
+        let research_db = research_dir.join("state.db");
+        File::create(&research_db).unwrap();
+
+        // Profile-scoped homes must also not scan `<active-profile>/profiles`.
+        let nested_dir = coder_dir.join("profiles/archived");
+        fs::create_dir_all(&nested_dir).unwrap();
+        File::create(nested_dir.join("state.db")).unwrap();
+
+        unsafe { std::env::set_var("HERMES_HOME", &coder_dir) };
+        let result = scan_all_clients_with_scanner_settings(
+            home.to_str().unwrap(),
+            &["hermes".to_string()],
+            true,
+            &ScannerSettings::default(),
+        );
+        restore_env("HERMES_HOME", previous);
+
+        assert_eq!(result.hermes_db.as_ref(), Some(&coder_db));
+        assert_eq!(result.hermes_db_paths(), vec![coder_db.clone()]);
+        assert!(
+            !result.hermes_db_paths().contains(&research_db),
+            "profile-scoped HERMES_HOME must not discover sibling profiles"
+        );
+        assert!(
+            !result.hermes_db_paths().contains(&default_db),
+            "profile-scoped HERMES_HOME must not discover the default profile"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_scan_all_clients_with_scanner_settings_discovers_hermes_windows_local_appdata_home() {
+        // Native Windows root: Hermes stores its home under
+        // `%LOCALAPPDATA%\hermes` (literal `<home>/AppData/Local/hermes`). Run
+        // with env roots disabled so this exercises the cross-platform
+        // `AppData/Local` fallback, mirroring the Crush LOCALAPPDATA tests.
+        let previous_hermes_home = std::env::var("HERMES_HOME").ok();
+        let previous_local_app_data = std::env::var("LOCALAPPDATA").ok();
+        unsafe { std::env::remove_var("HERMES_HOME") };
+        unsafe { std::env::remove_var("LOCALAPPDATA") };
+
+        let dir = TempDir::new().unwrap();
+        let home = dir.path();
+
+        let windows_home = home.join("AppData/Local/hermes");
+        fs::create_dir_all(&windows_home).unwrap();
+        let default_db = windows_home.join("state.db");
+        File::create(&default_db).unwrap();
+
+        let profile_dir = windows_home.join("profiles/research");
+        fs::create_dir_all(&profile_dir).unwrap();
+        let profile_db = profile_dir.join("state.db");
+        File::create(&profile_db).unwrap();
+
+        let result = scan_all_clients_with_scanner_settings(
+            home.to_str().unwrap(),
+            &["hermes".to_string()],
+            false,
+            &ScannerSettings::default(),
+        );
+
+        restore_env("HERMES_HOME", previous_hermes_home);
+        restore_env("LOCALAPPDATA", previous_local_app_data);
 
         assert_eq!(result.hermes_db.as_ref(), Some(&default_db));
         assert_eq!(result.hermes_db_paths(), vec![default_db, profile_db]);
@@ -2124,7 +3199,7 @@ mod tests {
         let hermes_only = scan_all_clients_with_scanner_settings(
             home.to_str().unwrap(),
             &["hermes".to_string()],
-            true,
+            false,
             &settings,
         );
         assert_eq!(hermes_only.hermes_db_paths(), vec![profile_db]);
@@ -2388,6 +3463,32 @@ mod tests {
         assert!(result.get(ClientId::OpenCode).is_empty());
     }
 
+    /// Regression for #815: nested-layout subagent/workflow transcripts
+    /// (`<session>/subagents/workflows/<wf>/agent-*.jsonl`) must be discovered by
+    /// the recursive project-dir walk, so their usage is counted. The sibling
+    /// `journal.jsonl` orchestration metadata is discovered too, but the parser
+    /// drops it (covered in the claudecode parser tests).
+    #[test]
+    fn test_scan_all_clients_claude_nested_workflow_agents() {
+        let dir = TempDir::new().unwrap();
+        let home = dir.path();
+        let wf = home.join(".claude/projects/myproject/sess-uuid/subagents/workflows/wf_abc");
+        fs::create_dir_all(&wf).unwrap();
+        let agent = wf.join("agent-a123.jsonl");
+        File::create(&agent).unwrap().write_all(b"{}\n").unwrap();
+        File::create(wf.join("journal.jsonl"))
+            .unwrap()
+            .write_all(b"{}\n")
+            .unwrap();
+
+        let result = scan_all_clients(home.to_str().unwrap(), &["claude".to_string()]);
+        assert!(
+            result.get(ClientId::Claude).iter().any(|p| p == &agent),
+            "nested workflow agent transcript must be discovered, got {:?}",
+            result.get(ClientId::Claude)
+        );
+    }
+
     #[test]
     fn test_scan_all_clients_claude_transcripts() {
         let dir = TempDir::new().unwrap();
@@ -2607,6 +3708,51 @@ mod tests {
     }
 
     #[test]
+    fn test_scan_all_clients_kiro_includes_cli_and_global_storage() {
+        let dir = TempDir::new().unwrap();
+        let home = dir.path();
+        setup_mock_kiro_dir(home);
+        setup_mock_kiro_global_storage_dir(home);
+
+        let result = scan_all_clients(home.to_str().unwrap(), &["kiro".to_string()]);
+        assert_eq!(result.get(ClientId::Kiro).len(), 4);
+        assert!(result
+            .get(ClientId::Kiro)
+            .iter()
+            .any(|p| p.ends_with("session-001.json")));
+        assert!(result
+            .get(ClientId::Kiro)
+            .iter()
+            .any(|p| p.ends_with("execution.chat")));
+        assert!(result
+            .get(ClientId::Kiro)
+            .iter()
+            .any(|p| p.ends_with("execution")));
+    }
+
+    #[test]
+    fn test_scan_all_clients_kiro_includes_ide_sessions() {
+        let dir = TempDir::new().unwrap();
+        let home = dir.path();
+
+        let sess_dir = home.join(".kiro/sessions/workspace-a/sess_02f1c107");
+        fs::create_dir_all(&sess_dir).unwrap();
+        File::create(sess_dir.join("session.json")).unwrap();
+        File::create(sess_dir.join("messages.jsonl")).unwrap();
+
+        let result = scan_all_clients(home.to_str().unwrap(), &["kiro".to_string()]);
+        assert!(result
+            .get(ClientId::Kiro)
+            .iter()
+            .any(|p| p.ends_with("sess_02f1c107/session.json")));
+        // The sibling messages.jsonl is read by the parser, not scanned directly.
+        assert!(!result
+            .get(ClientId::Kiro)
+            .iter()
+            .any(|p| p.ends_with("messages.jsonl")));
+    }
+
+    #[test]
     fn test_scan_crush_registry_resolves_relative_and_absolute_data_dirs() {
         let dir = TempDir::new().unwrap();
         let project_a = dir.path().join("project-a");
@@ -2712,6 +3858,116 @@ mod tests {
 
         restore_current_dir(&previous_dir);
         restore_env("XDG_DATA_HOME", previous_xdg);
+    }
+
+    #[test]
+    #[serial]
+    fn test_discover_crush_dbs_honors_crush_global_data_env() {
+        let previous_global = std::env::var("CRUSH_GLOBAL_DATA").ok();
+        let previous_xdg = std::env::var("XDG_DATA_HOME").ok();
+        let previous_local_app_data = std::env::var("LOCALAPPDATA").ok();
+        unsafe { std::env::remove_var("LOCALAPPDATA") };
+
+        let dir = TempDir::new().unwrap();
+        let home = dir.path().join("home");
+        let global_data = dir.path().join("crush-global");
+        let project = dir.path().join("project");
+        fs::create_dir_all(project.join(".crush")).unwrap();
+        File::create(project.join(".crush").join("crush.db")).unwrap();
+
+        let projects_json = format!(
+            r#"{{ "projects": [ {{ "path": "{}", "data_dir": ".crush" }} ] }}"#,
+            project.display()
+        );
+        setup_mock_crush_registry(&global_data.join("projects.json"), &projects_json);
+
+        unsafe { std::env::set_var("CRUSH_GLOBAL_DATA", &global_data) };
+        unsafe { std::env::remove_var("XDG_DATA_HOME") };
+
+        let result = discover_crush_dbs(home.to_str().unwrap(), true);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].db_path, project.join(".crush").join("crush.db"));
+
+        let without_env_roots = discover_crush_dbs(home.to_str().unwrap(), false);
+        assert!(
+            without_env_roots.is_empty(),
+            "CRUSH_GLOBAL_DATA must be ignored when env roots are disabled"
+        );
+
+        restore_env("CRUSH_GLOBAL_DATA", previous_global);
+        restore_env("XDG_DATA_HOME", previous_xdg);
+        restore_env("LOCALAPPDATA", previous_local_app_data);
+    }
+
+    #[test]
+    #[serial]
+    fn test_discover_crush_dbs_scans_windows_local_appdata_under_home() {
+        let previous_global = std::env::var("CRUSH_GLOBAL_DATA").ok();
+        let previous_xdg = std::env::var("XDG_DATA_HOME").ok();
+        unsafe { std::env::remove_var("CRUSH_GLOBAL_DATA") };
+        unsafe { std::env::remove_var("XDG_DATA_HOME") };
+
+        let dir = TempDir::new().unwrap();
+        let home = dir.path().join("home");
+        let project = dir.path().join("project");
+        fs::create_dir_all(project.join(".crush")).unwrap();
+        File::create(project.join(".crush").join("crush.db")).unwrap();
+
+        let projects_json = format!(
+            r#"{{ "projects": [ {{ "path": "{}", "data_dir": ".crush" }} ] }}"#,
+            project.display()
+        );
+        setup_mock_crush_registry(
+            &home.join("AppData/Local/crush/projects.json"),
+            &projects_json,
+        );
+
+        let result = discover_crush_dbs(home.to_str().unwrap(), false);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].db_path, project.join(".crush").join("crush.db"));
+
+        restore_env("CRUSH_GLOBAL_DATA", previous_global);
+        restore_env("XDG_DATA_HOME", previous_xdg);
+    }
+
+    #[test]
+    #[serial]
+    fn test_discover_crush_dbs_dedups_across_registry_candidates() {
+        let previous_global = std::env::var("CRUSH_GLOBAL_DATA").ok();
+        let previous_xdg = std::env::var("XDG_DATA_HOME").ok();
+        let previous_local_app_data = std::env::var("LOCALAPPDATA").ok();
+        unsafe { std::env::remove_var("LOCALAPPDATA") };
+
+        let dir = TempDir::new().unwrap();
+        let home = dir.path().join("home");
+        let xdg = dir.path().join("xdg");
+        let project = dir.path().join("project");
+        fs::create_dir_all(project.join(".crush")).unwrap();
+        File::create(project.join(".crush").join("crush.db")).unwrap();
+
+        let projects_json = format!(
+            r#"{{ "projects": [ {{ "path": "{}", "data_dir": ".crush" }} ] }}"#,
+            project.display()
+        );
+        setup_mock_crush_registry(&xdg.join("crush/projects.json"), &projects_json);
+        setup_mock_crush_registry(
+            &home.join("AppData/Local/crush/projects.json"),
+            &projects_json,
+        );
+
+        unsafe { std::env::remove_var("CRUSH_GLOBAL_DATA") };
+        unsafe { std::env::set_var("XDG_DATA_HOME", &xdg) };
+
+        let result = discover_crush_dbs(home.to_str().unwrap(), true);
+        assert_eq!(
+            result.len(),
+            1,
+            "same crush.db reachable via multiple registries must be deduplicated"
+        );
+
+        restore_env("CRUSH_GLOBAL_DATA", previous_global);
+        restore_env("XDG_DATA_HOME", previous_xdg);
+        restore_env("LOCALAPPDATA", previous_local_app_data);
     }
 
     #[test]
@@ -2870,6 +4126,27 @@ mod tests {
     }
 
     #[test]
+    fn test_discover_codex_compat_homes_finds_orca_runtime_home() {
+        let dir = TempDir::new().unwrap();
+        let home = dir.path();
+        let orca_sessions = home
+            .join("Library/Application Support/orca/codex-runtime-home/home/sessions/2026/07/15");
+        fs::create_dir_all(&orca_sessions).unwrap();
+        let rollout = orca_sessions.join("rollout-orca.jsonl");
+        File::create(&rollout).unwrap();
+
+        let discovered = discover_codex_compat_homes(home.to_str().unwrap(), true, false);
+        assert_eq!(discovered.len(), 1);
+        assert_eq!(
+            scan_directory(&discovered[0].join("sessions").to_string_lossy(), "*.jsonl"),
+            vec![rollout]
+        );
+
+        assert!(discover_codex_compat_homes(home.to_str().unwrap(), false, false).is_empty());
+        assert!(discover_codex_compat_homes(home.to_str().unwrap(), true, true).is_empty());
+    }
+
+    #[test]
     fn test_scan_all_clients_kimi() {
         let dir = TempDir::new().unwrap();
         let home = dir.path();
@@ -2895,6 +4172,23 @@ mod tests {
         );
         assert_eq!(result.get(ClientId::Grok).len(), 1);
         assert!(result.get(ClientId::Grok)[0].ends_with("updates.jsonl"));
+        assert!(result.get(ClientId::OpenCode).is_empty());
+        assert!(result.get(ClientId::Claude).is_empty());
+    }
+
+    #[test]
+    fn test_scan_all_clients_jcode() {
+        let dir = TempDir::new().unwrap();
+        let home = dir.path();
+        setup_mock_jcode_dir(home);
+
+        let result = scan_all_clients_with_env_strategy(
+            home.to_str().unwrap(),
+            &["jcode".to_string()],
+            false,
+        );
+        assert_eq!(result.get(ClientId::Jcode).len(), 1);
+        assert!(result.get(ClientId::Jcode)[0].ends_with("session_fixture.json"));
         assert!(result.get(ClientId::OpenCode).is_empty());
         assert!(result.get(ClientId::Claude).is_empty());
     }

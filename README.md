@@ -3,7 +3,7 @@
 > Track, visualize, and compete on AI coding-assistant token usage — across Claude Code, Codex, Cursor, OpenCode, Gemini, and more.
 
 > [!NOTE]
-> **This project is a fork and secondary development of [tokscale](https://github.com/junhoyeo/tokscale) by [Junho Yeo](https://github.com/junhoyeo)** (original site: [tokscale.ai](https://tokscale.ai)).
+> **This project is a fork and secondary development of [Tokscale](https://github.com/junhoyeo/tokscale) by [Junho Yeo](https://github.com/junhoyeo)** (original site: [tokscale.ai](https://tokscale.ai)).
 > All credit for the original design and implementation goes to the upstream author and contributors. Like the original, this project is released under the **MIT License** — see [LICENSE](./LICENSE).
 
 **Tokens** is a CLI + web leaderboard for monitoring your AI coding token usage and cost. Install the CLI, sign in once, and your usage submits automatically — then see your stats, contribution graph, and rank at **[tokens.ci](https://tokens.ci)**.
@@ -127,4 +127,4 @@ All usage is read **locally** from each tool's own data directory — nothing le
 
 [MIT](./LICENSE) — the same license as the upstream project.
 
-Built on **[tokscale](https://github.com/junhoyeo/tokscale)** by [Junho Yeo](https://github.com/junhoyeo). Huge thanks to the original author and contributors for the foundational work.
+Built on **[Tokscale](https://github.com/junhoyeo/tokscale)** by [Junho Yeo](https://github.com/junhoyeo). Huge thanks to the original author and contributors for the foundational work.

@@ -9,7 +9,7 @@ use super::{
     normalize_opencode_agent_name, normalize_workspace_key, workspace_label_from_key,
     UnifiedMessage,
 };
-use crate::TokenBreakdown;
+use crate::{provider_identity, TokenBreakdown};
 #[cfg(test)]
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
@@ -138,6 +138,13 @@ fn opencode_duration_ms(time: &OpenCodeTime) -> Option<i64> {
     }
 }
 
+fn embedded_cost(cost: Option<f64>) -> f64 {
+    match cost {
+        Some(cost) if cost.is_finite() && cost >= 0.0 => cost,
+        _ => 0.0,
+    }
+}
+
 pub fn parse_opencode_file(path: &Path) -> Option<UnifiedMessage> {
     let data = read_file_or_none(path)?;
     let mut bytes = data;
@@ -167,10 +174,14 @@ pub fn parse_opencode_file(path: &Path) -> Option<UnifiedMessage> {
             .map(|s| s.to_string())
     });
 
+    let provider_id = msg.provider_id.unwrap_or_else(|| "unknown".to_string());
+    let provider_id = provider_identity::canonical_provider(&provider_id).unwrap_or(provider_id);
+    let cost = embedded_cost(msg.cost);
+
     let mut unified = UnifiedMessage::new_with_agent(
         "opencode",
         model_id,
-        msg.provider_id.unwrap_or_else(|| "unknown".to_string()),
+        provider_id,
         session_id,
         msg.time.created as i64,
         TokenBreakdown {
@@ -180,13 +191,25 @@ pub fn parse_opencode_file(path: &Path) -> Option<UnifiedMessage> {
             cache_write: tokens.cache.write.max(0),
             reasoning: tokens.reasoning.unwrap_or(0).max(0),
         },
-        msg.cost.unwrap_or(0.0).max(0.0),
+        cost,
         agent,
     );
     unified.duration_ms = opencode_duration_ms(&msg.time);
     unified.dedup_key = dedup_key;
     set_workspace_from_root(&mut unified, workspace_root.as_deref());
+    mark_opencode_cost_source(&mut unified);
     Some(unified)
+}
+
+/// OpenCode computes per-message cost at request time from its own pricing
+/// data (models.dev), so a positive `cost` is authoritative and must survive
+/// tokscale's LiteLLM repricing pass. A zero cost usually means OpenCode
+/// itself had no pricing for the model — leave it `Unknown` so
+/// `apply_pricing_if_available` can still estimate.
+fn mark_opencode_cost_source(unified: &mut UnifiedMessage) {
+    if unified.cost > 0.0 {
+        unified.mark_provider_reported_cost();
+    }
 }
 
 pub fn parse_opencode_sqlite(db_path: &Path) -> Vec<UnifiedMessage> {
@@ -268,6 +291,8 @@ pub fn parse_opencode_sqlite(db_path: &Path) -> Vec<UnifiedMessage> {
         };
 
         let provider_id = msg.provider_id.unwrap_or_else(|| "unknown".to_string());
+        let provider_id =
+            provider_identity::canonical_provider(&provider_id).unwrap_or(provider_id);
         let agent_or_mode = msg.mode.or(msg.agent);
         let agent = agent_or_mode.map(|a| normalize_opencode_agent_name(&a));
         let input = tokens.input.max(0);
@@ -275,7 +300,7 @@ pub fn parse_opencode_sqlite(db_path: &Path) -> Vec<UnifiedMessage> {
         let reasoning = tokens.reasoning.unwrap_or(0).max(0);
         let cache_read = tokens.cache.read.max(0);
         let cache_write = tokens.cache.write.max(0);
-        let cost = msg.cost.unwrap_or(0.0).max(0.0);
+        let cost = embedded_cost(msg.cost);
         let dedup_key = message_id.clone().unwrap_or(row_id);
         let fingerprint = OpenCodeSqliteFingerprint {
             created_bits: msg.time.created.to_bits(),
@@ -313,6 +338,7 @@ pub fn parse_opencode_sqlite(db_path: &Path) -> Vec<UnifiedMessage> {
             .as_deref()
             .or(embedded_workspace_root.as_deref());
         set_workspace_from_root(&mut unified, workspace_root);
+        mark_opencode_cost_source(&mut unified);
 
         if let Some(index) = fingerprint_indices.get(&fingerprint).copied() {
             let dedup_state = &mut dedup_states[index];
@@ -740,6 +766,131 @@ mod tests {
         );
         assert_eq!(messages[0].model_id, "claude-sonnet-4");
         assert_eq!(messages[0].tokens.input, 1000);
+    }
+
+    #[test]
+    fn test_parse_opencode_file_marks_positive_cost_as_provider_reported() {
+        use std::io::Write;
+        let json = r#"{
+            "id": "msg_cost_001",
+            "sessionID": "ses_cost",
+            "role": "assistant",
+            "modelID": "z-ai/glm-4.6",
+            "providerID": "openrouter",
+            "cost": 0.0025158,
+            "tokens": {
+                "input": 2675,
+                "output": 28,
+                "reasoning": 1,
+                "cache": { "read": 7700, "write": 0 }
+            },
+            "time": { "created": 1765915142201.0 }
+        }"#;
+
+        let mut temp_file = tempfile::Builder::new().suffix(".json").tempfile().unwrap();
+        temp_file.write_all(json.as_bytes()).unwrap();
+
+        let msg = parse_opencode_file(temp_file.path()).expect("Should parse");
+        assert_eq!(
+            msg.cost_source,
+            crate::sessions::CostSource::ProviderReported,
+            "positive embedded cost must survive the LiteLLM repricing pass"
+        );
+        assert!((msg.cost - 0.0025158).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_parse_opencode_file_keeps_zero_cost_unknown_for_estimation() {
+        use std::io::Write;
+        let json = r#"{
+            "id": "msg_cost_002",
+            "sessionID": "ses_cost",
+            "role": "assistant",
+            "modelID": "claude-sonnet-4",
+            "providerID": "anthropic",
+            "cost": 0.0,
+            "tokens": {
+                "input": 1000,
+                "output": 500,
+                "reasoning": 0,
+                "cache": { "read": 0, "write": 0 }
+            },
+            "time": { "created": 1700000000000.0 }
+        }"#;
+
+        let mut temp_file = tempfile::Builder::new().suffix(".json").tempfile().unwrap();
+        temp_file.write_all(json.as_bytes()).unwrap();
+
+        let msg = parse_opencode_file(temp_file.path()).expect("Should parse");
+        assert_eq!(
+            msg.cost_source,
+            crate::sessions::CostSource::Unknown,
+            "zero cost means OpenCode had no pricing — leave repricing enabled"
+        );
+    }
+
+    #[test]
+    fn test_parse_opencode_sqlite_marks_positive_cost_as_provider_reported() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let db_path = dir.path().join("test_opencode_cost.db");
+        let conn = create_opencode_sqlite_db(&db_path);
+
+        let costed = r#"{
+            "role": "assistant",
+            "modelID": "z-ai/glm-4.6",
+            "providerID": "openrouter",
+            "cost": 0.0025158,
+            "tokens": {
+                "input": 2675,
+                "output": 28,
+                "reasoning": 1,
+                "cache": { "read": 7700, "write": 0 }
+            },
+            "time": { "created": 1765915142201.0 }
+        }"#;
+        let free = r#"{
+            "role": "assistant",
+            "modelID": "claude-sonnet-4",
+            "providerID": "anthropic",
+            "cost": 0.0,
+            "tokens": {
+                "input": 1000,
+                "output": 500,
+                "reasoning": 0,
+                "cache": { "read": 0, "write": 0 }
+            },
+            "time": { "created": 1700000000000.0 }
+        }"#;
+
+        conn.execute(
+            "INSERT INTO message (id, session_id, data) VALUES (?1, ?2, ?3)",
+            rusqlite::params!["msg_costed", "ses_cost", costed],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO message (id, session_id, data) VALUES (?1, ?2, ?3)",
+            rusqlite::params!["msg_free", "ses_cost", free],
+        )
+        .unwrap();
+        drop(conn);
+
+        let messages = parse_opencode_sqlite(&db_path);
+        assert_eq!(messages.len(), 2);
+
+        let costed_msg = messages
+            .iter()
+            .find(|m| m.dedup_key.as_deref() == Some("msg_costed"))
+            .unwrap();
+        assert_eq!(
+            costed_msg.cost_source,
+            crate::sessions::CostSource::ProviderReported
+        );
+
+        let free_msg = messages
+            .iter()
+            .find(|m| m.dedup_key.as_deref() == Some("msg_free"))
+            .unwrap();
+        assert_eq!(free_msg.cost_source, crate::sessions::CostSource::Unknown);
     }
 
     #[test]

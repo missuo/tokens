@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * Benchmark Runner for Tokscale CLI
+ * Benchmark Runner for Tokens CLI
  * 
  * Measures performance of the graph command with:
  * - Wall-clock time (primary metric)
@@ -116,7 +116,7 @@ function parseArgs(): Partial<BenchmarkConfig> {
         break;
       case "--help":
         console.log(`
-Benchmark Runner for Tokscale CLI
+Benchmark Runner for Tokens CLI
 
 Usage: bunx benchmarks/runner.ts [options]
 
@@ -285,7 +285,7 @@ function calculateStats(values: number[]): {
 // =============================================================================
 
 async function runBenchmark(config: BenchmarkConfig): Promise<BenchmarkResult> {
-  console.log("\n📊 Tokscale Benchmark Runner\n");
+  console.log("\n📊 Tokens Benchmark Runner\n");
   console.log(`  Implementation: ${config.implementation}`);
   console.log(`  Data source: ${config.useSyntheticData ? "synthetic" : "real"}`);
   console.log(`  Iterations: ${config.iterations} (+ ${config.warmupIterations} warmup)`);

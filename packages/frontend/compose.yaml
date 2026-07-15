@@ -1,13 +1,13 @@
-name: tokscale
+name: tokens
 
 services:
   db:
     image: postgres:17-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_USER: tokscale
+      POSTGRES_USER: ${POSTGRES_USER:-tokens}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: tokscale
+      POSTGRES_DB: ${POSTGRES_DB:-tokens}
     volumes:
       - pgdata:/var/lib/postgresql/data
     networks:
@@ -15,7 +15,11 @@ services:
     # No `ports:` — the database is reachable only on the internal network,
     # never published to the host or the outside world.
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U tokscale -d tokscale"]
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-tokens} -d ${POSTGRES_DB:-tokens}",
+        ]
       interval: 5s
       timeout: 5s
       retries: 12
@@ -33,7 +37,7 @@ services:
     environment:
       NODE_ENV: production
       # The app talks to Postgres over the internal network; no TLS needed.
-      DATABASE_URL: postgres://tokscale:${POSTGRES_PASSWORD}@db:5432/tokscale?sslmode=disable
+      DATABASE_URL: postgres://${POSTGRES_USER:-tokens}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-tokens}?sslmode=disable
       DATABASE_SSL: disable
       NEXT_PUBLIC_URL: ${NEXT_PUBLIC_URL}
       GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID}

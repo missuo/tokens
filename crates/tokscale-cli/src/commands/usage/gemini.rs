@@ -231,6 +231,9 @@ pub fn fetch() -> Result<UsageOutput> {
             plan: None,
             email: None,
             metrics: build_metrics(&buckets),
+            reset_credits: None,
+            credit_status: None,
+            spend_control: None,
         })
     })
 }

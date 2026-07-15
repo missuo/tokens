@@ -109,6 +109,7 @@ pub struct PricingLookup {
     litellm: HashMap<String, ModelPricing>,
     openrouter: HashMap<String, ModelPricing>,
     cursor: HashMap<String, ModelPricing>,
+    sakana: HashMap<String, ModelPricing>,
     models_dev: HashMap<String, ModelPricing>,
     litellm_keys: Vec<String>,
     openrouter_keys: Vec<String>,
@@ -121,6 +122,7 @@ pub struct PricingLookup {
     openrouter_model_part: HashMap<String, String>,
     models_dev_model_part: HashMap<String, String>,
     cursor_lower: HashMap<String, String>,
+    sakana_lower: HashMap<String, String>,
     lookup_cache: RwLock<HashMap<String, Option<CachedResult>>>,
 }
 
@@ -136,13 +138,17 @@ impl PricingLookup {
         openrouter: HashMap<String, ModelPricing>,
         cursor: HashMap<String, ModelPricing>,
     ) -> Self {
-        Self::new_with_models_dev(litellm, openrouter, cursor, HashMap::new())
+        // Bare `new` keeps the legacy 3-source shape (no Sakana built-in
+        // overrides); production wiring goes through `new_with_models_dev`
+        // which threads the Sakana map alongside Cursor.
+        Self::new_with_models_dev(litellm, openrouter, cursor, HashMap::new(), HashMap::new())
     }
 
     pub fn new_with_models_dev(
         litellm: HashMap<String, ModelPricing>,
         openrouter: HashMap<String, ModelPricing>,
         cursor: HashMap<String, ModelPricing>,
+        sakana: HashMap<String, ModelPricing>,
         models_dev: HashMap<String, ModelPricing>,
     ) -> Self {
         let mut litellm_keys: Vec<String> = litellm.keys().cloned().collect();
@@ -209,6 +215,11 @@ impl PricingLookup {
             cursor_lower.insert(key.to_lowercase(), key.clone());
         }
 
+        let mut sakana_lower = HashMap::with_capacity(sakana.len());
+        for key in sakana.keys() {
+            sakana_lower.insert(key.to_lowercase(), key.clone());
+        }
+
         let build_key_parts = |keys: &[String]| -> Vec<KeyModelPart> {
             keys.iter()
                 .map(|key| {
@@ -230,6 +241,7 @@ impl PricingLookup {
             litellm,
             openrouter,
             cursor,
+            sakana,
             models_dev,
             litellm_keys,
             openrouter_keys,
@@ -242,6 +254,7 @@ impl PricingLookup {
             openrouter_model_part,
             models_dev_model_part,
             cursor_lower,
+            sakana_lower,
             lookup_cache: RwLock::new(HashMap::with_capacity(64)),
         }
     }
@@ -375,6 +388,22 @@ impl PricingLookup {
         let guarded_lookup = |candidate: &str| {
             do_lookup(candidate).filter(|result| !unsafe_claude_resolution(result))
         };
+
+        // 1.5. Generic provider-routing prefix fallback: ids coming from a
+        // router/proxy (e.g. `cx/gpt-5.5` via an `omniroute` provider) carry a
+        // prefix outside the curated `PROVIDER_PREFIXES` list, so the
+        // known-prefix stripping inside `lookup_auto` never fires for them.
+        // The direct exact lookup above already had first crack at the full
+        // id, so a dataset key that legitimately keeps its prefix (e.g.
+        // `anthropic/claude-fable-5`) resolves there and never reaches this
+        // fallback. Only the terminal path segment is retried here, matching
+        // the `/`-scoped fallbacks already used by the Cursor/Sakana exact
+        // matchers.
+        if let Some(terminal) = strip_generic_provider_prefix(lower_ref) {
+            if let Some(result) = guarded_lookup(terminal) {
+                return Some(result);
+            }
+        }
 
         // 2. Try stripping unknown suffixes (e.g., -thinking, -high, -codex)
         if let Some(result) = try_strip_unknown_suffix(lower_ref, guarded_lookup) {
@@ -577,6 +606,19 @@ impl PricingLookup {
         }
         if let Some(version_normalized) = normalize_version_separator(model_id) {
             if let Some(result) = self.exact_match_cursor(&version_normalized) {
+                return Some(result);
+            }
+        }
+
+        // Sakana built-in overrides sit at the SAME precedence as Cursor:
+        // upstream real prices (litellm/openrouter/models.dev exact + prefix)
+        // already won above, so Sakana only catches ids upstream doesn't price,
+        // while still beating the fuzzy guesses below.
+        if let Some(result) = self.exact_match_sakana(model_id) {
+            return Some(result);
+        }
+        if let Some(version_normalized) = normalize_version_separator(model_id) {
+            if let Some(result) = self.exact_match_sakana(&version_normalized) {
                 return Some(result);
             }
         }
@@ -928,6 +970,20 @@ impl PricingLookup {
             if model_part != model_id {
                 if let Some(key) = self.cursor_lower.get(model_part) {
                     return lookup_result_if_usable(self.cursor.get(key).unwrap(), "Cursor", key);
+                }
+            }
+        }
+        None
+    }
+
+    fn exact_match_sakana(&self, model_id: &str) -> Option<LookupResult> {
+        if let Some(key) = self.sakana_lower.get(model_id) {
+            return lookup_result_if_usable(self.sakana.get(key).unwrap(), "Sakana", key);
+        }
+        if let Some(model_part) = model_id.split('/').next_back() {
+            if model_part != model_id {
+                if let Some(key) = self.sakana_lower.get(model_part) {
+                    return lookup_result_if_usable(self.sakana.get(key).unwrap(), "Sakana", key);
                 }
             }
         }
@@ -1558,6 +1614,26 @@ fn strip_known_provider_prefix(model_id: &str) -> Option<&str> {
         }
     }
     None
+}
+
+/// Generic routing-prefix fallback for ids whose leading segment is not one
+/// of the curated `PROVIDER_PREFIXES` (e.g. `cx/gpt-5.5` routed through an
+/// `omniroute` proxy, or any other CLI/router-assigned alias). Returns the
+/// terminal path segment — the part after the last `/` — when the id
+/// actually contains a `/`, so `cx/gpt-5.5` resolves to `gpt-5.5`.
+///
+/// This is intentionally unconditional (unlike `strip_known_provider_prefix`,
+/// which only recognizes canonical LLM provider names): the caller only
+/// invokes it as a fallback AFTER the exact/direct lookup on the full id has
+/// already failed, so dataset keys that legitimately keep their prefix (e.g.
+/// `anthropic/claude-fable-5`) are resolved by their own exact key first and
+/// never reach this fallback.
+fn strip_generic_provider_prefix(model_id: &str) -> Option<&str> {
+    let terminal = model_id.rsplit('/').next()?;
+    if terminal.is_empty() || terminal == model_id {
+        return None;
+    }
+    Some(terminal)
 }
 
 fn is_valid_price_value(value: f64) -> bool {
@@ -3662,6 +3738,48 @@ mod tests {
         }
     }
 
+    /// Regression (#831): router/proxy-assigned ids like `cx/gpt-5.5` (seen
+    /// from OpenCode's `omniroute` provider) carry a prefix outside the
+    /// curated `PROVIDER_PREFIXES` list, so the pricing lookup used to return
+    /// `None` (and thus bill $0) instead of stripping the prefix and pricing
+    /// the underlying `gpt-5.5` model.
+    #[test]
+    fn test_unknown_prefixed_model_id_strips_to_underlying_model() {
+        let lookup = create_lookup();
+        let direct = lookup.lookup("gpt-5.5").unwrap();
+        let prefixed = lookup.lookup("cx/gpt-5.5").unwrap();
+        assert_eq!(prefixed.matched_key, direct.matched_key);
+        assert_eq!(prefixed.source, direct.source);
+        assert_eq!(
+            prefixed.pricing.input_cost_per_token,
+            direct.pricing.input_cost_per_token
+        );
+        assert_eq!(
+            prefixed.pricing.output_cost_per_token,
+            direct.pricing.output_cost_per_token
+        );
+    }
+
+    /// Regression (#831): a dataset key that legitimately keeps its own
+    /// provider prefix (e.g. `anthropic/claude-fable-5`, which exists as its
+    /// own OpenRouter key) must still resolve via the exact/direct lookup —
+    /// the new generic prefix-stripping fallback must not preempt it.
+    #[test]
+    fn test_known_prefixed_dataset_key_still_resolves_exactly() {
+        let lookup = claude_family_fixture();
+        let result = lookup.lookup("anthropic/claude-fable-5").unwrap();
+        assert_eq!(result.matched_key, "anthropic/claude-fable-5");
+    }
+
+    /// Regression (#831): an id with an unrecognized provider prefix AND an
+    /// unrecognized underlying model must still return `None` rather than
+    /// fuzzy-matching something unrelated.
+    #[test]
+    fn test_unknown_prefixed_unknown_model_stays_none() {
+        let lookup = create_lookup();
+        assert!(lookup.lookup("unknown/nonexistent").is_none());
+    }
+
     /// When the dataset later gains a major-5 key, the same ids resolve to it
     /// with no code change — the "known version" decision is dataset-driven.
     #[test]
@@ -3827,6 +3945,7 @@ mod tests {
             HashMap::new(),
             openrouter,
             HashMap::new(),
+            HashMap::new(),
             models_dev,
         );
 
@@ -3864,6 +3983,7 @@ mod tests {
         let lookup = PricingLookup::new_with_models_dev(
             HashMap::new(),
             openrouter,
+            HashMap::new(),
             HashMap::new(),
             models_dev,
         );
@@ -3913,6 +4033,7 @@ mod tests {
             HashMap::new(),
             openrouter,
             HashMap::new(),
+            HashMap::new(),
             models_dev,
         );
 
@@ -3958,6 +4079,7 @@ mod tests {
             HashMap::new(),
             HashMap::new(),
             HashMap::new(),
+            HashMap::new(),
             models_dev,
         );
 
@@ -3980,6 +4102,7 @@ mod tests {
             },
         );
         let lookup = PricingLookup::new_with_models_dev(
+            HashMap::new(),
             HashMap::new(),
             HashMap::new(),
             HashMap::new(),
@@ -4012,6 +4135,7 @@ mod tests {
             price.clone(),
         );
         let lookup = PricingLookup::new_with_models_dev(
+            HashMap::new(),
             HashMap::new(),
             HashMap::new(),
             HashMap::new(),

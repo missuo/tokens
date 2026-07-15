@@ -31,7 +31,7 @@ describe("formatTokenCount", () => {
 
   // Regression: values near unit boundaries should promote to the next unit
   // instead of displaying "1000.0K", "1000.0M", etc.
-  // https://github.com/junhoyeo/tokscale/issues/474
+  // https://github.com/missuo/tokens/issues/474
   it("promotes 999_950 to 1.0M instead of 1000.0K", () => {
     expect(formatTokenCount(999_950)).toBe("1.0M");
   });

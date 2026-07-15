@@ -1,4 +1,6 @@
 import { notFound } from "next/navigation";
+import { Navigation } from "@/components/layout/Navigation";
+import { ServiceFooter } from "@/components/layout/ServiceFooter";
 import { getSession } from "@/lib/auth/session";
 import { getGroupLeaderboardData } from "@/lib/groups/getGroupLeaderboard";
 import { getGroupMembership } from "@/lib/groups/permissions";
@@ -11,15 +13,10 @@ interface GroupPageProps {
 
 function PageShell({ children }: { children: React.ReactNode }) {
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        display: "flex",
-        flexDirection: "column",
-        backgroundColor: "var(--color-bg-default)",
-      }}
-    >
-      <main className="main-container">{children}</main>
+    <div className="service-page-shell">
+      <Navigation />
+      <main className="service-main" id="main-content">{children}</main>
+      <ServiceFooter />
     </div>
   );
 }

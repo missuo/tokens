@@ -1,12 +1,22 @@
 import { NextResponse } from "next/server";
 import { getLeaderboardData } from "@/lib/leaderboard/getLeaderboard";
 import type { Period, SortBy } from "@/lib/leaderboard/types";
-import { parseCustomDateRange, isValidDateString } from "@/lib/leaderboard/dateRange";
+import {
+  isValidDateString,
+  parseCustomDateRange,
+} from "@/lib/leaderboard/dateRange";
 
 export const revalidate = 60;
 
-const VALID_PERIODS: Period[] = ["all", "month", "last-month", "week", "today", "custom"];
-const VALID_SORT_BY: SortBy[] = ["tokens", "cost", "time"];
+const VALID_PERIODS: Period[] = [
+  "all",
+  "month",
+  "last-month",
+  "week",
+  "today",
+  "custom",
+];
+const VALID_SORT_BY: SortBy[] = ["tokens", "cost"];
 
 function parseIntSafe(value: string | null, defaultValue: number): number {
   if (!value) return defaultValue;
@@ -45,8 +55,6 @@ export async function GET(request: Request) {
       period = "all";
     }
 
-    // "today" carries the viewer's local calendar date so the board reflects
-    // the visitor's timezone rather than the server's UTC day.
     if (period === "today" && isValidDateString(fromParam)) {
       customFrom = fromParam;
       customTo = fromParam;

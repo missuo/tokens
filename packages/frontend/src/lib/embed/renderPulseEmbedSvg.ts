@@ -5,7 +5,11 @@
  * The busiest week is marked. No template in the set charts usage as a trend
  * line, so this is the data-visualization-forward option.
  */
-import type { UserEmbedStats, EmbedContributionDay, EmbedTodayUsage } from "./getUserEmbedStats";
+import type {
+  UserEmbedStats,
+  EmbedContributionDay,
+  EmbedTodayUsage,
+} from "./getUserEmbedStats";
 import { formatNumber, formatCurrency } from "../format";
 import {
   type EmbedTheme,
@@ -126,7 +130,17 @@ export function renderPulseEmbedSvg(
     stat("active days", String(layout.activeDays), palette.text),
   ];
   if (options.today) {
-    statLine.push(stat("today", formatTodayInline(options.today, tokensFormat === "compact", costFormat === "compact"), palette.tokenEnd));
+    statLine.push(
+      stat(
+        "today",
+        formatTodayInline(
+          options.today,
+          tokensFormat === "compact",
+          costFormat === "compact",
+        ),
+        palette.tokenEnd,
+      ),
+    );
   }
   add(`  <text x="${PAD}" y="78" font-family="${FIGTREE_FONT_STACK}" xml:space="preserve">${statLine.join(sep)}</text>`);
 

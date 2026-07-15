@@ -2,7 +2,7 @@
 
 ## How to Select and Copy Text in the TUI
 
-Tokscale's TUI supports **both mouse interactions** (clicking tabs, buttons) **and text selection** simultaneously.
+The Tokens TUI supports **both mouse interactions** (clicking tabs, buttons) **and text selection** simultaneously.
 
 ### Text Selection Method
 

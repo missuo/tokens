@@ -2,7 +2,7 @@
 
 <div align="center">
 
-[![Tokscale](./.github/assets/hero-v2.png)](https://tokscale.ai)
+[![Tokens](./.github/assets/hero-v2.png)](https://tokens.ci)
 
 </div>
 
@@ -19,14 +19,14 @@
 
 <div align="center">
 
-[![GitHub Release](https://img.shields.io/github/v/release/junhoyeo/tokscale?color=0073FF&labelColor=black&logo=github&style=flat-square)](https://github.com/junhoyeo/tokscale/releases)
-[![npm Downloads](https://img.shields.io/npm/dt/tokscale?color=0073FF&labelColor=black&style=flat-square)](https://www.npmjs.com/package/tokscale)
-[![GitHub Contributors](https://img.shields.io/github/contributors/junhoyeo/tokscale?color=0073FF&labelColor=black&style=flat-square)](https://github.com/junhoyeo/tokscale/graphs/contributors)
-[![GitHub Forks](https://img.shields.io/github/forks/junhoyeo/tokscale?color=0073FF&labelColor=black&style=flat-square)](https://github.com/junhoyeo/tokscale/network/members)
-[![GitHub Stars](https://img.shields.io/github/stars/junhoyeo/tokscale?color=0073FF&labelColor=black&style=flat-square)](https://github.com/junhoyeo/tokscale/stargazers)
-[![GitHub Issues](https://img.shields.io/github/issues/junhoyeo/tokscale?color=0073FF&labelColor=black&style=flat-square)](https://github.com/junhoyeo/tokscale/issues)
-[![License](https://img.shields.io/badge/license-MIT-white?labelColor=black&style=flat-square)](https://github.com/junhoyeo/tokscale/blob/master/LICENSE)
-[![Coverage](https://raw.githubusercontent.com/junhoyeo/tokscale/refs/heads/main/.github/badges/coverage.svg)](https://github.com/junhoyeo/tokscale/issues/403)
+[![GitHub Release](https://img.shields.io/github/v/release/missuo/tokens?color=0073FF&labelColor=black&logo=github&style=flat-square)](https://github.com/missuo/tokens/releases)
+[![npm Downloads](https://img.shields.io/npm/dt/tokens-cli?color=0073FF&labelColor=black&style=flat-square)](https://www.npmjs.com/package/tokens-cli)
+[![GitHub Contributors](https://img.shields.io/github/contributors/missuo/tokens?color=0073FF&labelColor=black&style=flat-square)](https://github.com/missuo/tokens/graphs/contributors)
+[![GitHub Forks](https://img.shields.io/github/forks/missuo/tokens?color=0073FF&labelColor=black&style=flat-square)](https://github.com/missuo/tokens/network/members)
+[![GitHub Stars](https://img.shields.io/github/stars/missuo/tokens?color=0073FF&labelColor=black&style=flat-square)](https://github.com/missuo/tokens/stargazers)
+[![GitHub Issues](https://img.shields.io/github/issues/missuo/tokens?color=0073FF&labelColor=black&style=flat-square)](https://github.com/missuo/tokens/issues)
+[![License](https://img.shields.io/badge/license-MIT-white?labelColor=black&style=flat-square)](https://github.com/missuo/tokens/blob/main/LICENSE)
+[![Coverage](https://raw.githubusercontent.com/missuo/tokens/refs/heads/main/.github/badges/coverage.svg)](https://github.com/missuo/tokens/issues/403)
 
 [🇺🇸 English](README.md) | [🇰🇷 한국어](README.ko.md) | [🇯🇵 日本語](README.ja.md) | [🇨🇳 简体中文](README.zh-cn.md)
 
@@ -44,13 +44,13 @@
 
 | Frontend (3D Contributions Graph) | Wrapped 2025 |
 |:---:|:---:|
-| <a href="https://tokscale.ai"><img alt="Frontend (3D Contributions Graph)" src=".github/assets/frontend-contributions-graph.png" width="700px" /></a> | <a href="#wrapped-2025"><img alt="Wrapped 2025" src=".github/assets/wrapped-2025-agents.png" width="700px" /></a> |
+| <a href="https://tokens.ci"><img alt="Frontend (3D Contributions Graph)" src=".github/assets/frontend-contributions-graph.png" width="700px" /></a> | <a href="#wrapped-2025"><img alt="Wrapped 2025" src=".github/assets/wrapped-2025-agents.png" width="700px" /></a> |
 
-> **运行 [`bunx tokscale submit`](#社交平台命令) 将您的使用数据提交到排行榜并创建公开个人资料！**
+> **运行 [`bunx tokens-cli submit`](#社交平台命令) 将您的使用数据提交到排行榜并创建公开个人资料！**
 
 ## 概述
 
-**Tokscale** 帮助您监控和分析以下平台的 Token 消耗：
+**Tokens** 帮助您监控和分析以下平台的 Token 消耗：
 
 | 图标 | 客户端 | 数据位置 | 支持状态 |
 |------|----------|---------------|-----------|
@@ -61,7 +61,7 @@
 | <img width="48px" src=".github/assets/client-copilot.jpg" alt="Copilot" /> | [GitHub Copilot CLI](https://docs.github.com/en/copilot/how-tos/use-copilot-agents/use-the-github-copilot-coding-agent-in-cli) | `~/.copilot/otel/*.jsonl` (+ `COPILOT_OTEL_FILE_EXPORTER_PATH`) | ✅ 支持 |
 | <img width="48px" src=".github/assets/client-hermes.png" alt="Hermes Agent" /> | [Hermes Agent](https://github.com/NousResearch/hermes-agent) | `$HERMES_HOME/state.db`（回退：`~/.hermes/state.db`） | ✅ 支持 |
 | <img width="48px" src=".github/assets/client-gemini.png" alt="Gemini" /> | [Gemini CLI](https://github.com/google-gemini/gemini-cli) | `$GEMINI_CLI_HOME/tmp/*/chats/*.json`（回退：`~/.gemini/tmp/*/chats/*.json`） | ✅ 支持 |
-| <img width="48px" src=".github/assets/client-cursor.jpg" alt="Cursor" /> | [Cursor IDE](https://cursor.com/) | 通过 `~/.config/tokscale/cursor-cache/` API 同步 | ✅ 支持 |
+| <img width="48px" src=".github/assets/client-cursor.jpg" alt="Cursor" /> | [Cursor IDE](https://cursor.com/) | 通过 `~/.config/tokens/cursor-cache/` API 同步 | ✅ 支持 |
 | <img width="48px" src=".github/assets/client-amp.png" alt="Amp" /> | [Amp (AmpCode)](https://ampcode.com/) | `~/.local/share/amp/threads/` | ✅ 支持 |
 | <img width="48px" src=".github/assets/client-codebuff.png" alt="Codebuff" /> | [Codebuff](https://codebuff.com/) | `~/.config/manicode/`（+ `manicode-dev`、`manicode-staging`；可通过 `CODEBUFF_DATA_DIR` 覆盖） | ✅ 支持 |
 | <img width="48px" src=".github/assets/client-droid.png" alt="Droid" /> | [Droid (Factory Droid)](https://factory.ai/) | `~/.factory/sessions/` | ✅ 支持 |
@@ -74,8 +74,8 @@
 | <img width="48px" src=".github/assets/client-mux.png" alt="Mux" /> | [Mux](https://github.com/coder/mux) | `~/.mux/sessions/` | ✅ 支持 |
 | <img width="48px" src=".github/assets/client-crush.png" alt="Crush" /> | [Crush](https://crush.ai/) | `$XDG_DATA_HOME/crush/projects.json`（项目注册表；回退路径：`~/.local/share/crush/projects.json`） | ✅ 支持 |
 | <img width="48px" src=".github/assets/client-goose.png" alt="Goose" /> | [Goose](https://github.com/aaif-goose/goose) | `~/.local/share/goose/sessions/sessions.db`（+ macOS Application Support、旧版 Block/goose 路径；可通过 `GOOSE_PATH_ROOT` 覆盖） | ✅ 支持 |
-| <img width="48px" src=".github/assets/client-antigravity.png" alt="Antigravity" /> | [Google Antigravity](https://antigravity.google/) | 通过 `tokscale antigravity sync` 缓存到 `~/.config/tokscale/antigravity-cache/sessions/*.jsonl`（使用本地语言服务器 RPC） | ✅ 支持 |
-| <img width="48px" src=".github/assets/client-trae.png" alt="Trae" /> | [Trae IDE](https://www.trae.ai/) / [Trae Solo](https://www.trae.ai/solo)（国际版） | 通过 `tokscale trae sync` 缓存到 `~/.config/tokscale/trae-cache/sessions/*.json`（来自官方 API 的账号级使用量） | ✅ 支持 |
+| <img width="48px" src=".github/assets/client-antigravity.png" alt="Antigravity" /> | [Google Antigravity](https://antigravity.google/) | 通过 `tokens antigravity sync` 缓存到 `~/.config/tokens/antigravity-cache/sessions/*.jsonl`（使用本地语言服务器 RPC） | ✅ 支持 |
+| <img width="48px" src=".github/assets/client-trae.png" alt="Trae" /> | [Trae IDE](https://www.trae.ai/) / [Trae Solo](https://www.trae.ai/solo)（国际版） | 通过 `tokens trae sync` 缓存到 `~/.config/tokens/trae-cache/sessions/*.json`（来自官方 API 的账号级使用量） | ✅ 支持 |
 | Grok Build | Grok Build | `$GROK_HOME/sessions/*/*/updates.jsonl`（回退：`~/.grok/sessions/*/*/updates.jsonl`） | ✅ 支持 |
 | <img width="48px" src=".github/assets/client-zed.webp" alt="Zed Agent" /> | [Zed Agent](https://zed.dev/docs/ai/agent-panel) | `~/.local/share/zed/threads/threads.db`（macOS: `~/Library/Application Support/Zed/threads/threads.db`；Windows: `%LOCALAPPDATA%/Zed/threads/threads.db`；仅限托管 Zed 模型，不含外部 ACP 代理） | ✅ 支持 |
 | Kiro | Kiro | `~/.kiro/sessions/cli/*.json`（+ `*.jsonl`）和 `~/.local/share/kiro-cli/data.sqlite3`（macOS: `~/Library/Application Support/kiro-cli/data.sqlite3`） | ✅ 支持 |
@@ -84,16 +84,16 @@
 
 使用 [🚅 LiteLLM 的价格数据](https://github.com/BerriAI/litellm)提供实时价格计算，支持分层定价模型和缓存 Token 折扣。
 
-### 为什么叫 "Tokscale"？
+### 为什么叫 "Tokens"？
 
 这个项目的灵感来自 **[卡尔达肖夫指数(Kardashev Scale)](https://zh.wikipedia.org/wiki/%E5%8D%A1%E5%B0%94%E8%BE%BE%E8%82%96%E5%A4%AB%E6%8C%87%E6%95%B0)**，这是天体物理学家尼古拉·卡尔达肖夫提出的一种根据能源消耗来衡量文明技术发展水平的方法。I 型文明利用其行星上所有可用的能源，II 型文明捕获其恒星的全部输出，III 型文明则掌控整个星系的能源。
 
-在 AI 辅助开发的时代，**Token 就是新的能源**。它们驱动我们的思考，提升我们的生产力，推动我们的创造性产出。正如卡尔达肖夫指数在宇宙尺度上追踪能源消耗，Tokscale 在您攀登 AI 增强开发的阶梯时测量您的 Token 消耗。无论您是休闲用户还是每天消耗数百万 Token，Tokscale 都能帮助您可视化从行星级开发者到银河级代码架构师的旅程。
+在 AI 辅助开发的时代，**Token 就是新的能源**。它们驱动我们的思考，提升我们的生产力，推动我们的创造性产出。正如卡尔达肖夫指数在宇宙尺度上追踪能源消耗，Tokens 在您攀登 AI 增强开发的阶梯时测量您的 Token 消耗。无论您是休闲用户还是每天消耗数百万 Token，Tokens 都能帮助您可视化从行星级开发者到银河级代码架构师的旅程。
 
 ## 目录
 
 - [概述](#概述)
-  - [为什么叫 "Tokscale"？](#为什么叫-tokscale)
+  - [为什么叫 "Tokens"？](#为什么叫-tokens)
 - [功能](#功能)
 - [安装](#安装)
   - [快速开始](#快速开始)
@@ -162,21 +162,21 @@
 
 ```bash
 # 直接用 npx 运行
-npx tokscale@latest
+npx tokens-cli@latest
 
 # 或使用 bunx
-bunx tokscale@latest
+bunx tokens-cli@latest
 
 # 或使用 Deno（无需安装别名）
-deno x npm:tokscale@latest
+deno x npm:tokens-cli@latest
 
 # 轻量模式（仅表格渲染）
-npx tokscale@latest --light
+npx tokens-cli@latest --light
 ```
 
 就这样！零配置即可获得完整的交互式 TUI 体验。
 
-> **包结构**：`tokscale` 是一个别名包（类似 [`swc`](https://www.npmjs.com/package/swc)），它安装 `@tokscale/cli`。两者都安装包含原生 Rust 核心（`@tokscale/core`）的相同 CLI。
+> **包结构**：npm 包名是 `tokens-cli`，安装后会直接在 `PATH` 中提供 `tokens` 命令，并自动选择当前平台对应的原生二进制。
 
 
 ### 先决条件
@@ -190,8 +190,8 @@ npx tokscale@latest --light
 
 ```bash
 # 克隆仓库
-git clone https://github.com/junhoyeo/tokscale.git
-cd tokscale
+git clone https://github.com/missuo/tokens.git
+cd tokens
 
 # 安装 Bun（如果尚未安装）
 curl -fsSL https://bun.sh/install | bash
@@ -203,7 +203,7 @@ bun install
 bun run cli
 ```
 
-> **注意**：`bun run cli` 用于本地开发。通过 `bunx tokscale` 安装后，命令直接运行。下面的使用部分显示已安装的二进制命令。
+> **注意**：`bun run cli` 用于本地开发。通过 `bunx tokens-cli` 运行时，命令会直接执行。下面的使用部分显示已安装的二进制命令。
 
 ### 构建原生模块
 
@@ -214,7 +214,7 @@ bun run cli
 bun run build:core
 ```
 
-> **注意**：通过 `bunx tokscale@latest` 安装时，原生二进制文件已预构建并包含在内。仅在本地开发时才需要从源码构建。
+> **注意**：通过 `bunx tokens-cli@latest` 安装时，原生二进制文件已预构建并包含在内。仅在本地开发时才需要从源码构建。
 
 ## 使用方法
 
@@ -222,27 +222,27 @@ bun run build:core
 
 ```bash
 # 启动交互式 TUI（默认）
-tokscale
+tokens
 
 # 使用特定标签启动 TUI
-tokscale models    # 模型标签
-tokscale monthly   # 每日视图（显示每日分解）
+tokens models    # 模型标签
+tokens monthly   # 每日视图（显示每日分解）
 
 # 使用传统 CLI 表格输出
-tokscale --light
-tokscale models --light
+tokens --light
+tokens models --light
 
 # 明确启动 TUI
-tokscale tui
+tokens tui
 
 # 导出贡献图数据为 JSON
-tokscale graph --output data.json
+tokens graph --output data.json
 
 # 以 JSON 输出数据（用于脚本/自动化）
-tokscale --json                    # 默认模型视图为 JSON
-tokscale models --json             # 模型分解为 JSON
-tokscale monthly --json            # 月度分解为 JSON
-tokscale models --json > report.json   # 保存到文件
+tokens --json                    # 默认模型视图为 JSON
+tokens models --json             # 模型分解为 JSON
+tokens monthly --json            # 月度分解为 JSON
+tokens models --json > report.json   # 保存到文件
 ```
 
 ### TUI 功能
@@ -268,7 +268,7 @@ tokscale models --json > report.json   # 保存到文件
   - `q` 或 `Ctrl+C`：退出
 - **鼠标支持**：点击标签、按钮和筛选器
 - **主题**：Green、Halloween、Teal、Blue、Pink、Purple、Orange、Monochrome、YlGnBu
-- **设置持久化**：偏好设置保存到 `~/.config/tokscale/settings.json`（参见[配置](#配置)）
+- **设置持久化**：偏好设置保存到 `~/.config/tokens/settings.json`（参见[配置](#配置)）
 
 ### 分组策略
 
@@ -308,22 +308,22 @@ tokscale models --json > report.json   # 保存到文件
 
 ```bash
 # 仅显示 OpenCode 使用量
-tokscale --client opencode
+tokens --client opencode
 
 # 逗号分隔：同时筛选多个客户端
-tokscale --client opencode,claude
+tokens --client opencode,claude
 
 # 重复使用：效果相同（与 shell 别名搭配使用很方便）
-tokscale -c opencode -c claude
+tokens -c opencode -c claude
 
-# Cursor IDE 需要先运行 `tokscale cursor login`
-tokscale --client cursor
+# Cursor IDE 需要先运行 `tokens cursor login`
+tokens --client cursor
 
 # Synthetic（synthetic.new）从其他 agent 会话中检测
-tokscale --client synthetic
+tokens --client synthetic
 
 # 与其他筛选条件组合
-tokscale --client opencode,claude --week --json
+tokens --client opencode,claude --week --json
 ```
 
 可用值：`opencode`、`claude`、`codex`、`copilot`、`gemini`、`cursor`、`amp`、`codebuff`、`droid`、`openclaw`、`hermes`、`pi`、`kimi`、`qwen`、`roocode`、`kilocode`、`kilo`、`mux`、`crush`、`goose`、`antigravity`、`zed`、`kiro`、`trae`、`gjc`、`synthetic`。
@@ -332,24 +332,24 @@ tokscale --client opencode,claude --week --json
 
 ### 日期筛选
 
-日期筛选器适用于所有生成报告的命令（`tokscale`、`tokscale models`、`tokscale monthly`、`tokscale graph`）：
+日期筛选器适用于所有生成报告的命令（`tokens`、`tokens models`、`tokens monthly`、`tokens graph`）：
 
 ```bash
 # 快速日期快捷方式
-tokscale --today              # 仅今天
-tokscale --yesterday          # 仅昨天
-tokscale --week               # 最近 7 天
-tokscale --month              # 本月
+tokens --today              # 仅今天
+tokens --yesterday          # 仅昨天
+tokens --week               # 最近 7 天
+tokens --month              # 本月
 
 # 自定义日期范围（包含，本地时区）
-tokscale --since 2024-01-01 --until 2024-12-31
+tokens --since 2024-01-01 --until 2024-12-31
 
 # 按年份筛选
-tokscale --year 2024
+tokens --year 2024
 
 # 与其他选项组合
-tokscale models --week --client claude --json
-tokscale monthly --month --benchmark
+tokens models --week --client claude --json
+tokens monthly --month --benchmark
 ```
 
 > **注意**：日期筛选器使用本地时区。`--since` 和 `--until` 都是包含的。
@@ -361,13 +361,13 @@ tokscale monthly --month --benchmark
 
 ```bash
 # 查询模型价格
-tokscale pricing "claude-3-5-sonnet-20241022"
-tokscale pricing "gpt-4o"
-tokscale pricing "grok-code"
+tokens pricing "claude-3-5-sonnet-20241022"
+tokens pricing "gpt-4o"
+tokens pricing "grok-code"
 
 # 强制指定提供商来源
-tokscale pricing "grok-code" --provider openrouter
-tokscale pricing "claude-3-5-sonnet" --provider litellm
+tokens pricing "grok-code" --provider openrouter
+tokens pricing "claude-3-5-sonnet" --provider litellm
 ```
 
 **查询策略：**
@@ -399,23 +399,23 @@ tokscale pricing "claude-3-5-sonnet" --provider litellm
 ### 社交平台命令
 
 ```bash
-# 登录 Tokscale（打开浏览器进行 GitHub 认证）
-tokscale login
+# 登录 Tokens（打开浏览器进行 GitHub 认证）
+tokens login
 
 # 查看当前登录用户
-tokscale whoami
+tokens whoami
 
 # 提交使用量数据到排行榜
-tokscale submit
+tokens submit
 
 # 带筛选提交
-tokscale submit --client opencode,claude --since 2024-01-01
+tokens submit --client opencode,claude --since 2024-01-01
 
 # 预览将要提交的内容（试运行）
-tokscale submit --dry-run
+tokens submit --dry-run
 
 # 登出
-tokscale logout
+tokens logout
 ```
 
 <img alt="CLI Submit" src="./.github/assets/cli-submit.png" />
@@ -427,35 +427,35 @@ Cursor IDE 需要通过会话令牌进行单独认证（与社交平台登录不
 ```bash
 # 登录 Cursor（需要从浏览器获取会话令牌）
 # --name 是可选的，用于之后区分账户的标签
-tokscale cursor login --name work
+tokens cursor login --name work
 
 # 检查 Cursor 认证状态和会话有效性
-tokscale cursor status
+tokens cursor status
 
 # 列出已保存的 Cursor 账户
-tokscale cursor accounts
+tokens cursor accounts
 
 # 切换活动账户（同步到 cursor-cache/usage.csv 的账户）
-tokscale cursor switch work
+tokens cursor switch work
 
 # 登出指定账户（保留历史，但不再参与合并统计）
-tokscale cursor logout --name work
+tokens cursor logout --name work
 
 # 登出并删除该账户的缓存
-tokscale cursor logout --name work --purge-cache
+tokens cursor logout --name work --purge-cache
 
 # 登出所有 Cursor 账户（保留历史，但不再参与合并统计）
-tokscale cursor logout --all
+tokens cursor logout --all
 
 # 登出所有账户并删除缓存
-tokscale cursor logout --all --purge-cache
+tokens cursor logout --all --purge-cache
 ```
 
-**凭据存储**：Cursor 账户保存到 `~/.config/tokscale/cursor-credentials.json`。使用量数据缓存在 `~/.config/tokscale/cursor-cache/`（活动账户使用 `usage.csv`，其他账户使用 `usage.<account>.csv`）。
+**凭据存储**：Cursor 账户保存到 `~/.config/tokens/cursor-credentials.json`。使用量数据缓存在 `~/.config/tokens/cursor-cache/`（活动账户使用 `usage.csv`，其他账户使用 `usage.<account>.csv`）。
 
-默认情况下，tokscale 会 **合并统计所有已保存 Cursor 账户的使用量**（`cursor-cache/usage*.csv`）。为保持兼容性，活动账户会同步到 `cursor-cache/usage.csv`。
+默认情况下，tokens 会 **合并统计所有已保存 Cursor 账户的使用量**（`cursor-cache/usage*.csv`）。为保持兼容性，活动账户会同步到 `cursor-cache/usage.csv`。
 
-登出时，tokscale 会将缓存的历史记录移动到 `cursor-cache/archive/`（因此不会参与合并统计）。如需彻底删除缓存，请使用 `--purge-cache`。
+登出时，tokens 会将缓存的历史记录移动到 `cursor-cache/archive/`（因此不会参与合并统计）。如需彻底删除缓存，请使用 `--purge-cache`。
 
 **获取 Cursor 会话令牌的方法：**
 1. 在浏览器中打开 https://www.cursor.com/settings
@@ -467,57 +467,57 @@ tokscale cursor logout --all --purge-cache
 
 ### Antigravity 命令
 
-Antigravity 同步目前仅在 macOS 和 Linux 上受支持。只有在启用了 Antigravity 的编辑器正在运行且本地语言服务器可用时才生效；tokscale 会从该本地语言服务器读取使用量，并将归一化后的产物缓存到本地。
+Antigravity 同步目前仅在 macOS 和 Linux 上受支持。只有在启用了 Antigravity 的编辑器正在运行且本地语言服务器可用时才生效；tokens 会从该本地语言服务器读取使用量，并将归一化后的产物缓存到本地。
 
 ```bash
-# 检查 tokscale 是否能识别正在运行的 Antigravity 语言服务器
-tokscale antigravity status
+# 检查 tokens 是否能识别正在运行的 Antigravity 语言服务器
+tokens antigravity status
 
-# 将本地 Antigravity 语言服务器中的使用量同步到 tokscale 的缓存
-tokscale antigravity sync
+# 将本地 Antigravity 语言服务器中的使用量同步到 tokens 的缓存
+tokens antigravity sync
 
 # 删除已缓存的 Antigravity 产物
-tokscale antigravity purge-cache
+tokens antigravity purge-cache
 ```
 
-**缓存位置**：`~/.config/tokscale/antigravity-cache/`
+**缓存位置**：`~/.config/tokens/antigravity-cache/`
 
-**工作原理**：`tokscale antigravity sync` 会发现本地的 Antigravity 会话候选项，从本地语言服务器 RPC 获取已确认的使用数据，并以归一化的 JSONL 产物形式存储，供 tokscale-core 后续解析。如果希望报告反映最新的 Antigravity 数据，请在生成报告前先运行同步。
+**工作原理**：`tokens antigravity sync` 会发现本地的 Antigravity 会话候选项，从本地语言服务器 RPC 获取已确认的使用数据，并以归一化的 JSONL 产物形式存储，供 tokscale-core 后续解析。如果希望报告反映最新的 Antigravity 数据，请在生成报告前先运行同步。
 
 ### Trae 命令
 
-Trae（[ByteDance 的 AI IDE](https://www.trae.ai/)）有两个国际版产品线 —— Trae IDE 和 Trae Solo。它们共享同一份账号级使用量数据（同后端、同 JWT），所以 tokscale 将其统一报告为一个 `trae` 客户端。装一个或两个都可以，tokscale 会自动从任何已安装的桌面端发现凭据。
+Trae（[ByteDance 的 AI IDE](https://www.trae.ai/)）有两个国际版产品线 —— Trae IDE 和 Trae Solo。它们共享同一份账号级使用量数据（同后端、同 JWT），所以 tokens 将其统一报告为一个 `trae` 客户端。装一个或两个都可以，tokens 会自动从任何已安装的桌面端发现凭据。
 
 凭据通过 `--variant` 按桌面端区分：
 
 - **`--variant ide`** —— 来自 Trae IDE 的凭据（`~/Library/Application Support/Trae/`）
 - **`--variant solo`** —— 来自 Trae Solo 的凭据（`~/Library/Application Support/TRAE SOLO/`）
 
-`tokscale trae sync` 每次运行只调用一次官方的 `query_user_usage_group_by_session` API（无论安装了几个桌面端），并将原始 JSON 持久化到本地缓存。
+`tokens trae sync` 每次运行只调用一次官方的 `query_user_usage_group_by_session` API（无论安装了几个桌面端），并将原始 JSON 持久化到本地缓存。
 
 ```bash
 # 登录（自动从任意已安装的 Trae 桌面客户端检测凭据）
-tokscale trae login
+tokens trae login
 
 # 手动输入 JWT（适用于无法自动找到 storage.json 的环境，
 # 例如 Linux/Windows 或无头服务器）。在浏览器打开
 # https://www.trae.ai/account-setting#usage，F12 → Network →
 # 过滤 `query_user_usage` → 复制 `Authorization` header 的值。
-tokscale trae login --manual --variant solo
+tokens trae login --manual --variant solo
 
 # 查看哪些变体已有缓存凭据
-tokscale trae status
+tokens trae status
 
 # 同步使用量（使用第一个可用的凭据来源）
-tokscale trae sync --since 30
+tokens trae sync --since 30
 
 # 清除某个变体的缓存凭据
-tokscale trae logout --variant solo
+tokens trae logout --variant solo
 ```
 
-**缓存位置**：`~/.config/tokscale/trae-cache/`
+**缓存位置**：`~/.config/tokens/trae-cache/`
 
-**工作原理**：tokscale 会解密桌面客户端的 `iCubeAuthInfo://*` blob（`globalStorage/storage.json`）来恢复 JWT，或接受通过 `--manual` 粘贴的 JWT。随后它分页调用 `POST /trae/api/v1/pay/query_user_usage_group_by_session` 并保存原始 JSON。如果希望报告反映最新的 Trae 数据，请在生成报告前先运行同步。
+**工作原理**：tokens 会解密桌面客户端的 `iCubeAuthInfo://*` blob（`globalStorage/storage.json`）来恢复 JWT，或接受通过 `--manual` 粘贴的 JWT。随后它分页调用 `POST /trae/api/v1/pay/query_user_usage_group_by_session` 并保存原始 JSON。如果希望报告反映最新的 Trae 数据，请在生成报告前先运行同步。
 
 > **中国区版本**：中国区版本（`trae.com.cn`）目前有意不支持。CN 后端暂未暴露按会话查询使用量的官方 API；如果上游提供正式端点，再加入支持。
 
@@ -527,7 +527,7 @@ tokscale trae logout --variant solo
 
 ### 配置
 
-Tokscale 将设置存储在 `~/.config/tokscale/settings.json`：
+Tokens 将设置存储在 `~/.config/tokens/settings.json`：
 
 ```json
 {
@@ -545,14 +545,14 @@ Tokscale 将设置存储在 `~/.config/tokscale/settings.json`：
 | `autoRefreshMs` | number | `60000` | 自动刷新间隔（30000-3600000ms） |
 | `nativeTimeoutMs` | number | `300000` | 原生子进程处理最大时间（5000-3600000ms） |
 | `defaultClients` | string[] | `[]` | 未传递 `--client/-c` 选项时应用的客户端筛选。接受与 `--client` 相同的 ID（例如 `["opencode", "claude", "synthetic"]`）。未知 ID 会被静默丢弃。命令行选项会完全覆盖此列表 — 不会合并。 |
-| `light.writeCache` | boolean | `false` | 为 `true` 时，`tokscale --light` 会在渲染完成后以原子方式覆盖 TUI 缓存。CLI 标志 `--write-cache` / `--no-write-cache` 会按次运行覆盖该设置。 |
+| `light.writeCache` | boolean | `false` | 为 `true` 时，`tokens --light` 会在渲染完成后以原子方式覆盖 TUI 缓存。CLI 标志 `--write-cache` / `--no-write-cache` 会按次运行覆盖该设置。 |
 | `minutelyTabEnabled` | boolean | `false` | 在 TUI 中显示按分钟的 Minutely 标签，并在数据加载期间执行分钟级聚合。对大多数用户而言，分钟级粒度是较为小众的诊断视图，而在大数据集上分钟分桶有非平凡的代价，因此默认关闭。 |
 
 #### 启用 Minutely 标签
 
 Minutely 标签按分钟显示 Token 使用情况，最适合用于诊断突发模式、调试单个会话，或与 `autoRefreshEnabled` 配合进行近实时监控。分钟级聚合在数据加载期间会遍历所有已解析的消息，对大多数用户来说带来不必要的 RAM 与 CPU 开销。因此默认情况下它是隐藏的。
 
-要启用它，请在 `~/.config/tokscale/settings.json` 中将 `minutelyTabEnabled` 设为 `true`：
+要启用它，请在 `~/.config/tokens/settings.json` 中将 `minutelyTabEnabled` 设为 `true`：
 
 ```json
 {
@@ -564,7 +564,7 @@ Minutely 标签按分钟显示 Token 使用情况，最适合用于诊断突发�
 
 #### 缓存目录布局
 
-可再生成的 CLI/TUI/价格/Wrapped 缓存位于 `~/.config/tokscale/cache/` 下（如果设置了 `TOKSCALE_CONFIG_DIR`，则为 `${TOKSCALE_CONFIG_DIR}/cache/`）。集成同步产物保留在各自的客户端缓存目录中，例如 `~/.config/tokscale/antigravity-cache/` 和 `~/.config/tokscale/trae-cache/`：
+可再生成的 CLI/TUI/价格/Wrapped 缓存位于 `~/.config/tokens/cache/` 下（如果设置了 `TOKENS_CONFIG_DIR`，则为 `${TOKENS_CONFIG_DIR}/cache/`）。集成同步产物保留在各自的客户端缓存目录中，例如 `~/.config/tokens/antigravity-cache/` 和 `~/.config/tokens/trae-cache/`：
 
 - `tui-data-cache.json` —— TUI 启动缓存
 - `source-message-cache.bin` + `source-message-cache.lock` —— 源消息缓存与锁文件
@@ -572,7 +572,7 @@ Minutely 标签按分钟显示 Token 使用情况，最适合用于诊断突发�
 - `opencode-migration.json` —— OpenCode 迁移记录
 - `fonts/`、`images/` —— Wrapped 资源缓存
 
-删除该目录是安全的。Tokscale 会在需要时重新创建并重新生成其中的内容。
+删除该目录是安全的。Tokens 会在需要时重新创建并重新生成其中的内容。
 
 ### 环境变量
 
@@ -580,57 +580,57 @@ Minutely 标签按分钟显示 Token 使用情况，最适合用于诊断突发�
 
 | 变量 | 默认值 | 描述 |
 |----------|---------|-------------|
-| `TOKSCALE_NATIVE_TIMEOUT_MS` | `300000`（5 分钟） | 覆盖 `nativeTimeoutMs` 配置 |
-| `TOKSCALE_CONFIG_DIR` | unset | 覆盖配置目录根（`settings.json`、`star-cache.json`、`cache/`、`antigravity-cache/`、`trae-cache/` 的存放位置）。建议使用绝对路径；相对路径将基于进程 CWD 解析。适用于 CI 沙箱或固定到非默认位置。设置后，tokscale 不会回退到 macOS 旧路径（`~/Library/Application Support/tokscale/`）。 |
+| `TOKENS_NATIVE_TIMEOUT_MS` | `300000`（5 分钟） | 覆盖 `nativeTimeoutMs` 配置 |
+| `TOKENS_CONFIG_DIR` | unset | 覆盖配置目录根（`settings.json`、`star-cache.json`、`cache/`、`antigravity-cache/`、`trae-cache/` 的存放位置）。建议使用绝对路径；相对路径将基于进程 CWD 解析。适用于 CI 沙箱或固定到非默认位置。设置后，tokens 不会回退到 macOS 旧路径（`~/Library/Application Support/tokens/`）。 |
 
 ```bash
 # 示例：为非常大的数据集增加超时时间
-TOKSCALE_NATIVE_TIMEOUT_MS=600000 tokscale graph --output data.json
+TOKENS_NATIVE_TIMEOUT_MS=600000 tokens graph --output data.json
 ```
 
-> **注意**：如需永久更改，建议在 `~/.config/tokscale/settings.json` 中设置 `nativeTimeoutMs`。环境变量适用于一次性覆盖或 CI/CD。
+> **注意**：如需永久更改，建议在 `~/.config/tokens/settings.json` 中设置 `nativeTimeoutMs`。环境变量适用于一次性覆盖或 CI/CD。
 
 ### Headless 模式
 
-Tokscale 可以聚合来自 **Codex CLI 无头输出**的令牌使用情况，用于自动化、CI/CD 流水线和批处理。
+Tokens 可以聚合来自 **Codex CLI 无头输出**的令牌使用情况，用于自动化、CI/CD 流水线和批处理。
 
 **什么是 Headless 模式？**
 
 当您使用 JSON 输出标志运行 Codex CLI 时（例如 \`codex exec --json\`），它会将使用数据输出到 stdout，而不是存储在常规会话目录中。Headless 模式允许您捕获和跟踪这些使用情况。
 
-**存储位置：** \`~/.config/tokscale/headless/\`
+**存储位置：** \`~/.config/tokens/headless/\`
 
-在 macOS 上，当未设置 \`TOKSCALE_HEADLESS_DIR\` 时，Tokscale 也会扫描 \`~/Library/Application Support/tokscale/headless/\`。
+在 macOS 上，当未设置 \`TOKENS_HEADLESS_DIR\` 时，Tokens 也会扫描 \`~/Library/Application Support/tokens/headless/\`。
 
-Tokscale 会自动扫描此目录结构：
+Tokens 会自动扫描此目录结构：
 ```
-~/.config/tokscale/headless/
+~/.config/tokens/headless/
 └── codex/       # Codex CLI JSONL 输出
 ```
 
-**环境变量：** 设置 \`TOKSCALE_HEADLESS_DIR\` 以自定义无头日志目录：
+**环境变量：** 设置 \`TOKENS_HEADLESS_DIR\` 以自定义无头日志目录：
 ```bash
-export TOKSCALE_HEADLESS_DIR="$HOME/my-custom-logs"
+export TOKENS_HEADLESS_DIR="$HOME/my-custom-logs"
 ```
 
 **推荐（自动捕获）：**
 
 | 工具 | 命令示例 |
 |------|----------|
-| **Codex CLI** | \`tokscale headless codex exec -m gpt-5 "implement feature"\` |
+| **Codex CLI** | \`tokens headless codex exec -m gpt-5 "implement feature"\` |
 
 **手动重定向（可选）：**
 
 | 工具 | 命令示例 |
 |------|----------|
-| **Codex CLI** | \`codex exec --json "implement feature" > ~/.config/tokscale/headless/codex/ci-run.jsonl\` |
+| **Codex CLI** | \`codex exec --json "implement feature" > ~/.config/tokens/headless/codex/ci-run.jsonl\` |
 
 **诊断：**
 
 ```bash
 # 显示扫描位置和无头计数
-tokscale sources
-tokscale sources --json
+tokens sources
+tokens sources --json
 ```
 
 **CI/CD 集成示例：**
@@ -639,13 +639,13 @@ tokscale sources --json
 # 在 GitHub Actions 工作流中
 - name: Run AI automation
   run: |
-    mkdir -p ~/.config/tokscale/headless/codex
+    mkdir -p ~/.config/tokens/headless/codex
     codex exec --json "review code changes" \\
-      > ~/.config/tokscale/headless/codex/pr-\${{ github.event.pull_request.number }}.jsonl
+      > ~/.config/tokens/headless/codex/pr-\${{ github.event.pull_request.number }}.jsonl
 
 # 稍后跟踪使用情况
 - name: Report token usage
-  run: tokscale --json
+  run: tokens --json
 ```
 
 > **注意**：无头捕获仅支持 Codex CLI。如果直接运行 Codex，必须如上所示将 stdout 重定向到 headless 目录。
@@ -680,7 +680,7 @@ bun run dev
 
 ## 社交平台
 
-Tokscale 包含一个社交平台，您可以在其中分享使用数据并与其他开发者竞争。
+Tokens 包含一个社交平台，您可以在其中分享使用数据并与其他开发者竞争。
 
 ### 功能
 
@@ -692,10 +692,10 @@ Tokscale 包含一个社交平台，您可以在其中分享使用数据并与�
 
 ### GitHub 个人资料嵌入小组件
 
-您可以直接在 GitHub 个人资料 README 中嵌入 Tokscale 公开统计数据：
+您可以直接在 GitHub 个人资料 README 中嵌入 Tokens 公开统计数据：
 
 ```md
-[![Tokscale Stats](https://tokscale.ai/api/embed/<username>/svg)](https://tokscale.ai/u/<username>)
+[![Tokens Stats](https://tokens.ci/api/embed/<username>/svg)](https://tokens.ci/u/<username>)
 ```
 
 - 将 `<username>` 替换为您的 GitHub 用户名
@@ -704,14 +704,14 @@ Tokscale 包含一个社交平台，您可以在其中分享使用数据并与�
   - `sort=tokens`（默认）或 `sort=cost` 控制排名依据
   - `compact=1` 使用紧凑布局 + 紧凑数字表示法（例如 `1.2M`、`$3.4K`）
 - 示例：
-  - `https://tokscale.ai/api/embed/<username>/svg?theme=light&sort=cost&compact=1`
+  - `https://tokens.ci/api/embed/<username>/svg?theme=light&sort=cost&compact=1`
 
 ### GitHub 个人资料徽章
 
 您还可以使用 shields.io 风格的更紧凑的徽章：
 
 ```md
-![Tokscale Tokens](https://tokscale.ai/api/badge/<username>/svg)
+![Tokens Tokens](https://tokens.ci/api/badge/<username>/svg)
 ```
 
 - 将 `<username>` 替换为您的 GitHub 用户名
@@ -723,13 +723,13 @@ Tokscale 包含一个社交平台，您可以在其中分享使用数据并与�
   - `label=<文本>` 自定义左侧标签
   - `color=<hex>` 自定义右侧背景颜色（例如 `color=ff5733`）
 - 示例：
-  - `https://tokscale.ai/api/badge/<username>/svg?metric=cost&compact=1`
-  - `https://tokscale.ai/api/badge/<username>/svg?metric=rank&sort=cost&style=flat-square`
+  - `https://tokens.ci/api/badge/<username>/svg?metric=cost&compact=1`
+  - `https://tokens.ci/api/badge/<username>/svg?metric=rank&sort=cost&style=flat-square`
 
 ### 入门
 
-1. **登录** - 运行 `tokscale login` 通过 GitHub 认证
-2. **提交** - 运行 `tokscale submit` 上传使用数据
+1. **登录** - 运行 `tokens login` 通过 GitHub 认证
+2. **提交** - 运行 `tokens submit` 上传使用数据
 3. **查看** - 访问 Web 平台查看您的资料和排行榜
 
 ### 数据验证
@@ -746,7 +746,7 @@ Tokscale 包含一个社交平台，您可以在其中分享使用数据并与�
 
 生成一张精美的年度回顾图片，总结您的 AI 编程助手使用情况——灵感来自 Spotify Wrapped。
 
-| `bunx tokscale@latest wrapped` | `bunx tokscale@latest wrapped --clients` | `bunx tokscale@latest wrapped --agents --disable-pinned` |
+| `bunx tokens-cli@latest wrapped` | `bunx tokens-cli@latest wrapped --clients` | `bunx tokens-cli@latest wrapped --agents --disable-pinned` |
 |:---:|:---:|:---:|
 | ![Wrapped 2025 (Agents + Pin Sisyphus)](.github/assets/wrapped-2025-agents.png) | ![Wrapped 2025 (Clients)](.github/assets/wrapped-2025-clients.png) | ![Wrapped 2025 (Agents + Disable Pinned)](.github/assets/wrapped-2025-agents-disable-pinned.png) |
 
@@ -754,10 +754,10 @@ Tokscale 包含一个社交平台，您可以在其中分享使用数据并与�
 
 ```bash
 # 生成当前年份的 Wrapped 图片
-tokscale wrapped
+tokens wrapped
 
 # 生成指定年份的 Wrapped 图片
-tokscale wrapped --year 2025
+tokens wrapped --year 2025
 ```
 
 ### 包含内容
@@ -853,19 +853,19 @@ bun run bench
 
 ```bash
 # 导出图表数据到文件
-tokscale graph --output usage-data.json
+tokens graph --output usage-data.json
 
 # 日期筛选（所有快捷方式都有效）
-tokscale graph --today
-tokscale graph --week
-tokscale graph --since 2024-01-01 --until 2024-12-31
-tokscale graph --year 2024
+tokens graph --today
+tokens graph --week
+tokens graph --since 2024-01-01 --until 2024-12-31
+tokens graph --year 2024
 
 # 按平台筛选
-tokscale graph --client opencode,claude
+tokens graph --client opencode,claude
 
 # 显示处理时间基准
-tokscale graph --output data.json --benchmark
+tokens graph --output data.json --benchmark
 ```
 
 ### 基准测试标志
@@ -873,17 +873,17 @@ tokscale graph --output data.json --benchmark
 显示处理时间以进行性能分析：
 
 ```bash
-tokscale --benchmark           # 显示默认视图的处理时间
-tokscale models --benchmark    # 基准测试模型报告
-tokscale monthly --benchmark   # 基准测试月度报告
-tokscale graph --benchmark     # 基准测试图表生成
+tokens --benchmark           # 显示默认视图的处理时间
+tokens models --benchmark    # 基准测试模型报告
+tokens monthly --benchmark   # 基准测试月度报告
+tokens graph --benchmark     # 基准测试图表生成
 ```
 
 ### 为前端生成数据
 
 ```bash
 # 导出可视化数据
-tokscale graph --output packages/frontend/public/my-data.json
+tokens graph --output packages/frontend/public/my-data.json
 ```
 
 ### 性能
@@ -936,15 +936,15 @@ cd packages/core && bun run bench
 
 ### Windows 支持
 
-Tokscale 完全支持 Windows。TUI 和 CLI 的工作方式与 macOS/Linux 相同。
+Tokens 完全支持 Windows。TUI 和 CLI 的工作方式与 macOS/Linux 相同。
 
 **Windows 安装：**
 ```powershell
 # 安装 Bun（PowerShell）
 powershell -c "irm bun.sh/install.ps1 | iex"
 
-# 运行 tokscale
-bunx tokscale@latest
+# 运行 tokens
+bunx tokens-cli@latest
 ```
 
 #### Windows 上的数据位置
@@ -961,7 +961,7 @@ AI 编程工具将会话数据存储在跨平台位置。大多数工具在所�
 | Hermes Agent | `~/.hermes/` | `%USERPROFILE%\.hermes\` | 可通过 `HERMES_HOME` 环境变量配置（[源码](https://github.com/NousResearch/hermes-agent/blob/main/website/docs/developer-guide/session-storage.md)） |
 | Gemini CLI | `~/.gemini/` | `%USERPROFILE%\.gemini\` | 可通过 `GEMINI_CLI_HOME` 环境变量配置 |
 | Amp | `~/.local/share/amp/` | `%USERPROFILE%\.local\share\amp\` | 与 OpenCode 一样使用 `xdg-basedir` |
-| Cursor | API 同步 | API 同步 | 通过 API 获取数据，缓存在 `%USERPROFILE%\.config\tokscale\cursor-cache\` |
+| Cursor | API 同步 | API 同步 | 通过 API 获取数据，缓存在 `%USERPROFILE%\.config\tokens\cursor-cache\` |
 | Droid | `~/.factory/` | `%USERPROFILE%\.factory\` | 所有平台使用相同路径 |
 | Pi | `~/.pi/` and `~/.omp/` | `%USERPROFILE%\.pi\` and `%USERPROFILE%\.omp\` | 所有平台使用相同路径（支持 Pi 和 [Oh My Pi](https://github.com/can1357/oh-my-pi)） |
 | Kimi CLI | `~/.kimi/` | `%USERPROFILE%\.kimi\` | 所有平台使用相同路径 |
@@ -974,8 +974,8 @@ AI 编程工具将会话数据存储在跨平台位置。大多数工具在所�
 | Kilo CLI | `~/.local/share/kilo/` | `%USERPROFILE%\.local\share\kilo\` | 与 OpenCode 一样使用 `xdg-basedir` |
 | Crush | `$XDG_DATA_HOME/crush/`（回退路径：`~/.local/share/crush/`） | `%USERPROFILE%\.local\share\crush\`（如果设置了 `%XDG_DATA_HOME%`，则为 `%XDG_DATA_HOME%\crush\`） | 使用带回退路径的 XDG 数据目录 |
 | Goose | `~/.local/share/goose/sessions/`（+ macOS Application Support、旧版 Block 路径） | `%USERPROFILE%\.local\share\goose\sessions\` | 可通过 `GOOSE_PATH_ROOT` 环境变量配置 |
-| Antigravity | `~/.config/tokscale/antigravity-cache/sessions/` | — | `tokscale antigravity sync` 目前仅支持 macOS / Linux |
-| Trae | `~/.config/tokscale/trae-cache/sessions/` | `%APPDATA%\tokscale\trae-cache\sessions\` | 通过 `tokscale trae sync` 同步一次；凭据会从已安装的任意 Trae IDE 或 Trae Solo 桌面端自动发现 |
+| Antigravity | `~/.config/tokens/antigravity-cache/sessions/` | — | `tokens antigravity sync` 目前仅支持 macOS / Linux |
+| Trae | `~/.config/tokens/trae-cache/sessions/` | `%APPDATA%\tokens\trae-cache\sessions\` | 通过 `tokens trae sync` 同步一次；凭据会从已安装的任意 Trae IDE 或 Trae Solo 桌面端自动发现 |
 | Grok Build | `~/.grok/sessions/` | `%USERPROFILE%\.grok\sessions\` | 可通过 `GROK_HOME` 环境变量配置；解析 `updates.jsonl` 会话更新 |
 | Gajae-Code | `~/.gjc/agent/sessions/` | `%USERPROFILE%\.gjc\agent\sessions\` | 可通过 `GJC_CODING_AGENT_DIR`（也可用 `GJC_CONFIG_DIR`/`PI_CONFIG_DIR`；Linux/macOS 上 `$XDG_DATA_HOME/gjc/sessions/` 亦支持）配置 |
 | Synthetic | 从其他来源重归属 | 从其他来源重归属 | 检测 `hf:` 模型前缀 + `synthetic` provider |
@@ -984,13 +984,13 @@ AI 编程工具将会话数据存储在跨平台位置。大多数工具在所�
 
 #### Windows 特定配置
 
-Tokscale 将配置存储在：
-- **TUI 设置**: `%APPDATA%\tokscale\settings.json`（平台默认值。可用 `TOKSCALE_CONFIG_DIR` 覆盖）
-- **缓存**: `%APPDATA%\tokscale\cache\`（统一缓存根目录）
-- **旧版缓存路径**: 旧版本曾使用 `%USERPROFILE%\.cache\tokscale\` 这类分散路径；在可再生数据写入新路径之前，这些旧路径可能仍然存在。
-- **Cursor 凭据**: `%USERPROFILE%\.config\tokscale\cursor-credentials.json`
-- **Trae 凭据和同步使用量**: `%APPDATA%\tokscale\trae-cache\`
-- **Tokscale 账号凭据**: `%USERPROFILE%\.config\tokscale\credentials.json`
+Tokens 将配置存储在：
+- **TUI 设置**: `%APPDATA%\tokens\settings.json`（平台默认值。可用 `TOKENS_CONFIG_DIR` 覆盖）
+- **缓存**: `%APPDATA%\tokens\cache\`（统一缓存根目录）
+- **旧版缓存路径**: 旧版本曾使用 `%USERPROFILE%\.cache\tokens\` 这类分散路径；在可再生数据写入新路径之前，这些旧路径可能仍然存在。
+- **Cursor 凭据**: `%USERPROFILE%\.config\tokens\cursor-credentials.json`
+- **Trae 凭据和同步使用量**: `%APPDATA%\tokens\trae-cache\`
+- **Tokens 账号凭据**: `%USERPROFILE%\.config\tokens\credentials.json`
 
 ## 会话数据保留
 
@@ -1067,9 +1067,9 @@ OpenCode 没有内置会话清理。`~/.local/share/opencode/storage/` 中的会
 
 位置：`~/.local/share/opencode/opencode.db` (v1.2+) 或 `storage/message/{sessionId}/*.json` (旧版)
 
-OpenCode 1.2+ 将会话存储在 SQLite 中。Tokscale 优先从 SQLite 读取，旧版本则回退到旧版 JSON 文件。
+OpenCode 1.2+ 将会话存储在 SQLite 中。Tokens 优先从 SQLite 读取，旧版本则回退到旧版 JSON 文件。
 
-OpenCode 根据构建时的发布渠道决定数据库文件名：`latest`/`beta` 渠道使用 `opencode.db`，其他渠道使用 `opencode-<channel>.db`（例如 `opencode-stable.db`、`opencode-nightly.db`）。Tokscale 会扫描所有这些文件，因此同时使用多个渠道的用户也能获得统一的视图。
+OpenCode 根据构建时的发布渠道决定数据库文件名：`latest`/`beta` 渠道使用 `opencode.db`，其他渠道使用 `opencode-<channel>.db`（例如 `opencode-stable.db`、`opencode-nightly.db`）。Tokens 会扫描所有这些文件，因此同时使用多个渠道的用户也能获得统一的视图。
 
 每个消息包含：
 ```json
@@ -1131,13 +1131,13 @@ $env:COPILOT_OTEL_FILE_EXPORTER_PATH = Join-Path $otelDir ("copilot-otel-{0}.jso
 
 建议使用带时间戳的文件名，这样每个 Copilot 会话都会写入新文件，而不是累积到一个巨大的 OTEL 日志中。
 
-Tokscale 将 `chat` span 作为 Token 统计的真实来源，并在第一阶段忽略工具 span 和累积指标：
+Tokens 将 `chat` span 作为 Token 统计的真实来源，并在第一阶段忽略工具 span 和累积指标：
 
 ```json
 {"type":"span","name":"chat gpt-5.4-mini","attributes":{"gen_ai.operation.name":"chat","gen_ai.response.model":"gpt-5.4-mini","gen_ai.conversation.id":"session-id","gen_ai.usage.input_tokens":1234,"gen_ai.usage.output_tokens":567,"gen_ai.usage.cache_read.input_tokens":890,"gen_ai.usage.reasoning.output_tokens":123}}
 ```
 
-> Copilot 的 OTEL 负载目前不暴露稳定的工作区元数据，因此 Copilot 行可能不会显示工作区属性。Tokscale 尽可能根据报告的模型为这些行定价，不会直接信任 `github.copilot.cost`。
+> Copilot 的 OTEL 负载目前不暴露稳定的工作区元数据，因此 Copilot 行可能不会显示工作区属性。Tokens 尽可能根据报告的模型为这些行定价，不会直接信任 `github.copilot.cost`。
 
 ### Gemini CLI
 
@@ -1155,27 +1155,27 @@ Tokscale 将 `chat` span 作为 Token 统计的真实来源，并在第一阶段
 
 ### Cursor IDE
 
-位置：`~/.config/tokscale/cursor-cache/`（通过 Cursor API 同步）
+位置：`~/.config/tokens/cursor-cache/`（通过 Cursor API 同步）
 
-Cursor 数据使用您的会话令牌从 Cursor API 获取并本地缓存。运行 `tokscale cursor login` 进行认证。设置说明请参阅 [Cursor IDE 命令](#cursor-ide-命令)。
+Cursor 数据使用您的会话令牌从 Cursor API 获取并本地缓存。运行 `tokens cursor login` 进行认证。设置说明请参阅 [Cursor IDE 命令](#cursor-ide-命令)。
 
 ### Antigravity
 
-位置：`~/.config/tokscale/antigravity-cache/sessions/*.jsonl`（通过本地 Antigravity 语言服务器 RPC 同步）
+位置：`~/.config/tokens/antigravity-cache/sessions/*.jsonl`（通过本地 Antigravity 语言服务器 RPC 同步）
 
-Antigravity 数据不会被根命令自动获取。请在启用了 Antigravity 的编辑器打开时运行 `tokscale antigravity sync` 来刷新本地缓存，然后对缓存的 JSONL 产物使用常规的 tokscale 报告和筛选。
+Antigravity 数据不会被根命令自动获取。请在启用了 Antigravity 的编辑器打开时运行 `tokens antigravity sync` 来刷新本地缓存，然后对缓存的 JSONL 产物使用常规的 tokens 报告和筛选。
 
 ### Trae
 
-位置：`~/.config/tokscale/trae-cache/sessions/*.json`（通过官方使用量 API 同步）
+位置：`~/.config/tokens/trae-cache/sessions/*.json`（通过官方使用量 API 同步）
 
-Trae 数据不会被根命令自动获取。先运行一次 `tokscale trae login`，然后在生成报告前运行 `tokscale trae sync`。Tokscale 会将同步得到的 API dump 解析为会话级记录，并保留 Trae 返回的成本总额。
+Trae 数据不会被根命令自动获取。先运行一次 `tokens trae login`，然后在生成报告前运行 `tokens trae sync`。Tokens 会将同步得到的 API dump 解析为会话级记录，并保留 Trae 返回的成本总额。
 
 ### Grok Build
 
 位置：`$GROK_HOME/sessions/*/*/updates.jsonl`（回退：`~/.grok/sessions/*/*/updates.jsonl`）
 
-Grok Build 数据直接从本地会话更新解析。当前日志只公开累积 `totalTokens` 计数器，没有稳定的 input/output 拆分，因此 Tokscale 将每个 turn 的正向增量记录为 input token。`grok-composer-2.5-fast` 会临时映射到 Composer 2.5 Fast 价格 override，直到专用公开价格可用。
+Grok Build 数据直接从本地会话更新解析。当前日志只公开累积 `totalTokens` 计数器，没有稳定的 input/output 拆分，因此 Tokens 将每个 turn 的正向增量记录为 input token。`grok-composer-2.5-fast` 会临时映射到 Composer 2.5 Fast 价格 override，直到专用公开价格可用。
 
 ### OpenClaw
 
@@ -1201,7 +1201,7 @@ Grok Build 数据直接从本地会话更新解析。当前日志只公开累积
 
 位置：`$HERMES_HOME/state.db`（回退：`~/.hermes/state.db`）
 
-Hermes 将会话级使用量存储在 SQLite `sessions` 表中。Tokscale 导入 `model` 存在且 token 或费用合计非零的行，使用 `started_at` 作为时间戳，保留 `message_count`，并优先使用 `actual_cost_usd` 而非 `estimated_cost_usd`。
+Hermes 将会话级使用量存储在 SQLite `sessions` 表中。Tokens 导入 `model` 存在且 token 或费用合计非零的行，使用 `started_at` 作为时间戳，保留 `message_count`，并优先使用 `actual_cost_usd` 而非 `estimated_cost_usd`。
 
 ### Pi
 
@@ -1250,7 +1250,7 @@ Hermes 将会话级使用量存储在 SQLite `sessions` 表中。Tokscale 导入
 
 每个任务目录可能还包含 `api_conversation_history.json`，其中包含用于模型/代理元数据的 `<environment_details>` 块。
 
-`ui_messages.json` 是一个 UI 事件数组。Tokscale 仅计算：
+`ui_messages.json` 是一个 UI 事件数组。Tokens 仅计算：
 - `type == "say"`
 - `say == "api_req_started"`
 
@@ -1270,7 +1270,7 @@ Hermes 将会话级使用量存储在 SQLite `sessions` 表中。Tokscale 导入
 - 本地：`~/.config/Code/User/globalStorage/kilocode.kilo-code/tasks/{TASK_ID}/ui_messages.json`
 - 服务器（尽力而为）：`~/.vscode-server/data/User/globalStorage/kilocode.kilo-code/tasks/{TASK_ID}/ui_messages.json`
 
-Kilo 使用与 Roo Code 相同的任务日志格式。Tokscale 应用相同的规则：
+Kilo 使用与 Roo Code 相同的任务日志格式。Tokens 应用相同的规则：
 - 仅计算 `ui_messages.json` 中的 `say/api_req_started` 事件
 - 从 `text` JSON 中解析 `tokensIn`、`tokensOut`、`cacheReads`、`cacheWrites`、`cost` 和 `apiProtocol`
 - 在可用时从相邻的 `api_conversation_history.json` 中丰富模型/代理元数据
@@ -1282,7 +1282,7 @@ Kilo 使用与 Roo Code 相同的任务日志格式。Tokscale 应用相同的�
 
 Mux 在 `session-usage.json` 文件中存储每个会话的累计 Token 使用量。每个文件包含一个 `byModel` 映射，其中包含每个模型的 Token 细分：
  `input`、`cached`（缓存读取）、`cacheCreate`（缓存写入）、`output`、`reasoning`
- 模型名称使用 `provider:model` 格式（例如 `anthropic:claude-opus-4-6`）— tokscale 会去除 provider 前缀以识别模型
+ 模型名称使用 `provider:model` 格式（例如 `anthropic:claude-opus-4-6`）— tokens 会去除 provider 前缀以识别模型
  子代理使用量由 Mux 自动汇总到父会话中，因此不存在重复计算
 
 ### Kilo CLI
@@ -1295,25 +1295,25 @@ Kilo CLI 在类似于 OpenCode 的 SQLite 数据库中存储会话数据。每�
 
 位置：通过 `$XDG_DATA_HOME/crush/projects.json` 发现的项目级 SQLite 数据库（回退路径：`~/.local/share/crush/projects.json`）
 
-Crush 在项目级 SQLite 数据库（`crush.db`）中存储使用量。由于 Crush 不提供可靠的每条消息或每个模型的 Token 统计，Tokscale 仅导入根会话的会话级成本总计。记录显示为 `model=session-total`，Token 细分为零。
+Crush 在项目级 SQLite 数据库（`crush.db`）中存储使用量。由于 Crush 不提供可靠的每条消息或每个模型的 Token 统计，Tokens 仅导入根会话的会话级成本总计。记录显示为 `model=session-total`，Token 细分为零。
 
 ### Goose
 
 位置：`~/.local/share/goose/sessions/sessions.db`（同时扫描 `~/Library/Application Support/goose/`、`~/Library/Application Support/Block/goose/`、`~/.local/share/Block/goose/`；可通过 `GOOSE_PATH_ROOT` 覆盖）
 
-Goose 在 SQLite 的 `sessions.db` 中按会话保存使用量。Tokscale 从 `model_config_json` 提取模型，从 `provider_name` 提取提供商，并按会话累加输入/输出 Token 总数。当推理 Token 列有数据时也会被推断出来。
+Goose 在 SQLite 的 `sessions.db` 中按会话保存使用量。Tokens 从 `model_config_json` 提取模型，从 `provider_name` 提取提供商，并按会话累加输入/输出 Token 总数。当推理 Token 列有数据时也会被推断出来。
 
 ### Codebuff
 
 位置：`~/.config/manicode/projects/<project>/chats/<chatId>/chat-messages.json`（同时扫描 `manicode-dev` 和 `manicode-staging` 频道；可通过 `CODEBUFF_DATA_DIR` 覆盖）
 
-Codebuff（前身 Manicode）按聊天写入 JSON 文件。Tokscale 从 `metadata.usage`、`metadata.codebuff.usage` 以及 run-state 中的 `messageHistory[*].providerOptions` 回退路径解析 Token 使用量，并以反向顺序遍历历史，避免部分更新的较新条目遮蔽实际承载 Token 数的较早条目。当消息时间戳缺失时，会回退到 chat-id 目录名，最后回退到文件 mtime。
+Codebuff（前身 Manicode）按聊天写入 JSON 文件。Tokens 从 `metadata.usage`、`metadata.codebuff.usage` 以及 run-state 中的 `messageHistory[*].providerOptions` 回退路径解析 Token 使用量，并以反向顺序遍历历史，避免部分更新的较新条目遮蔽实际承载 Token 数的较早条目。当消息时间戳缺失时，会回退到 chat-id 目录名，最后回退到文件 mtime。
 
 ### Gajae-Code (gjc)
 
 位置：`~/.gjc/agent/sessions/<project-slug>/*.jsonl`（可通过 `GJC_CODING_AGENT_DIR` 覆盖 agent 目录；也会解析 `GJC_CONFIG_DIR`/`PI_CONFIG_DIR` 拼接 `agent/sessions`，以及 Linux/macOS 上展平的 `$XDG_DATA_HOME/gjc/sessions/` 重定向路径）。深度为 2 的逐次子代理转录（`<slug>/<session>/N-*.jsonl`）也会被发现。
 
-包含会话头和消息条目的 JSONL 格式。Tokscale 仅处理 assistant 消息，并在存在时优先使用 gjc 的权威性每条消息 `usage.cost.total`（USD），仅在缺失时才从 token 数重新计算：
+包含会话头和消息条目的 JSONL 格式。Tokens 仅处理 assistant 消息，并在存在时优先使用 gjc 的权威性每条消息 `usage.cost.total`（USD），仅在缺失时才从 token 数重新计算：
 ```json
 {"type":"session","id":"S1","timestamp":"2026-01-01T00:00:00.000Z","cwd":"/work/proj"}
 {"type":"message","id":"M1","timestamp":"2026-01-01T00:00:01.000Z","message":{"role":"assistant","model":"claude-sonnet-4","provider":"anthropic","usage":{"input":1000,"output":500,"cacheRead":0,"cacheWrite":0,"totalTokens":1500,"cost":{"input":0.1,"output":0.2,"total":0.3}}}}
@@ -1323,19 +1323,19 @@ Codebuff（前身 Manicode）按聊天写入 JSON 文件。Tokscale 从 `metadat
 
 Synthetic 通过后处理重归属其他来源的消息。当检测到 `hf:` 前缀模型 ID 或 `synthetic` / `glhf` / `octofriend` provider 时，消息会被归类为 `synthetic` 来源。
 
-Tokscale 还会检测 `~/.local/share/octofriend/sqlite.db`，并在可用时解析包含 token 数据的记录。
+Tokens 还会检测 `~/.local/share/octofriend/sqlite.db`，并在可用时解析包含 token 数据的记录。
 
 ## 定价
 
-Tokscale 从 [LiteLLM 的价格数据库](https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json)获取实时价格。
+Tokens 从 [LiteLLM 的价格数据库](https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json)获取实时价格。
 
-**动态回退**：对于 LiteLLM 中尚未收录的模型（例如最近发布的模型），Tokscale 会自动从 [OpenRouter 的端点 API](https://openrouter.ai/docs/api/api-reference/endpoints/list-endpoints) 获取定价。
+**动态回退**：对于 LiteLLM 中尚未收录的模型（例如最近发布的模型），Tokens 会自动从 [OpenRouter 的端点 API](https://openrouter.ai/docs/api/api-reference/endpoints/list-endpoints) 获取定价。
 
-**Cursor 模型定价**：对于 LiteLLM 和 OpenRouter 中都尚未收录的最新模型（例如 `gpt-5.3-codex`），Tokscale 使用从 [Cursor 模型文档](https://cursor.com/en-US/docs/models)获取的硬编码定价。这些覆盖在所有上游来源之后、模糊匹配之前检查，因此当真正的上游定价可用时会自动让步。
+**Cursor 模型定价**：对于 LiteLLM 和 OpenRouter 中都尚未收录的最新模型（例如 `gpt-5.3-codex`），Tokens 使用从 [Cursor 模型文档](https://cursor.com/en-US/docs/models)获取的硬编码定价。这些覆盖在所有上游来源之后、模糊匹配之前检查，因此当真正的上游定价可用时会自动让步。
 
 **缓存**：价格数据以 1 小时 TTL 缓存到磁盘，确保快速启动：
-- LiteLLM 缓存：`~/.config/tokscale/cache/pricing-litellm.json`
-- OpenRouter 缓存：`~/.config/tokscale/cache/pricing-openrouter.json`（缓存支持提供商的模型作者定价信息）
+- LiteLLM 缓存：`~/.config/tokens/cache/pricing-litellm.json`
+- OpenRouter 缓存：`~/.config/tokens/cache/pricing-openrouter.json`（缓存支持提供商的模型作者定价信息）
 
 定价包括：
 - 输入 Token

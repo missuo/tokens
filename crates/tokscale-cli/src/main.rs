@@ -28,8 +28,8 @@ struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
 
-    #[arg(short, long, default_value = "blue")]
-    theme: String,
+    #[arg(short, long)]
+    theme: Option<String>,
 
     #[arg(short, long, default_value = "0")]
     refresh: u64,
@@ -61,6 +61,12 @@ struct Cli {
         help = "Skip cache write even if settings.json `light.writeCache` is true. Only valid with --light."
     )]
     no_write_cache: bool,
+
+    #[arg(
+        long = "hide-zero",
+        help = "Hide entries whose token counts, cost, and duration are all zero. Report totals still include them. Implies the static report view instead of the interactive TUI."
+    )]
+    hide_zero: bool,
 
     #[command(flatten)]
     clients: ClientFlags,
@@ -126,6 +132,11 @@ enum Commands {
             help = "Skip cache write even if settings.json `light.writeCache` is true. Only valid with --light."
         )]
         no_write_cache: bool,
+        #[arg(
+            long = "hide-zero",
+            help = "Hide entries whose token counts, cost, and duration are all zero. Report totals still include them. Implies the static report view instead of the interactive TUI."
+        )]
+        hide_zero: bool,
         #[arg(long, help = "Disable spinner")]
         no_spinner: bool,
     },
@@ -141,6 +152,11 @@ enum Commands {
         date: DateRangeFlags,
         #[arg(long, help = "Show processing time")]
         benchmark: bool,
+        #[arg(
+            long = "hide-zero",
+            help = "Hide entries whose token counts and cost are all zero. Report totals still include them. Implies the static report view instead of the interactive TUI."
+        )]
+        hide_zero: bool,
         #[arg(long, help = "Disable spinner")]
         no_spinner: bool,
     },
@@ -156,6 +172,11 @@ enum Commands {
         date: DateRangeFlags,
         #[arg(long, help = "Show processing time")]
         benchmark: bool,
+        #[arg(
+            long = "hide-zero",
+            help = "Hide entries whose token counts and cost are all zero. Report totals still include them. Implies the static report view instead of the interactive TUI."
+        )]
+        hide_zero: bool,
         #[arg(long, help = "Disable spinner")]
         no_spinner: bool,
     },
@@ -180,10 +201,7 @@ enum Commands {
     },
     #[command(about = "Login to Tokens (opens browser for GitHub auth)")]
     Login {
-        #[arg(
-            long,
-            help = "Save an existing Tokens API token without browser auth"
-        )]
+        #[arg(long, help = "Save an existing Tokens API token without browser auth")]
         token: Option<String>,
     },
     #[command(about = "Logout from Tokens")]
@@ -258,6 +276,11 @@ enum Commands {
         )]
         interval: Option<u64>,
     },
+    #[command(about = "Manage periodic usage submission")]
+    Autosubmit {
+        #[command(subcommand)]
+        subcommand: commands::autosubmit::AutosubmitSubcommand,
+    },
     #[command(about = "Capture subprocess output for token usage tracking")]
     Headless {
         #[arg(help = "Source CLI (currently only 'codex' supported)")]
@@ -273,7 +296,7 @@ enum Commands {
     },
     #[command(about = "Generate year-in-review wrapped image")]
     Wrapped {
-        #[arg(long, help = "Output file path (default: tokscale-{year}-wrapped.png)")]
+        #[arg(long, help = "Output file path (default: tokens-{year}-wrapped.png)")]
         output: Option<String>,
         #[arg(long, help = "Year to generate (default: current year)")]
         year: Option<String>,
@@ -345,6 +368,29 @@ enum Commands {
     },
     #[command(about = "Warm TUI cache in background (internal)", hide = true)]
     WarmTuiCache,
+    #[command(about = "Task-attributed usage report")]
+    Report {
+        #[arg(long, help = "Output as JSON")]
+        json: bool,
+        #[arg(long, help = "Filter by workspace path")]
+        workspace: Option<String>,
+        #[arg(long, help = "Filter by client (opencode, claude, codex, etc.)")]
+        client: Option<String>,
+        #[command(flatten)]
+        date: DateRangeFlags,
+        #[arg(long, help = "Skip LLM summarization (show raw data only)")]
+        no_summarize: bool,
+        #[arg(
+            long,
+            default_value = "apple-fm",
+            help = "Summarizer backend: apple-fm, claude, codex, gemini, kiro"
+        )]
+        summarizer: String,
+        #[arg(long, help = "Reset all summaries and re-summarize from scratch")]
+        rebuild: bool,
+        #[arg(long, help = "Show all sessions without truncation")]
+        full: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -411,6 +457,11 @@ enum CodexSubcommand {
     Status {
         #[arg(long, help = "Account label or id")]
         name: Option<String>,
+        #[arg(long, help = "Output as JSON")]
+        json: bool,
+    },
+    #[command(about = "Show an opt-in Codex account-activity snapshot")]
+    Activity {
         #[arg(long, help = "Output as JSON")]
         json: bool,
     },
@@ -490,11 +541,15 @@ fn main() -> Result<()> {
     use std::io::IsTerminal;
 
     let cli = Cli::parse();
+    // Install user-configured model aliases once, before any report/graph/TUI
+    // path runs, so model-name variants fold consistently across every command.
+    // Honors the global `--home` override exactly like scanner settings; an
+    // empty or absent config is a strict no-op.
+    tokscale_core::model_alias::set_global(&tui::settings::load_model_aliases_for_home(&cli.home));
 
     // Pin the date-bucketing timezone before any scanning so usage is
     // attributed to stable calendar dates regardless of where `submit` runs.
     timezone::install(&cli.home);
-
     let can_use_tui = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
 
     if cli.test_data {
@@ -511,6 +566,7 @@ fn main() -> Result<()> {
             group_by,
             write_cache,
             no_write_cache,
+            hide_zero,
             no_spinner,
         }) => {
             use tokscale_core::GroupBy;
@@ -519,37 +575,27 @@ fn main() -> Result<()> {
                 eprintln!("Error: {}", e);
                 std::process::exit(1);
             });
-            let today = date.today;
-            let yesterday = date.yesterday;
-            let week = date.week;
-            let month = date.month;
-            let (since, until) =
-                build_date_filter(today, yesterday, week, month, date.since, date.until);
-            let year = normalize_year_filter(today, yesterday, week, month, date.year);
             let clients = build_client_filter(clients, &cli.home);
-            if json || light || !can_use_tui {
+            if json || light || hide_zero || !can_use_tui {
                 run_models_report(
                     json,
                     cli.home.clone(),
                     clients,
-                    since,
-                    until,
-                    year,
+                    &date,
                     benchmark,
                     no_spinner || !can_use_tui,
-                    today,
-                    yesterday,
-                    week,
-                    month,
                     group_by,
                     write_cache,
                     no_write_cache,
+                    hide_zero,
                 )
             } else {
+                let (since, until) = build_date_filter(&date);
+                let year = normalize_year_filter(&date);
                 ensure_home_supported_for_tui(&cli.home)?;
                 auto_sync_cursor_before_tui(&cli.home, &clients)?;
                 tui::run(
-                    &cli.theme,
+                    cli.theme.as_deref().unwrap_or(""),
                     cli.refresh,
                     cli.debug,
                     clients,
@@ -566,43 +612,34 @@ fn main() -> Result<()> {
             clients,
             date,
             benchmark,
+            hide_zero,
             no_spinner,
         }) => {
-            let today = date.today;
-            let yesterday = date.yesterday;
-            let week = date.week;
-            let month = date.month;
-            let (since, until) =
-                build_date_filter(today, yesterday, week, month, date.since, date.until);
-            let year = normalize_year_filter(today, yesterday, week, month, date.year);
             let clients = build_client_filter(clients, &cli.home);
-            if json || light || !can_use_tui {
+            if json || light || hide_zero || !can_use_tui {
                 run_monthly_report(
                     json,
                     cli.home.clone(),
                     clients,
-                    since,
-                    until,
-                    year,
+                    &date,
                     benchmark,
                     no_spinner || !can_use_tui,
-                    today,
-                    yesterday,
-                    week,
-                    month,
+                    hide_zero,
                 )
             } else {
+                let (since, until) = build_date_filter(&date);
+                let year = normalize_year_filter(&date);
                 ensure_home_supported_for_tui(&cli.home)?;
                 auto_sync_cursor_before_tui(&cli.home, &clients)?;
                 tui::run(
-                    &cli.theme,
+                    cli.theme.as_deref().unwrap_or(""),
                     cli.refresh,
                     cli.debug,
                     clients,
                     since,
                     until,
                     year,
-                    Some(Tab::Daily),
+                    Some(Tab::Monthly),
                 )
             }
         }
@@ -612,36 +649,27 @@ fn main() -> Result<()> {
             clients,
             date,
             benchmark,
+            hide_zero,
             no_spinner,
         }) => {
-            let today = date.today;
-            let yesterday = date.yesterday;
-            let week = date.week;
-            let month = date.month;
-            let (since, until) =
-                build_date_filter(today, yesterday, week, month, date.since, date.until);
-            let year = normalize_year_filter(today, yesterday, week, month, date.year);
             let clients = build_client_filter(clients, &cli.home);
-            if json || light || !can_use_tui {
+            if json || light || hide_zero || !can_use_tui {
                 run_hourly_report(
                     json,
                     cli.home.clone(),
                     clients,
-                    since,
-                    until,
-                    year,
+                    &date,
                     benchmark,
                     no_spinner || !can_use_tui,
-                    today,
-                    yesterday,
-                    week,
-                    month,
+                    hide_zero,
                 )
             } else {
+                let (since, until) = build_date_filter(&date);
+                let year = normalize_year_filter(&date);
                 ensure_home_supported_for_tui(&cli.home)?;
                 auto_sync_cursor_before_tui(&cli.home, &clients)?;
                 tui::run(
-                    &cli.theme,
+                    cli.theme.as_deref().unwrap_or(""),
                     cli.refresh,
                     cli.debug,
                     clients,
@@ -692,13 +720,8 @@ fn main() -> Result<()> {
             work_time,
             today_only,
         }) => {
-            let today = date.today;
-            let yesterday = date.yesterday;
-            let week = date.week;
-            let month = date.month;
-            let (since, until) =
-                build_date_filter(today, yesterday, week, month, date.since, date.until);
-            let year = normalize_year_filter(today, yesterday, week, month, date.year);
+            let (since, until) = build_date_filter(&date);
+            let year = normalize_year_filter(&date);
             let clients = build_client_filter(clients, &cli.home);
             run_graph_command(
                 output,
@@ -716,17 +739,12 @@ fn main() -> Result<()> {
         }
         Some(Commands::Tui { clients, date }) => {
             ensure_home_supported_for_tui(&cli.home)?;
-            let today = date.today;
-            let yesterday = date.yesterday;
-            let week = date.week;
-            let month = date.month;
-            let (since, until) =
-                build_date_filter(today, yesterday, week, month, date.since, date.until);
-            let year = normalize_year_filter(today, yesterday, week, month, date.year);
+            let (since, until) = build_date_filter(&date);
+            let year = normalize_year_filter(&date);
             let clients = build_client_filter(clients, &cli.home);
             auto_sync_cursor_before_tui(&cli.home, &clients)?;
             tui::run(
-                &cli.theme,
+                cli.theme.as_deref().unwrap_or(""),
                 cli.refresh,
                 cli.debug,
                 clients,
@@ -742,25 +760,31 @@ fn main() -> Result<()> {
             dry_run,
         }) => {
             reject_unsupported_home_override(&cli.home, "submit")?;
-            let today = date.today;
-            let yesterday = date.yesterday;
-            let week = date.week;
-            let month = date.month;
-            let (since, until) =
-                build_date_filter(today, yesterday, week, month, date.since, date.until);
-            let year = normalize_year_filter(today, yesterday, week, month, date.year);
+            let (since, until) = build_date_filter(&date);
+            let year = normalize_year_filter(&date);
             // Bypass settings.json defaultClients for the submit path: we want the
             // submit-specific default_submit_clients() fallback (in run_submit_command)
             // to fire when the user passes no client flags, not the user's general
             // defaultClients view filter (which may exclude clients they still want
             // to upload). Pass an explicit empty defaults slice.
             let clients = build_client_filter_with_defaults(clients, &[]);
-            run_submit_command(clients, since, until, year, dry_run)
+            run_submit_command(
+                clients,
+                since,
+                until,
+                year,
+                dry_run,
+                SubmitMode::Interactive,
+            )
         }
         Some(Commands::Serve { clients, interval }) => {
             reject_unsupported_home_override(&cli.home, "serve")?;
             let clients = build_client_filter_with_defaults(clients, &[]);
             run_serve(interval, clients)
+        }
+        Some(Commands::Autosubmit { subcommand }) => {
+            reject_unsupported_home_override(&cli.home, "autosubmit")?;
+            run_autosubmit_command(subcommand)
         }
         Some(Commands::Headless {
             source,
@@ -828,13 +852,8 @@ fn main() -> Result<()> {
             date,
             no_spinner,
         }) => {
-            let today = date.today;
-            let yesterday = date.yesterday;
-            let week = date.week;
-            let month = date.month;
-            let (since, until) =
-                build_date_filter(today, yesterday, week, month, date.since, date.until);
-            let year = normalize_year_filter(today, yesterday, week, month, date.year);
+            let (since, until) = build_date_filter(&date);
+            let year = normalize_year_filter(&date);
             let clients = build_client_filter(clients, &cli.home);
             run_time_metrics_report(
                 json,
@@ -847,21 +866,39 @@ fn main() -> Result<()> {
             )
         }
         Some(Commands::WarmTuiCache) => run_warm_tui_cache(),
-        None => {
-            let today = cli.date.today;
-            let yesterday = cli.date.yesterday;
-            let week = cli.date.week;
-            let month = cli.date.month;
-            let clients = build_client_filter(cli.clients, &cli.home);
-            let (since, until) = build_date_filter(
+        Some(Commands::Report {
+            json,
+            workspace,
+            client,
+            date,
+            no_summarize,
+            summarizer,
+            rebuild,
+            full,
+        }) => {
+            let today = date.today;
+            let week = date.week;
+            let month = date.month;
+            let (since, until) = build_date_filter(&date);
+            commands::report::run_report(commands::report::ReportOptions {
+                json,
+                since,
+                until,
+                workspace,
+                client,
+                no_summarize,
+                summarizer,
+                rebuild,
+                home_dir: cli.home.clone(),
+                scanner_settings: tui::settings::load_scanner_settings(),
                 today,
-                yesterday,
                 week,
                 month,
-                cli.date.since,
-                cli.date.until,
-            );
-            let year = normalize_year_filter(today, yesterday, week, month, cli.date.year);
+                full,
+            })
+        }
+        None => {
+            let clients = build_client_filter(cli.clients, &cli.home);
             let group_by: tokscale_core::GroupBy = cli.group_by.parse().unwrap_or_else(|e| {
                 eprintln!("Error: {}", e);
                 std::process::exit(1);
@@ -872,42 +909,34 @@ fn main() -> Result<()> {
                     cli.json,
                     cli.home.clone(),
                     clients,
-                    since,
-                    until,
-                    year,
+                    &cli.date,
                     cli.benchmark,
                     cli.no_spinner || cli.json,
-                    today,
-                    yesterday,
-                    week,
-                    month,
                     group_by,
                     cli.write_cache,
                     cli.no_write_cache,
+                    cli.hide_zero,
                 )
-            } else if cli.light || !can_use_tui {
+            } else if cli.light || cli.hide_zero || !can_use_tui {
                 run_models_report(
                     false,
                     cli.home.clone(),
                     clients,
-                    since,
-                    until,
-                    year,
+                    &cli.date,
                     cli.benchmark,
                     cli.no_spinner || !can_use_tui,
-                    today,
-                    yesterday,
-                    week,
-                    month,
                     group_by,
                     cli.write_cache,
                     cli.no_write_cache,
+                    cli.hide_zero,
                 )
             } else {
+                let (since, until) = build_date_filter(&cli.date);
+                let year = normalize_year_filter(&cli.date);
                 ensure_home_supported_for_tui(&cli.home)?;
                 auto_sync_cursor_before_tui(&cli.home, &clients)?;
                 tui::run(
-                    &cli.theme,
+                    cli.theme.as_deref().unwrap_or(""),
                     cli.refresh,
                     cli.debug,
                     clients,
@@ -966,6 +995,20 @@ pub enum ClientFilter {
     Cline,
     Gjc,
     Grok,
+    Jcode,
+    Commandcode,
+    Micode,
+    #[value(name = "antigravity-cli")]
+    AntigravityCli,
+    Junie,
+    Zcode,
+    Opencodereview,
+    Codebuddy,
+    Workbuddy,
+    #[value(name = "devin-cli")]
+    DevinCli,
+    #[value(name = "devin-desktop")]
+    DevinDesktop,
     Synthetic,
 }
 
@@ -1003,6 +1046,17 @@ impl ClientFilter {
             Self::Cline => "cline",
             Self::Gjc => "gjc",
             Self::Grok => "grok",
+            Self::Jcode => "jcode",
+            Self::Commandcode => "commandcode",
+            Self::Micode => "micode",
+            Self::AntigravityCli => "antigravity-cli",
+            Self::Junie => "junie",
+            Self::Zcode => "zcode",
+            Self::Opencodereview => "opencodereview",
+            Self::Codebuddy => "codebuddy",
+            Self::Workbuddy => "workbuddy",
+            Self::DevinCli => "devin-cli",
+            Self::DevinDesktop => "devin-desktop",
             Self::Synthetic => "synthetic",
         }
     }
@@ -1043,6 +1097,17 @@ impl ClientFilter {
             Self::Cline => Some(ClientId::Cline),
             Self::Gjc => Some(ClientId::Gjc),
             Self::Grok => Some(ClientId::Grok),
+            Self::Jcode => Some(ClientId::Jcode),
+            Self::Commandcode => Some(ClientId::CommandCode),
+            Self::Micode => Some(ClientId::MiMoCode),
+            Self::AntigravityCli => Some(ClientId::AntigravityCli),
+            Self::Junie => Some(ClientId::Junie),
+            Self::Zcode => Some(ClientId::Zcode),
+            Self::Opencodereview => Some(ClientId::OpenCodeReview),
+            Self::Codebuddy => Some(ClientId::CodeBuddy),
+            Self::Workbuddy => Some(ClientId::WorkBuddy),
+            Self::DevinCli => Some(ClientId::DevinCli),
+            Self::DevinDesktop => Some(ClientId::DevinDesktop),
             Self::Synthetic => None,
         }
     }
@@ -1080,6 +1145,17 @@ impl ClientFilter {
             ClientId::Cline => Self::Cline,
             ClientId::Gjc => Self::Gjc,
             ClientId::Grok => Self::Grok,
+            ClientId::Jcode => Self::Jcode,
+            ClientId::CommandCode => Self::Commandcode,
+            ClientId::MiMoCode => Self::Micode,
+            ClientId::AntigravityCli => Self::AntigravityCli,
+            ClientId::Junie => Self::Junie,
+            ClientId::Zcode => Self::Zcode,
+            ClientId::OpenCodeReview => Self::Opencodereview,
+            ClientId::CodeBuddy => Self::Codebuddy,
+            ClientId::WorkBuddy => Self::Workbuddy,
+            ClientId::DevinCli => Self::DevinCli,
+            ClientId::DevinDesktop => Self::DevinDesktop,
         }
     }
 
@@ -1119,8 +1195,10 @@ pub struct ClientFlags {
     /// Canonical client filter. Repeatable or comma-separated.
     /// Example: `--client opencode,claude` or `-c opencode -c claude`.
     #[arg(
+        id = "client_filter",
         long = "client",
         short = 'c',
+        value_name = "CLIENTS",
         value_enum,
         value_delimiter = ',',
         action = clap::ArgAction::Append,
@@ -1128,79 +1206,33 @@ pub struct ClientFlags {
         help = "Filter by client(s). Repeatable or comma-separated (e.g. -c opencode,claude)."
     )]
     pub clients: Vec<ClientFilter>,
-
-    // ---- Deprecated legacy boolean flags ------------------------------
-    // Hidden from --help. Kept for backward compatibility; print a stderr
-    // deprecation warning when used. Slated for removal in the next major.
-    #[arg(long, hide = true)]
-    pub opencode: bool,
-    #[arg(long, hide = true)]
-    pub claude: bool,
-    #[arg(long, hide = true)]
-    pub codex: bool,
-    #[arg(long, hide = true)]
-    pub copilot: bool,
-    #[arg(long, hide = true)]
-    pub gemini: bool,
-    #[arg(long, hide = true)]
-    pub cursor: bool,
-    #[arg(long, hide = true)]
-    pub amp: bool,
-    #[arg(long, hide = true)]
-    pub codebuff: bool,
-    #[arg(long, hide = true)]
-    pub droid: bool,
-    #[arg(long, hide = true)]
-    pub openclaw: bool,
-    #[arg(long, hide = true)]
-    pub hermes: bool,
-    #[arg(long, hide = true)]
-    pub pi: bool,
-    #[arg(long, hide = true)]
-    pub kimi: bool,
-    #[arg(long, hide = true)]
-    pub qwen: bool,
-    #[arg(long, hide = true)]
-    pub roocode: bool,
-    #[arg(long, hide = true)]
-    pub kilocode: bool,
-    #[arg(long, hide = true)]
-    pub kilo: bool,
-    #[arg(long, hide = true)]
-    pub mux: bool,
-    #[arg(long, hide = true)]
-    pub crush: bool,
-    #[arg(long, hide = true)]
-    pub goose: bool,
-    #[arg(long, hide = true)]
-    pub antigravity: bool,
-    #[arg(long, hide = true)]
-    pub zed: bool,
-    #[arg(long, hide = true)]
-    pub kiro: bool,
-    #[arg(long, hide = true)]
-    pub trae: bool,
-    #[arg(long, hide = true)]
-    pub warp: bool,
-    #[arg(long, hide = true)]
-    pub cline: bool,
-    #[arg(long, hide = true)]
-    pub gjc: bool,
-    #[arg(long, hide = true)]
-    pub grok: bool,
-    #[arg(long, hide = true)]
-    pub synthetic: bool,
 }
 
 #[derive(Args, Clone, Debug, Default)]
 pub struct DateRangeFlags {
-    #[arg(long, help = "Show only today's usage")]
+    #[arg(
+        long,
+        help = "Show only today's usage",
+        conflicts_with_all = ["yesterday", "week", "month", "since", "until", "year"]
+    )]
     pub today: bool,
-    #[arg(long, help = "Show only yesterday's usage")]
+    #[arg(
+        long,
+        help = "Show only yesterday's usage",
+        conflicts_with_all = ["week", "month", "since", "until", "year"]
+    )]
     pub yesterday: bool,
-    #[arg(long, help = "Show last 7 days")]
+    #[arg(
+        long,
+        help = "Show last 7 days",
+        conflicts_with_all = ["month", "since", "until", "year"]
+    )]
     pub week: bool,
-    #[arg(long, help = "Show current month")]
+    #[arg(
+        long,
+        help = "Show current month",
+        conflicts_with_all = ["since", "until", "year"]
+    )]
     pub month: bool,
     #[arg(long, help = "Start date (YYYY-MM-DD)")]
     pub since: Option<String>,
@@ -1214,11 +1246,9 @@ pub struct DateRangeFlags {
 ///
 /// Resolution order:
 /// 1. Collect canonical `--client/-c` values (preserves user order).
-/// 2. Append any legacy `--<client>` boolean flags that are set, emitting a
-///    one-time stderr deprecation warning so existing scripts keep working.
-/// 3. If steps 1 and 2 produced nothing, fall back to user-configured
+/// 2. If step 1 produced nothing, fall back to user-configured
 ///    `defaultClients` from `~/.config/tokens/settings.json` when present.
-/// 4. Deduplicate while preserving first-seen order.
+/// 3. Deduplicate while preserving first-seen order.
 ///
 /// Returns `None` when no filters are active *and* no defaults configured
 /// so the caller can scan all clients.
@@ -1244,58 +1274,10 @@ fn build_client_filter_with_defaults(
         }
     }
 
-    let legacy: [(bool, ClientFilter); 29] = [
-        (flags.opencode, ClientFilter::Opencode),
-        (flags.claude, ClientFilter::Claude),
-        (flags.codex, ClientFilter::Codex),
-        (flags.cursor, ClientFilter::Cursor),
-        (flags.gemini, ClientFilter::Gemini),
-        (flags.amp, ClientFilter::Amp),
-        (flags.codebuff, ClientFilter::Codebuff),
-        (flags.droid, ClientFilter::Droid),
-        (flags.openclaw, ClientFilter::Openclaw),
-        (flags.pi, ClientFilter::Pi),
-        (flags.kimi, ClientFilter::Kimi),
-        (flags.qwen, ClientFilter::Qwen),
-        (flags.roocode, ClientFilter::Roocode),
-        (flags.kilocode, ClientFilter::Kilocode),
-        (flags.mux, ClientFilter::Mux),
-        (flags.kilo, ClientFilter::Kilo),
-        (flags.crush, ClientFilter::Crush),
-        (flags.hermes, ClientFilter::Hermes),
-        (flags.copilot, ClientFilter::Copilot),
-        (flags.goose, ClientFilter::Goose),
-        (flags.antigravity, ClientFilter::Antigravity),
-        (flags.zed, ClientFilter::Zed),
-        (flags.kiro, ClientFilter::Kiro),
-        (flags.trae, ClientFilter::Trae),
-        (flags.warp, ClientFilter::Warp),
-        (flags.cline, ClientFilter::Cline),
-        (flags.gjc, ClientFilter::Gjc),
-        (flags.grok, ClientFilter::Grok),
-        (flags.synthetic, ClientFilter::Synthetic),
-    ];
-
-    let mut legacy_used: Vec<&'static str> = Vec::new();
-    for (enabled, client) in legacy {
-        if !enabled {
-            continue;
-        }
-        let id = client.as_filter_str();
-        legacy_used.push(id);
-        if seen.insert(id.to_string()) {
-            ordered.push(id.to_string());
-        }
-    }
-
-    if !legacy_used.is_empty() {
-        emit_legacy_client_flag_warning(&legacy_used);
-    }
-
-    // Defaults only apply when the user passed neither canonical nor legacy
-    // flags. CLI flags always win — predictable semantics over "merge".
-    // Unknown / typo'd ids are dropped silently so a stale settings.json
-    // entry never breaks tokscale.
+    // Defaults only apply when the user passed no canonical `--client` flags.
+    // CLI flags always win — predictable semantics over "merge". Unknown /
+    // typo'd ids are dropped silently so a stale settings.json entry never
+    // breaks tokscale.
     if ordered.is_empty() {
         for raw in defaults {
             if let Some(client) = ClientFilter::from_filter_str(raw) {
@@ -1312,22 +1294,6 @@ fn build_client_filter_with_defaults(
     } else {
         Some(ordered)
     }
-}
-
-/// Emits a single stderr deprecation warning when legacy `--<client>` flags
-/// are used. Suppressed entirely when stderr is not a TTY (e.g. when piping
-/// JSON output through scripts) so machine-parseable output stays clean.
-fn emit_legacy_client_flag_warning(used: &[&'static str]) {
-    if !std::io::stderr().is_terminal() {
-        return;
-    }
-    let pretty: Vec<String> = used.iter().map(|id| format!("--{id}")).collect();
-    let replacement = used.join(",");
-    eprintln!(
-        "warning: {} is deprecated; use `--client {}` instead. The legacy flags will be removed in the next major release.",
-        pretty.join(", "),
-        replacement
-    );
 }
 
 fn client_filter_includes_cursor(clients: &Option<Vec<String>>) -> bool {
@@ -1398,7 +1364,7 @@ fn cursor_setup_warnings_for_report(
 
     let Some(state) = cursor_setup_state(home_dir) else {
         return vec![
-            "Cursor usage requires Tokens's Cursor API cache, but the home directory could not be resolved. Run `tokens cursor login` and `tokens cursor sync --json`. Tokens does not parse local `~/.cursor` session data.".to_string(),
+            "Cursor usage requires the Tokens Cursor API cache, but the home directory could not be resolved. Run `tokens cursor login` and `tokens cursor sync --json`. Tokens does not parse local `~/.cursor` session data.".to_string(),
         ];
     };
     if state.has_cache {
@@ -1414,7 +1380,7 @@ fn cursor_setup_warnings_for_report(
     };
 
     vec![format!(
-        "Cursor usage requires Tokens's Cursor API cache at `{}`; {}. Tokens does not parse local `~/.cursor` session data.",
+        "Cursor usage requires the Tokens Cursor API cache at `{}`; {}. Tokens does not parse local `~/.cursor` session data.",
         state.cache_glob, action
     )]
 }
@@ -1444,7 +1410,7 @@ fn warp_setup_warnings_for_report(
             Some(home) => (home, false),
             None => {
                 return vec![
-                    "Warp usage requires Tokens' Warp aggregate cache, but the home directory could not be resolved. Tokens does not parse local Warp transcripts.".to_string(),
+                    "Warp usage requires the Tokens Warp aggregate cache, but the home directory could not be resolved. Tokens does not parse local Warp transcripts.".to_string(),
                 ];
             }
         },
@@ -1475,7 +1441,7 @@ fn warp_setup_warnings_for_report(
     };
 
     vec![format!(
-        "Warp usage requires Tokens' aggregate API cache at `{}`; {}. Tokens does not parse local Warp/Oz session transcripts and does not infer tokens from request counts.",
+        "Warp usage requires the Tokens aggregate API cache at `{}`; {}. Tokens does not parse local Warp/Oz session transcripts and does not infer tokens from request counts.",
         cache_glob, action
     )]
 }
@@ -1641,49 +1607,29 @@ fn ensure_home_supported_for_tui(home_dir: &Option<String>) -> Result<()> {
     Ok(())
 }
 
-fn build_date_filter(
-    today: bool,
-    yesterday: bool,
-    week: bool,
-    month: bool,
-    since: Option<String>,
-    until: Option<String>,
-) -> (Option<String>, Option<String>) {
-    build_date_filter_for_date(
-        today,
-        yesterday,
-        week,
-        month,
-        since,
-        until,
-        tokscale_core::bucket_timezone().today(),
-    )
+fn build_date_filter(date: &DateRangeFlags) -> (Option<String>, Option<String>) {
+    build_date_filter_for_date(date, tokscale_core::bucket_timezone().today())
 }
 
 fn build_date_filter_for_date(
-    today: bool,
-    yesterday: bool,
-    week: bool,
-    month: bool,
-    since: Option<String>,
-    until: Option<String>,
+    date: &DateRangeFlags,
     current_date: chrono::NaiveDate,
 ) -> (Option<String>, Option<String>) {
     use chrono::{Datelike, Duration};
 
-    if today {
-        let date = current_date.format("%Y-%m-%d").to_string();
-        return (Some(date.clone()), Some(date));
+    if date.today {
+        let day = current_date.format("%Y-%m-%d").to_string();
+        return (Some(day.clone()), Some(day));
     }
 
-    if yesterday {
-        let date = (current_date - Duration::days(1))
+    if date.yesterday {
+        let day = (current_date - Duration::days(1))
             .format("%Y-%m-%d")
             .to_string();
-        return (Some(date.clone()), Some(date));
+        return (Some(day.clone()), Some(day));
     }
 
-    if week {
+    if date.week {
         let start = current_date - Duration::days(6);
         return (
             Some(start.format("%Y-%m-%d").to_string()),
@@ -1691,7 +1637,7 @@ fn build_date_filter_for_date(
         );
     }
 
-    if month {
+    if date.month {
         let start = current_date.with_day(1).unwrap_or(current_date);
         return (
             Some(start.format("%Y-%m-%d").to_string()),
@@ -1699,75 +1645,45 @@ fn build_date_filter_for_date(
         );
     }
 
-    (since, until)
+    (date.since.clone(), date.until.clone())
 }
 
-fn normalize_year_filter(
-    today: bool,
-    yesterday: bool,
-    week: bool,
-    month: bool,
-    year: Option<String>,
-) -> Option<String> {
-    if today || yesterday || week || month {
+fn normalize_year_filter(date: &DateRangeFlags) -> Option<String> {
+    if date.today || date.yesterday || date.week || date.month {
         None
     } else {
-        year
+        date.year.clone()
     }
 }
 
-fn get_date_range_label(
-    today: bool,
-    yesterday: bool,
-    week: bool,
-    month: bool,
-    since: &Option<String>,
-    until: &Option<String>,
-    year: &Option<String>,
-) -> Option<String> {
-    get_date_range_label_for_date(
-        today,
-        yesterday,
-        week,
-        month,
-        since,
-        until,
-        year,
-        tokscale_core::bucket_timezone().today(),
-    )
+fn get_date_range_label(date: &DateRangeFlags) -> Option<String> {
+    get_date_range_label_for_date(date, tokscale_core::bucket_timezone().today())
 }
 
-#[allow(clippy::too_many_arguments)]
 fn get_date_range_label_for_date(
-    today: bool,
-    yesterday: bool,
-    week: bool,
-    month: bool,
-    since: &Option<String>,
-    until: &Option<String>,
-    year: &Option<String>,
+    date: &DateRangeFlags,
     current_date: chrono::NaiveDate,
 ) -> Option<String> {
-    if today {
+    if date.today {
         return Some("Today".to_string());
     }
-    if yesterday {
+    if date.yesterday {
         return Some("Yesterday".to_string());
     }
-    if week {
+    if date.week {
         return Some("Last 7 days".to_string());
     }
-    if month {
+    if date.month {
         return Some(current_date.format("%B %Y").to_string());
     }
-    if let Some(y) = year {
+    if let Some(y) = &date.year {
         return Some(y.clone());
     }
     let mut parts = Vec::new();
-    if let Some(s) = since {
+    if let Some(s) = &date.since {
         parts.push(format!("from {}", s));
     }
-    if let Some(u) = until {
+    if let Some(u) = &date.until {
         parts.push(format!("to {}", u));
     }
     if parts.is_empty() {
@@ -1894,25 +1810,21 @@ fn run_models_report(
     json: bool,
     home_dir: Option<String>,
     clients: Option<Vec<String>>,
-    since: Option<String>,
-    until: Option<String>,
-    year: Option<String>,
+    date: &DateRangeFlags,
     benchmark: bool,
     no_spinner: bool,
-    today: bool,
-    yesterday: bool,
-    week: bool,
-    month_flag: bool,
     group_by: tokscale_core::GroupBy,
     cli_write_cache: bool,
     cli_no_write_cache: bool,
+    hide_zero: bool,
 ) -> Result<()> {
     use std::time::Instant;
     use tokio::runtime::Runtime;
     use tokscale_core::{get_model_report, GroupBy, ReportOptions};
 
-    let date_range =
-        get_date_range_label(today, yesterday, week, month_flag, &since, &until, &year);
+    let (since, until) = build_date_filter(date);
+    let year = normalize_year_filter(date);
+    let date_range = get_date_range_label(date);
     let effective_home_dir = resolve_effective_home_dir(&home_dir);
 
     let had_cursor_cache = has_cursor_usage_cache_for_report(&home_dir);
@@ -1945,6 +1857,21 @@ fn run_models_report(
             .await
         })
         .map_err(|e| anyhow::anyhow!(e))?;
+    let mut report = report;
+    if hide_zero {
+        // Display-only filter: totals were computed in core over the full
+        // entry set and intentionally still include the hidden rows.
+        report.entries.retain(|e| {
+            e.input != 0
+                || e.output != 0
+                || e.cache_read != 0
+                || e.cache_write != 0
+                || e.reasoning != 0
+                || e.cost != 0.0
+                || e.performance.total_duration_ms != 0
+        });
+    }
+    let report = report;
 
     if let Some(spinner) = spinner {
         spinner.stop();
@@ -2108,11 +2035,18 @@ fn run_models_report(
                             .map(capitalize_client)
                             .collect::<Vec<_>>()
                             .join(", ");
-                        let total_tokens =
-                            entry.input + entry.output + entry.cache_read + entry.cache_write;
+                        let total_tokens = saturating_token_total(
+                            entry.input,
+                            entry.output,
+                            entry.cache_read,
+                            entry.cache_write,
+                        );
                         table.add_row(vec![
                             Cell::new(capitalized_clients),
-                            Cell::new(&entry.provider).add_attribute(Attribute::Dim),
+                            Cell::new(crate::tui::ui::widgets::get_provider_display_name(
+                                &entry.provider,
+                            ))
+                            .add_attribute(Attribute::Dim),
                             Cell::new(&entry.model),
                             Cell::new(format_tokens_with_commas(entry.input))
                                 .set_alignment(CellAlignment::Right),
@@ -2127,10 +2061,12 @@ fn run_models_report(
                         ]);
                     }
 
-                    let total_tokens = report.total_input
-                        + report.total_output
-                        + report.total_cache_read
-                        + report.total_cache_write;
+                    let total_tokens = saturating_token_total(
+                        report.total_input,
+                        report.total_output,
+                        report.total_cache_read,
+                        report.total_cache_write,
+                    );
                     table.add_row(vec![
                         Cell::new("Total")
                             .fg(Color::Yellow)
@@ -2167,11 +2103,18 @@ fn run_models_report(
                     ]);
 
                     for entry in &report.entries {
-                        let total_tokens =
-                            entry.input + entry.output + entry.cache_read + entry.cache_write;
+                        let total_tokens = saturating_token_total(
+                            entry.input,
+                            entry.output,
+                            entry.cache_read,
+                            entry.cache_write,
+                        );
                         table.add_row(vec![
                             Cell::new(capitalize_client(&entry.client)),
-                            Cell::new(&entry.provider).add_attribute(Attribute::Dim),
+                            Cell::new(crate::tui::ui::widgets::get_provider_display_name(
+                                &entry.provider,
+                            ))
+                            .add_attribute(Attribute::Dim),
                             Cell::new(&entry.model),
                             Cell::new(format_tokens_with_commas(entry.input))
                                 .set_alignment(CellAlignment::Right),
@@ -2186,10 +2129,12 @@ fn run_models_report(
                         ]);
                     }
 
-                    let total_tokens = report.total_input
-                        + report.total_output
-                        + report.total_cache_read
-                        + report.total_cache_write;
+                    let total_tokens = saturating_token_total(
+                        report.total_input,
+                        report.total_output,
+                        report.total_cache_read,
+                        report.total_cache_write,
+                    );
                     table.add_row(vec![
                         Cell::new("Total")
                             .fg(Color::Yellow)
@@ -2228,8 +2173,12 @@ fn run_models_report(
                     table.set_header(header);
 
                     for entry in &report.entries {
-                        let total_tokens =
-                            entry.input + entry.output + entry.cache_read + entry.cache_write;
+                        let total_tokens = saturating_token_total(
+                            entry.input,
+                            entry.output,
+                            entry.cache_read,
+                            entry.cache_write,
+                        );
                         let session_label = entry
                             .session_id
                             .clone()
@@ -2249,10 +2198,12 @@ fn run_models_report(
                         table.add_row(row);
                     }
 
-                    let total_all = report.total_input
-                        + report.total_output
-                        + report.total_cache_read
-                        + report.total_cache_write;
+                    let total_all = saturating_token_total(
+                        report.total_input,
+                        report.total_output,
+                        report.total_cache_read,
+                        report.total_cache_write,
+                    );
                     let mut total_row = Vec::with_capacity(6);
                     if show_client {
                         total_row.push(
@@ -2332,8 +2283,12 @@ fn run_models_report(
                     ]);
 
                     for entry in &report.entries {
-                        let total =
-                            entry.input + entry.output + entry.cache_write + entry.cache_read;
+                        let total = saturating_token_total(
+                            entry.input,
+                            entry.output,
+                            entry.cache_read,
+                            entry.cache_write,
+                        );
 
                         let clients_str = entry.merged_clients.as_deref().unwrap_or(&entry.client);
                         let capitalized_clients = clients_str
@@ -2343,7 +2298,10 @@ fn run_models_report(
                             .join(", ");
                         table.add_row(vec![
                             Cell::new(capitalized_clients),
-                            Cell::new(&entry.provider).add_attribute(Attribute::Dim),
+                            Cell::new(crate::tui::ui::widgets::get_provider_display_name(
+                                &entry.provider,
+                            ))
+                            .add_attribute(Attribute::Dim),
                             Cell::new(&entry.model),
                             Cell::new(format_tokens_with_commas(entry.input))
                                 .set_alignment(CellAlignment::Right),
@@ -2364,10 +2322,12 @@ fn run_models_report(
                         ]);
                     }
 
-                    let total_all = report.total_input
-                        + report.total_output
-                        + report.total_cache_write
-                        + report.total_cache_read;
+                    let total_all = saturating_token_total(
+                        report.total_input,
+                        report.total_output,
+                        report.total_cache_read,
+                        report.total_cache_write,
+                    );
                     table.add_row(vec![
                         Cell::new("Total")
                             .fg(Color::Yellow)
@@ -2419,8 +2379,12 @@ fn run_models_report(
                     table.set_header(header);
 
                     for entry in &report.entries {
-                        let total =
-                            entry.input + entry.output + entry.cache_write + entry.cache_read;
+                        let total = saturating_token_total(
+                            entry.input,
+                            entry.output,
+                            entry.cache_read,
+                            entry.cache_write,
+                        );
                         let session_label = entry
                             .session_id
                             .clone()
@@ -2431,7 +2395,10 @@ fn run_models_report(
                         }
                         row.extend([
                             Cell::new(session_label),
-                            Cell::new(&entry.provider).add_attribute(Attribute::Dim),
+                            Cell::new(crate::tui::ui::widgets::get_provider_display_name(
+                                &entry.provider,
+                            ))
+                            .add_attribute(Attribute::Dim),
                             Cell::new(&entry.model),
                             Cell::new(format_tokens_with_commas(entry.input))
                                 .set_alignment(CellAlignment::Right),
@@ -2447,10 +2414,12 @@ fn run_models_report(
                         table.add_row(row);
                     }
 
-                    let total_all = report.total_input
-                        + report.total_output
-                        + report.total_cache_write
-                        + report.total_cache_read;
+                    let total_all = saturating_token_total(
+                        report.total_input,
+                        report.total_output,
+                        report.total_cache_read,
+                        report.total_cache_write,
+                    );
                     let mut total_row: Vec<Cell> = Vec::with_capacity(9);
                     total_row.push(
                         Cell::new("Total")
@@ -2505,12 +2474,19 @@ fn run_models_report(
                     ]);
 
                     for entry in &report.entries {
-                        let total =
-                            entry.input + entry.output + entry.cache_write + entry.cache_read;
+                        let total = saturating_token_total(
+                            entry.input,
+                            entry.output,
+                            entry.cache_read,
+                            entry.cache_write,
+                        );
 
                         table.add_row(vec![
                             Cell::new(capitalize_client(&entry.client)),
-                            Cell::new(&entry.provider).add_attribute(Attribute::Dim),
+                            Cell::new(crate::tui::ui::widgets::get_provider_display_name(
+                                &entry.provider,
+                            ))
+                            .add_attribute(Attribute::Dim),
                             Cell::new(&entry.model),
                             Cell::new(format_model_name(&entry.model)),
                             Cell::new(format_tokens_with_commas(entry.input))
@@ -2532,10 +2508,12 @@ fn run_models_report(
                         ]);
                     }
 
-                    let total_all = report.total_input
-                        + report.total_output
-                        + report.total_cache_write
-                        + report.total_cache_read;
+                    let total_all = saturating_token_total(
+                        report.total_input,
+                        report.total_output,
+                        report.total_cache_read,
+                        report.total_cache_write,
+                    );
                     table.add_row(vec![
                         Cell::new("Total")
                             .fg(Color::Yellow)
@@ -2585,8 +2563,12 @@ fn run_models_report(
                     ]);
 
                     for entry in &report.entries {
-                        let total =
-                            entry.input + entry.output + entry.cache_write + entry.cache_read;
+                        let total = saturating_token_total(
+                            entry.input,
+                            entry.output,
+                            entry.cache_read,
+                            entry.cache_write,
+                        );
                         let clients_str = entry.merged_clients.as_deref().unwrap_or(&entry.client);
                         let capitalized_clients = clients_str
                             .split(", ")
@@ -2596,7 +2578,10 @@ fn run_models_report(
 
                         table.add_row(vec![
                             Cell::new(workspace_name(entry.workspace_label.as_deref())),
-                            Cell::new(&entry.provider).add_attribute(Attribute::Dim),
+                            Cell::new(crate::tui::ui::widgets::get_provider_display_name(
+                                &entry.provider,
+                            ))
+                            .add_attribute(Attribute::Dim),
                             Cell::new(capitalized_clients),
                             Cell::new(&entry.model),
                             Cell::new(format_tokens_with_commas(entry.input))
@@ -2616,10 +2601,12 @@ fn run_models_report(
                         ]);
                     }
 
-                    let total_all = report.total_input
-                        + report.total_output
-                        + report.total_cache_write
-                        + report.total_cache_read;
+                    let total_all = saturating_token_total(
+                        report.total_input,
+                        report.total_output,
+                        report.total_cache_read,
+                        report.total_cache_write,
+                    );
                     table.add_row(vec![
                         Cell::new("Total")
                             .fg(Color::Yellow)
@@ -2660,10 +2647,12 @@ fn run_models_report(
         println!("\n  \x1b[36m{}\x1b[0m\n", title);
         println!("{}", dim_borders(&table.to_string()));
 
-        let total_tokens = report.total_input
-            + report.total_output
-            + report.total_cache_write
-            + report.total_cache_read;
+        let total_tokens = saturating_token_total(
+            report.total_input,
+            report.total_output,
+            report.total_cache_read,
+            report.total_cache_write,
+        );
         println!(
             "\x1b[90m\n  Total: {} messages, {} tokens, \x1b[32m{}\x1b[90m\x1b[0m",
             format_tokens_with_commas(report.total_messages as i64),
@@ -2690,27 +2679,22 @@ fn run_models_report(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 fn run_monthly_report(
     json: bool,
     home_dir: Option<String>,
     clients: Option<Vec<String>>,
-    since: Option<String>,
-    until: Option<String>,
-    year: Option<String>,
+    date: &DateRangeFlags,
     benchmark: bool,
     no_spinner: bool,
-    today: bool,
-    yesterday: bool,
-    week: bool,
-    month_flag: bool,
+    hide_zero: bool,
 ) -> Result<()> {
     use std::time::Instant;
     use tokio::runtime::Runtime;
     use tokscale_core::{get_monthly_report, GroupBy, ReportOptions};
 
-    let date_range =
-        get_date_range_label(today, yesterday, week, month_flag, &since, &until, &year);
+    let (since, until) = build_date_filter(date);
+    let year = normalize_year_filter(date);
+    let date_range = get_date_range_label(date);
 
     let had_cursor_cache = has_cursor_usage_cache_for_report(&home_dir);
     let explicit_cursor_filter = client_filter_explicitly_requests_cursor(&clients);
@@ -2742,6 +2726,18 @@ fn run_monthly_report(
             .await
         })
         .map_err(|e| anyhow::anyhow!(e))?;
+    let mut report = report;
+    if hide_zero {
+        // Display-only filter: totals still include the hidden rows.
+        report.entries.retain(|e| {
+            e.input != 0
+                || e.output != 0
+                || e.cache_read != 0
+                || e.cache_write != 0
+                || e.cost != 0.0
+        });
+    }
+    let report = report;
 
     if let Some(spinner) = spinner {
         spinner.stop();
@@ -2845,8 +2841,12 @@ fn run_monthly_report(
                         .collect::<Vec<_>>()
                         .join("\n")
                 };
-                let total_tokens =
-                    entry.input + entry.output + entry.cache_read + entry.cache_write;
+                let total_tokens = saturating_token_total(
+                    entry.input,
+                    entry.output,
+                    entry.cache_read,
+                    entry.cache_write,
+                );
 
                 table.add_row(vec![
                     Cell::new(entry.month.clone()),
@@ -2861,11 +2861,14 @@ fn run_monthly_report(
                 ]);
             }
 
-            let total_input: i64 = report.entries.iter().map(|e| e.input).sum();
-            let total_output: i64 = report.entries.iter().map(|e| e.output).sum();
-            let total_cache_read: i64 = report.entries.iter().map(|e| e.cache_read).sum();
-            let total_cache_write: i64 = report.entries.iter().map(|e| e.cache_write).sum();
-            let total_tokens = total_input + total_output + total_cache_read + total_cache_write;
+            let (total_input, total_output, total_cache_read, total_cache_write) =
+                monthly_token_field_totals(&report.entries);
+            let total_tokens = saturating_token_total(
+                total_input,
+                total_output,
+                total_cache_read,
+                total_cache_write,
+            );
             table.add_row(vec![
                 Cell::new("Total")
                     .fg(Color::Yellow)
@@ -2915,7 +2918,12 @@ fn run_monthly_report(
                         .collect::<Vec<_>>()
                         .join("\n")
                 };
-                let total = entry.input + entry.output + entry.cache_write + entry.cache_read;
+                let total = saturating_token_total(
+                    entry.input,
+                    entry.output,
+                    entry.cache_read,
+                    entry.cache_write,
+                );
 
                 table.add_row(vec![
                     Cell::new(entry.month.clone()),
@@ -2935,11 +2943,14 @@ fn run_monthly_report(
                 ]);
             }
 
-            let total_input: i64 = report.entries.iter().map(|e| e.input).sum();
-            let total_output: i64 = report.entries.iter().map(|e| e.output).sum();
-            let total_cache_write: i64 = report.entries.iter().map(|e| e.cache_write).sum();
-            let total_cache_read: i64 = report.entries.iter().map(|e| e.cache_read).sum();
-            let total_all = total_input + total_output + total_cache_write + total_cache_read;
+            let (total_input, total_output, total_cache_read, total_cache_write) =
+                monthly_token_field_totals(&report.entries);
+            let total_all = saturating_token_total(
+                total_input,
+                total_output,
+                total_cache_read,
+                total_cache_write,
+            );
 
             table.add_row(vec![
                 Cell::new("Total")
@@ -2994,27 +3005,22 @@ fn run_monthly_report(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 fn run_hourly_report(
     json: bool,
     home_dir: Option<String>,
     clients: Option<Vec<String>>,
-    since: Option<String>,
-    until: Option<String>,
-    year: Option<String>,
+    date: &DateRangeFlags,
     benchmark: bool,
     no_spinner: bool,
-    today: bool,
-    yesterday: bool,
-    week: bool,
-    month_flag: bool,
+    hide_zero: bool,
 ) -> Result<()> {
     use std::time::Instant;
     use tokio::runtime::Runtime;
     use tokscale_core::{get_hourly_report, GroupBy, ReportOptions};
 
-    let date_range =
-        get_date_range_label(today, yesterday, week, month_flag, &since, &until, &year);
+    let (since, until) = build_date_filter(date);
+    let year = normalize_year_filter(date);
+    let date_range = get_date_range_label(date);
 
     let had_cursor_cache = has_cursor_usage_cache_for_report(&home_dir);
     let explicit_cursor_filter = client_filter_explicitly_requests_cursor(&clients);
@@ -3046,6 +3052,19 @@ fn run_hourly_report(
             .await
         })
         .map_err(|e| anyhow::anyhow!(e))?;
+    let mut report = report;
+    if hide_zero {
+        // Display-only filter: totals still include the hidden rows.
+        report.entries.retain(|e| {
+            e.input != 0
+                || e.output != 0
+                || e.cache_read != 0
+                || e.cache_write != 0
+                || e.reasoning != 0
+                || e.cost != 0.0
+        });
+    }
+    let report = report;
 
     if let Some(spinner) = spinner {
         spinner.stop();
@@ -3150,8 +3169,12 @@ fn run_hourly_report(
                 } else {
                     "—".to_string()
                 };
-                let total_tokens =
-                    entry.input + entry.output + entry.cache_read + entry.cache_write;
+                let total_tokens = saturating_token_total(
+                    entry.input,
+                    entry.output,
+                    entry.cache_read,
+                    entry.cache_write,
+                );
                 table.add_row(vec![
                     Cell::new(&entry.hour).fg(Color::White),
                     Cell::new(&clients_col),
@@ -3224,8 +3247,12 @@ fn run_hourly_report(
                     "—".to_string()
                 };
 
-                let total_tokens =
-                    entry.input + entry.output + entry.cache_read + entry.cache_write;
+                let total_tokens = saturating_token_total(
+                    entry.input,
+                    entry.output,
+                    entry.cache_read,
+                    entry.cache_write,
+                );
 
                 table.add_row(vec![
                     Cell::new(&entry.hour).fg(Color::White),
@@ -3577,7 +3604,7 @@ fn run_pricing_list_overrides(json: bool) -> Result<()> {
 
     println!("\n  {}", "Custom pricing overrides".bold());
     println!("  Path: {}", path.display());
-    println!("  Loaded once at startup; restart tokscale after editing this file.");
+    println!("  Loaded once at startup; restart tokens after editing this file.");
     println!();
 
     for entry in entries {
@@ -3629,12 +3656,52 @@ fn format_ms_per_1k(ms_per_1k_tokens: Option<f64>) -> String {
     }
 }
 
+/// Saturating sum of the four billable token buckets (input/output/cache
+/// read/cache write) used throughout the display layer for per-row and
+/// grand-total token counts. tokscale-core saturates these fields at the
+/// per-message and per-entry level (see `TokenBreakdown::total` and
+/// `model_report_token_totals`), so a corrupt/misbehaving source can
+/// legitimately clamp a bucket to `i64::MAX`; combining up to four such
+/// buckets with plain `+` can then overflow (debug panic / release wrap).
+/// `saturating_add` keeps this fold a no-op for real token counts and only
+/// changes behavior in that already-degraded case.
+fn saturating_token_total(input: i64, output: i64, cache_read: i64, cache_write: i64) -> i64 {
+    input
+        .saturating_add(output)
+        .saturating_add(cache_read)
+        .saturating_add(cache_write)
+}
+
+/// Sum the (input, output, cache_read, cache_write) token fields across
+/// monthly usage entries with saturating_add. `MonthlyReport` (unlike
+/// `ModelReport`) doesn't carry precomputed grand totals, so the display
+/// layer aggregates `report.entries` itself; a saturating fold keeps that
+/// aggregation safe against clamped (i64::MAX) entry buckets.
+fn monthly_token_field_totals(entries: &[tokscale_core::MonthlyUsage]) -> (i64, i64, i64, i64) {
+    entries.iter().fold(
+        (0, 0, 0, 0),
+        |(input, output, cache_read, cache_write), entry| {
+            (
+                input.saturating_add(entry.input),
+                output.saturating_add(entry.output),
+                cache_read.saturating_add(entry.cache_read),
+                cache_write.saturating_add(entry.cache_write),
+            )
+        },
+    )
+}
+
 fn model_entry_total_tokens(entry: &tokscale_core::ModelUsage) -> i64 {
-    entry.input.max(0)
-        + entry.output.max(0)
-        + entry.cache_read.max(0)
-        + entry.cache_write.max(0)
-        + entry.reasoning.max(0)
+    // saturating_add (mirrors tokscale_core::TokenBreakdown::total) so a
+    // clamped (i64::MAX) bucket from a corrupt source can't overflow the
+    // per-entry sum.
+    entry
+        .input
+        .max(0)
+        .saturating_add(entry.output.max(0))
+        .saturating_add(entry.cache_read.max(0))
+        .saturating_add(entry.cache_write.max(0))
+        .saturating_add(entry.reasoning.max(0))
 }
 
 fn aggregate_model_report_performance(
@@ -3652,7 +3719,13 @@ fn aggregate_model_report_performance(
             .sample_count
             .saturating_add(entry.performance.sample_count);
     }
-    let total_tokens = entries.iter().map(model_entry_total_tokens).sum();
+    // saturating fold: model_entry_total_tokens already saturates per entry,
+    // but two saturated (i64::MAX) entries folded with plain `.sum()` can
+    // still overflow the cross-entry total.
+    let total_tokens = entries
+        .iter()
+        .map(model_entry_total_tokens)
+        .fold(0i64, i64::saturating_add);
     performance.finalize(total_tokens);
     performance
 }
@@ -3724,6 +3797,14 @@ fn capitalize_client(client: &str) -> String {
         "grok" => "Grok Build".to_string(),
         "pi" => "Pi".to_string(),
         "gjc" => "Gajae-Code".to_string(),
+        "jcode" => "Jcode".to_string(),
+        "commandcode" => "Command Code".to_string(),
+        "junie" => "Junie".to_string(),
+        "zcode" => "ZCode".to_string(),
+        "codebuddy" => "CodeBuddy".to_string(),
+        "workbuddy" => "WorkBuddy".to_string(),
+        "devin-cli" => "Devin CLI".to_string(),
+        "devin-desktop" => "Devin Desktop".to_string(),
         other => other.to_string(),
     }
 }
@@ -3839,7 +3920,7 @@ fn run_clients_command(json: bool, home_dir: Option<String>) -> Result<()> {
                     .data()
                     .resolve_path_with_env_strategy(&home_dir_str, use_env_roots);
                 let sessions_path_exists = Path::new(&sessions_path).exists();
-                let additional_paths: Vec<AdditionalPath> = built_in_extra_paths
+                let mut additional_paths: Vec<AdditionalPath> = built_in_extra_paths
                     .iter()
                     .filter(|(c, _)| *c == client)
                     .map(|(_, path)| AdditionalPath {
@@ -3847,6 +3928,13 @@ fn run_clients_command(json: bool, home_dir: Option<String>) -> Result<()> {
                         exists: path.exists(),
                     })
                     .collect();
+                if client == ClientId::Zcode {
+                    let path = home_dir.join(".zcode/cli/db/db.sqlite");
+                    additional_paths.push(AdditionalPath {
+                        path: path.to_string_lossy().to_string(),
+                        exists: path.exists(),
+                    });
+                }
                 let legacy_paths = if client == ClientId::OpenClaw {
                     vec![
                         LegacyPath {
@@ -3901,6 +3989,7 @@ fn run_clients_command(json: bool, home_dir: Option<String>) -> Result<()> {
                     ClientId::Gemini => "Gemini CLI",
                     ClientId::Cursor => "Cursor IDE",
                     ClientId::Kimi => "Kimi CLI",
+                    ClientId::AntigravityCli => "Antigravity CLI",
                     _ => client_ui::display_name(client),
                 }
                 .to_string();
@@ -4605,7 +4694,7 @@ fn prompt_star_repo(username: &str) -> Result<()> {
     // Check if user has already starred via gh API
     // Returns exit 0 (HTTP 204) if starred, non-zero (HTTP 404) if not
     let already_starred = Command::new("gh")
-        .args(["api", "/user/starred/junhoyeo/tokscale"])
+        .args(["api", "/user/starred/missuo/tokens"])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status()
@@ -4621,15 +4710,15 @@ fn prompt_star_repo(username: &str) -> Result<()> {
     println!("{}", "  Help us grow! \u{2b50}".cyan());
     println!(
         "{}",
-        "  Starring tokscale helps others discover the project.".bright_black()
+        "  Starring tokens helps others discover the project.".bright_black()
     );
     println!(
         "  {}\n",
-        osc8_link("https://github.com/junhoyeo/tokscale").bright_black()
+        osc8_link("https://github.com/missuo/tokens").bright_black()
     );
     print!(
         "{}",
-        "  \u{2b50} Would you like to star tokscale? (Y/n): ".white()
+        "  \u{2b50} Would you like to star Tokens? (Y/n): ".white()
     );
     io::stdout().flush()?;
 
@@ -4649,7 +4738,7 @@ fn prompt_star_repo(username: &str) -> Result<()> {
             "--silent",
             "--method",
             "PUT",
-            "/user/starred/junhoyeo/tokscale",
+            "/user/starred/missuo/tokens",
         ])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -4955,7 +5044,9 @@ struct ExcludedTokenlessRow {
 }
 
 fn client_token_total(tokens: &tokscale_core::TokenBreakdown) -> i64 {
-    tokens.input + tokens.output + tokens.cache_read + tokens.cache_write + tokens.reasoning
+    // TokenBreakdown::total() already saturating_adds its fields so a clamped
+    // (i64::MAX) bucket from a corrupt source can't overflow this display fold.
+    tokens.total()
 }
 
 /// Cursor's pre-2025-05 exports include `premium-tool-call` rows billed per
@@ -5095,6 +5186,12 @@ fn report_excluded_tokenless_rows(excluded: &[ExcludedTokenlessRow]) {
     println!();
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SubmitMode {
+    Interactive,
+    Autosubmit,
+}
+
 /// Long-running service loop: submit immediately, then every `interval` minutes.
 ///
 /// Designed to be supervised by launchd (`brew services`) / systemd, which keep
@@ -5120,10 +5217,7 @@ fn run_serve(interval_min: Option<u64>, clients: Option<Vec<String>>) -> Result<
         std::process::exit(1);
     }
 
-    // One-time per-process offset so a fleet of machines doesn't all submit on
-    // the same minute. Derived from the clock — no rng dependency needed.
     let jitter = serve_startup_jitter(interval);
-
     println!(
         "  {} submitting every {interval_min} min (SIGTERM/Ctrl-C to stop)",
         "tokens serve:".cyan()
@@ -5141,12 +5235,63 @@ fn run_serve(interval_min: Option<u64>, clients: Option<Vec<String>>) -> Result<
         match run_submit_subprocess(clients.as_deref()) {
             Ok(true) => println!("  {} [{ts}] submit complete", "•".green()),
             Ok(false) => {
-                eprintln!("  {} [{ts}] submit exited with a non-zero status", "✗".yellow())
+                eprintln!(
+                    "  {} [{ts}] submit exited with a non-zero status",
+                    "✗".yellow()
+                )
             }
             // Never crash the daemon on a transient failure — log and retry next cycle.
             Err(error) => eprintln!("  {} [{ts}] submit failed: {error}", "✗".yellow()),
         }
         std::thread::sleep(interval + jitter);
+    }
+}
+
+fn run_autosubmit_command(subcommand: commands::autosubmit::AutosubmitSubcommand) -> Result<()> {
+    use commands::autosubmit::{AutosubmitRunDecision, AutosubmitSubcommand};
+
+    match subcommand {
+        AutosubmitSubcommand::Enable(args) => commands::autosubmit::enable(args),
+        AutosubmitSubcommand::Status { json } => commands::autosubmit::status(json),
+        AutosubmitSubcommand::Disable => commands::autosubmit::disable(),
+        AutosubmitSubcommand::Run { force } => {
+            let now_ms = chrono::Utc::now().timestamp_millis();
+            let (settings, decision) = commands::autosubmit::load_run_config(force, now_ms)?;
+            match decision {
+                AutosubmitRunDecision::Disabled => {
+                    println!("Autosubmit is disabled.");
+                    return Ok(());
+                }
+                AutosubmitRunDecision::NotDue { next_run_at_ms } => {
+                    println!(
+                        "Autosubmit is not due yet. Next run: {}.",
+                        commands::autosubmit::format_timestamp_ms(next_run_at_ms)
+                    );
+                    return Ok(());
+                }
+                AutosubmitRunDecision::Due => {}
+            }
+
+            let Some(_lock) = commands::autosubmit::try_acquire_run_lock()? else {
+                println!("Autosubmit is already running.");
+                return Ok(());
+            };
+
+            let (clients, since, until, year) = commands::autosubmit::submit_filters(&settings);
+            match run_submit_command(clients, since, until, year, false, SubmitMode::Autosubmit) {
+                Ok(()) => {
+                    commands::autosubmit::record_run_success(
+                        chrono::Utc::now().timestamp_millis(),
+                    )?;
+                    Ok(())
+                }
+                Err(err) => {
+                    let message = err.to_string();
+                    let _ = commands::autosubmit::record_run_error(&message);
+                    Err(err)
+                }
+            }
+        }
     }
 }
 
@@ -5189,6 +5334,7 @@ fn run_submit_command(
     until: Option<String>,
     year: Option<String>,
     dry_run: bool,
+    mode: SubmitMode,
 ) -> Result<()> {
     use colored::Colorize;
     use std::io::IsTerminal;
@@ -5198,16 +5344,22 @@ fn run_submit_command(
     let auth_token = match auth::resolve_api_token() {
         Some(token) => token,
         None => {
+            if mode == SubmitMode::Autosubmit {
+                return Err(anyhow::anyhow!(
+                    "Autosubmit requires login. Run `tokens login` or set TOKENS_API_TOKEN."
+                ));
+            }
             eprintln!("\n  {}", "Not logged in.".yellow());
             eprintln!(
                 "{}",
-                "  Run 'tokens login' or set TOKENS_API_TOKEN.\n".bright_black()
+                "  Run 'bunx tokens-cli@latest login' or set TOKENS_API_TOKEN.\n".bright_black()
             );
             std::process::exit(1);
         }
     };
 
-    if auth_token.source == auth::ApiTokenSource::StoredCredentials
+    if mode == SubmitMode::Interactive
+        && auth_token.source == auth::ApiTokenSource::StoredCredentials
         && std::io::stdin().is_terminal()
         && std::io::stdout().is_terminal()
     {
@@ -5258,7 +5410,7 @@ fn run_submit_command(
     println!("{}", "  Scanning local session data...".bright_black());
 
     let rt = Runtime::new()?;
-    let graph_result = rt
+    let mut graph_result = rt
         .block_on(async {
             generate_graph(ReportOptions {
                 home_dir: None,
@@ -5279,16 +5431,9 @@ fn run_submit_command(
         })
         .map_err(|e| anyhow::anyhow!(e))?;
 
-    // Contributions are bucketed by the user's local calendar date
-    // (chrono::Local), and usage rows are grouped that way, so the submission
-    // must include the submitter's local "today". We intentionally do NOT cap to
-    // UTC today: in UTC+ timezones the local date is ahead of UTC around
-    // midnight, and capping would silently drop valid same-day data until UTC
-    // catches up. The server tolerates dates up to UTC+2 days (covers every
-    // timezone offset), so local-today always passes validation.
-    // See: https://github.com/missuo/tokens/issues/15
-    let mut graph_result = graph_result;
-
+    // Preserve local-calendar contributions here. The API validator owns the
+    // UTC+ timezone buffer; client-side UTC capping silently drops current-day
+    // usage for users east of UTC. See #318 and #360.
     // Drop cost-only rows the server would reject (Cursor historical exports
     // record per-request cost with empty token columns) and report what was
     // left out, so a single legacy charge can't block the whole submission.
@@ -5379,21 +5524,20 @@ fn run_submit_command(
                     });
 
             if !status.is_success() {
-                eprintln!(
-                    "\n  {}",
-                    format!(
-                        "Error: {}",
-                        body.error
-                            .unwrap_or_else(|| "Submission failed".to_string())
-                    )
-                    .red()
-                );
+                let error = body
+                    .error
+                    .clone()
+                    .unwrap_or_else(|| "Submission failed".to_string());
+                eprintln!("\n  {}", format!("Error: {}", error).red());
                 if let Some(details) = body.details {
                     for detail in details {
                         eprintln!("{}", format!("    - {}", detail).bright_black());
                     }
                 }
                 println!();
+                if mode == SubmitMode::Autosubmit {
+                    return Err(anyhow::anyhow!(error));
+                }
                 std::process::exit(1);
             }
 
@@ -5451,6 +5595,9 @@ fn run_submit_command(
         Err(err) => {
             eprintln!("\n  {}", "Error: Failed to connect to server.".red());
             eprintln!("{}\n", format!("  {}", err).bright_black());
+            if mode == SubmitMode::Autosubmit {
+                return Err(anyhow::anyhow!("Failed to connect to server: {err}"));
+            }
             std::process::exit(1);
         }
     }
@@ -5458,7 +5605,9 @@ fn run_submit_command(
     // Warm the TUI cache so the next `tokens` launch is instant.
     // Detached subprocess so submit returns to the shell immediately on large
     // datasets — a full re-scan would otherwise block for tens of seconds.
-    spawn_warm_tui_cache_detached();
+    if mode == SubmitMode::Interactive {
+        spawn_warm_tui_cache_detached();
+    }
 
     Ok(())
 }
@@ -5652,6 +5801,7 @@ fn run_codex_command(subcommand: CodexSubcommand) -> Result<()> {
         CodexSubcommand::Status { name, json } => {
             commands::usage::codex::run_codex_status(name, json)
         }
+        CodexSubcommand::Activity { json } => commands::codex_activity::run(json),
     }
 }
 
@@ -6067,6 +6217,104 @@ mod tests {
     }
 
     #[test]
+    fn saturating_token_total_saturates_instead_of_overflowing() {
+        // tokscale-core (PR #823) clamps corrupt per-field token buckets to
+        // i64::MAX. The CLI display layer combines up to four such buckets
+        // (input/output/cache_read/cache_write) into row and grand totals; a
+        // plain `+` fold would panic in debug builds / wrap in release once
+        // two clamped buckets are combined.
+        assert_eq!(saturating_token_total(i64::MAX, i64::MAX, 0, 0), i64::MAX);
+        assert_eq!(saturating_token_total(i64::MAX, 1, i64::MAX, 1), i64::MAX);
+        // Real, non-overflowing counts still combine normally.
+        assert_eq!(saturating_token_total(10, 20, 30, 40), 100);
+    }
+
+    #[test]
+    fn monthly_token_field_totals_saturate_across_entries() {
+        // MonthlyReport has no precomputed grand totals, so the display layer
+        // aggregates report.entries itself. Two entries each carrying a
+        // clamped (i64::MAX) input bucket must not overflow that aggregation.
+        let make = |input: i64| tokscale_core::MonthlyUsage {
+            month: "2026-07".to_string(),
+            models: vec![],
+            input,
+            output: 0,
+            cache_read: 0,
+            cache_write: 0,
+            message_count: 1,
+            cost: 0.0,
+        };
+        let entries = vec![make(i64::MAX), make(i64::MAX)];
+        let (total_input, total_output, total_cache_read, total_cache_write) =
+            monthly_token_field_totals(&entries);
+        assert_eq!(total_input, i64::MAX);
+        assert_eq!(total_output, 0);
+        assert_eq!(total_cache_read, 0);
+        assert_eq!(total_cache_write, 0);
+    }
+
+    #[test]
+    fn model_entry_total_tokens_saturates_a_single_entrys_buckets() {
+        let entry = tokscale_core::ModelUsage {
+            client: "antigravity-cli".to_string(),
+            merged_clients: None,
+            workspace_key: None,
+            workspace_label: None,
+            session_id: None,
+            model: "gemini-3-pro".to_string(),
+            provider: "antigravity".to_string(),
+            input: i64::MAX,
+            output: 0,
+            cache_read: i64::MAX,
+            cache_write: 0,
+            reasoning: 0,
+            message_count: 1,
+            cost: 0.0,
+            performance: tokscale_core::ModelPerformance::default(),
+        };
+        assert_eq!(model_entry_total_tokens(&entry), i64::MAX);
+    }
+
+    #[test]
+    fn aggregate_model_report_performance_saturates_cross_entry_total() {
+        // model_entry_total_tokens already saturates each entry to i64::MAX;
+        // folding two such entries with plain `.sum()` would still overflow.
+        let make = || tokscale_core::ModelUsage {
+            client: "antigravity-cli".to_string(),
+            merged_clients: None,
+            workspace_key: None,
+            workspace_label: None,
+            session_id: None,
+            model: "gemini-3-pro".to_string(),
+            provider: "antigravity".to_string(),
+            input: i64::MAX,
+            output: 0,
+            cache_read: i64::MAX,
+            cache_write: 0,
+            reasoning: 0,
+            message_count: 1,
+            cost: 0.0,
+            performance: tokscale_core::ModelPerformance::default(),
+        };
+        let entries = vec![make(), make()];
+        // Must not panic (debug overflow) — the saturating fold caps at i64::MAX.
+        let performance = aggregate_model_report_performance(&entries);
+        assert_eq!(performance.timed_tokens, 0);
+    }
+
+    #[test]
+    fn client_token_total_saturates_instead_of_overflowing() {
+        let tokens = TokenBreakdown {
+            input: i64::MAX,
+            output: 0,
+            cache_read: i64::MAX,
+            cache_write: 0,
+            reasoning: 0,
+        };
+        assert_eq!(client_token_total(&tokens), i64::MAX);
+    }
+
+    #[test]
     fn test_status_command_parses() {
         let cli = Cli::try_parse_from(["tokens", "status"]).unwrap();
 
@@ -6161,128 +6409,90 @@ mod tests {
         assert_eq!(build_client_filter_with_defaults(flags, &[]), None);
     }
 
-    #[test]
-    fn test_build_client_filter_single_legacy_flag() {
-        let flags = ClientFlags {
-            opencode: true,
-            ..ClientFlags::default()
-        };
-        assert_eq!(
-            build_client_filter_with_defaults(flags, &[]),
-            Some(vec!["opencode".to_string()])
-        );
-    }
+    /// The 32 per-client boolean flags removed in 4.0.0. After removal every
+    /// one of these must produce a clap parse error — backward-compat parsing
+    /// is intentionally gone (breaking change). Keep this list in sync with the
+    /// flags deleted from `ClientFlags`.
+    const REMOVED_LEGACY_CLIENT_FLAGS: [&str; 32] = [
+        "opencode",
+        "claude",
+        "codex",
+        "copilot",
+        "gemini",
+        "cursor",
+        "amp",
+        "codebuff",
+        "droid",
+        "openclaw",
+        "hermes",
+        "pi",
+        "kimi",
+        "qwen",
+        "roocode",
+        "kilocode",
+        "kilo",
+        "mux",
+        "crush",
+        "goose",
+        "antigravity",
+        "zed",
+        "kiro",
+        "trae",
+        "warp",
+        "cline",
+        "gjc",
+        "grok",
+        "jcode",
+        "commandcode",
+        "micode",
+        "synthetic",
+    ];
 
     #[test]
-    fn test_build_client_filter_multiple_legacy_flags_preserve_order() {
-        let flags = ClientFlags {
-            opencode: true,
-            claude: true,
-            pi: true,
-            ..ClientFlags::default()
-        };
-        // Legacy iteration order is the declaration order in `legacy[]`,
-        // not the order the user typed flags on the command line. This is
-        // a deliberate trade-off: legacy flags are deprecated, and the
-        // canonical `--client a,b,c` form preserves user order.
-        assert_eq!(
-            build_client_filter_with_defaults(flags, &[]),
-            Some(vec![
-                "opencode".to_string(),
-                "claude".to_string(),
-                "pi".to_string()
-            ])
-        );
-    }
-
-    #[test]
-    fn test_build_client_filter_synthetic_only_legacy() {
-        let flags = ClientFlags {
-            synthetic: true,
-            ..ClientFlags::default()
-        };
-        assert_eq!(
-            build_client_filter_with_defaults(flags, &[]),
-            Some(vec!["synthetic".to_string()])
-        );
-    }
-
-    #[test]
-    fn test_build_client_filter_all_legacy_flags() {
-        let flags = ClientFlags {
-            opencode: true,
-            claude: true,
-            codex: true,
-            copilot: true,
-            gemini: true,
-            cursor: true,
-            amp: true,
-            codebuff: true,
-            droid: true,
-            openclaw: true,
-            hermes: true,
-            pi: true,
-            kimi: true,
-            qwen: true,
-            roocode: true,
-            kilocode: true,
-            kilo: true,
-            mux: true,
-            crush: true,
-            goose: true,
-            antigravity: true,
-            zed: true,
-            kiro: true,
-            trae: true,
-            warp: true,
-            cline: true,
-            gjc: true,
-            grok: true,
-            synthetic: true,
-            ..ClientFlags::default()
-        };
-        let result = build_client_filter_with_defaults(flags, &[]);
-        assert!(result.is_some());
-        let sources = result.unwrap();
-        // ClientId::COUNT does not include synthetic, but ClientFilter does.
-        let expected_len = tokscale_core::ClientId::iter().count() + 1;
-        assert_eq!(sources.len(), expected_len);
-        for required in [
-            "opencode",
-            "claude",
-            "codex",
-            "copilot",
-            "gemini",
-            "cursor",
-            "amp",
-            "codebuff",
-            "droid",
-            "openclaw",
-            "hermes",
-            "pi",
-            "kimi",
-            "qwen",
-            "roocode",
-            "kilocode",
-            "kilo",
-            "mux",
-            "crush",
-            "goose",
-            "antigravity",
-            "zed",
-            "kiro",
-            "trae",
-            "warp",
-            "cline",
-            "gjc",
-            "grok",
-            "synthetic",
-        ] {
+    fn test_removed_legacy_client_flags_now_error() {
+        for flag in REMOVED_LEGACY_CLIENT_FLAGS {
+            let arg = format!("--{flag}");
+            let result = Cli::try_parse_from(["tokens", arg.as_str()]);
             assert!(
-                sources.contains(&required.to_string()),
-                "missing client filter id: {required}"
+                result.is_err(),
+                "expected `{arg}` to be rejected after removal, but it parsed"
             );
         }
+    }
+
+    #[test]
+    fn test_canonical_client_still_parses_for_removed_flag_names() {
+        // Every removed boolean flag name remains a valid `--client` value.
+        for flag in REMOVED_LEGACY_CLIENT_FLAGS {
+            let cli = Cli::try_parse_from(["tokens", "--client", flag])
+                .unwrap_or_else(|_| panic!("`--client {flag}` should parse"));
+            assert_eq!(
+                build_client_filter_with_defaults(cli.clients, &[]),
+                Some(vec![flag.to_string()]),
+                "`--client {flag}` should resolve to a single source"
+            );
+        }
+    }
+
+    #[test]
+    fn test_canonical_client_parses_single_and_multi() {
+        let cli = Cli::try_parse_from(["tokens", "--client", "opencode"]).expect("parse ok");
+        assert_eq!(
+            build_client_filter_with_defaults(cli.clients, &[]),
+            Some(vec!["opencode".to_string()])
+        );
+
+        let cli = Cli::try_parse_from(["tokens", "--client", "opencode,claude"]).expect("parse ok");
+        assert_eq!(
+            build_client_filter_with_defaults(cli.clients, &[]),
+            Some(vec!["opencode".to_string(), "claude".to_string()])
+        );
+
+        let cli = Cli::try_parse_from(["tokens", "--client", "synthetic"]).expect("parse ok");
+        assert_eq!(
+            build_client_filter_with_defaults(cli.clients, &[]),
+            Some(vec!["synthetic".to_string()])
+        );
     }
 
     #[test]
@@ -6295,7 +6505,6 @@ mod tests {
                 ClientFilter::Opencode,
                 ClientFilter::Pi,
             ],
-            ..ClientFlags::default()
         };
         assert_eq!(
             build_client_filter_with_defaults(flags, &[]),
@@ -6315,24 +6524,6 @@ mod tests {
                 ClientFilter::Claude,
                 ClientFilter::Opencode,
             ],
-            ..ClientFlags::default()
-        };
-        assert_eq!(
-            build_client_filter_with_defaults(flags, &[]),
-            Some(vec!["claude".to_string(), "opencode".to_string()])
-        );
-    }
-
-    #[test]
-    fn test_build_client_filter_canonical_and_legacy_dedup() {
-        // Mixing canonical `--client claude` with legacy `--claude` must not
-        // double-list claude. Canonical entries come first, legacy fills in
-        // anything missing.
-        let flags = ClientFlags {
-            clients: vec![ClientFilter::Claude],
-            opencode: true,
-            claude: true,
-            ..ClientFlags::default()
         };
         assert_eq!(
             build_client_filter_with_defaults(flags, &[]),
@@ -6538,7 +6729,6 @@ mod tests {
         // give me X" not "I asked for X but you also added Y from settings".
         let flags = ClientFlags {
             clients: vec![ClientFilter::Codex],
-            ..ClientFlags::default()
         };
         let defaults = vec!["opencode".to_string(), "claude".to_string()];
         assert_eq!(
@@ -6548,13 +6738,11 @@ mod tests {
     }
 
     #[test]
-    fn test_build_client_filter_legacy_flag_overrides_defaults() {
-        // Legacy flags also count as "user passed something" → defaults
-        // ignored. Otherwise upgrading a script that uses --opencode
-        // would surprise users with extra clients from settings.
+    fn test_build_client_filter_canonical_flag_overrides_defaults() {
+        // A canonical `--client` value counts as "user passed something" →
+        // defaults ignored. CLI flags always win over settings.json.
         let flags = ClientFlags {
-            opencode: true,
-            ..ClientFlags::default()
+            clients: vec![ClientFilter::Opencode],
         };
         let defaults = vec!["claude".to_string()];
         assert_eq!(
@@ -6612,8 +6800,7 @@ mod tests {
     fn test_client_flags_parses_canonical_form() {
         // End-to-end smoke test: ensure clap derives accept the new
         // `--client a,b` and `-c a -c b` shapes through the CLI parser.
-        let cli =
-            Cli::try_parse_from(["tokens", "--client", "opencode,claude"]).expect("parse ok");
+        let cli = Cli::try_parse_from(["tokens", "--client", "opencode,claude"]).expect("parse ok");
         assert_eq!(
             cli.clients.clients,
             vec![ClientFilter::Opencode, ClientFilter::Claude]
@@ -6678,14 +6865,6 @@ mod tests {
     }
 
     #[test]
-    fn test_client_flags_legacy_still_parses() {
-        // Legacy `--claude` keeps working even though it is hidden in --help.
-        let cli = Cli::try_parse_from(["tokens", "--claude"]).expect("parse ok");
-        assert!(cli.clients.claude);
-        assert!(cli.clients.clients.is_empty());
-    }
-
-    #[test]
     fn test_client_flag_accepts_uppercase() {
         let cli =
             Cli::try_parse_from(["tokens", "--client", "OPENCODE"]).expect("uppercase parses");
@@ -6703,15 +6882,6 @@ mod tests {
     fn test_client_flag_rejects_unknown_and_empty_values() {
         assert!(Cli::try_parse_from(["tokens", "--client", "unknown"]).is_err());
         assert!(Cli::try_parse_from(["tokens", "--client", ""]).is_err());
-    }
-
-    #[test]
-    fn test_legacy_bool_flag_rejects_duplicates() {
-        let result = Cli::try_parse_from(["tokens", "--opencode", "--opencode"]);
-        assert!(
-            result.is_err(),
-            "clap rejects duplicated boolean flags by default; if this changes, document it explicitly"
-        );
     }
 
     #[test]
@@ -6788,6 +6958,62 @@ mod tests {
     }
 
     #[test]
+    fn test_codex_activity_command_parses() {
+        let cli = Cli::try_parse_from(["tokens", "codex", "activity", "--json"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Codex {
+                subcommand: CodexSubcommand::Activity { json: true }
+            })
+        ));
+    }
+
+    #[test]
+    fn test_autosubmit_commands_parse() {
+        let cli = Cli::try_parse_from([
+            "tokens",
+            "autosubmit",
+            "enable",
+            "--interval",
+            "2h",
+            "--client",
+            "opencode,claude",
+            "--week",
+        ])
+        .unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Autosubmit {
+                subcommand: commands::autosubmit::AutosubmitSubcommand::Enable(_)
+            })
+        ));
+
+        let cli = Cli::try_parse_from(["tokens", "autosubmit", "status", "--json"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Autosubmit {
+                subcommand: commands::autosubmit::AutosubmitSubcommand::Status { json: true }
+            })
+        ));
+
+        let cli = Cli::try_parse_from(["tokens", "autosubmit", "run", "--force"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Autosubmit {
+                subcommand: commands::autosubmit::AutosubmitSubcommand::Run { force: true }
+            })
+        ));
+
+        let cli = Cli::try_parse_from(["tokens", "autosubmit", "disable"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Autosubmit {
+                subcommand: commands::autosubmit::AutosubmitSubcommand::Disable
+            })
+        ));
+    }
+
+    #[test]
     fn test_login_token_option_parses() {
         let cli = Cli::try_parse_from(["tokens", "login", "--token", "tt_ci_token"]).unwrap();
         assert!(matches!(
@@ -6826,21 +7052,18 @@ mod tests {
 
     #[test]
     fn test_build_date_filter_custom_range() {
-        let (since, until) = build_date_filter(
-            false,
-            false,
-            false,
-            false,
-            Some("2024-01-01".to_string()),
-            Some("2024-12-31".to_string()),
-        );
+        let (since, until) = build_date_filter(&DateRangeFlags {
+            since: Some("2024-01-01".to_string()),
+            until: Some("2024-12-31".to_string()),
+            ..DateRangeFlags::default()
+        });
         assert_eq!(since, Some("2024-01-01".to_string()));
         assert_eq!(until, Some("2024-12-31".to_string()));
     }
 
     #[test]
     fn test_build_date_filter_no_filters() {
-        let (since, until) = build_date_filter(false, false, false, false, None, None);
+        let (since, until) = build_date_filter(&DateRangeFlags::default());
         assert_eq!(since, None);
         assert_eq!(until, None);
     }
@@ -6848,8 +7071,13 @@ mod tests {
     #[test]
     fn test_build_date_filter_today_uses_provided_local_date() {
         let today = chrono::NaiveDate::from_ymd_opt(2026, 3, 8).unwrap();
-        let (since, until) =
-            build_date_filter_for_date(true, false, false, false, None, None, today);
+        let (since, until) = build_date_filter_for_date(
+            &DateRangeFlags {
+                today: true,
+                ..DateRangeFlags::default()
+            },
+            today,
+        );
         assert_eq!(since, Some("2026-03-08".to_string()));
         assert_eq!(until, Some("2026-03-08".to_string()));
     }
@@ -6857,8 +7085,13 @@ mod tests {
     #[test]
     fn test_build_date_filter_yesterday_uses_provided_local_date() {
         let today = chrono::NaiveDate::from_ymd_opt(2026, 3, 8).unwrap();
-        let (since, until) =
-            build_date_filter_for_date(false, true, false, false, None, None, today);
+        let (since, until) = build_date_filter_for_date(
+            &DateRangeFlags {
+                yesterday: true,
+                ..DateRangeFlags::default()
+            },
+            today,
+        );
         assert_eq!(since, Some("2026-03-07".to_string()));
         assert_eq!(until, Some("2026-03-07".to_string()));
     }
@@ -6866,8 +7099,13 @@ mod tests {
     #[test]
     fn test_build_date_filter_week_uses_provided_local_date() {
         let today = chrono::NaiveDate::from_ymd_opt(2026, 3, 8).unwrap();
-        let (since, until) =
-            build_date_filter_for_date(false, false, true, false, None, None, today);
+        let (since, until) = build_date_filter_for_date(
+            &DateRangeFlags {
+                week: true,
+                ..DateRangeFlags::default()
+            },
+            today,
+        );
         assert_eq!(since, Some("2026-03-02".to_string()));
         assert_eq!(until, Some("2026-03-08".to_string()));
     }
@@ -6875,46 +7113,123 @@ mod tests {
     #[test]
     fn test_build_date_filter_month_uses_provided_local_date() {
         let today = chrono::NaiveDate::from_ymd_opt(2026, 3, 8).unwrap();
-        let (since, until) =
-            build_date_filter_for_date(false, false, false, true, None, None, today);
+        let (since, until) = build_date_filter_for_date(
+            &DateRangeFlags {
+                month: true,
+                ..DateRangeFlags::default()
+            },
+            today,
+        );
         assert_eq!(since, Some("2026-03-01".to_string()));
         assert_eq!(until, Some("2026-03-08".to_string()));
     }
 
     #[test]
     fn test_normalize_year_filter_with_year() {
-        let year = normalize_year_filter(false, false, false, false, Some("2024".to_string()));
+        let year = normalize_year_filter(&DateRangeFlags {
+            year: Some("2024".to_string()),
+            ..DateRangeFlags::default()
+        });
         assert_eq!(year, Some("2024".to_string()));
     }
 
     #[test]
     fn test_normalize_year_filter_with_today() {
-        let year = normalize_year_filter(true, false, false, false, Some("2024".to_string()));
+        let year = normalize_year_filter(&DateRangeFlags {
+            today: true,
+            year: Some("2024".to_string()),
+            ..DateRangeFlags::default()
+        });
         assert_eq!(year, None);
     }
 
     #[test]
     fn test_normalize_year_filter_with_yesterday() {
-        let year = normalize_year_filter(false, true, false, false, Some("2024".to_string()));
+        let year = normalize_year_filter(&DateRangeFlags {
+            yesterday: true,
+            year: Some("2024".to_string()),
+            ..DateRangeFlags::default()
+        });
         assert_eq!(year, None);
     }
 
     #[test]
     fn test_normalize_year_filter_with_week() {
-        let year = normalize_year_filter(false, false, true, false, Some("2024".to_string()));
+        let year = normalize_year_filter(&DateRangeFlags {
+            week: true,
+            year: Some("2024".to_string()),
+            ..DateRangeFlags::default()
+        });
         assert_eq!(year, None);
     }
 
     #[test]
     fn test_normalize_year_filter_with_month() {
-        let year = normalize_year_filter(false, false, false, true, Some("2024".to_string()));
+        let year = normalize_year_filter(&DateRangeFlags {
+            month: true,
+            year: Some("2024".to_string()),
+            ..DateRangeFlags::default()
+        });
         assert_eq!(year, None);
     }
 
     #[test]
     fn test_normalize_year_filter_no_year() {
-        let year = normalize_year_filter(false, false, false, false, None);
+        let year = normalize_year_filter(&DateRangeFlags::default());
         assert_eq!(year, None);
+    }
+
+    /// Parses `args` expecting failure; panics if parsing unexpectedly
+    /// succeeds. Avoids `unwrap_err()` since `Cli` does not derive `Debug`.
+    fn expect_parse_error(args: &[&str]) -> clap::Error {
+        match Cli::try_parse_from(args) {
+            Ok(_) => panic!("expected `{}` to fail to parse", args.join(" ")),
+            Err(err) => err,
+        }
+    }
+
+    #[test]
+    fn test_date_shortcut_flags_conflict() {
+        let err = expect_parse_error(&["tokens", "--today", "--yesterday"]);
+        assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
+
+        let err = expect_parse_error(&["tokens", "--week", "--month"]);
+        assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
+    fn test_date_shortcut_conflicts_with_since_until_year() {
+        let err = expect_parse_error(&["tokens", "--today", "--since", "2024-01-01"]);
+        assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
+
+        let err = expect_parse_error(&["tokens", "--week", "--until", "2024-12-31"]);
+        assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
+
+        let err = expect_parse_error(&["tokens", "--month", "--year", "2024"]);
+        assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
+    fn test_date_shortcut_conflict_applies_to_subcommands() {
+        let err = expect_parse_error(&["tokens", "models", "--today", "--yesterday"]);
+        assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
+    fn test_since_until_year_still_combine() {
+        let cli = Cli::try_parse_from([
+            "tokens",
+            "--since",
+            "2024-01-01",
+            "--until",
+            "2024-12-31",
+            "--year",
+            "2024",
+        ])
+        .unwrap();
+        assert_eq!(cli.date.since.as_deref(), Some("2024-01-01"));
+        assert_eq!(cli.date.until.as_deref(), Some("2024-12-31"));
+        assert_eq!(cli.date.year.as_deref(), Some("2024"));
     }
 
     #[test]
@@ -7029,95 +7344,95 @@ mod tests {
     }
 
     #[test]
+    fn test_capitalize_client_jcode() {
+        assert_eq!(capitalize_client("jcode"), "Jcode");
+    }
+
+    #[test]
     fn test_capitalize_client_unknown() {
         assert_eq!(capitalize_client("unknown"), "unknown");
     }
 
     #[test]
     fn test_get_date_range_label_today() {
-        let label = get_date_range_label(true, false, false, false, &None, &None, &None);
+        let label = get_date_range_label(&DateRangeFlags {
+            today: true,
+            ..DateRangeFlags::default()
+        });
         assert_eq!(label, Some("Today".to_string()));
     }
 
     #[test]
     fn test_get_date_range_label_yesterday() {
-        let label = get_date_range_label(false, true, false, false, &None, &None, &None);
+        let label = get_date_range_label(&DateRangeFlags {
+            yesterday: true,
+            ..DateRangeFlags::default()
+        });
         assert_eq!(label, Some("Yesterday".to_string()));
     }
 
     #[test]
     fn test_get_date_range_label_week() {
-        let label = get_date_range_label(false, false, true, false, &None, &None, &None);
+        let label = get_date_range_label(&DateRangeFlags {
+            week: true,
+            ..DateRangeFlags::default()
+        });
         assert_eq!(label, Some("Last 7 days".to_string()));
     }
 
     #[test]
     fn test_get_date_range_label_month_uses_provided_local_date() {
         let today = chrono::NaiveDate::from_ymd_opt(2026, 3, 1).unwrap();
-        let label =
-            get_date_range_label_for_date(false, false, false, true, &None, &None, &None, today);
+        let label = get_date_range_label_for_date(
+            &DateRangeFlags {
+                month: true,
+                ..DateRangeFlags::default()
+            },
+            today,
+        );
         assert_eq!(label, Some("March 2026".to_string()));
     }
 
     #[test]
     fn test_get_date_range_label_year() {
-        let label = get_date_range_label(
-            false,
-            false,
-            false,
-            false,
-            &None,
-            &None,
-            &Some("2024".to_string()),
-        );
+        let label = get_date_range_label(&DateRangeFlags {
+            year: Some("2024".to_string()),
+            ..DateRangeFlags::default()
+        });
         assert_eq!(label, Some("2024".to_string()));
     }
 
     #[test]
     fn test_get_date_range_label_custom_since() {
-        let label = get_date_range_label(
-            false,
-            false,
-            false,
-            false,
-            &Some("2024-01-01".to_string()),
-            &None,
-            &None,
-        );
+        let label = get_date_range_label(&DateRangeFlags {
+            since: Some("2024-01-01".to_string()),
+            ..DateRangeFlags::default()
+        });
         assert_eq!(label, Some("from 2024-01-01".to_string()));
     }
 
     #[test]
     fn test_get_date_range_label_custom_until() {
-        let label = get_date_range_label(
-            false,
-            false,
-            false,
-            false,
-            &None,
-            &Some("2024-12-31".to_string()),
-            &None,
-        );
+        let label = get_date_range_label(&DateRangeFlags {
+            until: Some("2024-12-31".to_string()),
+            ..DateRangeFlags::default()
+        });
         assert_eq!(label, Some("to 2024-12-31".to_string()));
     }
 
     #[test]
     fn test_get_date_range_label_custom_range() {
-        let label = get_date_range_label(
-            false,
-            false,
-            false,
-            false,
-            &Some("2024-01-01".to_string()),
-            &Some("2024-12-31".to_string()),
-            &None,
-        );
+        let label = get_date_range_label(&DateRangeFlags {
+            since: Some("2024-01-01".to_string()),
+            until: Some("2024-12-31".to_string()),
+            ..DateRangeFlags::default()
+        });
         assert_eq!(label, Some("from 2024-01-01 to 2024-12-31".to_string()));
     }
 
     #[test]
     fn test_get_date_range_label_none() {
-        let label = get_date_range_label(false, false, false, false, &None, &None, &None);
+        let label = get_date_range_label(&DateRangeFlags::default());
         assert_eq!(label, None);
     }
 
@@ -7536,25 +7851,24 @@ mod tests {
 
     #[test]
     fn clap_accepts_codex_account_commands() {
-        assert!(Cli::try_parse_from(["tokscale", "codex", "import", "--name", "work"]).is_ok());
-        assert!(Cli::try_parse_from(["tokscale", "codex", "accounts"]).is_ok());
-        assert!(Cli::try_parse_from(["tokscale", "codex", "accounts", "--json"]).is_ok());
-        assert!(Cli::try_parse_from(["tokscale", "codex", "switch", "work"]).is_ok());
-        assert!(Cli::try_parse_from(["tokscale", "codex", "remove", "work"]).is_ok());
-        assert!(Cli::try_parse_from(["tokscale", "codex", "status"]).is_ok());
-        assert!(Cli::try_parse_from(["tokscale", "codex", "status", "--name", "work"]).is_ok());
+        assert!(Cli::try_parse_from(["tokens", "codex", "import", "--name", "work"]).is_ok());
+        assert!(Cli::try_parse_from(["tokens", "codex", "accounts"]).is_ok());
+        assert!(Cli::try_parse_from(["tokens", "codex", "accounts", "--json"]).is_ok());
+        assert!(Cli::try_parse_from(["tokens", "codex", "switch", "work"]).is_ok());
+        assert!(Cli::try_parse_from(["tokens", "codex", "remove", "work"]).is_ok());
+        assert!(Cli::try_parse_from(["tokens", "codex", "status"]).is_ok());
+        assert!(Cli::try_parse_from(["tokens", "codex", "status", "--name", "work"]).is_ok());
         assert!(
-            Cli::try_parse_from(["tokscale", "codex", "status", "--name", "work", "--json"])
-                .is_ok()
+            Cli::try_parse_from(["tokens", "codex", "status", "--name", "work", "--json"]).is_ok()
         );
     }
 
     #[test]
     fn clap_accepts_warp_status_and_sync_commands() {
-        assert!(Cli::try_parse_from(["tokscale", "warp", "status"]).is_ok());
-        assert!(Cli::try_parse_from(["tokscale", "warp", "status", "--json"]).is_ok());
-        assert!(Cli::try_parse_from(["tokscale", "warp", "sync"]).is_ok());
-        assert!(Cli::try_parse_from(["tokscale", "warp", "sync", "--json"]).is_ok());
+        assert!(Cli::try_parse_from(["tokens", "warp", "status"]).is_ok());
+        assert!(Cli::try_parse_from(["tokens", "warp", "status", "--json"]).is_ok());
+        assert!(Cli::try_parse_from(["tokens", "warp", "sync"]).is_ok());
+        assert!(Cli::try_parse_from(["tokens", "warp", "sync", "--json"]).is_ok());
     }
 
     #[test]

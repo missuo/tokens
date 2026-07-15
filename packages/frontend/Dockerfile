@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 #
-# Production image for the tokscale frontend (Next.js 16 on Bun).
-# The frontend has no @tokscale/* workspace dependencies, so it builds
+# Production image for the Tokens frontend (Next.js 16 on Bun).
+# The frontend has no local workspace dependencies, so it builds
 # standalone — the build context is just packages/frontend.
 
 # --- deps: install node_modules (incl. devDeps so drizzle-kit is available

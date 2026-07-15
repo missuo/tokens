@@ -203,6 +203,27 @@ describe('POST /api/submit - Client-Level Merge', () => {
       expect(result.data?.device).toBeUndefined();
     });
 
+    it('accepts jcode client submissions', () => {
+      const result = validateSubmission(createMockSubmissionData({
+        clients: ['jcode'],
+        contributions: [{
+          date: '2024-12-01',
+          clients: [{
+            client: 'jcode',
+            modelId: 'gpt-5.5-fast',
+            cost: 0.75,
+            tokens: { input: 1200, output: 300, cacheRead: 800, cacheWrite: 0 },
+            messages: 3,
+          }],
+        }],
+      }));
+
+      expect(result.valid).toBe(true);
+      expect(result.errors).toHaveLength(0);
+      expect(result.data?.summary.clients).toEqual(['jcode']);
+      expect(result.data?.contributions[0].clients[0].client).toBe('jcode');
+    });
+
     it('includes the submit device id in the submission hash', () => {
       const base = createMockSubmissionData({ clients: ['claude'] });
       const laptop = validateSubmission({
@@ -560,7 +581,7 @@ describe('POST /api/submit - Client-Level Merge', () => {
       // that are billed per tool invocation and carry no token counts. They
       // legitimately have cost > 0 and tokens = 0 and must bypass the
       // cost-without-tokens sanity check; otherwise any user with historical
-      // Cursor data is permanently locked out of `tokscale submit`.
+      // Cursor data is permanently locked out of `tokens submit`.
       const payload = {
         meta: {
           generatedAt: "2026-05-27T00:00:00.000Z",

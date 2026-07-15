@@ -1,20 +1,42 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import styled from "styled-components";
 import { toast } from "react-toastify";
-import { EMBED_TEMPLATES, type EmbedTemplate } from "@/lib/embed/embedShared";
-import { getPaletteNames, getPalette, type ColorPaletteName } from "@/lib/themes";
-
-type EmbedTheme = "dark" | "light";
-type EmbedSortBy = "tokens" | "cost";
-type EmbedView = "2d" | "3d";
-type EmbedNumberFormat = "compact" | "full";
-type EmbedRankFormat = "plain" | "percent" | "total";
+import {
+  EMBED_TEMPLATES,
+  resolvePalette,
+  type EmbedTemplate,
+} from "@/lib/embed/embedShared";
+import { getPaletteNames, type ColorPaletteName } from "@/lib/themes";
+import {
+  buildEmbedPreviewPath,
+  buildProfileEmbedLinks,
+  getEmbedDialogCapabilities,
+  type EmbedNumberFormat,
+  type EmbedRankFormat,
+  type EmbedSortBy,
+  type EmbedTheme,
+  type EmbedView,
+} from "./embedDialogOptions";
 
 function titleCase(value: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
+
+const EMBED_TEMPLATE_LABELS: Record<EmbedTemplate, string> = {
+  classic: "Overview",
+  minimal: "Token focus",
+  terminal: "Readout",
+  graph: "Contributions",
+  orbit: "Rank focus",
+  vitals: "Activity summary",
+  blueprint: "Detailed stats",
+  receipt: "Compact list",
+  pulse: "Usage pulse",
+  detailed: "Today breakdown",
+};
 
 interface ProfileEmbedDialogProps {
   open: boolean;
@@ -23,106 +45,136 @@ interface ProfileEmbedDialogProps {
   onClose: () => void;
 }
 
-// Absolute base for shareable snippets (README image links must resolve publicly).
-const SITE_URL = process.env.NEXT_PUBLIC_URL || "https://tokens.ci";
-
-function Segmented<T extends string>({
-  options,
-  value,
-  onChange,
-}: {
-  options: { id: T; label: string }[];
-  value: T;
-  onChange: (v: T) => void;
-}) {
-  return (
-    <div className="flex flex-wrap gap-2">
-      {options.map((opt) => {
-        const active = value === opt.id;
-        return (
-          <button
-            key={opt.id}
-            type="button"
-            onClick={() => onChange(opt.id)}
-            className={`inline-flex min-h-10 items-center justify-center rounded-full border px-3.5 py-2.5 text-sm font-semibold transition hover:-translate-y-px ${
-              active ? "border-[rgba(133,202,255,0.24)] bg-gradient-to-br from-[rgba(22,154,255,0.18)] to-[rgba(133,202,255,0.1)] text-foreground" : "border-line bg-[var(--surface-tertiary)] text-muted hover:text-foreground"
-            }`}
-          >
-            {opt.label}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
-function OptionGroup({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="flex flex-col gap-2.5 rounded-2xl border border-line bg-surface/70 p-4">
-      <span className="text-sm font-semibold text-foreground">{label}</span>
-      {children}
-    </div>
-  );
-}
-
-export function ProfileEmbedDialog({ open, username, displayName, onClose }: ProfileEmbedDialogProps) {
+export function ProfileEmbedDialog({
+  open,
+  username,
+  displayName,
+  onClose,
+}: ProfileEmbedDialogProps) {
+  const dialogRef = useRef<HTMLDivElement>(null);
   const [theme, setTheme] = useState<EmbedTheme>("dark");
   const [sortBy, setSortBy] = useState<EmbedSortBy>("tokens");
-  const [compact, setCompact] = useState(false);
+  const [layoutCompact, setLayoutCompact] = useState(false);
+  const [threeDCompact, setThreeDCompact] = useState(false);
   const [view, setView] = useState<EmbedView>("2d");
   const [template, setTemplate] = useState<EmbedTemplate>("classic");
   const [color, setColor] = useState<ColorPaletteName | null>(null);
-  const [tokensFormat, setTokensFormat] = useState<EmbedNumberFormat>("compact");
+  const [tokensFormat, setTokensFormat] =
+    useState<EmbedNumberFormat>("compact");
   const [costFormat, setCostFormat] = useState<EmbedNumberFormat>("compact");
   const [rankFormat, setRankFormat] = useState<EmbedRankFormat>("plain");
   const [graph, setGraph] = useState(false);
   const [today, setToday] = useState(false);
+  const compact = view === "3d" ? threeDCompact : layoutCompact;
+  const setCompactForView = (nextCompact: boolean) => {
+    if (view === "3d") {
+      setThreeDCompact(nextCompact);
+    } else {
+      setLayoutCompact(nextCompact);
+    }
+  };
 
-  const graphCapable = template !== "graph" && template !== "vitals" && template !== "detailed";
-  // The detailed template always shows today, so the toggle is hidden there.
-  const todayCapable = template !== "detailed";
+  const capabilities = getEmbedDialogCapabilities({
+    compact,
+    template,
+    view,
+  });
 
   useEffect(() => {
     if (!open) return;
+
     const previousOverflow = document.body.style.overflow;
+    const previousFocus = document.activeElement as HTMLElement | null;
+    const focusDialog = window.requestAnimationFrame(() => {
+      dialogRef.current?.focus();
+    });
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+        return;
+      }
+
+      if (event.key !== "Tab" || !dialogRef.current) {
+        return;
+      }
+
+      const focusableElements = Array.from(
+        dialogRef.current.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ),
+      ).filter((element) => element.getClientRects().length > 0);
+
+      if (focusableElements.length === 0) {
+        event.preventDefault();
+        dialogRef.current.focus();
+        return;
+      }
+
+      const firstElement = focusableElements[0];
+      const lastElement = focusableElements[focusableElements.length - 1];
+      const activeElement = document.activeElement;
+
+      if (
+        event.shiftKey &&
+        (activeElement === firstElement ||
+          activeElement === dialogRef.current ||
+          !dialogRef.current.contains(activeElement))
+      ) {
+        event.preventDefault();
+        lastElement.focus();
+      } else if (
+        !event.shiftKey &&
+        (activeElement === lastElement ||
+          !dialogRef.current.contains(activeElement))
+      ) {
+        event.preventDefault();
+        firstElement.focus();
+      }
     };
+
     document.body.style.overflow = "hidden";
     window.addEventListener("keydown", handleKeyDown);
+
     return () => {
+      window.cancelAnimationFrame(focusDialog);
       document.body.style.overflow = previousOverflow;
       window.removeEventListener("keydown", handleKeyDown);
+      previousFocus?.focus();
     };
   }, [open, onClose]);
 
-  const { embedUrl, previewSrc, markdownSnippet, htmlSnippet, profileUrl } = useMemo(() => {
-    const params = new URLSearchParams();
-    if (view === "3d") params.set("view", "3d");
-    if (theme !== "dark") params.set("theme", theme);
-    if (sortBy !== "tokens") params.set("sort", sortBy);
-    if (template !== "classic") params.set("template", template);
-    if (color) params.set("color", color);
-    if (template === "classic" && compact) params.set("compact", "1");
-    if (graph && graphCapable) params.set("graph", "1");
-    if (today && todayCapable) params.set("today", "1");
-    if (rankFormat !== "plain") params.set("rank", rankFormat);
-    params.set("tokens", tokensFormat);
-    params.set("cost", costFormat);
-
-    const query = params.toString();
-    const path = `/api/embed/${username}/svg${query ? `?${query}` : ""}`;
-    const resolvedEmbedUrl = `${SITE_URL}${path}`;
-    const resolvedProfileUrl = `${SITE_URL}/u/${username}`;
-
-    return {
-      embedUrl: resolvedEmbedUrl,
-      previewSrc: path,
-      markdownSnippet: `[![Tokens Stats](${resolvedEmbedUrl})](${resolvedProfileUrl})`,
-      htmlSnippet: `<a href="${resolvedProfileUrl}"><img alt="Tokens Stats for @${username}" src="${resolvedEmbedUrl}" /></a>`,
-      profileUrl: resolvedProfileUrl,
-    };
-  }, [color, compact, costFormat, graph, graphCapable, rankFormat, sortBy, template, theme, today, todayCapable, tokensFormat, username, view]);
+  const { embedUrl, markdownSnippet, htmlSnippet, profileUrl } = useMemo(
+    () =>
+      buildProfileEmbedLinks(username, {
+        color,
+        compact,
+        costFormat,
+        graph,
+        rankFormat,
+        sortBy,
+        template,
+        theme,
+        today,
+        tokensFormat,
+        view,
+      }),
+    [
+      color,
+      compact,
+      costFormat,
+      graph,
+      rankFormat,
+      sortBy,
+      template,
+      theme,
+      today,
+      tokensFormat,
+      username,
+      view,
+    ],
+  );
+  const previewUrl = useMemo(() => buildEmbedPreviewPath(embedUrl), [embedUrl]);
 
   const copyToClipboard = async (value: string, label: string) => {
     try {
@@ -133,155 +185,1082 @@ export function ProfileEmbedDialog({ open, username, displayName, onClose }: Pro
     }
   };
 
-  if (!open || typeof document === "undefined") return null;
+  if (!open || typeof document === "undefined") {
+    return null;
+  }
 
   return createPortal(
-    <div
+    <Overlay
       onClick={(event) => {
         if (event.target === event.currentTarget) onClose();
       }}
-      className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/80 p-6 backdrop-blur-lg max-[640px]:items-end max-[640px]:p-3"
     >
-      <div role="dialog" aria-modal="true" aria-labelledby="profile-embed-dialog-title" className="max-h-[88vh] w-full max-w-[1040px] overflow-auto rounded-[28px] border border-[rgba(133,202,255,0.16)] bg-surface shadow-2xl max-[640px]:rounded-t-3xl max-[640px]:rounded-b-none">
-        <div className="flex items-start justify-between gap-4 px-7 pt-7 max-[640px]:px-[18px] max-[640px]:pt-[22px]">
-          <div className="flex min-w-0 flex-col gap-2.5">
-            <span className="w-fit rounded-full border border-[rgba(133,202,255,0.18)] bg-[rgba(133,202,255,0.08)] px-3 py-1.5 text-xs font-bold tracking-widest text-[var(--color-accent-blue)] uppercase">
-              GitHub README embed
-            </span>
-            <h2 id="profile-embed-dialog-title" className="text-[clamp(28px,3vw,38px)] leading-tight font-bold tracking-tight text-foreground">
-              Share @{username} with a polished Tokens card
-            </h2>
-            <p className="max-w-[720px] text-[15px] leading-relaxed text-muted">
-              Preview the live embed, tweak the presentation, and copy a ready-to-paste snippet for your README.
-            </p>
-          </div>
+      <Dialog
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="profile-embed-dialog-title"
+        aria-describedby="profile-embed-dialog-description"
+        tabIndex={-1}
+      >
+        <DialogHeader>
+          <HeaderCopy>
+            <DialogTitle id="profile-embed-dialog-title">
+              Embed @{username}
+            </DialogTitle>
+            <DialogDescription id="profile-embed-dialog-description">
+              Customize the live card, then copy it into GitHub or any HTML
+              page.
+            </DialogDescription>
+          </HeaderCopy>
 
-          <button type="button" onClick={onClose} aria-label="Close embed dialog" className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-line bg-[var(--surface-tertiary)] text-foreground transition hover:-translate-y-px">
-            <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none">
-              <path d="M18 6L6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-              <path d="M6 6L18 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-            </svg>
-          </button>
-        </div>
+          <CloseButton
+            type="button"
+            onClick={onClose}
+            aria-label="Close embed dialog"
+          >
+            <CloseIcon />
+          </CloseButton>
+        </DialogHeader>
 
-        <div className="grid grid-cols-[minmax(0,1.1fr)_minmax(320px,420px)] gap-6 px-7 pt-7 pb-10 max-[920px]:grid-cols-1 max-[640px]:gap-[18px] max-[640px]:px-[18px] max-[640px]:pt-[18px] max-[640px]:pb-8">
-          <div className="flex flex-col gap-4">
-            <div className="flex flex-col gap-4 rounded-3xl border border-[rgba(133,202,255,0.12)] bg-background p-5">
-              <span className="text-xs font-semibold tracking-wider text-muted uppercase">Live preview</span>
-              <div className="flex min-h-[360px] items-center justify-center rounded-[18px] border border-dashed border-[rgba(133,202,255,0.16)] bg-white/[0.02] p-6 max-[640px]:min-h-[220px] max-[640px]:p-4">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={previewSrc} alt={`Tokens README embed preview for ${displayName || username}`} className="h-auto w-full max-w-full drop-shadow-2xl" />
-              </div>
-            </div>
-
-            <ul className="grid list-none gap-2.5 p-0">
-              {["GitHub-ready markdown with a linked image card", "Matches the Tokens visual language", "Automatically refreshes as profile stats update"].map((t) => (
-                <li key={t} className="relative pl-[18px] text-sm leading-relaxed text-muted before:absolute before:top-2 before:left-0 before:h-[7px] before:w-[7px] before:rounded-full before:bg-gradient-to-br before:from-[#169aff] before:to-[#85caff]">
-                  {t}
-                </li>
-              ))}
-            </ul>
-          </div>
-
-          <div className="flex flex-col gap-4">
-            <OptionGroup label="Template">
-              <Segmented options={EMBED_TEMPLATES.map((tpl) => ({ id: tpl, label: titleCase(tpl) }))} value={template} onChange={setTemplate} />
-            </OptionGroup>
-
-            <OptionGroup label="View">
-              <Segmented options={[{ id: "2d", label: "2D" }, { id: "3d", label: "3D" }]} value={view} onChange={setView} />
-            </OptionGroup>
-
-            <OptionGroup label="Theme">
-              <Segmented options={[{ id: "dark", label: "Dark" }, { id: "light", label: "Light" }]} value={theme} onChange={setTheme} />
-            </OptionGroup>
-
-            <OptionGroup label="Accent color">
-              <div className="flex flex-wrap gap-2.5">
-                <button
-                  type="button"
-                  aria-label="Default accent color"
-                  title="Default"
-                  onClick={() => setColor(null)}
-                  className="h-[34px] w-[34px] rounded-full ring-1 ring-line transition hover:-translate-y-px"
-                  style={{ background: "var(--border)", border: color === null ? "2px solid var(--foreground)" : "2px solid transparent" }}
+        <DialogBody>
+          <PreviewPanel>
+            <PreviewSurface>
+              <PreviewLabel>Live preview</PreviewLabel>
+              <PreviewFrame $threeD={view === "3d"}>
+                <PreviewImage
+                  src={previewUrl}
+                  alt={`Tokens README embed preview for ${displayName || username}`}
                 />
-                {getPaletteNames().map((name) => (
-                  <button
-                    key={name}
+              </PreviewFrame>
+            </PreviewSurface>
+          </PreviewPanel>
+
+          <ControlsPanel aria-label="Embed customization">
+            <ControlsHeader>
+              <ControlsTitle>Card settings</ControlsTitle>
+            </ControlsHeader>
+
+            {capabilities.showTemplate && (
+              <OptionGroup>
+                <OptionLabel id="embed-template-label">Template</OptionLabel>
+                <SelectWrap>
+                  <SelectControl
+                    name="profile-embed-template"
+                    aria-labelledby="embed-template-label"
+                    value={template}
+                    onChange={(event) =>
+                      setTemplate(event.currentTarget.value as EmbedTemplate)
+                    }
+                  >
+                    {EMBED_TEMPLATES.map((tpl) => (
+                      <option key={tpl} value={tpl}>
+                        {EMBED_TEMPLATE_LABELS[tpl]}
+                      </option>
+                    ))}
+                  </SelectControl>
+                  <SelectIcon aria-hidden="true" />
+                </SelectWrap>
+              </OptionGroup>
+            )}
+
+            <OptionGroup>
+              <OptionLabel id="embed-view-label">View</OptionLabel>
+              <SegmentedControl role="group" aria-labelledby="embed-view-label">
+                <SegmentButton
+                  type="button"
+                  $active={view === "2d"}
+                  aria-pressed={view === "2d"}
+                  onClick={() => setView("2d")}
+                >
+                  2D
+                </SegmentButton>
+                <SegmentButton
+                  type="button"
+                  $active={view === "3d"}
+                  aria-pressed={view === "3d"}
+                  onClick={() => setView("3d")}
+                >
+                  3D
+                </SegmentButton>
+              </SegmentedControl>
+            </OptionGroup>
+
+            <OptionGroup>
+              <OptionLabel id="embed-theme-label">Theme</OptionLabel>
+              <SegmentedControl
+                role="group"
+                aria-labelledby="embed-theme-label"
+              >
+                <SegmentButton
+                  type="button"
+                  $active={theme === "dark"}
+                  aria-pressed={theme === "dark"}
+                  onClick={() => setTheme("dark")}
+                >
+                  Dark
+                </SegmentButton>
+                <SegmentButton
+                  type="button"
+                  $active={theme === "light"}
+                  aria-pressed={theme === "light"}
+                  onClick={() => setTheme("light")}
+                >
+                  Light
+                </SegmentButton>
+              </SegmentedControl>
+            </OptionGroup>
+
+            {capabilities.showAccent && (
+              <OptionGroup $stacked>
+                <OptionLabel id="embed-accent-label">Accent color</OptionLabel>
+                <SwatchRow role="group" aria-labelledby="embed-accent-label">
+                  <Swatch
                     type="button"
-                    aria-label={`${name} accent color`}
-                    title={titleCase(name)}
-                    onClick={() => setColor(name)}
-                    className="h-[34px] w-[34px] rounded-full ring-1 ring-line transition hover:-translate-y-px"
-                    style={{ background: getPalette(name).grade3, border: color === name ? "2px solid var(--foreground)" : "2px solid transparent" }}
+                    $active={color === null}
+                    $color={resolvePalette(theme, null).brand}
+                    aria-pressed={color === null}
+                    aria-label="Default accent color"
+                    title="Default"
+                    onClick={() => setColor(null)}
                   />
-                ))}
-              </div>
-            </OptionGroup>
-
-            <OptionGroup label="Ranking">
-              <Segmented options={[{ id: "tokens", label: "Tokens" }, { id: "cost", label: "Cost" }]} value={sortBy} onChange={setSortBy} />
-            </OptionGroup>
-
-            <OptionGroup label="Rank format">
-              <Segmented options={(["plain", "percent", "total"] as const).map((m) => ({ id: m, label: titleCase(m) }))} value={rankFormat} onChange={setRankFormat} />
-            </OptionGroup>
-
-            {template === "classic" && (
-              <OptionGroup label="Layout">
-                <Segmented options={[{ id: "full", label: "Full" }, { id: "compact", label: "Compact" }]} value={compact ? "compact" : "full"} onChange={(v) => setCompact(v === "compact")} />
+                  {getPaletteNames().map((name) => (
+                    <Swatch
+                      key={name}
+                      type="button"
+                      $active={color === name}
+                      $color={resolvePalette(theme, name).brand}
+                      aria-pressed={color === name}
+                      aria-label={`${name} accent color`}
+                      title={titleCase(name)}
+                      onClick={() => setColor(name)}
+                    />
+                  ))}
+                </SwatchRow>
               </OptionGroup>
             )}
 
-            {graphCapable && (
-              <OptionGroup label="Contribution graph">
-                <Segmented options={[{ id: "off", label: "Off" }, { id: "on", label: "On" }]} value={graph ? "on" : "off"} onChange={(v) => setGraph(v === "on")} />
+            <OptionGroup>
+              <OptionLabel id="embed-ranking-label">Ranking</OptionLabel>
+              <SegmentedControl
+                role="group"
+                aria-labelledby="embed-ranking-label"
+              >
+                <SegmentButton
+                  type="button"
+                  $active={sortBy === "tokens"}
+                  aria-pressed={sortBy === "tokens"}
+                  onClick={() => setSortBy("tokens")}
+                >
+                  Tokens
+                </SegmentButton>
+                <SegmentButton
+                  type="button"
+                  $active={sortBy === "cost"}
+                  aria-pressed={sortBy === "cost"}
+                  onClick={() => setSortBy("cost")}
+                >
+                  Cost
+                </SegmentButton>
+              </SegmentedControl>
+            </OptionGroup>
+
+            {capabilities.showRankFormat && (
+              <OptionGroup>
+                <OptionLabel id="embed-rank-format-label">
+                  Rank format
+                </OptionLabel>
+                <SegmentedControl
+                  role="group"
+                  aria-labelledby="embed-rank-format-label"
+                >
+                  {(["plain", "percent", "total"] as const).map((mode) => (
+                    <SegmentButton
+                      key={mode}
+                      type="button"
+                      $active={rankFormat === mode}
+                      aria-pressed={rankFormat === mode}
+                      onClick={() => setRankFormat(mode)}
+                    >
+                      {titleCase(mode)}
+                    </SegmentButton>
+                  ))}
+                </SegmentedControl>
               </OptionGroup>
             )}
 
-            {todayCapable && (
-              <OptionGroup label="Today's usage">
-                <Segmented options={[{ id: "off", label: "Off" }, { id: "on", label: "On" }]} value={today ? "on" : "off"} onChange={(v) => setToday(v === "on")} />
+            {capabilities.showLayout && (
+              <OptionGroup>
+                <OptionLabel id="embed-layout-label">
+                  {view === "3d" ? "Number format" : "Layout"}
+                </OptionLabel>
+                <SegmentedControl
+                  role="group"
+                  aria-labelledby="embed-layout-label"
+                >
+                  <SegmentButton
+                    type="button"
+                    $active={!compact}
+                    aria-pressed={!compact}
+                    onClick={() => setCompactForView(false)}
+                  >
+                    Full
+                  </SegmentButton>
+                  <SegmentButton
+                    type="button"
+                    $active={compact}
+                    aria-pressed={compact}
+                    onClick={() => setCompactForView(true)}
+                  >
+                    Compact
+                  </SegmentButton>
+                </SegmentedControl>
               </OptionGroup>
             )}
 
-            <OptionGroup label="Token number format">
-              <Segmented options={[{ id: "compact", label: "Compact" }, { id: "full", label: "Full" }]} value={tokensFormat} onChange={setTokensFormat} />
-            </OptionGroup>
+            {capabilities.showGraph && (
+              <OptionGroup>
+                <OptionLabel id="embed-graph-label">
+                  Contribution graph
+                </OptionLabel>
+                <SegmentedControl
+                  role="group"
+                  aria-labelledby="embed-graph-label"
+                >
+                  <SegmentButton
+                    type="button"
+                    $active={!graph}
+                    aria-pressed={!graph}
+                    onClick={() => setGraph(false)}
+                  >
+                    Off
+                  </SegmentButton>
+                  <SegmentButton
+                    type="button"
+                    $active={graph}
+                    aria-pressed={graph}
+                    onClick={() => setGraph(true)}
+                  >
+                    On
+                  </SegmentButton>
+                </SegmentedControl>
+              </OptionGroup>
+            )}
 
-            <OptionGroup label="Cost number format">
-              <Segmented options={[{ id: "compact", label: "Compact" }, { id: "full", label: "Full" }]} value={costFormat} onChange={setCostFormat} />
-            </OptionGroup>
+            {capabilities.showToday && (
+              <OptionGroup>
+                <OptionLabel id="embed-today-label">Today&apos;s usage</OptionLabel>
+                <SegmentedControl
+                  role="group"
+                  aria-labelledby="embed-today-label"
+                >
+                  <SegmentButton
+                    type="button"
+                    $active={!today}
+                    aria-pressed={!today}
+                    onClick={() => setToday(false)}
+                  >
+                    Off
+                  </SegmentButton>
+                  <SegmentButton
+                    type="button"
+                    $active={today}
+                    aria-pressed={today}
+                    onClick={() => setToday(true)}
+                  >
+                    On
+                  </SegmentButton>
+                </SegmentedControl>
+              </OptionGroup>
+            )}
 
-            <div className="flex flex-col gap-3.5 rounded-3xl border border-[rgba(133,202,255,0.16)] bg-surface p-5">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <h3 className="text-[15px] font-bold text-foreground">Markdown snippet</h3>
-                <div className="flex flex-wrap gap-2">
-                  <button type="button" onClick={() => copyToClipboard(embedUrl, "Image URL")} className="inline-flex min-h-[34px] items-center justify-center rounded-full border border-line bg-[var(--surface-tertiary)] px-3 py-2 text-[13px] font-semibold text-muted transition hover:text-foreground">
+            {capabilities.showNumberFormats && (
+              <>
+                <OptionGroup>
+                  <OptionLabel id="embed-token-format-label">
+                    Token format
+                  </OptionLabel>
+                  <SegmentedControl
+                    role="group"
+                    aria-labelledby="embed-token-format-label"
+                  >
+                    <SegmentButton
+                      type="button"
+                      $active={tokensFormat === "compact"}
+                      aria-pressed={tokensFormat === "compact"}
+                      onClick={() => setTokensFormat("compact")}
+                    >
+                      Compact
+                    </SegmentButton>
+                    <SegmentButton
+                      type="button"
+                      $active={tokensFormat === "full"}
+                      aria-pressed={tokensFormat === "full"}
+                      onClick={() => setTokensFormat("full")}
+                    >
+                      Full
+                    </SegmentButton>
+                  </SegmentedControl>
+                </OptionGroup>
+
+                <OptionGroup>
+                  <OptionLabel id="embed-cost-format-label">
+                    Cost format
+                  </OptionLabel>
+                  <SegmentedControl
+                    role="group"
+                    aria-labelledby="embed-cost-format-label"
+                  >
+                    <SegmentButton
+                      type="button"
+                      $active={costFormat === "compact"}
+                      aria-pressed={costFormat === "compact"}
+                      onClick={() => setCostFormat("compact")}
+                    >
+                      Compact
+                    </SegmentButton>
+                    <SegmentButton
+                      type="button"
+                      $active={costFormat === "full"}
+                      aria-pressed={costFormat === "full"}
+                      onClick={() => setCostFormat("full")}
+                    >
+                      Full
+                    </SegmentButton>
+                  </SegmentedControl>
+                </OptionGroup>
+              </>
+            )}
+
+            <SnippetSection>
+              <SnippetHeader>
+                <SnippetTitle>Markdown snippet</SnippetTitle>
+                <InlineActions>
+                  <InlineActionButton
+                    type="button"
+                    onClick={() => copyToClipboard(embedUrl, "Image URL")}
+                  >
                     Copy image URL
-                  </button>
-                  <button type="button" onClick={() => copyToClipboard(htmlSnippet, "HTML snippet")} className="inline-flex min-h-[34px] items-center justify-center rounded-full border border-line bg-[var(--surface-tertiary)] px-3 py-2 text-[13px] font-semibold text-muted transition hover:text-foreground">
+                  </InlineActionButton>
+                  <InlineActionButton
+                    type="button"
+                    onClick={() => copyToClipboard(htmlSnippet, "HTML snippet")}
+                  >
                     Copy HTML
-                  </button>
-                </div>
-              </div>
+                  </InlineActionButton>
+                </InlineActions>
+              </SnippetHeader>
 
-              <pre className="overflow-auto rounded-[18px] border border-white/5 bg-black/40 p-4 font-mono text-[13px] leading-relaxed break-words whitespace-pre-wrap text-[#d9edff]">{markdownSnippet}</pre>
+              <CodeBlock>{markdownSnippet}</CodeBlock>
 
-              <div className="flex flex-wrap gap-2.5">
-                <button type="button" onClick={() => copyToClipboard(markdownSnippet, "Markdown snippet")} className="inline-flex min-h-11 items-center justify-center rounded-full border border-[rgba(133,202,255,0.26)] bg-gradient-to-br from-[#169aff] to-[#0073ff] px-4 py-3 text-sm font-bold text-white transition hover:brightness-105">
+              <PrimaryActions>
+                <PrimaryButton
+                  type="button"
+                  onClick={() =>
+                    copyToClipboard(markdownSnippet, "Markdown snippet")
+                  }
+                >
                   Copy markdown
-                </button>
-                <a href={profileUrl} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 items-center justify-center rounded-full border border-line bg-[var(--surface-tertiary)] px-4 py-3 text-sm font-semibold text-foreground transition hover:-translate-y-px">
+                </PrimaryButton>
+                <SecondaryLink
+                  href={profileUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
                   View profile
-                </a>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>,
+                </SecondaryLink>
+              </PrimaryActions>
+            </SnippetSection>
+          </ControlsPanel>
+        </DialogBody>
+      </Dialog>
+    </Overlay>,
     document.body,
+  );
+}
+
+const Overlay = styled.div`
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(5, 7, 12, 0.78);
+  backdrop-filter: blur(10px);
+  overscroll-behavior: contain;
+
+  @media (max-width: 640px) {
+    align-items: flex-end;
+    padding: 8px 0 0;
+  }
+`;
+
+const Dialog = styled.div`
+  display: grid;
+  width: min(100%, 960px);
+  height: min(84dvh, 760px);
+  max-height: calc(100dvh - 32px);
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid var(--service-border-strong);
+  border-radius: 14px;
+  outline: none;
+  background: var(--service-surface);
+
+  @media (max-width: 840px) {
+    height: min(92dvh, 860px);
+  }
+
+  @media (max-width: 640px) {
+    width: 100%;
+    height: min(96dvh, 860px);
+    max-height: calc(100dvh - 8px);
+    border-bottom: 0;
+    border-radius: 14px 14px 0 0;
+  }
+`;
+
+const DialogHeader = styled.div`
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--service-border);
+  background: var(--service-surface);
+
+  @media (max-width: 640px) {
+    padding: 12px 14px;
+  }
+`;
+
+const HeaderCopy = styled.div`
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+`;
+
+const DialogTitle = styled.h2`
+  overflow: hidden;
+  margin: 0;
+  color: var(--service-text);
+  font-size: 1.125rem;
+  font-weight: 600;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+`;
+
+const DialogDescription = styled.p`
+  overflow: hidden;
+  margin: 0;
+  color: var(--service-text-muted);
+  font-size: 0.8125rem;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+
+  @media (max-width: 480px) {
+    display: none;
+  }
+`;
+
+const CloseButton = styled.button`
+  display: inline-flex;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--service-border-strong);
+  border-radius: 8px;
+  background: var(--service-surface-muted);
+  color: var(--service-text-muted);
+  transition:
+    border-color 150ms ease,
+    background-color 150ms ease,
+    color 150ms ease;
+
+  &:focus-visible {
+    outline: 2px solid var(--service-focus);
+    outline-offset: 2px;
+  }
+
+  @media (hover: hover) {
+    &:hover {
+      background: var(--service-accent-soft);
+      color: var(--service-text);
+    }
+  }
+
+  @media (pointer: coarse) {
+    width: 44px;
+    height: 44px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    transition: none;
+  }
+`;
+
+const DialogBody = styled.div`
+  display: grid;
+  min-height: 0;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 360px);
+  overflow: hidden;
+  scrollbar-color: color-mix(
+      in srgb,
+      var(--service-text-muted) 52%,
+      transparent
+    )
+    var(--service-canvas);
+  scrollbar-width: thin;
+
+  &::-webkit-scrollbar {
+    width: 9px;
+  }
+
+  &::-webkit-scrollbar-track {
+    background: var(--service-canvas);
+  }
+
+  &::-webkit-scrollbar-thumb {
+    border: 2px solid var(--service-canvas);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--service-text-muted) 52%, transparent);
+  }
+
+  @media (max-width: 840px) {
+    grid-template-columns: 1fr;
+    align-content: start;
+    overflow-y: auto;
+    padding-bottom: max(24px, env(safe-area-inset-bottom));
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+    scroll-padding-bottom: max(24px, env(safe-area-inset-bottom));
+  }
+
+  @media (max-width: 640px) {
+    padding-bottom: max(32px, calc(env(safe-area-inset-bottom) + 16px));
+    scroll-padding-bottom: max(32px, calc(env(safe-area-inset-bottom) + 16px));
+  }
+`;
+
+const PreviewPanel = styled.div`
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 16px;
+  border-right: 1px solid var(--service-border);
+  background: var(--service-canvas);
+
+  @media (max-width: 840px) {
+    overflow: visible;
+    border-right: 0;
+    border-bottom: 1px solid var(--service-border);
+  }
+
+  @media (max-width: 640px) {
+    padding: 12px;
+  }
+`;
+
+const PreviewSurface = styled.div`
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 8px;
+`;
+
+const PreviewLabel = styled.span`
+  color: var(--service-text);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  line-height: 1.3;
+`;
+
+const PreviewFrame = styled.div<{ $threeD: boolean }>`
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 20px 0;
+
+  @media (max-width: 840px) {
+    height: ${({ $threeD }) => ($threeD ? "320px" : "200px")};
+    flex: 0 0 auto;
+  }
+
+  @media (max-width: 640px) {
+    height: ${({ $threeD }) => ($threeD ? "272px" : "160px")};
+    padding: 8px 0;
+  }
+`;
+
+const PreviewImage = styled.img`
+  width: auto;
+  max-width: 100%;
+  max-height: 100%;
+  height: auto;
+  object-fit: contain;
+`;
+
+const ControlsPanel = styled.div`
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  overflow-y: auto;
+  padding: 14px 16px 16px;
+  background: var(--service-surface);
+  overscroll-behavior: contain;
+  scrollbar-color: color-mix(
+      in srgb,
+      var(--service-text-muted) 52%,
+      transparent
+    )
+    var(--service-canvas);
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+
+  &::-webkit-scrollbar {
+    width: 9px;
+  }
+
+  &::-webkit-scrollbar-track {
+    border-left: 1px solid var(--service-border);
+    background: var(--service-canvas);
+  }
+
+  &::-webkit-scrollbar-thumb {
+    border: 2px solid var(--service-canvas);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--service-text-muted) 52%, transparent);
+  }
+
+  @media (max-width: 840px) {
+    overflow: visible;
+    scrollbar-gutter: auto;
+  }
+
+  @media (max-width: 640px) {
+    padding: 12px 14px max(16px, env(safe-area-inset-bottom));
+  }
+`;
+
+const ControlsHeader = styled.div`
+  display: flex;
+  align-items: center;
+  padding-bottom: 9px;
+  border-bottom: 1px solid var(--service-border);
+`;
+
+const ControlsTitle = styled.h3`
+  margin: 0;
+  color: var(--service-text);
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.3;
+`;
+
+const OptionGroup = styled.div<{ $stacked?: boolean }>`
+  display: grid;
+  grid-template-columns: ${({ $stacked }) =>
+    $stacked ? "1fr" : "7rem minmax(0, 1fr)"};
+  align-items: ${({ $stacked }) => ($stacked ? "start" : "center")};
+  gap: ${({ $stacked }) => ($stacked ? "7px" : "10px")};
+  padding: 8px 0;
+  border-bottom: 1px solid var(--service-border);
+
+  @media (max-width: 400px) {
+    grid-template-columns: ${({ $stacked }) =>
+      $stacked ? "1fr" : "6.25rem minmax(0, 1fr)"};
+    gap: ${({ $stacked }) => ($stacked ? "7px" : "8px")};
+  }
+`;
+
+const OptionLabel = styled.span`
+  color: var(--service-text-muted);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  line-height: 1.3;
+`;
+
+const SelectWrap = styled.div`
+  position: relative;
+  min-width: 0;
+`;
+
+const SelectControl = styled.select`
+  width: 100%;
+  min-height: 34px;
+  appearance: none;
+  border: 1px solid var(--service-border-strong);
+  border-radius: 8px;
+  padding: 6px 30px 6px 10px;
+  background: var(--service-surface-muted);
+  color: var(--service-text);
+  font: inherit;
+  font-size: 0.8125rem;
+  line-height: 1.3;
+
+  &:focus-visible {
+    outline: 2px solid var(--service-focus);
+    outline-offset: 2px;
+  }
+
+  @media (pointer: coarse) {
+    min-height: 44px;
+    font-size: 1rem;
+  }
+`;
+
+const SelectIcon = styled.span`
+  position: absolute;
+  top: 50%;
+  right: 12px;
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid var(--service-text-muted);
+  border-bottom: 1.5px solid var(--service-text-muted);
+  pointer-events: none;
+  transform: translateY(-70%) rotate(45deg);
+`;
+
+const SegmentedControl = styled.div`
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--service-border);
+  border-radius: 8px;
+  background: var(--service-surface-muted);
+`;
+
+const SegmentButton = styled.button<{ $active: boolean }>`
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid
+    ${({ $active }) =>
+      $active ? "var(--service-border-strong)" : "transparent"};
+  border-radius: 6px;
+  padding: 4px 8px;
+  background: ${({ $active }) =>
+    $active ? "var(--service-accent-soft)" : "transparent"};
+  color: ${({ $active }) =>
+    $active ? "var(--service-text)" : "var(--service-text-muted)"};
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 550;
+  line-height: 1;
+  transition:
+    border-color 150ms ease,
+    background-color 150ms ease,
+    color 150ms ease,
+    transform 120ms ease;
+
+  &:active {
+    transform: translateY(1px);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--service-focus);
+    outline-offset: 1px;
+  }
+
+  @media (hover: hover) {
+    &:hover {
+      color: var(--service-text);
+    }
+  }
+
+  @media (pointer: coarse) {
+    min-height: 44px;
+    padding-right: 12px;
+    padding-left: 12px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    transition: none;
+  }
+`;
+
+const SwatchRow = styled.div`
+  display: grid;
+  width: 100%;
+  grid-template-columns: repeat(10, 28px);
+  justify-content: space-between;
+  gap: 0;
+
+  @media (pointer: coarse) {
+    width: fit-content;
+    grid-template-columns: repeat(5, 44px);
+    justify-content: start;
+    gap: 8px;
+  }
+
+  @media (max-width: 640px) {
+    width: fit-content;
+    grid-template-columns: repeat(5, 44px);
+    justify-content: start;
+    gap: 8px;
+  }
+`;
+
+const Swatch = styled.button<{ $active: boolean; $color: string }>`
+  width: 28px;
+  height: 28px;
+  border: 2px solid var(--service-surface);
+  border-radius: 7px;
+  background: ${({ $color }) => $color};
+  box-shadow:
+    0 0 0 1px
+      ${({ $active }) =>
+        $active ? "var(--service-text)" : "var(--service-border-strong)"},
+    inset 0 0 0 1px rgba(0, 0, 0, 0.18);
+  cursor: pointer;
+  transition: transform 120ms ease;
+
+  &:active {
+    transform: translateY(1px);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--service-focus);
+    outline-offset: 2px;
+  }
+
+  @media (pointer: coarse) {
+    width: 44px;
+    height: 44px;
+  }
+
+  @media (max-width: 640px) {
+    width: 44px;
+    height: 44px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    transition: none;
+  }
+`;
+
+const SnippetSection = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 12px;
+  border: 1px solid var(--service-border-strong);
+  border-radius: 10px;
+  background: var(--service-canvas);
+`;
+
+const SnippetHeader = styled.div`
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+`;
+
+const SnippetTitle = styled.h3`
+  margin: 0;
+  color: var(--service-text);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  line-height: 1.3;
+`;
+
+const InlineActions = styled.div`
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+`;
+
+const InlineActionButton = styled.button`
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--service-border-strong);
+  border-radius: 7px;
+  padding: 4px 8px;
+  background: var(--service-surface-muted);
+  color: var(--service-text-muted);
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 550;
+  line-height: 1;
+  transition:
+    border-color 150ms ease,
+    background-color 150ms ease,
+    color 150ms ease;
+
+  &:focus-visible {
+    outline: 2px solid var(--service-focus);
+    outline-offset: 2px;
+  }
+
+  @media (hover: hover) {
+    &:hover {
+      background: var(--service-accent-soft);
+      color: var(--service-text);
+    }
+  }
+
+  @media (pointer: coarse) {
+    min-height: 44px;
+    padding-right: 12px;
+    padding-left: 12px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    transition: none;
+  }
+`;
+
+const CodeBlock = styled.pre`
+  max-height: 92px;
+  overflow: auto;
+  margin: 0;
+  padding: 10px;
+  border: 1px solid var(--service-border);
+  border-radius: 8px;
+  background: #080b11;
+  color: var(--service-text);
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 0.6875rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+
+  @media (max-width: 840px) {
+    max-height: none;
+    overflow: visible;
+  }
+`;
+
+const PrimaryActions = styled.div`
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+`;
+
+const PrimaryButton = styled.button`
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--service-accent);
+  border-radius: 8px;
+  padding: 7px 11px;
+  background: var(--service-accent);
+  color: var(--service-accent-foreground);
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 650;
+  line-height: 1;
+  transition:
+    border-color 150ms ease,
+    background-color 150ms ease;
+
+  &:focus-visible {
+    outline: 2px solid var(--service-focus);
+    outline-offset: 2px;
+  }
+
+  @media (hover: hover) {
+    &:hover {
+      border-color: var(--service-accent-hover);
+      background: var(--service-accent-hover);
+    }
+  }
+
+  @media (pointer: coarse) {
+    min-height: 44px;
+    padding-right: 14px;
+    padding-left: 14px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    transition: none;
+  }
+`;
+
+const SecondaryLink = styled.a`
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--service-border-strong);
+  border-radius: 8px;
+  padding: 7px 11px;
+  background: var(--service-surface-muted);
+  color: var(--service-text);
+  font-size: 0.75rem;
+  font-weight: 550;
+  line-height: 1;
+  text-decoration: none;
+  transition:
+    border-color 150ms ease,
+    background-color 150ms ease;
+
+  &:focus-visible {
+    outline: 2px solid var(--service-focus);
+    outline-offset: 2px;
+  }
+
+  @media (hover: hover) {
+    &:hover {
+      background: var(--service-accent-soft);
+    }
+  }
+
+  @media (pointer: coarse) {
+    min-height: 44px;
+    padding-right: 14px;
+    padding-left: 14px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    transition: none;
+  }
+`;
+
+function CloseIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+    >
+      <path
+        d="M18 6L6 18"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+      <path
+        d="M6 6L18 18"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+    </svg>
   );
 }

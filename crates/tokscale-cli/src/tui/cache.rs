@@ -15,13 +15,13 @@ use tokscale_core::{sessions, GroupBy, ModelPerformance};
 use crate::ClientFilter;
 
 use super::data::{
-    AgentUsage, ContributionDay, DailyModelInfo, DailySourceInfo, DailyUsage, GraphData,
-    HourlyModelInfo, HourlyUsage, ModelUsage, TokenBreakdown, UsageData,
+    aggregate_monthly_from_daily, AgentUsage, ContributionDay, DailyModelInfo, DailySourceInfo,
+    DailyUsage, GraphData, HourlyModelInfo, HourlyUsage, ModelUsage, TokenBreakdown, UsageData,
 };
 
 /// Cache staleness threshold: 5 minutes (matches TS implementation)
 const CACHE_STALE_THRESHOLD_MS: u64 = 5 * 60 * 1000;
-const CACHE_SCHEMA_VERSION: u32 = 9;
+const CACHE_SCHEMA_VERSION: u32 = 10;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -625,16 +625,19 @@ impl TryFrom<CachedUsageData> for UsageData {
         let hourly: Result<Vec<HourlyUsage>, _> =
             u.hourly.into_iter().map(|h| h.try_into()).collect();
         let graph: Option<Result<GraphData, _>> = u.graph.map(|g| g.try_into());
+        let daily = daily?;
+        let monthly = aggregate_monthly_from_daily(&daily);
 
         Ok(Self {
             models: u.models.into_iter().map(|m| m.into()).collect(),
             agents: normalize_cached_agents(u.agents),
-            daily: daily?,
+            daily,
             hourly: hourly?,
             // Minutely data is recomputed on each load (high cardinality,
             // not worth round-tripping through the on-disk cache); the
             // first foreground refresh after cache hit will populate it.
             minutely: Vec::new(),
+            monthly,
             graph: graph.transpose()?,
             total_tokens: u.total_tokens,
             total_cost: u.total_cost,
@@ -691,8 +694,14 @@ fn normalize_cached_agents(agents: Vec<CachedAgentUsage>) -> Vec<AgentUsage> {
 }
 
 fn normalize_cached_agent_name(agent: &str, clients: &str) -> String {
-    if clients.split(", ").any(|client| client == "opencode") {
+    // Mirror the per-client normalization in `tui::data` (see the `msg.agent`
+    // branch there): copilot and opencode agent ids use bespoke normalizers,
+    // everything else falls back to the generic one. Keep these two in sync.
+    let has_client = |name: &str| clients.split(", ").any(|client| client == name);
+    if has_client("opencode") {
         sessions::normalize_opencode_agent_name(agent)
+    } else if has_client("copilot") {
+        sessions::normalize_copilot_agent_name(agent)
     } else {
         sessions::normalize_agent_name(agent)
     }
@@ -999,6 +1008,28 @@ mod tests {
         assert_eq!(prometheus.message_count, 1);
     }
 
+    #[test]
+    fn test_normalize_cached_agents_merges_copilot_display_variants() {
+        // Copilot cached agent ids must go through normalize_copilot_agent_name
+        // (mirroring tui::data). Without the copilot branch in
+        // normalize_cached_agent_name, the raw "github.copilot.default" id would
+        // be left untouched (generic normalizer titlecases it differently) and
+        // would NOT merge with the "GitHub Copilot" display name.
+        let agents = normalize_cached_agents(vec![
+            cached_agent("github.copilot.default", "copilot", 10),
+            cached_agent("GITHUB.COPILOT.DEFAULT", "copilot", 20),
+        ]);
+
+        assert_eq!(agents.len(), 1);
+        let copilot = agents
+            .iter()
+            .find(|agent| agent.agent == "GitHub Copilot")
+            .unwrap();
+        assert_eq!(copilot.clients, "copilot");
+        assert_eq!(copilot.message_count, 2);
+        assert_eq!(copilot.tokens.input, 30);
+    }
+
     // ── check_client_match ──────────────────────────────────────────
 
     #[test]
@@ -1117,7 +1148,7 @@ mod tests {
         fs::write(
             &cache_path,
             r#"{
-  "schemaVersion": 9,
+  "schemaVersion": 10,
   "timestamp": 9999999999999,
   "enabledClients": ["claude"],
   "includeSynthetic": false,
@@ -1170,10 +1201,10 @@ mod tests {
     fn save_cached_data_writes_report_scope() {
         let temp_dir = TempDir::new().unwrap();
         let previous_home = env::var_os("HOME");
-        let previous_override = env::var_os("TOKSCALE_CONFIG_DIR");
+        let previous_override = env::var_os("TOKENS_CONFIG_DIR");
         unsafe {
             env::set_var("HOME", temp_dir.path());
-            env::remove_var("TOKSCALE_CONFIG_DIR");
+            env::remove_var("TOKENS_CONFIG_DIR");
         }
 
         let clients = make_filters(&[ClientFilter::Claude], false);
@@ -1202,8 +1233,8 @@ mod tests {
             None => unsafe { env::remove_var("HOME") },
         }
         match previous_override {
-            Some(value) => unsafe { env::set_var("TOKSCALE_CONFIG_DIR", value) },
-            None => unsafe { env::remove_var("TOKSCALE_CONFIG_DIR") },
+            Some(value) => unsafe { env::set_var("TOKENS_CONFIG_DIR", value) },
+            None => unsafe { env::remove_var("TOKENS_CONFIG_DIR") },
         }
     }
 
@@ -1440,7 +1471,7 @@ mod tests {
         fs::write(
             &cache_path,
             r#"{
-  "schemaVersion": 9,
+  "schemaVersion": 10,
   "timestamp": 9999999999999,
   "enabledClients": ["claude", "cursor"],
   "includeSynthetic": false,
@@ -1722,7 +1753,7 @@ mod tests {
         fs::write(
             &legacy_path,
             r#"{
-  "schemaVersion": 9,
+  "schemaVersion": 10,
   "timestamp": 9999999999999,
   "enabledClients": ["claude"],
   "includeSynthetic": false,
@@ -1891,7 +1922,7 @@ mod tests {
 
     /// Regression test for the TUI cache `group_by` mismatch bug.
     ///
-    /// Symptom: `npx tokscale@latest` (TUI launch) silently dropped the
+    /// Symptom: `bunx tokens-cli@latest` (TUI launch) silently dropped the
     /// on-disk cache and showed an empty dashboard until the background
     /// scan finished, even though `~/.config/tokens/cache/tui-data-cache.json`
     /// existed and was well-formed.

@@ -180,7 +180,7 @@ fn parse_thread_row(db_path: &Path, row: ZedThreadRow) -> Option<UnifiedMessage>
     let (tokens, message_count) = thread_usage(&thread)?;
     let timestamp = timestamp_ms(&row, &thread)?;
 
-    let mut message = UnifiedMessage::new(
+    let mut message = UnifiedMessage::new_with_dedup(
         "zed",
         model_id,
         ZED_HOSTED_PROVIDER,
@@ -188,9 +188,9 @@ fn parse_thread_row(db_path: &Path, row: ZedThreadRow) -> Option<UnifiedMessage>
         timestamp,
         tokens,
         0.0,
+        Some(format!("zed:{}", row.id)),
     );
     message.message_count = message_count;
-    message.dedup_key = Some(format!("zed:{}", row.id));
 
     if let Some(workspace_key) = workspace_key_from_folders(
         row.folder_paths.as_deref(),
@@ -281,7 +281,7 @@ fn sum_request_token_usage(value: Option<&Value>) -> (TokenBreakdown, i32) {
 
 // Zed persists `language_model::TokenUsage`, which currently stores only
 // input/output/cache fields in `threads.db`. Until upstream adds a dedicated
-// reasoning token field there, `reasoning` stays zero in Tokscale.
+// reasoning token field there, `reasoning` stays zero in Tokens.
 fn token_usage_from_value(value: &Value) -> Option<TokenBreakdown> {
     Some(TokenBreakdown {
         input: usage_field(value, "input_tokens"),

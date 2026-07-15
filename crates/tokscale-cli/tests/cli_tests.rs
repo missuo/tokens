@@ -298,6 +298,37 @@ fn create_timezone_boundary_fixture_dir() -> TempDir {
     tmp
 }
 
+fn create_positive_utc_offset_submit_fixture_dir() -> (TempDir, String) {
+    let tmp = TempDir::new().expect("failed to create temp dir");
+    let base = tmp.path();
+    prime_pricing_cache(base);
+
+    let utc_today = chrono::Utc::now().date_naive();
+    let utc_noon = utc_today.and_hms_opt(12, 0, 0).unwrap().and_utc();
+    let local_date = utc_today.succ_opt().unwrap().format("%Y-%m-%d").to_string();
+    let session = base.join(".local/share/opencode/storage/message/session1");
+    fs::create_dir_all(&session).unwrap();
+
+    let message = serde_json::json!({
+        "id": "msg_ahead_of_utc",
+        "sessionID": "session1",
+        "role": "assistant",
+        "modelID": "gpt-4o",
+        "providerID": "openai",
+        "cost": 0.02,
+        "tokens": {
+            "input": 1000,
+            "output": 500,
+            "reasoning": 0,
+            "cache": { "read": 200, "write": 50 }
+        },
+        "time": { "created": utc_noon.timestamp_millis() as f64 }
+    });
+    fs::write(session.join("msg_ahead_of_utc.json"), message.to_string()).unwrap();
+
+    (tmp, local_date)
+}
+
 fn create_qwen_workspace_fixture_dir() -> TempDir {
     let tmp = TempDir::new().expect("failed to create temp dir");
     let base = tmp.path();
@@ -434,7 +465,8 @@ fn create_conflicting_codex_fixture_dir() -> TempDir {
     tmp
 }
 
-/// Build a Command pointing HOME at the given temp dir, with --no-spinner and --opencode flags.
+/// Build a Command pointing HOME and the XDG dirs at the given temp dir for
+/// hermetic test runs (no flags are added; callers append their own).
 fn cmd_with_home(tmp: &Path) -> Command {
     let mut cmd = cargo_bin_cmd!("tokens");
     cmd.env("HOME", tmp)
@@ -482,15 +514,15 @@ fn offline_cmd_with_home(tmp: &Path) -> Command {
         .env("HTTPS_PROXY", "http://127.0.0.1:9")
         .env("ALL_PROXY", "http://127.0.0.1:9")
         // Clear scan-path overrides (mirrors cmd_with_home)
-        .env_remove("TOKSCALE_EXTRA_DIRS")
-        .env_remove("TOKSCALE_HEADLESS_DIR")
+        .env_remove("TOKENS_EXTRA_DIRS")
+        .env_remove("TOKENS_HEADLESS_DIR")
         .env_remove("CODEX_HOME")
         .env_remove("COPILOT_OTEL_FILE_EXPORTER_PATH")
         .env_remove("GOOSE_PATH_ROOT")
         .env_remove("CODEBUFF_DATA_DIR")
         .env_remove("GEMINI_CLI_HOME")
         .env_remove("HERMES_HOME")
-        .env_remove("TOKSCALE_CONFIG_DIR");
+        .env_remove("TOKENS_CONFIG_DIR");
     cmd
 }
 
@@ -503,7 +535,7 @@ fn write_pricing_cache(base: &Path, timestamp: u64) {
 
     // Seed all three locations so the test exercises the same fallback
     // chain the binary uses post-#470: canonical
-    // <config_dir>/cache/, then legacy dirs::cache_dir()/tokens, then
+    // <config_dir>/cache/, then legacy dirs::cache_dir()/tokscale, then
     // ~/.cache/tokens. Without the canonical path seeded, CI runners
     // where dirs::cache_dir() resolves outside the sandboxed HOME (e.g.
     // some Linux runners with XDG_CACHE_HOME set globally) miss the
@@ -518,6 +550,61 @@ fn write_pricing_cache(base: &Path, timestamp: u64) {
         fs::write(dir.join("pricing-litellm.json"), &litellm).unwrap();
         fs::write(dir.join("pricing-openrouter.json"), &openrouter).unwrap();
     }
+}
+
+/// Add an assistant message with NO embedded cost to the OpenCode fixture.
+///
+/// Provider-reported OpenCode costs are preserved verbatim (never repriced),
+/// so the stale-pricing-cache tests need an uncosted message to prove the
+/// cache is actually consulted: 1000 input * 0.0000025 + 400 output *
+/// 0.00001 = 0.0065 on top of the 0.10 embedded total.
+fn add_uncosted_opencode_message(base: &Path) {
+    let session2 = base.join(".local/share/opencode/storage/message/session2");
+    fs::create_dir_all(&session2).unwrap();
+
+    // Same hour as msg_c (2025-01-10 12:01 UTC) so hourly bucket counts hold
+    let msg_d = r#"{
+        "id": "msg_d",
+        "sessionID": "session2",
+        "role": "assistant",
+        "modelID": "gpt-4o",
+        "providerID": "openai",
+        "tokens": {
+            "input": 1000,
+            "output": 400,
+            "reasoning": 0,
+            "cache": { "read": 0, "write": 0 }
+        },
+        "time": { "created": 1736510460000.0 }
+    }"#;
+    fs::write(session2.join("msg_d.json"), msg_d).unwrap();
+}
+
+/// Add an assistant message whose usage is entirely zero (tokens, cost, no
+/// duration) in its own month/hour, for `--hide-zero` tests. Uses a distinct
+/// model and a 2023-03-15 timestamp so it forms an all-zero row in the
+/// models, monthly, and hourly reports without touching other buckets.
+fn add_zero_usage_opencode_message(base: &Path) {
+    let session3 = base.join(".local/share/opencode/storage/message/session3");
+    fs::create_dir_all(&session3).unwrap();
+
+    // 2023-03-15 12:00:00 UTC = 1678881600000 ms
+    let msg_z = r#"{
+        "id": "msg_z",
+        "sessionID": "session3",
+        "role": "assistant",
+        "modelID": "zero-model",
+        "providerID": "openai",
+        "cost": 0.0,
+        "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": { "read": 0, "write": 0 }
+        },
+        "time": { "created": 1678881600000.0 }
+    }"#;
+    fs::write(session3.join("msg_z.json"), msg_z).unwrap();
 }
 
 fn write_fireworks_pricing_cache(base: &Path) {
@@ -615,6 +702,24 @@ fn write_codex_token_session(dir: &Path, name: &str, model: &str, input: i64, ou
     fs::write(
         dir.join(name),
         format!("{}\n{}\n", turn_context, token_count),
+    )
+    .unwrap();
+}
+
+fn write_jcode_session(base: &Path) {
+    let sessions_dir = base.join(".jcode/sessions");
+    fs::create_dir_all(&sessions_dir).unwrap();
+    fs::write(
+        sessions_dir.join("session_cli_fixture.json"),
+        r#"{
+  "id":"session_cli_fixture",
+  "provider_key":"cliproxyapi",
+  "model":"jcode-cli-model",
+  "working_dir":"/work/cli-fixture",
+  "messages":[
+    {"id":"assistant_1","role":"assistant","timestamp":"2026-01-01T00:00:01Z","token_usage":{"input_tokens":1000,"output_tokens":250,"cache_read_input_tokens":400,"cache_creation_input_tokens":50,"reasoning_output_tokens":25}}
+  ]
+}"#,
     )
     .unwrap();
 }
@@ -732,6 +837,17 @@ fn test_codex_command_help() {
 }
 
 #[test]
+fn test_codex_activity_command_help() {
+    let mut cmd = cargo_bin_cmd!("tokens");
+    cmd.args(["codex", "activity", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "opt-in Codex account-activity snapshot",
+        ));
+}
+
+#[test]
 fn test_graph_command_help() {
     let mut cmd = cargo_bin_cmd!("tokens");
     cmd.arg("graph")
@@ -843,7 +959,7 @@ fn test_models_with_invalid_date_format() {
     cmd_with_home(tmp.path())
         .arg("models")
         .arg("--light")
-        .arg("--opencode")
+        .args(["--client", "opencode"])
         .arg("--no-spinner")
         .arg("--since")
         .arg("invalid-date")
@@ -857,7 +973,7 @@ fn test_models_with_invalid_year() {
     cmd_with_home(tmp.path())
         .arg("models")
         .arg("--light")
-        .arg("--opencode")
+        .args(["--client", "opencode"])
         .arg("--no-spinner")
         .arg("--year")
         .arg("not-a-year")
@@ -887,7 +1003,7 @@ fn test_global_debug_flag() {
 fn test_models_with_since_until_filter() {
     let tmp = create_temp_fixture_dir();
     cmd_with_home(tmp.path())
-        .args(["models", "--json", "--opencode", "--no-spinner"])
+        .args(["models", "--json", "--client", "opencode", "--no-spinner"])
         .args(["--since", "2024-06-01", "--until", "2024-06-30"])
         .assert()
         .success()
@@ -899,7 +1015,7 @@ fn test_models_with_since_until_filter() {
 fn test_models_with_year_filter() {
     let tmp = create_temp_fixture_dir();
     cmd_with_home(tmp.path())
-        .args(["models", "--json", "--opencode", "--no-spinner"])
+        .args(["models", "--json", "--client", "opencode", "--no-spinner"])
         .args(["--year", "2024"])
         .assert()
         .success()
@@ -911,7 +1027,7 @@ fn test_models_with_year_filter() {
 fn test_monthly_with_date_filters() {
     let tmp = create_temp_fixture_dir();
     cmd_with_home(tmp.path())
-        .args(["monthly", "--json", "--opencode", "--no-spinner"])
+        .args(["monthly", "--json", "--client", "opencode", "--no-spinner"])
         .args(["--since", "2025-01-01", "--until", "2025-12-31"])
         .assert()
         .success()
@@ -927,7 +1043,8 @@ fn test_models_home_override_ignores_conflicting_xdg_env() {
         .args([
             "models",
             "--json",
-            "--opencode",
+            "--client",
+            "opencode",
             "--no-spinner",
             "--home",
             real_home.path().to_str().unwrap(),
@@ -957,7 +1074,8 @@ fn test_monthly_home_override_ignores_conflicting_xdg_env() {
         .args([
             "monthly",
             "--json",
-            "--opencode",
+            "--client",
+            "opencode",
             "--no-spinner",
             "--home",
             real_home.path().to_str().unwrap(),
@@ -987,7 +1105,8 @@ fn test_graph_home_override_ignores_conflicting_xdg_env() {
     let output = cmd_with_conflicting_env(conflicting_home.path())
         .args([
             "graph",
-            "--opencode",
+            "--client",
+            "opencode",
             "--no-spinner",
             "--home",
             real_home.path().to_str().unwrap(),
@@ -1017,7 +1136,8 @@ fn test_models_home_override_ignores_conflicting_codex_home_env() {
         .args([
             "models",
             "--json",
-            "--codex",
+            "--client",
+            "codex",
             "--no-spinner",
             "--home",
             real_home.path().to_str().unwrap(),
@@ -1136,7 +1256,7 @@ fn test_clients_home_override_ignores_copilot_exporter_env() {
 fn test_models_with_since_only() {
     let tmp = create_temp_fixture_dir();
     cmd_with_home(tmp.path())
-        .args(["models", "--json", "--opencode", "--no-spinner"])
+        .args(["models", "--json", "--client", "opencode", "--no-spinner"])
         .args(["--since", "2025-01-01"])
         .assert()
         .success()
@@ -1148,7 +1268,7 @@ fn test_models_with_since_only() {
 fn test_models_with_until_only() {
     let tmp = create_temp_fixture_dir();
     cmd_with_home(tmp.path())
-        .args(["models", "--json", "--opencode", "--no-spinner"])
+        .args(["models", "--json", "--client", "opencode", "--no-spinner"])
         .args(["--until", "2024-12-31"])
         .assert()
         .success()
@@ -1160,7 +1280,7 @@ fn test_models_with_until_only() {
 fn test_models_with_no_matching_date() {
     let tmp = create_temp_fixture_dir();
     let output = cmd_with_home(tmp.path())
-        .args(["models", "--json", "--opencode", "--no-spinner"])
+        .args(["models", "--json", "--client", "opencode", "--no-spinner"])
         .args(["--since", "2099-01-01", "--until", "2099-12-31"])
         .output()
         .unwrap();
@@ -1178,7 +1298,7 @@ fn test_graph_single_day_filter_uses_local_timezone_boundaries() {
     let tmp = create_timezone_boundary_fixture_dir();
     let output = cmd_with_home(tmp.path())
         .env("TZ", "America/Los_Angeles")
-        .args(["graph", "--opencode", "--no-spinner"])
+        .args(["graph", "--client", "opencode", "--no-spinner"])
         .args(["--since", "2026-03-02", "--until", "2026-03-02"])
         .output()
         .unwrap();
@@ -1204,7 +1324,7 @@ fn test_graph_single_day_filter_uses_local_timezone_boundaries() {
 fn test_graph_with_year_filter() {
     let tmp = create_temp_fixture_dir();
     let output = cmd_with_home(tmp.path())
-        .args(["graph", "--opencode", "--no-spinner"])
+        .args(["graph", "--client", "opencode", "--no-spinner"])
         .args(["--year", "2024"])
         .output()
         .unwrap();
@@ -1227,7 +1347,7 @@ fn test_graph_with_year_filter() {
 fn test_models_with_client_filter_opencode() {
     let tmp = create_temp_fixture_dir();
     let output = cmd_with_home(tmp.path())
-        .args(["models", "--json", "--opencode", "--no-spinner"])
+        .args(["models", "--json", "--client", "opencode", "--no-spinner"])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -1242,9 +1362,46 @@ fn test_models_with_client_filter_opencode() {
 fn test_models_with_client_filter_multiple() {
     let tmp = create_temp_fixture_dir();
     cmd_with_home(tmp.path())
-        .args(["models", "--json", "--opencode", "--claude", "--no-spinner"])
+        .args([
+            "models",
+            "--json",
+            "--client",
+            "opencode",
+            "--client",
+            "claude",
+            "--no-spinner",
+        ])
         .assert()
         .success();
+}
+
+#[test]
+fn test_models_with_client_filter_jcode() {
+    let tmp = create_empty_fixture_dir();
+    write_jcode_session(tmp.path());
+
+    let output = cmd_with_home(tmp.path())
+        .args(["models", "--json", "--client", "jcode", "--no-spinner"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let entries = json["entries"].as_array().unwrap();
+    assert_eq!(entries.len(), 1);
+    let entry = &entries[0];
+    assert_eq!(entry["client"].as_str().unwrap(), "jcode");
+    assert_eq!(entry["provider"].as_str().unwrap(), "cliproxyapi");
+    assert_eq!(entry["model"].as_str().unwrap(), "jcode-cli-model");
+    assert_eq!(entry["input"].as_i64().unwrap(), 1000);
+    assert_eq!(entry["cacheRead"].as_i64().unwrap(), 400);
+    assert_eq!(entry["cacheWrite"].as_i64().unwrap(), 50);
+    assert_eq!(entry["output"].as_i64().unwrap(), 250);
+    assert_eq!(entry["reasoning"].as_i64().unwrap(), 25);
 }
 
 fn assert_cursor_setup_warning(json: &serde_json::Value) {
@@ -1514,6 +1671,22 @@ fn test_submit_cursor_explicit_missing_cache_reports_setup_warning_text() {
 }
 
 #[test]
+fn test_submit_dry_run_preserves_local_date_ahead_of_utc() {
+    let (tmp, expected_local_date) = create_positive_utc_offset_submit_fixture_dir();
+
+    cmd_with_home(tmp.path())
+        .env("TZ", "Pacific/Kiritimati")
+        .env("TOKENS_API_TOKEN", "test-token")
+        .args(["submit", "--client", "opencode", "--dry-run"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(format!(
+            "Date range: {expected_local_date} to {expected_local_date}"
+        )))
+        .stdout(predicate::str::contains("Total tokens: 1,750"));
+}
+
+#[test]
 fn test_models_with_all_client_flags() {
     let tmp = create_temp_fixture_dir();
     cmd_with_home(tmp.path())
@@ -1521,15 +1694,24 @@ fn test_models_with_all_client_flags() {
             "models",
             "--json",
             "--no-spinner",
-            "--opencode",
-            "--claude",
-            "--codex",
-            "--gemini",
-            "--cursor",
-            "--amp",
-            "--droid",
-            "--openclaw",
-            "--pi",
+            "--client",
+            "opencode",
+            "--client",
+            "claude",
+            "--client",
+            "codex",
+            "--client",
+            "gemini",
+            "--client",
+            "cursor",
+            "--client",
+            "amp",
+            "--client",
+            "droid",
+            "--client",
+            "openclaw",
+            "--client",
+            "pi",
         ])
         .assert()
         .success();
@@ -1539,7 +1721,7 @@ fn test_models_with_all_client_flags() {
 fn test_models_client_and_date_combined() {
     let tmp = create_temp_fixture_dir();
     cmd_with_home(tmp.path())
-        .args(["models", "--json", "--opencode", "--no-spinner"])
+        .args(["models", "--json", "--client", "opencode", "--no-spinner"])
         .args(["--year", "2025"])
         .assert()
         .success()
@@ -1553,7 +1735,7 @@ fn test_models_client_and_date_combined() {
 fn test_models_json_output() {
     let tmp = create_temp_fixture_dir();
     let output = cmd_with_home(tmp.path())
-        .args(["models", "--json", "--opencode", "--no-spinner"])
+        .args(["models", "--json", "--client", "opencode", "--no-spinner"])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -1606,7 +1788,7 @@ fn test_models_json_output() {
 fn test_models_json_offline_without_pricing_cache_still_succeeds() {
     let tmp = create_temp_fixture_dir_without_pricing_cache();
     let output = offline_cmd_with_home(tmp.path())
-        .args(["models", "--json", "--opencode", "--no-spinner"])
+        .args(["models", "--json", "--client", "opencode", "--no-spinner"])
         .output()
         .unwrap();
     assert!(
@@ -1632,7 +1814,7 @@ fn test_models_json_offline_without_pricing_cache_still_succeeds() {
 fn test_monthly_json_offline_without_pricing_cache_still_succeeds() {
     let tmp = create_temp_fixture_dir_without_pricing_cache();
     let output = offline_cmd_with_home(tmp.path())
-        .args(["monthly", "--json", "--opencode", "--no-spinner"])
+        .args(["monthly", "--json", "--client", "opencode", "--no-spinner"])
         .output()
         .unwrap();
     assert!(
@@ -1658,7 +1840,7 @@ fn test_monthly_json_offline_without_pricing_cache_still_succeeds() {
 fn test_graph_offline_without_pricing_cache_still_succeeds() {
     let tmp = create_temp_fixture_dir_without_pricing_cache();
     let output = offline_cmd_with_home(tmp.path())
-        .args(["graph", "--opencode", "--no-spinner"])
+        .args(["graph", "--client", "opencode", "--no-spinner"])
         .output()
         .unwrap();
     assert!(
@@ -1683,7 +1865,7 @@ fn test_graph_offline_without_pricing_cache_still_succeeds() {
 fn test_hourly_json_offline_without_pricing_cache_still_succeeds() {
     let tmp = create_temp_fixture_dir_without_pricing_cache();
     let output = offline_cmd_with_home(tmp.path())
-        .args(["hourly", "--json", "--opencode", "--no-spinner"])
+        .args(["hourly", "--json", "--client", "opencode", "--no-spinner"])
         .output()
         .unwrap();
     assert!(
@@ -1720,9 +1902,10 @@ fn test_hourly_json_offline_without_pricing_cache_still_succeeds() {
 fn test_models_json_offline_uses_stale_pricing_cache_when_available() {
     let tmp = create_temp_fixture_dir_without_pricing_cache();
     write_pricing_cache(tmp.path(), 1);
+    add_uncosted_opencode_message(tmp.path());
 
     let output = offline_cmd_with_home(tmp.path())
-        .args(["models", "--json", "--opencode", "--no-spinner"])
+        .args(["models", "--json", "--client", "opencode", "--no-spinner"])
         .output()
         .unwrap();
     assert!(
@@ -1734,7 +1917,7 @@ fn test_models_json_offline_uses_stale_pricing_cache_when_available() {
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     let total_cost = json["totalCost"].as_f64().unwrap();
     assert!(
-        (total_cost - 0.0209).abs() < 1e-9,
+        (total_cost - 0.1065).abs() < 1e-9,
         "unexpected totalCost: {total_cost}"
     );
 }
@@ -1743,9 +1926,10 @@ fn test_models_json_offline_uses_stale_pricing_cache_when_available() {
 fn test_monthly_json_offline_uses_stale_pricing_cache_when_available() {
     let tmp = create_temp_fixture_dir_without_pricing_cache();
     write_pricing_cache(tmp.path(), 1);
+    add_uncosted_opencode_message(tmp.path());
 
     let output = offline_cmd_with_home(tmp.path())
-        .args(["monthly", "--json", "--opencode", "--no-spinner"])
+        .args(["monthly", "--json", "--client", "opencode", "--no-spinner"])
         .output()
         .unwrap();
     assert!(
@@ -1757,7 +1941,7 @@ fn test_monthly_json_offline_uses_stale_pricing_cache_when_available() {
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     let total_cost = json["totalCost"].as_f64().unwrap();
     assert!(
-        (total_cost - 0.0209).abs() < 1e-9,
+        (total_cost - 0.1065).abs() < 1e-9,
         "unexpected totalCost: {total_cost}"
     );
 }
@@ -1766,9 +1950,10 @@ fn test_monthly_json_offline_uses_stale_pricing_cache_when_available() {
 fn test_graph_offline_uses_stale_pricing_cache_when_available() {
     let tmp = create_temp_fixture_dir_without_pricing_cache();
     write_pricing_cache(tmp.path(), 1);
+    add_uncosted_opencode_message(tmp.path());
 
     let output = offline_cmd_with_home(tmp.path())
-        .args(["graph", "--opencode", "--no-spinner"])
+        .args(["graph", "--client", "opencode", "--no-spinner"])
         .output()
         .unwrap();
     assert!(
@@ -1780,7 +1965,7 @@ fn test_graph_offline_uses_stale_pricing_cache_when_available() {
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     let total_cost = json["summary"]["totalCost"].as_f64().unwrap();
     assert!(
-        (total_cost - 0.0209).abs() < 1e-9,
+        (total_cost - 0.1065).abs() < 1e-9,
         "unexpected totalCost: {total_cost}"
     );
 }
@@ -1789,9 +1974,10 @@ fn test_graph_offline_uses_stale_pricing_cache_when_available() {
 fn test_hourly_json_offline_uses_stale_pricing_cache_when_available() {
     let tmp = create_temp_fixture_dir_without_pricing_cache();
     write_pricing_cache(tmp.path(), 1);
+    add_uncosted_opencode_message(tmp.path());
 
     let output = offline_cmd_with_home(tmp.path())
-        .args(["hourly", "--json", "--opencode", "--no-spinner"])
+        .args(["hourly", "--json", "--client", "opencode", "--no-spinner"])
         .output()
         .unwrap();
     assert!(
@@ -1808,27 +1994,124 @@ fn test_hourly_json_offline_uses_stale_pricing_cache_when_available() {
             .iter()
             .map(|entry| entry["input"].as_i64().unwrap())
             .sum::<i64>(),
-        2400
+        3400
     );
     assert_eq!(
         entries
             .iter()
             .map(|entry| entry["output"].as_i64().unwrap())
             .sum::<i64>(),
-        1000
+        1400
     );
     let total_cost = json["totalCost"].as_f64().unwrap();
     assert!(
-        (total_cost - 0.0209).abs() < 1e-9,
+        (total_cost - 0.1065).abs() < 1e-9,
         "unexpected totalCost: {total_cost}"
     );
+}
+
+#[test]
+fn test_empty_report_total_cost_is_positive_zero() {
+    // f64's Sum identity is -0.0; without normalization an empty report
+    // serializes as "totalCost": -0.0.
+    let tmp = TempDir::new().unwrap();
+    for subcmd in ["models", "monthly", "hourly"] {
+        let output = offline_cmd_with_home(tmp.path())
+            .args([subcmd, "--json", "--client", "crush", "--no-spinner"])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{subcmd} stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            !stdout.contains("-0.0"),
+            "{subcmd} JSON contains negative zero: {stdout}"
+        );
+
+        let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        let total_cost = json["totalCost"].as_f64().unwrap();
+        assert_eq!(total_cost, 0.0, "{subcmd} totalCost should be zero");
+        assert!(
+            total_cost.is_sign_positive(),
+            "{subcmd} totalCost serialized as -0.0"
+        );
+    }
+}
+
+#[test]
+fn test_hide_zero_drops_all_zero_entries_but_keeps_totals() {
+    let tmp = create_temp_fixture_dir_without_pricing_cache();
+    add_zero_usage_opencode_message(tmp.path());
+
+    let run = |args: &[&str]| -> serde_json::Value {
+        let output = offline_cmd_with_home(tmp.path())
+            .args(args)
+            .args(["--json", "--client", "opencode", "--no-spinner"])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{args:?} stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice(&output.stdout).unwrap()
+    };
+
+    // models: the all-zero (opencode, zero-model) row disappears with the flag
+    let full = run(&["models"]);
+    let filtered = run(&["models", "--hide-zero"]);
+    let has_zero_model = |json: &serde_json::Value| {
+        json["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e["model"] == "zero-model")
+    };
+    assert!(has_zero_model(&full), "zero row must show without the flag");
+    assert!(!has_zero_model(&filtered), "--hide-zero must drop the row");
+    assert!(filtered["entries"].as_array().unwrap().iter().all(|e| {
+        e["input"].as_i64().unwrap() != 0
+            || e["output"].as_i64().unwrap() != 0
+            || e["cost"].as_f64().unwrap() != 0.0
+    }));
+    // totals are display-independent: hidden rows still count
+    assert_eq!(full["totalMessages"], filtered["totalMessages"]);
+    assert_eq!(full["totalCost"], filtered["totalCost"]);
+
+    // monthly: the all-zero 2023-03 bucket disappears with the flag
+    let full = run(&["monthly"]);
+    let filtered = run(&["monthly", "--hide-zero"]);
+    let months = |json: &serde_json::Value| -> Vec<String> {
+        json["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["month"].as_str().unwrap().to_string())
+            .collect()
+    };
+    assert!(months(&full).contains(&"2023-03".to_string()));
+    assert!(!months(&filtered).contains(&"2023-03".to_string()));
+    assert_eq!(full["totalCost"], filtered["totalCost"]);
+
+    // hourly: exactly one all-zero hour bucket disappears with the flag
+    let full = run(&["hourly"]);
+    let filtered = run(&["hourly", "--hide-zero"]);
+    assert_eq!(
+        full["entries"].as_array().unwrap().len(),
+        filtered["entries"].as_array().unwrap().len() + 1
+    );
+    assert_eq!(full["totalCost"], filtered["totalCost"]);
 }
 
 #[test]
 fn test_models_json_total_consistency() {
     let tmp = create_temp_fixture_dir();
     let output = cmd_with_home(tmp.path())
-        .args(["models", "--json", "--opencode", "--no-spinner"])
+        .args(["models", "--json", "--client", "opencode", "--no-spinner"])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -1854,7 +2137,7 @@ fn test_models_json_total_consistency() {
 fn test_monthly_json_output() {
     let tmp = create_temp_fixture_dir();
     let output = cmd_with_home(tmp.path())
-        .args(["monthly", "--json", "--opencode", "--no-spinner"])
+        .args(["monthly", "--json", "--client", "opencode", "--no-spinner"])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -1916,7 +2199,8 @@ fn test_hourly_home_override_uses_explicit_home_scanner_settings() {
         .args([
             "hourly",
             "--json",
-            "--codex",
+            "--client",
+            "codex",
             "--no-spinner",
             "--home",
             real_home.path().to_str().unwrap(),
@@ -1941,7 +2225,7 @@ fn test_hourly_home_override_uses_explicit_home_scanner_settings() {
 fn test_monthly_json_with_client_filter() {
     let tmp = create_temp_fixture_dir();
     let output = cmd_with_home(tmp.path())
-        .args(["monthly", "--json", "--opencode", "--no-spinner"])
+        .args(["monthly", "--json", "--client", "opencode", "--no-spinner"])
         .args(["--year", "2024"])
         .output()
         .unwrap();
@@ -1962,7 +2246,7 @@ fn test_monthly_json_with_client_filter() {
 fn test_graph_json_output() {
     let tmp = create_temp_fixture_dir();
     let output = cmd_with_home(tmp.path())
-        .args(["graph", "--opencode", "--no-spinner"])
+        .args(["graph", "--client", "opencode", "--no-spinner"])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -1981,7 +2265,7 @@ fn test_graph_json_output() {
 fn test_graph_json_has_meta() {
     let tmp = create_temp_fixture_dir();
     let output = cmd_with_home(tmp.path())
-        .args(["graph", "--opencode", "--no-spinner"])
+        .args(["graph", "--client", "opencode", "--no-spinner"])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -1999,7 +2283,7 @@ fn test_graph_json_has_meta() {
 fn test_graph_json_has_summary() {
     let tmp = create_temp_fixture_dir();
     let output = cmd_with_home(tmp.path())
-        .args(["graph", "--opencode", "--no-spinner"])
+        .args(["graph", "--client", "opencode", "--no-spinner"])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -2031,7 +2315,7 @@ fn test_graph_json_has_summary() {
 fn test_models_group_by_default() {
     let tmp = create_temp_fixture_dir();
     let output = cmd_with_home(tmp.path())
-        .args(["models", "--json", "--opencode", "--no-spinner"])
+        .args(["models", "--json", "--client", "opencode", "--no-spinner"])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -2043,7 +2327,7 @@ fn test_models_group_by_default() {
 fn test_models_group_by_model() {
     let tmp = create_temp_fixture_dir();
     let output = cmd_with_home(tmp.path())
-        .args(["models", "--json", "--opencode", "--no-spinner"])
+        .args(["models", "--json", "--client", "opencode", "--no-spinner"])
         .args(["--group-by", "model"])
         .output()
         .unwrap();
@@ -2068,7 +2352,7 @@ fn test_models_group_by_model() {
 fn test_models_group_by_client_provider_model() {
     let tmp = create_temp_fixture_dir();
     let output = cmd_with_home(tmp.path())
-        .args(["models", "--json", "--opencode", "--no-spinner"])
+        .args(["models", "--json", "--client", "opencode", "--no-spinner"])
         .args(["--group-by", "client,provider,model"])
         .output()
         .unwrap();
@@ -2088,7 +2372,7 @@ fn test_models_group_by_client_provider_model() {
 fn test_models_json_with_group_by_model() {
     let tmp = create_temp_fixture_dir();
     let output = cmd_with_home(tmp.path())
-        .args(["models", "--json", "--opencode", "--no-spinner"])
+        .args(["models", "--json", "--client", "opencode", "--no-spinner"])
         .args(["--group-by", "model"])
         .output()
         .unwrap();
@@ -2115,11 +2399,258 @@ fn test_models_json_with_group_by_model() {
     }
 }
 
+/// Adds a third OpenCode session whose single message reports the same physical
+/// model as session 1 (claude sonnet 4) under a channel-variant name string
+/// (`claude-sonnet-4-cc`), so model-alias folding can be exercised end to end.
+fn add_alias_variant_message(tmp: &Path) {
+    let session3 = tmp.join(".local/share/opencode/storage/message/session3");
+    fs::create_dir_all(&session3).unwrap();
+    let msg = r#"{
+        "id": "msg_d",
+        "sessionID": "session3",
+        "role": "assistant",
+        "modelID": "claude-sonnet-4-cc",
+        "providerID": "anthropic",
+        "cost": 0.04,
+        "tokens": {
+            "input": 400,
+            "output": 100,
+            "reasoning": 0,
+            "cache": { "read": 0, "write": 0 }
+        },
+        "time": { "created": 1718460000000.0, "completed": 1718460002000.0 }
+    }"#;
+    fs::write(session3.join("msg_d.json"), msg).unwrap();
+}
+
+/// Writes a tokens `settings.json` with the given `modelAliases` object into
+/// the sandbox config dir that `cmd_with_home` points at
+/// (`XDG_CONFIG_HOME/tokscale`). `cmd_with_home` clears `TOKENS_CONFIG_DIR`, so
+/// the config must live under the pinned XDG path to be read.
+fn write_model_aliases(tmp: &Path, aliases_json: &str) {
+    let config_dir = tmp.join(".config/tokens");
+    fs::create_dir_all(&config_dir).unwrap();
+    fs::write(
+        config_dir.join("settings.json"),
+        format!(r#"{{"modelAliases": {aliases_json}}}"#),
+    )
+    .unwrap();
+}
+
+fn models_by_name(tmp: &Path) -> serde_json::Value {
+    let output = cmd_with_home(tmp)
+        .args(["models", "--json", "--client", "opencode", "--no-spinner"])
+        .args(["--group-by", "model"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "command failed: {output:?}");
+    serde_json::from_slice(&output.stdout).unwrap()
+}
+
+#[test]
+fn test_models_alias_folds_variants_into_one_row() {
+    let tmp = create_temp_fixture_dir();
+    add_alias_variant_message(tmp.path());
+    write_model_aliases(tmp.path(), r#"{"claude-sonnet-4-cc": "claude-sonnet-4"}"#);
+
+    let json = models_by_name(tmp.path());
+    let entries = json["entries"].as_array().unwrap();
+    let models: Vec<&str> = entries
+        .iter()
+        .map(|e| e["model"].as_str().unwrap())
+        .collect();
+
+    // The -cc variant folded into the canonical model: exactly one
+    // claude-sonnet-4 row and no claude-sonnet-4-cc row.
+    assert!(
+        models.contains(&"claude-sonnet-4"),
+        "expected folded model, got {models:?}"
+    );
+    assert!(
+        !models.contains(&"claude-sonnet-4-cc"),
+        "variant should have folded away, got {models:?}"
+    );
+
+    // The variant's tokens merged INTO the canonical row — the fold-sensitive
+    // check: session1 (input 1000 + 800) plus the folded -cc variant (400) =
+    // 2200. A no-op fold would leave this row at 1800 and emit a separate
+    // claude-sonnet-4-cc row instead.
+    let folded = entries
+        .iter()
+        .find(|e| e["model"] == "claude-sonnet-4")
+        .unwrap();
+    assert_eq!(
+        folded["input"].as_i64().unwrap(),
+        2200,
+        "folded row must include the variant's tokens, got {folded:?}"
+    );
+    assert!(
+        folded.get("mergedClients").is_some(),
+        "folded entry should retain mergedClients"
+    );
+
+    // Per-entry sums still reconcile with report totals — the fold must not
+    // double-count or drop tokens.
+    let sum_input: i64 = entries.iter().map(|e| e["input"].as_i64().unwrap()).sum();
+    assert_eq!(sum_input, json["totalInput"].as_i64().unwrap());
+}
+
+#[test]
+fn test_models_alias_folds_in_monthly_report() {
+    // The fold happens inside normalize_model_for_grouping, so it must apply at
+    // every grouping call site, not only the models report. Prove it on the
+    // monthly report (a distinct call site) too.
+    let tmp = create_temp_fixture_dir();
+    add_alias_variant_message(tmp.path());
+    write_model_aliases(tmp.path(), r#"{"claude-sonnet-4-cc": "claude-sonnet-4"}"#);
+
+    let output = cmd_with_home(tmp.path())
+        .args(["monthly", "--json", "--client", "opencode", "--no-spinner"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "command failed: {output:?}");
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    let models: Vec<&str> = json["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|entry| entry["models"].as_array().unwrap())
+        .map(|m| m.as_str().unwrap())
+        .collect();
+    assert!(
+        models.contains(&"claude-sonnet-4"),
+        "monthly models should include the canonical name, got {models:?}"
+    );
+    assert!(
+        !models.contains(&"claude-sonnet-4-cc"),
+        "monthly report must fold the -cc variant too, got {models:?}"
+    );
+}
+
+#[test]
+fn test_models_alias_absent_is_noop() {
+    let tmp = create_temp_fixture_dir();
+    add_alias_variant_message(tmp.path());
+    // No settings.json / no modelAliases configured.
+
+    let json = models_by_name(tmp.path());
+    let models: Vec<&str> = json["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["model"].as_str().unwrap())
+        .collect();
+
+    // Without aliases the variant stays a separate row (opt-in default off).
+    assert!(
+        models.contains(&"claude-sonnet-4"),
+        "expected base model, got {models:?}"
+    );
+    assert!(
+        models.contains(&"claude-sonnet-4-cc"),
+        "variant should remain separate without aliases, got {models:?}"
+    );
+}
+
+#[test]
+fn test_models_alias_totals_unchanged() {
+    // Folding relabels/merges buckets whose costs were already computed
+    // per-message, so grand totals must be identical with and without aliases.
+    let without = create_temp_fixture_dir();
+    add_alias_variant_message(without.path());
+    let base = models_by_name(without.path());
+
+    let with = create_temp_fixture_dir();
+    add_alias_variant_message(with.path());
+    write_model_aliases(with.path(), r#"{"claude-sonnet-4-cc": "claude-sonnet-4"}"#);
+    let aliased = models_by_name(with.path());
+
+    assert_eq!(
+        base["totalInput"].as_i64(),
+        aliased["totalInput"].as_i64(),
+        "totalInput must be unchanged by aliasing"
+    );
+    assert_eq!(
+        base["totalOutput"].as_i64(),
+        aliased["totalOutput"].as_i64(),
+        "totalOutput must be unchanged by aliasing"
+    );
+    let base_cost = base["totalCost"].as_f64().unwrap();
+    let aliased_cost = aliased["totalCost"].as_f64().unwrap();
+    assert!(
+        (base_cost - aliased_cost).abs() < 1e-9,
+        "totalCost must be unchanged by aliasing: {base_cost} vs {aliased_cost}"
+    );
+}
+
+#[test]
+fn test_alias_folds_local_report_but_not_submitted_payload() {
+    // Finding B: a machine-local `modelAliases` config must fold ONLY local
+    // presentation/grouping. The model identity that leaves the machine
+    // (submit/upload/export payload) must stay raw, or a per-device alias config
+    // would rewrite and fragment uploaded history across a user's machines. The
+    // `graph` command emits the exact byte shape that `submit` POSTs, so it is
+    // the faithful stand-in for the submitted payload.
+    let tmp = create_temp_fixture_dir();
+    add_alias_variant_message(tmp.path());
+    write_model_aliases(tmp.path(), r#"{"claude-sonnet-4-cc": "claude-sonnet-4"}"#);
+
+    // Local models report: the alias DOES fold (canonical name only, no variant).
+    let models = models_by_name(tmp.path());
+    let displayed: Vec<&str> = models["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["model"].as_str().unwrap())
+        .collect();
+    assert!(
+        displayed.contains(&"claude-sonnet-4"),
+        "local report must show the canonical name, got {displayed:?}"
+    );
+    assert!(
+        !displayed.contains(&"claude-sonnet-4-cc"),
+        "local report must fold the -cc variant away, got {displayed:?}"
+    );
+
+    // Submit/export payload (`graph` prints the submit shape to stdout): the raw
+    // variant MUST survive unfolded, both in the models summary and per-day.
+    let output = cmd_with_home(tmp.path())
+        .args(["graph", "--client", "opencode", "--no-spinner"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "graph command failed: {output:?}");
+    let payload: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    let submitted_models: Vec<&str> = payload["summary"]["models"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m.as_str().unwrap())
+        .collect();
+    assert!(
+        submitted_models.contains(&"claude-sonnet-4-cc"),
+        "submitted payload must keep the RAW model id (alias must not leak), got {submitted_models:?}"
+    );
+
+    let per_contribution_models: Vec<&str> = payload["contributions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|c| c["clients"].as_array().unwrap())
+        .map(|s| s["modelId"].as_str().unwrap())
+        .collect();
+    assert!(
+        per_contribution_models.contains(&"claude-sonnet-4-cc"),
+        "submitted per-day contributions must carry the RAW model id, got {per_contribution_models:?}"
+    );
+}
+
 #[test]
 fn test_models_group_by_session_emits_session_id_per_entry() {
     let tmp = create_temp_fixture_dir();
     let output = cmd_with_home(tmp.path())
-        .args(["models", "--json", "--opencode", "--no-spinner"])
+        .args(["models", "--json", "--client", "opencode", "--no-spinner"])
         .args(["--group-by", "session,model"])
         .output()
         .unwrap();
@@ -2162,7 +2693,7 @@ fn test_models_group_by_session_emits_session_id_per_entry() {
 fn test_models_group_by_client_session_includes_client_and_session() {
     let tmp = create_temp_fixture_dir();
     let output = cmd_with_home(tmp.path())
-        .args(["models", "--json", "--opencode", "--no-spinner"])
+        .args(["models", "--json", "--client", "opencode", "--no-spinner"])
         .args(["--group-by", "client,session,model"])
         .output()
         .unwrap();
@@ -2183,7 +2714,7 @@ fn test_models_group_by_client_session_includes_client_and_session() {
 fn test_models_group_by_workspace_model_uses_unknown_bucket_for_unsupported_clients() {
     let tmp = create_temp_fixture_dir();
     let output = cmd_with_home(tmp.path())
-        .args(["models", "--json", "--opencode", "--no-spinner"])
+        .args(["models", "--json", "--client", "opencode", "--no-spinner"])
         .args(["--group-by", "workspace,model"])
         .output()
         .unwrap();
@@ -2214,7 +2745,7 @@ fn test_models_group_by_workspace_model_uses_unknown_bucket_for_unsupported_clie
 fn test_models_group_by_workspace_model_surfaces_workspace_fields_for_qwen() {
     let tmp = create_qwen_workspace_fixture_dir();
     let output = cmd_with_home(tmp.path())
-        .args(["models", "--json", "--qwen", "--no-spinner"])
+        .args(["models", "--json", "--client", "qwen", "--no-spinner"])
         .args(["--group-by", "workspace-model"])
         .output()
         .unwrap();
@@ -2239,7 +2770,7 @@ fn test_models_group_by_workspace_model_surfaces_workspace_fields_for_qwen() {
 fn test_models_group_by_workspace_model_surfaces_workspace_fields_for_codex() {
     let tmp = create_codex_workspace_fixture_dir();
     let output = cmd_with_home(tmp.path())
-        .args(["models", "--json", "--codex", "--no-spinner"])
+        .args(["models", "--json", "--client", "codex", "--no-spinner"])
         .args(["--group-by", "workspace,model"])
         .output()
         .unwrap();
@@ -2264,7 +2795,7 @@ fn test_models_group_by_workspace_model_surfaces_workspace_fields_for_codex() {
 fn test_models_group_by_workspace_model_surfaces_workspace_fields_for_opencode() {
     let tmp = create_opencode_workspace_fixture_dir();
     let output = cmd_with_home(tmp.path())
-        .args(["models", "--json", "--opencode", "--no-spinner"])
+        .args(["models", "--json", "--client", "opencode", "--no-spinner"])
         .args(["--group-by", "workspace,model"])
         .output()
         .unwrap();
@@ -2648,7 +3179,7 @@ fn test_clients_command_includes_settings_extra_paths_text() {
 fn test_models_light_output() {
     let tmp = create_temp_fixture_dir();
     cmd_with_home(tmp.path())
-        .args(["models", "--light", "--opencode", "--no-spinner"])
+        .args(["models", "--light", "--client", "opencode", "--no-spinner"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Token Usage Report by Model"))
@@ -2659,7 +3190,7 @@ fn test_models_light_output() {
 fn test_monthly_light_output() {
     let tmp = create_temp_fixture_dir();
     cmd_with_home(tmp.path())
-        .args(["monthly", "--light", "--opencode", "--no-spinner"])
+        .args(["monthly", "--light", "--client", "opencode", "--no-spinner"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Monthly Token Usage Report"));
@@ -2669,7 +3200,7 @@ fn test_monthly_light_output() {
 fn test_models_light_with_client_filter() {
     let tmp = create_temp_fixture_dir();
     cmd_with_home(tmp.path())
-        .args(["models", "--light", "--opencode", "--no-spinner"])
+        .args(["models", "--light", "--client", "opencode", "--no-spinner"])
         .args(["--year", "2024"])
         .assert()
         .success()
@@ -2685,7 +3216,8 @@ fn test_models_benchmark_flag() {
         .args([
             "models",
             "--light",
-            "--opencode",
+            "--client",
+            "opencode",
             "--no-spinner",
             "--benchmark",
         ])
@@ -2701,7 +3233,8 @@ fn test_monthly_benchmark_flag() {
         .args([
             "monthly",
             "--light",
-            "--opencode",
+            "--client",
+            "opencode",
             "--no-spinner",
             "--benchmark",
         ])
@@ -2716,7 +3249,7 @@ fn test_monthly_benchmark_flag() {
 fn test_models_empty_fixture() {
     let tmp = create_empty_fixture_dir();
     let output = cmd_with_home(tmp.path())
-        .args(["models", "--json", "--opencode", "--no-spinner"])
+        .args(["models", "--json", "--client", "opencode", "--no-spinner"])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -2734,7 +3267,7 @@ fn test_models_empty_fixture() {
 fn test_graph_empty_contributions() {
     let tmp = create_empty_fixture_dir();
     let output = cmd_with_home(tmp.path())
-        .args(["graph", "--opencode", "--no-spinner"])
+        .args(["graph", "--client", "opencode", "--no-spinner"])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -2752,7 +3285,7 @@ fn test_graph_empty_contributions() {
 fn test_models_no_spinner_flag() {
     let tmp = create_temp_fixture_dir();
     cmd_with_home(tmp.path())
-        .args(["models", "--light", "--opencode", "--no-spinner"])
+        .args(["models", "--light", "--client", "opencode", "--no-spinner"])
         .assert()
         .success();
 }
@@ -2761,7 +3294,7 @@ fn test_models_no_spinner_flag() {
 fn test_graph_no_spinner_flag() {
     let tmp = create_temp_fixture_dir();
     cmd_with_home(tmp.path())
-        .args(["graph", "--opencode", "--no-spinner"])
+        .args(["graph", "--client", "opencode", "--no-spinner"])
         .assert()
         .success();
 }
@@ -2772,7 +3305,7 @@ fn test_graph_no_spinner_flag() {
 fn test_graph_with_client_filter() {
     let tmp = create_temp_fixture_dir();
     let output = cmd_with_home(tmp.path())
-        .args(["graph", "--opencode", "--no-spinner"])
+        .args(["graph", "--client", "opencode", "--no-spinner"])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -2797,7 +3330,7 @@ fn test_graph_output_to_file() {
     let tmp = create_temp_fixture_dir();
     let output_file = tmp.path().join("graph-output.json");
     cmd_with_home(tmp.path())
-        .args(["graph", "--opencode", "--no-spinner"])
+        .args(["graph", "--client", "opencode", "--no-spinner"])
         .args(["--output", output_file.to_str().unwrap()])
         .assert()
         .success();
@@ -2814,7 +3347,7 @@ fn test_graph_output_to_file() {
 fn test_root_json_output() {
     let tmp = create_temp_fixture_dir();
     let output = cmd_with_home(tmp.path())
-        .args(["--json", "--opencode", "--no-spinner"])
+        .args(["--json", "--client", "opencode", "--no-spinner"])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -2827,7 +3360,7 @@ fn test_root_json_output() {
 fn test_root_light_output() {
     let tmp = create_temp_fixture_dir();
     cmd_with_home(tmp.path())
-        .args(["--light", "--opencode", "--no-spinner"])
+        .args(["--light", "--client", "opencode", "--no-spinner"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Token Usage Report by Model"));
@@ -2841,7 +3374,13 @@ fn light_with_write_cache_writes_to_canonical_path() {
 
     cmd_with_home(tmp.path())
         .env("TOKENS_CONFIG_DIR", &config_dir)
-        .args(["--light", "--opencode", "--write-cache", "--no-spinner"])
+        .args([
+            "--light",
+            "--client",
+            "opencode",
+            "--write-cache",
+            "--no-spinner",
+        ])
         .assert()
         .success()
         .stdout(predicate::str::contains("Token Usage Report by Model"));
@@ -2856,7 +3395,7 @@ fn light_with_write_cache_writes_to_canonical_path() {
 fn test_root_with_date_filter() {
     let tmp = create_temp_fixture_dir();
     cmd_with_home(tmp.path())
-        .args(["--json", "--opencode", "--no-spinner"])
+        .args(["--json", "--client", "opencode", "--no-spinner"])
         .args(["--year", "2025"])
         .assert()
         .success()
@@ -2867,7 +3406,7 @@ fn test_root_with_date_filter() {
 fn test_root_with_group_by() {
     let tmp = create_temp_fixture_dir();
     let output = cmd_with_home(tmp.path())
-        .args(["--json", "--opencode", "--no-spinner"])
+        .args(["--json", "--client", "opencode", "--no-spinner"])
         .args(["--group-by", "model"])
         .output()
         .unwrap();
@@ -2882,7 +3421,7 @@ fn test_submit_offline_without_pricing_cache_fails() {
     write_fake_credentials(tmp.path());
 
     let output = offline_cmd_with_home(tmp.path())
-        .args(["submit", "--opencode", "--dry-run"])
+        .args(["submit", "--client", "opencode", "--dry-run"])
         .output()
         .unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -3038,4 +3577,35 @@ fn test_client_filter_gjc_isolation() {
             "gjc entry leaked into --client claude output: {entry}"
         );
     }
+}
+
+#[test]
+fn report_no_summarize_json_empty_home_emits_valid_json_without_panic() {
+    // Smoke test for the non-LLM `report` path: against an empty home it must
+    // exit 0, never panic (UTF-8 truncation / NaN sort / div-by-zero guards),
+    // and emit a parseable JSON array of entries.
+    let tmp = create_empty_fixture_dir();
+
+    let output = cmd_with_home(tmp.path())
+        .arg("report")
+        .arg("--no-summarize")
+        .arg("--json")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "report --no-summarize --json failed against empty home; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("report --json must emit valid JSON");
+    let entries = json
+        .as_array()
+        .expect("report --json output must be a JSON array of entries");
+    assert!(
+        entries.is_empty(),
+        "expected zero entries for empty home, got: {entries:?}"
+    );
 }

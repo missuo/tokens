@@ -1,22 +1,64 @@
 "use client";
 
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
+import styled from "styled-components";
 import dynamic from "next/dynamic";
 import type { TokenContributionData, DailyContribution, ViewMode, ClientType, TooltipPosition } from "@/lib/types";
 import { getPalette } from "@/lib/themes";
 import { useSettings } from "@/lib/useSettings";
-import { filterByClient, filterByYear, recalculateIntensity, findBestDay, calculateCurrentStreak, calculateLongestStreak } from "@/lib/utils";
+import { filterByClient, filterByYear, recalculateIntensity, findBestDay, calculateCurrentStreak, calculateLongestStreak, resolveSelectedDay } from "@/lib/utils";
 import { TokenGraph2D } from "./TokenGraph2D";
 
 // Lazy load 3D graph (Three.js) - reduces initial bundle, SSR disabled for WebGL
 const TokenGraph3D = dynamic(() => import("./TokenGraph3D").then((mod) => mod.TokenGraph3D), {
   ssr: false,
-  loading: () => <div className="flex h-[400px] items-center justify-center text-sm text-muted">Loading 3D view...</div>,
+  loading: () => <Graph3DPlaceholder>Loading 3D view...</Graph3DPlaceholder>,
 });
 import { GraphControls } from "./GraphControls";
 import { Tooltip } from "./Tooltip";
 import { BreakdownPanel } from "./BreakdownPanel";
 import { StatsPanel } from "./StatsPanel";
+
+const Container = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+`;
+
+const Graph3DPlaceholder = styled.div`
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 400px;
+  color: var(--color-fg-muted);
+  font-size: 14px;
+`;
+
+const GraphCard = styled.div`
+  border-radius: 16px;
+  border: 1px solid var(--color-border-default);
+  padding-top: 16px;
+  padding-bottom: 16px;
+  overflow: hidden;
+  box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  transition: box-shadow 200ms;
+  background-color: var(--color-graph-canvas);
+
+  &:hover {
+    box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+  }
+`;
+
+const ControlsWrapper = styled.div`
+  padding-left: 20px;
+  padding-right: 20px;
+`;
+
+const GraphWrapper = styled.div`
+  padding-left: 20px;
+  padding-right: 20px;
+  padding-bottom: 12px;
+`;
 
 interface GraphContainerProps {
   data: TokenContributionData;
@@ -32,7 +74,7 @@ export function GraphContainer({ data, totalActiveTimeMs, sessionCount, mcpServe
   const [selectedYear, setSelectedYear] = useState<string>(() => data.years.length > 0 ? data.years[data.years.length - 1].year : "");
   const [hoveredDay, setHoveredDay] = useState<DailyContribution | null>(null);
   const [tooltipPosition, setTooltipPosition] = useState<TooltipPosition | null>(null);
-  const [selectedDay, setSelectedDay] = useState<DailyContribution | null>(null);
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [clientFilter, setClientFilter] = useState<ClientType[]>([]);
   const initializedRef = useRef(false);
 
@@ -49,6 +91,14 @@ export function GraphContainer({ data, totalActiveTimeMs, sessionCount, mcpServe
     const filtered = filterByYear(filteredByClient.contributions, selectedYear);
     return recalculateIntensity(filtered);
   }, [filteredByClient.contributions, selectedYear]);
+
+  // Derive the breakdown panel's day from the live contributions so it re-resolves
+  // (and closes when the date drops out of the filtered data) whenever the client
+  // filter or selected year changes, instead of showing a stale pre-filter snapshot.
+  const selectedDay = useMemo(
+    () => resolveSelectedDay(selectedDate, yearContributions),
+    [selectedDate, yearContributions]
+  );
 
   const maxTokens = useMemo(() => Math.max(...yearContributions.map((c) => c.totals.tokens), 0), [yearContributions]);
   const totalCost = useMemo(() => yearContributions.reduce((sum, c) => sum + c.totals.cost, 0), [yearContributions]);
@@ -75,7 +125,7 @@ export function GraphContainer({ data, totalActiveTimeMs, sessionCount, mcpServe
         const latestDay = activeDaysWithTokens[activeDaysWithTokens.length - 1];
         // Intentional one-time initialization on first data load
         // eslint-disable-next-line react-hooks/set-state-in-effect
-        setSelectedDay(latestDay);
+        setSelectedDate(latestDay.date);
         initializedRef.current = true;
       }
     }
@@ -87,13 +137,13 @@ export function GraphContainer({ data, totalActiveTimeMs, sessionCount, mcpServe
   }, []);
 
   const handleDayClick = useCallback((day: DailyContribution | null) => {
-    setSelectedDay((prev) => (prev?.date === day?.date ? null : day));
+    setSelectedDate((prev) => (prev === day?.date ? null : day?.date ?? null));
   }, []);
 
   return (
-    <div className="flex flex-col gap-6">
-      <div className="overflow-hidden rounded-2xl border border-line bg-surface py-4 shadow-sm transition-shadow hover:shadow-md">
-        <div className="px-5">
+    <Container>
+      <GraphCard>
+        <ControlsWrapper>
           <GraphControls
             view={view}
             onViewChange={setView}
@@ -108,9 +158,9 @@ export function GraphContainer({ data, totalActiveTimeMs, sessionCount, mcpServe
             palette={palette}
             totalTokens={totalTokens}
           />
-        </div>
+        </ControlsWrapper>
 
-        <div className="px-5 pb-3">
+        <GraphWrapper>
           {view === "2d" ? (
             <TokenGraph2D
               contributions={yearContributions}
@@ -136,12 +186,12 @@ export function GraphContainer({ data, totalActiveTimeMs, sessionCount, mcpServe
               onDayClick={handleDayClick}
             />
           )}
-        </div>
-      </div>
+        </GraphWrapper>
+      </GraphCard>
 
-      {selectedDay && <BreakdownPanel day={selectedDay} onClose={() => setSelectedDay(null)} palette={palette} />}
+      {selectedDay && <BreakdownPanel day={selectedDay} onClose={() => setSelectedDate(null)} palette={palette} />}
       {view === "2d" && <StatsPanel data={filteredByClient} palette={palette} totalActiveTimeMs={clientFilter.length === 0 ? totalActiveTimeMs : null} sessionCount={clientFilter.length === 0 ? sessionCount : null} mcpServers={mcpServers} />}
       <Tooltip day={hoveredDay} position={tooltipPosition} visible={hoveredDay !== null} palette={palette} />
-    </div>
+    </Container>
   );
 }

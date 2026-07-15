@@ -59,7 +59,7 @@ const html = `<!doctype html>
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Tokscale Embed Templates — Gallery</title>
+<title>Tokens Embed Templates — Gallery</title>
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
@@ -119,7 +119,7 @@ const html = `<!doctype html>
 <body>
 <div class="wrap">
   <header>
-    <h1>Tokscale Embed Templates</h1>
+    <h1>Tokens Embed Templates</h1>
     <p class="lead">Every card design at a glance. Pick a template, accent color, and theme.</p>
   </header>
   <div class="controls">

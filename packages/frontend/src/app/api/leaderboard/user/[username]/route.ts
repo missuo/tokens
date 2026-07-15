@@ -5,8 +5,15 @@ import { isValidGitHubUsername } from "@/lib/validation/username";
 
 export const revalidate = 60;
 
-const VALID_PERIODS: Period[] = ["all", "month", "last-month", "week", "today", "custom"];
-const VALID_SORT_BY: SortBy[] = ["tokens", "cost", "time"];
+const VALID_PERIODS: Period[] = [
+  "all",
+  "month",
+  "last-month",
+  "week",
+  "today",
+  "custom",
+];
+const VALID_SORT_BY: SortBy[] = ["tokens", "cost"];
 
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -55,7 +62,6 @@ export async function GET(
         period = "all";
       }
     } else if (period === "today" && isValidDateString(fromParam)) {
-      // Viewer's local calendar date; the board is timezone-relative to them.
       customFrom = fromParam;
       customTo = fromParam;
     }

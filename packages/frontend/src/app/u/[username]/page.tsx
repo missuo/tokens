@@ -1,41 +1,54 @@
 import type { Metadata } from 'next';
 import { notFound, permanentRedirect } from 'next/navigation';
-import ProfilePageClient from './ProfilePageClient';
+import type { ProfileDevice } from '@/components/profile';
+import { loadPublicProfileDevicesForPage } from '@/lib/publicProfileDevices';
+import { loadPublicProfileForPage } from '@/lib/publicProfileData';
+import ProfilePageClient, { type ProfileData } from './ProfilePageClient';
 
 export const revalidate = 60;
 
-async function getProfileData(username: string) {
-  // In production: use explicit URL or Vercel auto-URL.
-  // In dev: use 127.0.0.1 to avoid ECONNREFUSED from localhost dual-stack DNS.
-  const baseUrl = process.env.NEXT_PUBLIC_URL
-    || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null)
-    || 'http://127.0.0.1:3000';
-  
-  const res = await fetch(`${baseUrl}/api/users/${username}`, {
-    next: { revalidate: 60 },
-  });
-  
-  if (!res.ok) {
+const PROFILE_PERIODS = ["all", "week", "month"] as const;
+type ProfilePeriod = (typeof PROFILE_PERIODS)[number];
+
+function parseProfilePeriod(value: string | string[] | undefined): ProfilePeriod {
+  const period = Array.isArray(value) ? value[0] : value;
+  return PROFILE_PERIODS.includes(period as ProfilePeriod)
+    ? (period as ProfilePeriod)
+    : "all";
+}
+
+async function getProfileData(
+  username: string,
+  period: ProfilePeriod,
+): Promise<ProfileData | null> {
+  // Calling the shared server handler keeps Vercel Deployment Protection out
+  // of the render path. A server-side HTTP self-fetch is anonymous and is
+  // redirected to Vercel's HTML login page on protected preview deployments.
+  const result = await loadPublicProfileForPage(username, period);
+
+  if (result.kind === "redirect") {
+    if (result.location) {
+      const canonicalUsername = decodeURIComponent(
+        new URL(result.location).pathname.split("/").at(-1) ?? "",
+      );
+      if (canonicalUsername && canonicalUsername !== username) {
+        return getProfileData(canonicalUsername, period);
+      }
+    }
+  }
+
+  if (result.kind !== "data") {
     return null;
   }
 
-  return res.json();
+  return result.data as ProfileData;
 }
 
-async function getDevices(username: string) {
-  const baseUrl = process.env.NEXT_PUBLIC_URL
-    || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null)
-    || 'http://127.0.0.1:3000';
-
-  // Tolerate failure: the Devices tab is supplementary, so a fetch error
-  // omits it rather than failing the whole profile page.
+// Devices are an enrichment on top of the core profile: if this fetch fails
+// we still render the profile, just without the Devices section.
+async function getProfileDevices(username: string) {
   try {
-    const res = await fetch(`${baseUrl}/api/users/${username}/devices`, {
-      next: { revalidate: 60 },
-    });
-    if (!res.ok) return [];
-    const json = await res.json();
-    return Array.isArray(json?.devices) ? json.devices : [];
+    return (await loadPublicProfileDevicesForPage(username)) as ProfileDevice[];
   } catch {
     return [];
   }
@@ -54,7 +67,7 @@ export async function generateMetadata({ params }: { params: Promise<{ username:
       siteName: 'Tokens',
       images: [
         {
-          url: 'https://tokens.ci/og.png',
+          url: 'https://tokens.ci/og-image.png',
           width: 1200,
           height: 630,
           alt: `${username}'s Token Usage on Tokens`,
@@ -64,16 +77,24 @@ export async function generateMetadata({ params }: { params: Promise<{ username:
     twitter: {
       card: 'summary_large_image',
       title: `@${username}'s Token Usage | Tokens`,
-      images: ['https://tokens.ci/og.png'],
+      images: ['https://tokens.ci/og-image.png'],
     },
   };
 }
 
-export default async function ProfilePage({ params }: { params: Promise<{ username: string }> }) {
+export default async function ProfilePage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ username: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const { username } = await params;
+  const resolvedSearchParams = await searchParams;
+  const period = parseProfilePeriod(resolvedSearchParams.period);
   const [data, devices] = await Promise.all([
-    getProfileData(username),
-    getDevices(username),
+    getProfileData(username, period),
+    getProfileDevices(username),
   ]);
 
   if (!data) {
@@ -81,8 +102,8 @@ export default async function ProfilePage({ params }: { params: Promise<{ userna
   }
 
   if (data.user?.username && data.user.username !== username) {
-    permanentRedirect(`/u/${data.user.username}`);
+    permanentRedirect(`/u/${data.user.username}${period === "all" ? "" : `?period=${period}`}`);
   }
 
-  return <ProfilePageClient initialData={data} username={username} initialDevices={devices} />;
+  return <ProfilePageClient initialData={data} initialDevices={devices} username={username} />;
 }

@@ -1,6 +1,6 @@
-//! Cross-platform resolution for tokscale's user config and cache dirs.
+//! Cross-platform resolution for Tokens' user config and cache dirs.
 //!
-//! Tokscale-core needs the same path helpers tokscale-cli uses (settings
+//! Tokens-core needs the same path helpers tokscale-cli uses (settings
 //! and message/pricing caches read from related directories), so the
 //! resolver lives here and is re-exported from tokscale-cli for callers
 //! that already imported it from there. macOS users following the docs
@@ -14,7 +14,7 @@
 
 use std::path::PathBuf;
 
-/// Resolve the tokscale config dir, honoring `TOKENS_CONFIG_DIR` first.
+/// Resolve the tokens config dir, honoring `TOKENS_CONFIG_DIR` first.
 ///
 /// Resolution order:
 /// 1. `TOKENS_CONFIG_DIR` taken verbatim when set to a non-empty value.
@@ -30,7 +30,7 @@ use std::path::PathBuf;
 ///    honored. Falls through to `$HOME/.config/tokens` when neither
 ///    `XDG_CONFIG_HOME` nor `HOME` resolve.
 /// 4. Windows (and any other platform): `dirs::config_dir().join("tokens")`.
-/// 5. Last-ditch fallback: `./.tokscale` so a missing HOME never panics.
+/// 5. Last-ditch fallback: `./.tokens` so a missing HOME never panics.
 pub fn get_config_dir() -> PathBuf {
     if let Some(custom) = std::env::var_os("TOKENS_CONFIG_DIR") {
         if !custom.is_empty() {
@@ -50,7 +50,7 @@ pub fn get_config_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(".tokens"))
 }
 
-/// Resolve the tokscale cache dir as `<config_dir>/cache`.
+/// Resolve the tokens cache dir as `<config_dir>/cache`.
 ///
 /// Caches (TUI display data, source-message bincode, pricing JSON, the
 /// OpenCode migration record, Wrapped fonts/images) all live under this
@@ -73,11 +73,11 @@ pub fn is_config_dir_overridden() -> bool {
     std::env::var_os("TOKENS_CONFIG_DIR").is_some_and(|v| !v.is_empty())
 }
 
-/// Pre-#470 cache directory at `dirs::cache_dir()/tokscale`.
+/// Pre-#470 cache directory at `dirs::cache_dir()/tokens`.
 ///
 /// On macOS this resolves to `~/Library/Caches/tokens/` (where the
 /// source-message-cache, pricing caches, and opencode-migration.json
-/// historically lived). On Linux this resolves to `$XDG_CACHE_HOME/tokscale`
+/// historically lived). On Linux this resolves to `$XDG_CACHE_HOME/tokens`
 /// or `~/.cache/tokens/`.
 ///
 /// Returns `None` when `TOKENS_CONFIG_DIR` is set so the override stays
@@ -162,7 +162,7 @@ mod tests {
     #[test]
     #[serial]
     #[cfg(any(target_os = "macos", target_os = "linux"))]
-    fn unix_default_is_dot_config_tokscale_under_home() {
+    fn unix_default_is_dot_config_tokens_under_home() {
         let prev = save_env();
         unsafe {
             env::remove_var("TOKENS_CONFIG_DIR");
@@ -187,7 +187,7 @@ mod tests {
         }
         assert_eq!(
             get_config_dir(),
-            PathBuf::from("/tmp/tokscale-core-paths-xdg/tokscale"),
+            PathBuf::from("/tmp/tokscale-core-paths-xdg/tokens"),
         );
         restore_env(prev);
     }
@@ -241,7 +241,7 @@ mod tests {
     fn get_config_dir_treats_empty_override_as_unset() {
         // Empty TOKENS_CONFIG_DIR previously slipped through and
         // produced PathBuf::from(""), which silently relocated cache
-        // writes to ./cache and ./.tokscale. The resolver must agree
+        // writes to ./cache and ./.tokens. The resolver must agree
         // with `is_config_dir_overridden`: empty == unset.
         let prev = save_env();
         unsafe {

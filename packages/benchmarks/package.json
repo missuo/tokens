@@ -1,8 +1,8 @@
 {
-  "name": "@tokscale/benchmarks",
+  "name": "@tokens/benchmarks",
   "version": "0.1.0",
   "private": true,
-  "description": "Benchmark scripts for tokscale CLI",
+  "description": "Benchmark scripts for the Tokens CLI",
   "type": "module",
   "scripts": {
     "generate": "bun generate.ts",

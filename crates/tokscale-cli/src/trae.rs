@@ -10,7 +10,7 @@
 //!
 //! Variants are credential sources only. Trae IDE and Trae Solo expose the same
 //! account-level usage data through the international usage API, so synced
-//! reports are stored once under tokscale's single `trae` client.
+//! reports are stored once under Tokens' single `trae` client.
 //!
 //! The China variants (trae.com.cn) are intentionally not integrated:
 //! the CN backend does not expose a session-level usage query API.
@@ -45,7 +45,7 @@ pub mod auth {
     //!
     //! Cache filenames: `credentials-solo.json` (Solo) and `credentials-ide.json` (Ide).
     //! These are fixed names, not derived from the report client id (`client_str()`).
-    //! Cache directory: `<tokscale config dir>/trae-cache/`, where the
+    //! Cache directory: `<tokens config dir>/trae-cache/`, where the
     //! config dir is resolved by [`paths::get_config_dir`] and honors
     //! `TOKENS_CONFIG_DIR` plus XDG defaults (typically
     //! `~/.config/tokens` on Linux/macOS).
@@ -82,7 +82,7 @@ pub mod auth {
     }
 
     impl TraeVariant {
-        /// tokscale client id string for this variant.
+        /// tokens client id string for this variant.
         pub fn client_str(&self) -> &'static str {
             match self {
                 Self::Solo => "trae-solo",
@@ -1199,7 +1199,7 @@ pub mod sync {
             // crashed previous run doesn't permanently block subsequent
             // syncs. This matches the policy used by Antigravity sync and
             // accepts a small concurrent-corruption risk on Windows; that
-            // risk is acceptable because tokscale is a single-user CLI and
+            // risk is acceptable because tokens is a single-user CLI and
             // overlapping syncs are rare in practice.
             false
         }

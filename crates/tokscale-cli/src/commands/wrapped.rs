@@ -19,7 +19,7 @@ const IMAGE_WIDTH: i32 = 1200 * SCALE;
 const IMAGE_HEIGHT: i32 = 1200 * SCALE;
 const PADDING: i32 = 56 * SCALE;
 
-const TOKENS_LOGO_SVG_URL: &str = "https://tokens.ci/tokscale-logo.svg";
+const TOKENS_LOGO_SVG_URL: &str = "https://tokens.ci/assets/hero-logo.svg";
 const TOKENS_LOGO_PNG_SIZE: i32 = 400;
 const FIGTREE_REGULAR_FILE: &str = "Figtree-Regular.ttf";
 const FIGTREE_REGULAR_URL: &str =
@@ -142,7 +142,7 @@ async fn generate_wrapped(options: WrappedOptions) -> Result<String> {
     let output = options
         .output
         .clone()
-        .unwrap_or_else(|| format!("tokscale-{}-wrapped.png", data.year));
+        .unwrap_or_else(|| format!("tokens-{}-wrapped.png", data.year));
     let output_path = PathBuf::from(&output);
     let absolute = if output_path.is_absolute() {
         output_path
@@ -274,10 +274,14 @@ async fn load_wrapped_data(options: &WrappedOptions) -> Result<WrappedData> {
                         tokens: 0,
                     });
             model_entry.cost += client_contrib.cost;
-            model_entry.tokens += client_contrib.tokens.input
-                + client_contrib.tokens.output
-                + client_contrib.tokens.cache_read
-                + client_contrib.tokens.cache_write;
+            model_entry.tokens = model_entry
+                .tokens
+                .saturating_add(crate::saturating_token_total(
+                    client_contrib.tokens.input,
+                    client_contrib.tokens.output,
+                    client_contrib.tokens.cache_read,
+                    client_contrib.tokens.cache_write,
+                ));
 
             let client_name = client_display_name(&client_contrib.client)
                 .unwrap_or(client_contrib.client.as_str())
@@ -291,10 +295,15 @@ async fn load_wrapped_data(options: &WrappedOptions) -> Result<WrappedData> {
                         tokens: 0,
                     });
             client_entry.cost += client_contrib.cost;
-            client_entry.tokens += client_contrib.tokens.input
-                + client_contrib.tokens.output
-                + client_contrib.tokens.cache_read
-                + client_contrib.tokens.cache_write;
+            client_entry.tokens =
+                client_entry
+                    .tokens
+                    .saturating_add(crate::saturating_token_total(
+                        client_contrib.tokens.input,
+                        client_contrib.tokens.output,
+                        client_contrib.tokens.cache_read,
+                        client_contrib.tokens.cache_write,
+                    ));
         }
     }
 
@@ -369,11 +378,14 @@ fn build_top_agents(parsed: &tokscale_core::ParsedMessages) -> Vec<WrappedAgentE
         };
 
         let normalized = tokscale_core::sessions::normalize_opencode_agent_name(agent);
-        let tokens = message.input
-            + message.output
-            + message.cache_read
-            + message.cache_write
-            + message.reasoning;
+        // saturating: per-message token fields from a corrupt source can be
+        // clamped to i64::MAX (see tokscale-core), so plain `+` can overflow.
+        let tokens = message
+            .input
+            .saturating_add(message.output)
+            .saturating_add(message.cache_read)
+            .saturating_add(message.cache_write)
+            .saturating_add(message.reasoning);
 
         let entry = agent_map
             .entry(normalized.clone())
@@ -382,7 +394,7 @@ fn build_top_agents(parsed: &tokscale_core::ParsedMessages) -> Vec<WrappedAgentE
                 tokens: 0,
                 messages: 0,
             });
-        entry.tokens += tokens;
+        entry.tokens = entry.tokens.saturating_add(tokens);
         entry.messages += 1;
     }
 
@@ -749,7 +761,7 @@ async fn generate_wrapped_image(data: &WrappedData, options: &RenderOptions) -> 
     if let Ok(logo_path) = fetch_svg_and_convert_to_png(
         &client,
         TOKENS_LOGO_SVG_URL,
-        "tokscale-logo@2x.png",
+        "tokens-logo@2x.png",
         TOKENS_LOGO_PNG_SIZE * SCALE,
     )
     .await
@@ -762,7 +774,7 @@ async fn generate_wrapped_image(data: &WrappedData, options: &RenderOptions) -> 
                 COLOR_TEXT_SECONDARY,
                 PADDING,
                 footer_bottom_y,
-                "github.com/junhoyeo/tokscale",
+                "github.com/missuo/tokens",
             );
 
             let logo_width = ((logo.width() as f32 / logo.height() as f32)
@@ -1454,10 +1466,13 @@ fn client_display_name(client: &str) -> Option<&'static str> {
         "crush" => Some("Crush"),
         "goose" => Some("Goose"),
         "antigravity" => Some("Antigravity"),
+        "antigravity-cli" => Some("Antigravity CLI"),
         "zed" => Some("Zed Agent"),
         "warp" => Some("Warp"),
         "cline" => Some("Cline"),
         "gjc" => Some("Gajae-Code"),
+        "jcode" => Some("Jcode"),
+        "junie" => Some("Junie"),
         "synthetic" => Some("Synthetic"),
         _ => None,
     }
@@ -1469,13 +1484,13 @@ fn client_logo_url(client_name: &str) -> Option<&'static str> {
         "Claude Code" => Some("https://tokens.ci/assets/logos/claude.jpg"),
         "Codex CLI" => Some("https://tokens.ci/assets/logos/openai.jpg"),
         "Copilot CLI" => Some(
-            "https://raw.githubusercontent.com/junhoyeo/tokscale/main/.github/assets/client-copilot.jpg",
+            "https://raw.githubusercontent.com/missuo/tokens/main/.github/assets/client-copilot.jpg",
         ),
         "Gemini CLI" => Some("https://tokens.ci/assets/logos/gemini.png"),
         "Cursor IDE" => Some("https://tokens.ci/assets/logos/cursor.jpg"),
         "Amp" => Some("https://tokens.ci/assets/logos/amp.png"),
         "Codebuff" => Some(
-            "https://raw.githubusercontent.com/junhoyeo/tokscale/main/.github/assets/client-codebuff.png",
+            "https://raw.githubusercontent.com/missuo/tokens/main/.github/assets/client-codebuff.png",
         ),
         "Droid" => Some("https://tokens.ci/assets/logos/droid.png"),
         "OpenClaw" => Some("https://tokens.ci/assets/logos/openclaw.png"),
@@ -1488,17 +1503,19 @@ fn client_logo_url(client_name: &str) -> Option<&'static str> {
         "Kilo CLI" => Some("https://tokens.ci/assets/logos/kilocode.png"),
         "Mux" => Some("https://tokens.ci/assets/logos/mux.png"),
         "Crush" => Some(
-            "https://raw.githubusercontent.com/junhoyeo/tokscale/6b483d0f2de3717266dec8faed13acd067f90ff3/.github/assets/client-crush.png",
+            "https://raw.githubusercontent.com/missuo/tokens/6b483d0f2de3717266dec8faed13acd067f90ff3/.github/assets/client-crush.png",
         ),
         "Goose" => Some(
-            "https://raw.githubusercontent.com/junhoyeo/tokscale/main/.github/assets/client-goose.png",
+            "https://raw.githubusercontent.com/missuo/tokens/main/.github/assets/client-goose.png",
         ),
-        "Antigravity" => Some(
-            "https://raw.githubusercontent.com/junhoyeo/tokscale/main/.github/assets/client-antigravity.png",
+        "Antigravity" | "Antigravity CLI" => Some(
+            "https://raw.githubusercontent.com/missuo/tokens/main/.github/assets/client-antigravity.png",
         ),
         "Zed Agent" => Some(
-            "https://raw.githubusercontent.com/junhoyeo/tokscale/main/.github/assets/client-zed.webp",
+            "https://raw.githubusercontent.com/missuo/tokens/main/.github/assets/client-zed.webp",
         ),
+        "Jcode" => Some("https://raw.githubusercontent.com/missuo/tokens/main/.github/assets/client-jcode.png"),
+        "Junie" => Some("https://github.com/JetBrains.png"),
         "Synthetic" => Some("https://tokens.ci/assets/logos/synthetic.png"),
         _ => None,
     }
@@ -2451,6 +2468,16 @@ mod tests {
     }
 
     #[test]
+    fn test_client_display_name_jcode() {
+        assert_eq!(client_display_name("jcode"), Some("Jcode"));
+    }
+
+    #[test]
+    fn test_client_display_name_junie() {
+        assert_eq!(client_display_name("junie"), Some("Junie"));
+    }
+
+    #[test]
     fn test_client_display_name_unknown() {
         assert_eq!(client_display_name("unknown"), None);
         assert_eq!(client_display_name(""), None);
@@ -2506,7 +2533,7 @@ mod tests {
         assert_eq!(
             client_logo_url("Copilot CLI"),
             Some(
-                "https://raw.githubusercontent.com/junhoyeo/tokscale/main/.github/assets/client-copilot.jpg",
+                "https://raw.githubusercontent.com/missuo/tokens/main/.github/assets/client-copilot.jpg",
             )
         );
     }
@@ -2564,7 +2591,7 @@ mod tests {
         assert_eq!(
             client_logo_url("Codebuff"),
             Some(
-                "https://raw.githubusercontent.com/junhoyeo/tokscale/main/.github/assets/client-codebuff.png"
+                "https://raw.githubusercontent.com/missuo/tokens/main/.github/assets/client-codebuff.png"
             )
         );
     }
@@ -2590,7 +2617,7 @@ mod tests {
         assert_eq!(
             client_logo_url("Crush"),
             Some(
-                "https://raw.githubusercontent.com/junhoyeo/tokscale/6b483d0f2de3717266dec8faed13acd067f90ff3/.github/assets/client-crush.png"
+                "https://raw.githubusercontent.com/missuo/tokens/6b483d0f2de3717266dec8faed13acd067f90ff3/.github/assets/client-crush.png"
             )
         );
     }
@@ -2600,7 +2627,7 @@ mod tests {
         assert_eq!(
             client_logo_url("Goose"),
             Some(
-                "https://raw.githubusercontent.com/junhoyeo/tokscale/main/.github/assets/client-goose.png"
+                "https://raw.githubusercontent.com/missuo/tokens/main/.github/assets/client-goose.png"
             )
         );
     }
@@ -2610,7 +2637,7 @@ mod tests {
         assert_eq!(
             client_logo_url("Antigravity"),
             Some(
-                "https://raw.githubusercontent.com/junhoyeo/tokscale/main/.github/assets/client-antigravity.png"
+                "https://raw.githubusercontent.com/missuo/tokens/main/.github/assets/client-antigravity.png"
             )
         );
     }
@@ -2620,8 +2647,24 @@ mod tests {
         assert_eq!(
             client_logo_url("Zed Agent"),
             Some(
-                "https://raw.githubusercontent.com/junhoyeo/tokscale/main/.github/assets/client-zed.webp"
+                "https://raw.githubusercontent.com/missuo/tokens/main/.github/assets/client-zed.webp"
             )
+        );
+    }
+
+    #[test]
+    fn test_client_logo_url_jcode() {
+        assert_eq!(
+            client_logo_url("Jcode"),
+            Some("https://raw.githubusercontent.com/missuo/tokens/main/.github/assets/client-jcode.png")
+        );
+    }
+
+    #[test]
+    fn test_client_logo_url_junie() {
+        assert_eq!(
+            client_logo_url("Junie"),
+            Some("https://github.com/JetBrains.png")
         );
     }
 
@@ -3014,7 +3057,7 @@ fn cursor_setup_warning_for_wrapped(
     };
 
     Some(format!(
-        "Cursor usage requires Tokens's Cursor API cache at `~/.config/tokens/cursor-cache/usage*.csv`; {action}. Tokens does not parse local `~/.cursor` session data."
+        "Cursor usage requires the Tokens Cursor API cache at `~/.config/tokens/cursor-cache/usage*.csv`; {action}. Tokens does not parse local `~/.cursor` session data."
     ))
 }
 

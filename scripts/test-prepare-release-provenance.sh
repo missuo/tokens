@@ -24,7 +24,6 @@ git_add_release_files() {
     packages/cli-linux-arm64-musl/package.json \
     packages/cli-win32-x64-msvc/package.json \
     packages/cli-win32-arm64-msvc/package.json \
-    packages/tokscale/package.json \
     scripts/check-version-coherence.sh \
     scripts/prepare-release-provenance.sh
 }
@@ -40,8 +39,7 @@ write_manifests() {
     packages/cli-linux-arm64-gnu \
     packages/cli-linux-arm64-musl \
     packages/cli-win32-x64-msvc \
-    packages/cli-win32-arm64-msvc \
-    packages/tokscale
+    packages/cli-win32-arm64-msvc
 
   cat > Cargo.toml <<EOF_MANIFEST
 [workspace.package]
@@ -66,17 +64,17 @@ EOF_LOCK
 
   cat > packages/cli/package.json <<EOF_MANIFEST
 {
-  "name": "@tokscale/cli",
+  "name": "tokens-cli",
   "version": "${version}",
   "optionalDependencies": {
-    "@tokscale/cli-darwin-arm64": "${version}",
-    "@tokscale/cli-darwin-x64": "${version}",
-    "@tokscale/cli-linux-x64-gnu": "${version}",
-    "@tokscale/cli-linux-x64-musl": "${version}",
-    "@tokscale/cli-linux-arm64-gnu": "${version}",
-    "@tokscale/cli-linux-arm64-musl": "${version}",
-    "@tokscale/cli-win32-x64-msvc": "${version}",
-    "@tokscale/cli-win32-arm64-msvc": "${version}"
+    "tokens-cli-darwin-arm64": "${version}",
+    "tokens-cli-darwin-x64": "${version}",
+    "tokens-cli-linux-x64-gnu": "${version}",
+    "tokens-cli-linux-x64-musl": "${version}",
+    "tokens-cli-linux-arm64-gnu": "${version}",
+    "tokens-cli-linux-arm64-musl": "${version}",
+    "tokens-cli-win32-x64-msvc": "${version}",
+    "tokens-cli-win32-arm64-msvc": "${version}"
   }
 }
 EOF_MANIFEST
@@ -92,21 +90,12 @@ EOF_MANIFEST
     cli-win32-arm64-msvc; do
     cat > "packages/${pkg}/package.json" <<EOF_MANIFEST
 {
-  "name": "@tokscale/${pkg}",
+  "name": "tokens-${pkg}",
   "version": "${version}"
 }
 EOF_MANIFEST
   done
 
-  cat > packages/tokscale/package.json <<EOF_MANIFEST
-{
-  "name": "tokscale",
-  "version": "${version}",
-  "dependencies": {
-    "@tokscale/cli": "${version}"
-  }
-}
-EOF_MANIFEST
 }
 
 copy_release_scripts() {

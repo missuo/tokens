@@ -69,7 +69,7 @@ async fn fetch_inner(url: &str, use_cache: bool) -> Result<PricingDataset, reqwe
 
                 if status.is_server_error() || status == reqwest::StatusCode::TOO_MANY_REQUESTS {
                     eprintln!(
-                        "[tokscale] models.dev HTTP {} (attempt {}/{})",
+                        "[tokens] models.dev HTTP {} (attempt {}/{})",
                         status,
                         attempt + 1,
                         MAX_RETRIES
@@ -86,7 +86,7 @@ async fn fetch_inner(url: &str, use_cache: bool) -> Result<PricingDataset, reqwe
                 }
 
                 if !status.is_success() {
-                    eprintln!("[tokscale] models.dev HTTP {}", status);
+                    eprintln!("[tokens] models.dev HTTP {}", status);
                     return Err(response.error_for_status().unwrap_err());
                 }
 
@@ -95,7 +95,7 @@ async fn fetch_inner(url: &str, use_cache: bool) -> Result<PricingDataset, reqwe
                     Ok(data) => {
                         if let Err(e) = cache::save_cache(CACHE_FILENAME, &data) {
                             eprintln!(
-                                "[tokscale] Warning: Failed to cache models.dev pricing at {}: {}",
+                                "[tokens] Warning: Failed to cache models.dev pricing at {}: {}",
                                 cache::get_cache_path(CACHE_FILENAME).display(),
                                 e
                             );
@@ -103,14 +103,14 @@ async fn fetch_inner(url: &str, use_cache: bool) -> Result<PricingDataset, reqwe
                         return Ok(data);
                     }
                     Err(e) => {
-                        eprintln!("[tokscale] models.dev JSON parse failed: {}", e);
+                        eprintln!("[tokens] models.dev JSON parse failed: {}", e);
                         return Ok(HashMap::new());
                     }
                 }
             }
             Err(e) => {
                 eprintln!(
-                    "[tokscale] models.dev network error (attempt {}/{}): {}",
+                    "[tokens] models.dev network error (attempt {}/{}): {}",
                     attempt + 1,
                     MAX_RETRIES,
                     e

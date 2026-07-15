@@ -118,6 +118,50 @@ pub const CLIENT_UI: [ClientUi; ClientId::COUNT] = [
         display_name: "Grok Build",
         hotkey: 'u',
     },
+    ClientUi {
+        display_name: "Jcode",
+        hotkey: 'j',
+    },
+    ClientUi {
+        display_name: "Command Code",
+        hotkey: 'd',
+    },
+    ClientUi {
+        display_name: "MiMo Code",
+        hotkey: 'm',
+    },
+    ClientUi {
+        display_name: "Antigravity CLI",
+        hotkey: 'f',
+    },
+    ClientUi {
+        display_name: "Junie",
+        hotkey: 'p',
+    },
+    ClientUi {
+        display_name: "ZCode",
+        hotkey: 'q',
+    },
+    ClientUi {
+        display_name: "OpenCodeReview",
+        hotkey: 'O',
+    },
+    ClientUi {
+        display_name: "CodeBuddy",
+        hotkey: 'C',
+    },
+    ClientUi {
+        display_name: "WorkBuddy",
+        hotkey: 'B',
+    },
+    ClientUi {
+        display_name: "Devin CLI",
+        hotkey: 'D',
+    },
+    ClientUi {
+        display_name: "Devin Desktop",
+        hotkey: 'E',
+    },
 ];
 
 pub fn display_name(client: ClientId) -> &'static str {

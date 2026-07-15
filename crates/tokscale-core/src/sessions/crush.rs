@@ -3,6 +3,13 @@
 //! Crush persists usage in a per-project SQLite database (`crush.db`).
 //! The database exposes reliable session-level cost, but not reliable
 //! per-message token accounting for import.
+//!
+//! IMPORTANT: Crush is COST-ONLY. This parser intentionally emits ZERO token
+//! counts (`TokenBreakdown::default()`) for every message and instead
+//! distributes the reliable session-level cost across day buckets. There are
+//! no trustworthy per-message token columns to populate, so a token-count
+//! report showing 0 tokens for crush is EXPECTED behavior, NOT a bug — the
+//! signal Crush provides is cost, not tokens.
 
 use super::utils::open_readonly_sqlite;
 use super::UnifiedMessage;
@@ -31,7 +38,7 @@ struct DayBucket {
 /// Parse root Crush sessions from a `crush.db` file.
 ///
 /// Crush stores reliable cost at the root-session level, but does not expose a
-/// stable per-message token breakdown. Tokscale v1 therefore preserves cost
+/// stable per-message token breakdown. Tokens v1 therefore preserves cost
 /// and assistant-message counts without fabricating token precision:
 /// - assistant messages are grouped by local day
 /// - session cost is allocated across those days proportionally

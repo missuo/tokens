@@ -1,6 +1,6 @@
 # AI Agent Guidelines
 
-This document provides context for AI agents working on the Tokscale project.
+This document provides context for AI agents working on the Tokens project.
 
 ## Maintaining AGENTS.md Files
 

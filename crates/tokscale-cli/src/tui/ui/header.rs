@@ -42,7 +42,7 @@ pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(app.theme.border))
         .title(Span::styled(
-            " tokscale ",
+            " tokens ",
             Style::default()
                 .fg(app.theme.accent)
                 .add_modifier(Modifier::BOLD),

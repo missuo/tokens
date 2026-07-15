@@ -3,7 +3,7 @@
 import type { ViewMode, ColorPaletteName, ClientType, GraphColorPalette } from "@/lib/types";
 import { getPaletteNames, colorPalettes } from "@/lib/themes";
 import { SOURCE_DISPLAY_NAMES, SOURCE_LOGOS } from "@/lib/constants";
-import { formatTokenCount } from "@/lib/utils";
+import { formatTokenCount, toggleClientFilter } from "@/lib/utils";
 
 interface GraphControlsProps {
   view: ViewMode;
@@ -37,11 +37,7 @@ export function GraphControls({
   const paletteNames = getPaletteNames();
 
   const handleClientToggle = (client: ClientType) => {
-    if (clientFilter.includes(client)) {
-      onClientFilterChange(clientFilter.filter((c) => c !== client));
-    } else {
-      onClientFilterChange([...clientFilter, client]);
-    }
+    onClientFilterChange(toggleClientFilter(client, clientFilter, availableClients));
   };
 
   return (

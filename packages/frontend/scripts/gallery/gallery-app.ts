@@ -76,7 +76,7 @@ function render() {
   if (state.cost !== "compact") params.push(`cost=${state.cost}`);
   if (state.rank !== "plain") params.push(`rank=${state.rank}`);
   if (state.sort !== "tokens") params.push(`sort=${state.sort}`);
-  $("url").textContent = `https://tokscale.ai/api/embed/${G.username}/svg?${params.join("&")}`;
+  $("url").textContent = `https://tokens.ci/api/embed/${G.username}/svg?${params.join("&")}`;
 }
 
 const tpl = $("tpl") as HTMLSelectElement;

@@ -1,7 +1,7 @@
 // Synthetic seed data for local development.
 //
 // Usage:
-//   DATABASE_URL=postgresql://tokscale:tokscale@localhost:5432/tokscale \
+//   DATABASE_URL=postgresql://tokens:tokens@localhost:5432/tokens \
 //     bun run packages/frontend/scripts/seed-dev.ts
 //
 // Idempotent: re-running clears anything inserted with the seed marker

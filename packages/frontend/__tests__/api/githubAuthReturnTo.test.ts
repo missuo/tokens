@@ -124,7 +124,7 @@ beforeAll(async () => {
 
 beforeEach(() => {
   mockState.reset();
-  process.env.NEXT_PUBLIC_URL = "https://tokscale.ai";
+  process.env.NEXT_PUBLIC_URL = "https://tokens.ci";
 });
 
 describe("GitHub OAuth returnTo safety", () => {
@@ -140,7 +140,7 @@ describe("GitHub OAuth returnTo safety", () => {
   ])("stores safe returnTo value for %s", async (returnTo, expected) => {
     await startGET(
       new Request(
-        `https://tokscale.ai/api/auth/github?returnTo=${encodeURIComponent(returnTo)}`
+        `https://tokens.ci/api/auth/github?returnTo=${encodeURIComponent(returnTo)}`
       )
     );
 
@@ -166,11 +166,11 @@ describe("GitHub OAuth returnTo safety", () => {
 
     const response = await callbackGET(
       new Request(
-        "https://tokscale.ai/api/auth/github/callback?code=ok&state=state-token"
+        "https://tokens.ci/api/auth/github/callback?code=ok&state=state-token"
       )
     );
 
-    expect(response.headers.get("location")).toBe("https://tokscale.ai/leaderboard");
+    expect(response.headers.get("location")).toBe("https://tokens.ci/leaderboard");
   });
 
   it("redirects to a safe same-origin relative callback returnTo", async () => {
@@ -180,12 +180,12 @@ describe("GitHub OAuth returnTo safety", () => {
 
     const response = await callbackGET(
       new Request(
-        "https://tokscale.ai/api/auth/github/callback?code=ok&state=state-token"
+        "https://tokens.ci/api/auth/github/callback?code=ok&state=state-token"
       )
     );
 
     expect(response.headers.get("location")).toBe(
-      "https://tokscale.ai/device?code=abc"
+      "https://tokens.ci/device?code=abc"
     );
   });
 });

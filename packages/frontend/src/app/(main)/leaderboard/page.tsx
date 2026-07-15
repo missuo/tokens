@@ -1,10 +1,15 @@
 import { Suspense } from "react";
 import { cookies } from "next/headers";
+import { Navigation } from "@/components/layout/Navigation";
+import { ServiceFooter } from "@/components/layout/ServiceFooter";
 import { LeaderboardSkeleton } from "@/components/Skeleton";
 import { getLeaderboardData, getUserRank } from "@/lib/leaderboard/getLeaderboard";
 import type { LeaderboardData, Period, SortBy } from "@/lib/leaderboard/types";
 import { getSession } from "@/lib/auth/session";
-import { SORT_BY_COOKIE_NAME, isValidSortBy } from "@/lib/leaderboard/constants";
+import {
+  SORT_BY_COOKIE_NAME,
+  resolveSortByParam,
+} from "@/lib/leaderboard/constants";
 import { parseCustomDateRange } from "@/lib/leaderboard/dateRange";
 import { listPublicGroups, listUserGroups } from "@/lib/groups/queries";
 import LeaderboardClient from "./LeaderboardClient";
@@ -31,8 +36,6 @@ function createEmptyLeaderboardData(sortBy: SortBy): LeaderboardData {
     stats: {
       totalTokens: 0,
       totalCost: 0,
-      totalActiveTimeMs: null,
-      totalSubmissions: null,
       uniqueUsers: 0,
     },
     period: "all",
@@ -50,12 +53,16 @@ interface PageProps {
 
 export default function LeaderboardPage({ searchParams }: PageProps) {
   return (
-    <div className="flex min-h-screen flex-col">
-      <main className="main-container">
+    <div className="service-page-shell">
+      <Navigation />
+
+      <main className="service-main" id="main-content">
         <Suspense fallback={<LeaderboardSkeleton />}>
           <LeaderboardWithPreferences searchParams={searchParams} />
         </Suspense>
       </main>
+
+      <ServiceFooter />
     </div>
   );
 }
@@ -88,11 +95,7 @@ async function LeaderboardWithPreferences({
     typeof searchParams.search === "string" ? searchParams.search.trim() : "";
 
   const sortBy: SortBy =
-    sortByParam && isValidSortBy(sortByParam)
-      ? sortByParam
-      : isValidSortBy(sortByCookie)
-      ? sortByCookie
-      : "tokens";
+    resolveSortByParam(sortByParam) ?? resolveSortByParam(sortByCookie) ?? "tokens";
 
   let period: Period =
     periodParam && VALID_PERIODS.includes(periodParam as Period)

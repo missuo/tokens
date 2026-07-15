@@ -1,151 +1,168 @@
-@import "tailwindcss";
-@import "@heroui/styles";
-
-/* Make Tailwind's `dark:` variant follow the `.dark` class that next-themes
-   toggles on <html>, matching how HeroUI themes via .dark / [data-theme="dark"]. */
-@custom-variant dark (&:where(.dark, .dark *));
-
-/* App fonts. `--font-figtree` / `--font-jetbrains` are injected by next/font in
-   layout.tsx. Exposing them through @theme makes `font-sans` / `font-mono`
-   utilities work and keeps a `--font-mono` root var for any code using it. */
-@theme {
-  --font-sans: var(--font-figtree), system-ui, -apple-system, sans-serif;
-  --font-mono: var(--font-jetbrains), ui-monospace, SFMono-Regular, "SF Mono",
-    Menlo, Consolas, "Liberation Mono", monospace;
-}
-
-/* Expose HeroUI's semantic tokens as Tailwind color utilities so app code can
-   use `bg-surface`, `text-muted`, `border-line`, `bg-accent`, etc. — and they
-   track the active theme because the values are the live HeroUI CSS vars. */
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --color-surface: var(--surface);
-  --color-surface-secondary: var(--surface-secondary);
-  --color-surface-tertiary: var(--surface-tertiary);
-  --color-overlay: var(--overlay);
-  --color-muted: var(--muted);
-  --color-line: var(--border);
-  --color-accent: var(--accent);
-  --color-accent-foreground: var(--accent-foreground);
-  --color-danger: var(--danger);
-  --color-success: var(--success);
-  --color-warning: var(--warning);
-}
-
-/* Brand palette — override HeroUI v3 semantic tokens with the Tokens look:
-   a refined developer-tool aesthetic, electric-blue accent, crisp 1px lines.
-   Light = clean near-white with white cards; dark = deep cosmic navy. */
-:root,
-.light,
-[data-theme="light"] {
-  --accent: #0073ff;
-  --accent-foreground: #ffffff;
-  --background: #fbfbfc;
-  --foreground: #0b0d14;
-  --surface: #ffffff;
-  --surface-secondary: #f4f5f7;
-  --surface-tertiary: #eceef1;
-  --overlay: #ffffff;
-  --muted: #5b6473;
-  --border: #e6e8ec;
-  --separator: #e6e8ec;
-}
-
-.dark,
-[data-theme="dark"] {
-  --accent: #3b82f6;
-  --accent-foreground: #ffffff;
-  --background: #0a0c12;
-  --foreground: #e9ecf3;
-  --surface: #12151e;
-  --surface-secondary: #171b26;
-  --surface-tertiary: #1d2230;
-  --overlay: #12151e;
-  --muted: #8b94a7;
-  --border: #232a39;
-  --separator: #232a39;
-}
-
-/* Compatibility layer: the old `--color-*` design tokens, remapped onto the
-   live HeroUI semantic vars. Canvas code (TokenGraph2D/3D) reads these via
-   getComputedStyle and a few components still set them inline; mapping them here
-   means everything themes correctly without re-deriving every color by hand. */
 :root {
-  --color-bg-darkest: var(--background);
-  --color-bg-default: var(--background);
-  --color-bg-elevated: var(--surface);
-  --color-bg-button: var(--surface-tertiary);
-  --color-bg-subtle: var(--surface-secondary);
-  --color-bg-active: var(--accent);
+  --color-bg-darkest: #111113;
+  --color-bg-default: #10121c;
+  --color-bg-elevated: #1a212a;
+  --color-bg-button: #202932;
+  --color-bg-subtle: #1e2733;
+  --color-bg-active: #0073ff;
 
-  --color-primary: var(--accent);
+  --color-text-primary: #ffffff;
+  --color-text-muted: #4b6486;
+
+  --color-primary: #53d1f3;
+  --color-primary-hover: #3bc4e8;
+  --color-primary-active: #2ab8dc;
+
   --color-accent-blue: #85caff;
   --color-accent-link: #169aff;
-  --color-accent-fg: var(--accent);
 
-  --color-graph-empty: var(--surface-secondary);
-  --color-graph-canvas: var(--surface);
+  --color-graph-empty: #1a212a;
+  --color-graph-canvas: #10121c;
 
-  --color-canvas-default: var(--background);
-  --color-canvas-subtle: var(--surface);
-  --color-fg-default: var(--foreground);
-  --color-fg-muted: var(--muted);
-  --color-fg-subtle: var(--muted);
-  --color-border-default: var(--border);
-  --color-border-muted: var(--border);
-  --color-card-bg: var(--surface);
-  --color-card-border: var(--border);
+  --color-canvas-default: #10121c;
+  --color-canvas-subtle: #1a212a;
+  --color-canvas-inset: #111113;
+  --color-fg-default: #ffffff;
+  --color-fg-muted: #7691b7;
+  --color-fg-subtle: #4b6486;
+  --color-border-default: #1e2733;
+  --color-border-muted: #1e2733;
+  --color-border-subtle: rgba(255, 255, 255, 0.1);
+  --color-accent-fg: #85caff;
+  --color-accent-emphasis: #169aff;
+  --color-card-bg: #1a212a;
+  --color-card-border: #1e2733;
+  --color-btn-bg: #202932;
+  --color-btn-border: #1e2733;
+  --color-btn-hover-bg: #2c2c2f;
+  --color-btn-active-bg: #2c2c2f;
+  --color-btn-selected-bg: #111113;
+  --color-badge-bg: rgba(133, 202, 255, 0.15);
+  --color-badge-text: #85caff;
+
+  /* Compact service UI. These are additive so the landing page and the
+     shared local visualizer can keep their existing theme contract. */
+  --service-canvas: #0d1018;
+  --service-surface: #131822;
+  --service-surface-muted: #191f2b;
+  --service-border: rgba(255, 255, 255, 0.09);
+  --service-border-strong: rgba(255, 255, 255, 0.16);
+  --service-text: #f4f7fb;
+  --service-text-muted: #a8b3c5;
+  --service-accent: #2f8fff;
+  --service-accent-hover: #57a5ff;
+  --service-accent-soft: rgba(47, 143, 255, 0.14);
+  --service-accent-foreground: #07111f;
+  --service-focus: #75b6ff;
+  --background: #000;
+  --foreground: #ffffff;
 }
 
-html {
-  scrollbar-gutter: stable;
+* {
+  font-family:
+    var(--font-figtree),
+    system-ui,
+    -apple-system,
+    sans-serif !important;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
+  font-family:
+    var(--font-figtree),
+    system-ui,
+    -apple-system,
+    sans-serif;
   font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Tabular figures for any numeric value — keeps stat columns aligned. */
-.tnum {
-  font-variant-numeric: tabular-nums;
-  font-feature-settings: "tnum";
+code,
+pre,
+.font-mono {
+  font-family:
+    var(--font-mono), ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    "Liberation Mono", monospace !important;
 }
 
-/* Page width helper. Centered column shared by every route. */
+button {
+  cursor: pointer;
+}
+
+a:hover {
+  text-decoration: none !important;
+}
+
+.bg-canvas {
+  background-color: var(--color-canvas-default);
+}
+.bg-canvas-subtle {
+  background-color: var(--color-canvas-subtle);
+}
+.bg-card {
+  background-color: var(--color-card-bg);
+}
+.text-fg {
+  color: var(--color-fg-default);
+}
+.text-fg-muted {
+  color: var(--color-fg-muted);
+}
+.border-default {
+  border-color: var(--color-border-default);
+}
+.border-subtle {
+  border-color: var(--color-border-subtle);
+}
+
 .main-container {
   flex: 1;
+  max-width: 1280px;
+  margin-left: auto;
+  margin-right: auto;
+  padding-left: 24px;
+  padding-right: 24px;
+  padding-bottom: 40px;
   width: 100%;
-  max-width: 1200px;
-  margin-inline: auto;
-  padding-inline: 24px;
-  padding-top: 32px;
-  padding-bottom: 64px;
 }
 
-@media (max-width: 640px) {
+.service-page-shell {
+  isolation: isolate;
+  color-scheme: dark;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  background: var(--service-canvas);
+  color: var(--service-text);
+}
+
+.service-main {
+  width: 100%;
+  max-width: 1500px;
+  flex: 1;
+  margin-right: auto;
+  margin-left: auto;
+  padding: 96px 32px 48px;
+}
+
+@media (max-width: 520px) {
+  .service-main {
+    padding: 88px 16px 40px;
+  }
+}
+
+@media (max-width: 560px) {
   .main-container {
-    padding-inline: 16px;
-    padding-top: 20px;
-    padding-bottom: 48px;
+    padding-left: 12px;
+    padding-right: 12px;
   }
 }
 
 @media (max-width: 400px) {
   .main-container {
-    padding-inline: 12px;
+    padding-left: 8px;
+    padding-right: 8px;
   }
-}
-
-/* Thin, theme-aware scrollbars on overflow regions (e.g. mobile tab strips). */
-.no-scrollbar {
-  -ms-overflow-style: none;
-  scrollbar-width: none;
-}
-.no-scrollbar::-webkit-scrollbar {
-  display: none;
 }
