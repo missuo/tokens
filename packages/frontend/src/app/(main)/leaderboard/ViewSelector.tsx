@@ -2,8 +2,6 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import styled from "styled-components";
-import { SegmentButton, SegmentedGroup } from "@/components/leaderboard/RankingUI";
 
 // Top-of-page segmented control that swaps between the global user leaderboard
 // and the group browser. Pure-link nav (no client state), so SSR + back/forward
@@ -15,46 +13,6 @@ import { SegmentButton, SegmentedGroup } from "@/components/leaderboard/RankingU
 // for in-page focus.
 
 export type LeaderboardView = "users" | "groups";
-
-const Header = styled.header`
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 20px;
-  margin-bottom: 24px;
-
-  @media (max-width: 640px) {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 16px;
-  }
-`;
-
-const HeadingGroup = styled.div`
-  min-width: 0;
-`;
-
-const Title = styled.h1`
-  margin: 0;
-  color: var(--service-text);
-  font-size: 1.5rem;
-  font-weight: 600;
-  letter-spacing: -0.02em;
-  text-wrap: balance;
-`;
-
-const Description = styled.p`
-  max-width: 68ch;
-  margin: 6px 0 0;
-  color: var(--service-text-muted);
-  font-size: 0.875rem;
-  line-height: 1.5;
-  text-wrap: pretty;
-
-  @media (max-width: 640px) {
-    font-size: 1rem;
-  }
-`;
 
 export type LeaderboardSearchParams = Record<string, string | string[] | undefined>;
 
@@ -94,6 +52,22 @@ export function buildLeaderboardViewHref(
   return `/leaderboard?${params.toString()}`;
 }
 
+function UsersIcon() {
+  return (
+    <svg aria-hidden="true" width="15" height="15" viewBox="0 0 16 16" fill="currentColor">
+      <path d="M10.561 8.073a6.005 6.005 0 0 1 3.432 5.142.75.75 0 1 1-1.498.07 4.5 4.5 0 0 0-8.99 0 .75.75 0 0 1-1.498-.07 6.004 6.004 0 0 1 3.431-5.142 3.999 3.999 0 1 1 5.123 0ZM10.5 5a2.5 2.5 0 1 0-5 0 2.5 2.5 0 0 0 5 0Z" />
+    </svg>
+  );
+}
+
+function GroupsIcon() {
+  return (
+    <svg aria-hidden="true" width="15" height="15" viewBox="0 0 16 16" fill="currentColor">
+      <path d="M2 5.5a3.5 3.5 0 1 1 5.898 2.549 5.508 5.508 0 0 1 3.034 4.084.75.75 0 1 1-1.482.235 4 4 0 0 0-7.9 0 .75.75 0 0 1-1.482-.236A5.507 5.507 0 0 1 3.102 8.05 3.49 3.49 0 0 1 2 5.5ZM11 4a3.001 3.001 0 0 1 2.22 5.018 5.01 5.01 0 0 1 2.56 3.012.749.749 0 0 1-.885.954.752.752 0 0 1-.549-.514 3.507 3.507 0 0 0-2.522-2.372.75.75 0 0 1-.574-.73v-.352a.75.75 0 0 1 .416-.672A1.5 1.5 0 0 0 11 5.5.75.75 0 0 1 11 4Zm-5.5-.5a2 2 0 1 0-.001 3.999A2 2 0 0 0 5.5 3.5Z" />
+    </svg>
+  );
+}
+
 export default function ViewSelector({ current, searchParams }: ViewSelectorProps) {
   const liveSearchParams = useSearchParams();
   const liveSearchParamsRecord: LeaderboardSearchParams = {};
@@ -113,34 +87,41 @@ export default function ViewSelector({ current, searchParams }: ViewSelectorProp
     ? liveSearchParamsRecord
     : searchParams;
 
+  const itemClass = (active: boolean) =>
+    `inline-flex flex-1 items-center justify-center gap-1.5 rounded-md px-3.5 py-1.5 text-sm font-medium transition focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 sm:flex-none ${
+      active ? "bg-surface text-foreground shadow-sm ring-1 ring-line" : "text-muted hover:text-foreground"
+    }`;
+
   return (
-    <Header>
-      <HeadingGroup>
-        <Title>{current === "groups" ? "Groups" : "Leaderboard"}</Title>
-        <Description>
+    <nav aria-label="Leaderboard view" className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="min-w-0">
+        <h1 className="text-2xl font-bold tracking-tight text-foreground sm:text-[1.75rem]">
+          {current === "groups" ? "Groups" : "Leaderboard"}
+        </h1>
+        <p className="mt-1 text-sm text-muted">
           {current === "groups"
-            ? "Scoped rankings for teams, friends, and workspaces."
-            : "Global rankings across public Tokens submissions."}
-        </Description>
-      </HeadingGroup>
-      <SegmentedGroup as="nav" aria-label="Leaderboard view">
-        <SegmentButton
-          as={Link}
+            ? "Browse and compete in token usage groups"
+            : "See who's burning the most tokens"}
+        </p>
+      </div>
+      <div className="inline-flex items-center gap-1 rounded-lg border border-line bg-surface-secondary p-1">
+        <Link
           href={buildLeaderboardViewHref(activeSearchParams, "users")}
-          $active={current === "users"}
+          className={itemClass(current === "users")}
           aria-current={current === "users" ? "page" : undefined}
         >
+          <UsersIcon />
           Users
-        </SegmentButton>
-        <SegmentButton
-          as={Link}
+        </Link>
+        <Link
           href={buildLeaderboardViewHref(activeSearchParams, "groups")}
-          $active={current === "groups"}
+          className={itemClass(current === "groups")}
           aria-current={current === "groups" ? "page" : undefined}
         >
+          <GroupsIcon />
           Groups
-        </SegmentButton>
-      </SegmentedGroup>
-    </Header>
+        </Link>
+      </div>
+    </nav>
   );
 }

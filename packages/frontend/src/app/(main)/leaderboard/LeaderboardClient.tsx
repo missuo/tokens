@@ -51,8 +51,10 @@ const TabSection = styled.div`
 `;
 
 const TableContainer = styled.div`
-  border-top: 1px solid var(--service-border);
-  border-bottom: 1px solid var(--service-border);
+  overflow: hidden;
+  border: 1px solid var(--service-border);
+  border-radius: 12px;
+  background: var(--service-surface);
 `;
 
 const EmptyState = styled.div`
@@ -151,7 +153,7 @@ const TableRow = styled.tr`
   position: relative;
 
   &:hover {
-    background: var(--service-surface);
+    background: var(--service-surface-muted);
   }
 
   &:not(:last-child) td {
@@ -410,13 +412,13 @@ const CodeLine = styled.div`
 
 const CommandPrompt = styled.span`
   flex: 0 0 auto;
-  color: #4B6486;
+  color: var(--service-text-muted);
   margin-right: 8px;
 `;
 
 const CommandPrefix = styled.span`
   flex: 0 0 auto;
-  color: #FFF;
+  color: var(--service-text);
   &::after {
     content: " ";
     white-space: pre;
@@ -435,7 +437,7 @@ const CommandArg = styled.span`
   min-width: 0;
   flex: 0 1 auto;
   overflow: hidden;
-  color: #FFF;
+  color: var(--service-text);
   text-overflow: ellipsis;
   white-space: nowrap;
   &::before {
@@ -452,15 +454,15 @@ const CopyIconButton = styled.button`
   padding: 6px;
   border: none;
   background: transparent;
-  color: #4B6486;
+  color: var(--service-text-muted);
   cursor: pointer;
   border-radius: 4px;
   transition: all 150ms;
   flex-shrink: 0;
 
   &:hover {
-    color: #FFF;
-    background: rgba(255, 255, 255, 0.1);
+    color: var(--service-text);
+    background: var(--service-surface-muted);
   }
 
   &.copied {

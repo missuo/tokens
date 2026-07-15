@@ -7,13 +7,14 @@ import { SecondaryActionLink } from "@/components/leaderboard/RankingUI";
 
 const Shell = styled.section`
   max-width: 640px;
+  margin: 0 auto;
 `;
 
 const Title = styled.h1`
   margin: 0;
   color: var(--service-text);
-  font-size: 1.5rem;
-  font-weight: 600;
+  font-size: 1.75rem;
+  font-weight: 700;
   letter-spacing: -0.02em;
   text-wrap: balance;
 `;
@@ -33,9 +34,10 @@ const Description = styled.p`
 const Form = styled.form`
   display: grid;
   gap: 16px;
-  padding: 20px 0;
-  border-top: 1px solid var(--service-border);
-  border-bottom: 1px solid var(--service-border);
+  padding: 20px;
+  border: 1px solid var(--service-border);
+  border-radius: 12px;
+  background: var(--service-surface);
 `;
 
 const Field = styled.label`
@@ -43,7 +45,7 @@ const Field = styled.label`
   gap: 8px;
   color: var(--service-text);
   font-size: 0.875rem;
-  font-weight: 500;
+  font-weight: 600;
 
   @media (max-width: 640px) {
     font-size: 1rem;
@@ -55,7 +57,7 @@ const Input = styled.input`
   padding: 0 12px;
   border: 1px solid var(--service-border-strong);
   border-radius: 8px;
-  background: var(--service-surface);
+  background: var(--service-surface-muted);
   color: var(--service-text);
   font: inherit;
 
@@ -76,7 +78,7 @@ const Textarea = styled.textarea`
   padding: 10px 12px;
   border: 1px solid var(--service-border-strong);
   border-radius: 8px;
-  background: var(--service-surface);
+  background: var(--service-surface-muted);
   color: var(--service-text);
   font: inherit;
   resize: vertical;

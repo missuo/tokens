@@ -17,18 +17,19 @@ interface InvitePreview {
 }
 
 const Shell = styled.section`
-  max-width: 620px;
-  margin: 0 auto;
-  padding: 20px 0;
-  border-top: 1px solid var(--service-border);
-  border-bottom: 1px solid var(--service-border);
+  max-width: 560px;
+  margin: 40px auto 0;
+  padding: 24px;
+  border: 1px solid var(--service-border);
+  border-radius: 12px;
+  background: var(--service-surface);
 `;
 
 const Title = styled.h1`
   margin: 0;
   color: var(--service-text);
-  font-size: 1.5rem;
-  font-weight: 600;
+  font-size: 1.75rem;
+  font-weight: 700;
   letter-spacing: -0.02em;
   text-wrap: balance;
 `;
@@ -50,9 +51,10 @@ const Meta = styled.dl`
   grid-template-columns: max-content minmax(0, 1fr);
   gap: 8px 16px;
   margin: 18px 0;
-  padding: 14px 0;
-  border-top: 1px solid var(--service-border);
-  border-bottom: 1px solid var(--service-border);
+  padding: 16px;
+  border: 1px solid var(--service-border);
+  border-radius: 8px;
+  background: var(--service-surface-muted);
 `;
 
 const MetaLabel = styled.dt`
@@ -80,6 +82,7 @@ const Actions = styled.div`
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
+  margin-top: 20px;
 `;
 
 const Button = styled.button`
@@ -114,8 +117,8 @@ const Button = styled.button`
 `;
 
 const ErrorText = styled.p`
-  margin: 0;
-  color: #ff8c85;
+  margin: 8px 0 0;
+  color: var(--danger);
 `;
 
 function formatRole(role: InvitePreview["role"]): string {

@@ -1228,7 +1228,7 @@ const IsometricTop = styled.polygon<{
       ? "var(--service-focus)"
       : props.$active
         ? "var(--service-text)"
-        : "rgba(255, 255, 255, 0.08)"};
+        : "color-mix(in srgb, var(--service-text) 8%, transparent)"};
   stroke-width: ${(props) => (props.$active || props.$selected ? 1.4 : 0.55)};
   vector-effect: non-scaling-stroke;
 `;
@@ -1348,7 +1348,7 @@ const Cell = styled.button<{
   border: 0;
   border-radius: ${PROFILE_CONTRIBUTION_CELL_RADIUS}px;
   box-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, 0.035),
+    inset 0 0 0 1px color-mix(in srgb, var(--service-text) 4%, transparent),
     ${(props) =>
       props.$selected
         ? "0 0 0 1px var(--service-focus)"
@@ -1459,7 +1459,7 @@ const LegendSwatch = styled.span<{ $color: string }>`
   height: 0.625rem;
   background: ${(props) => props.$color};
   border-radius: 2px;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--service-text) 5%, transparent);
 `;
 
 const CellTooltip = styled.div<{
@@ -1757,7 +1757,7 @@ const ClientDot = styled.span<{ $color: string }>`
   width: 0.5rem;
   height: 0.5rem;
   background: ${(props) => props.$color};
-  border: 1px solid rgba(255, 255, 255, 0.28);
+  border: 1px solid color-mix(in srgb, var(--service-text) 28%, transparent);
   border-radius: 999px;
 `;
 

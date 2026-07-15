@@ -1,7 +1,5 @@
 import { Suspense } from "react";
 import { cookies } from "next/headers";
-import { Navigation } from "@/components/layout/Navigation";
-import { ServiceFooter } from "@/components/layout/ServiceFooter";
 import { LeaderboardSkeleton } from "@/components/Skeleton";
 import { getLeaderboardData, getUserRank } from "@/lib/leaderboard/getLeaderboard";
 import type { LeaderboardData, Period, SortBy } from "@/lib/leaderboard/types";
@@ -53,17 +51,11 @@ interface PageProps {
 
 export default function LeaderboardPage({ searchParams }: PageProps) {
   return (
-    <div className="service-page-shell">
-      <Navigation />
-
-      <main className="service-main" id="main-content">
-        <Suspense fallback={<LeaderboardSkeleton />}>
-          <LeaderboardWithPreferences searchParams={searchParams} />
-        </Suspense>
-      </main>
-
-      <ServiceFooter />
-    </div>
+    <main className="main-container" id="main-content">
+      <Suspense fallback={<LeaderboardSkeleton />}>
+        <LeaderboardWithPreferences searchParams={searchParams} />
+      </Suspense>
+    </main>
   );
 }
 

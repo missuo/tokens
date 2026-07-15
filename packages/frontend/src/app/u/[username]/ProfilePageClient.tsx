@@ -3,8 +3,6 @@
 import { useId, useMemo, useState } from "react";
 import Link from "next/link";
 import styled from "styled-components";
-import { Navigation } from "@/components/layout/Navigation";
-import { ServiceFooter } from "@/components/layout/ServiceFooter";
 import {
   createContributionRangeOptions,
   getContributionDayForDate,
@@ -219,8 +217,6 @@ export default function ProfilePageClient({
 
   return (
     <PageContainer>
-      <Navigation />
-
       <MainContent id="main-content">
         <ContentWrapper>
           {showResubmitBanner && (
@@ -361,8 +357,6 @@ export default function ProfilePageClient({
           <ProfileDevices devices={initialDevices ?? []} />
         </ContentWrapper>
       </MainContent>
-
-      <ServiceFooter />
     </PageContainer>
   );
 }
@@ -497,27 +491,22 @@ function ProfilePeriodSelector({
 }
 
 const PageContainer = styled.div`
-  isolation: isolate;
-  color-scheme: dark;
-  min-height: 100dvh;
+  min-height: calc(100dvh - 56px);
   display: flex;
   flex-direction: column;
-  background: var(--service-canvas);
-  color: var(--service-text);
+  background: var(--background);
+  color: var(--foreground);
 `;
 
 const MainContent = styled.main`
   width: 100%;
-  max-width: 1500px;
+  max-width: 1200px;
   flex: 1;
   margin: 0 auto;
-  padding: 96px 32px 40px;
+  padding: 32px 24px 64px;
 
-  @media (max-width: 520px) {
-    padding-right: 16px;
-    padding-left: 16px;
-    padding-top: 88px;
-    padding-bottom: 40px;
+  @media (max-width: 640px) {
+    padding: 20px 16px 48px;
   }
 `;
 
@@ -533,7 +522,7 @@ const UpdateNotice = styled.p`
   border: 1px solid color-mix(in srgb, #f4b740 28%, transparent);
   border-radius: 8px;
   background: color-mix(in srgb, #f4b740 9%, transparent);
-  color: #f4d38a;
+  color: var(--foreground);
   font-size: 16px;
   line-height: 24px;
 

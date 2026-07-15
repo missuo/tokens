@@ -4,8 +4,6 @@ import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "nextjs-toploader/app";
 import styled from "styled-components";
 import { KeyIcon } from "@/components/ui/Icons";
-import { Navigation } from "@/components/layout/Navigation";
-import { Footer } from "@/components/layout/Footer";
 import { deviceDisplayLabel } from "@/lib/devices/shared";
 import { formatNumber, formatCurrency } from "@/lib/utils";
 import { formatRelativeTime } from "@/lib/format";
@@ -65,17 +63,23 @@ function validateDeviceName(name: string): string | null {
 // ============================================================================
 
 const PageWrapper = styled.div`
-  min-height: 100vh;
+  min-height: calc(100dvh - 56px);
   display: flex;
   flex-direction: column;
+  background: var(--background);
+  color: var(--foreground);
 `;
 
 const MainContent = styled.main`
   flex: 1;
   max-width: 768px;
   margin: 0 auto;
-  padding: 40px 24px;
+  padding: 32px 24px 64px;
   width: 100%;
+
+  @media (max-width: 640px) {
+    padding: 20px 16px 48px;
+  }
 `;
 
 const LoadingMain = styled.main`
@@ -86,14 +90,23 @@ const LoadingMain = styled.main`
 `;
 
 const Title = styled.h1`
-  font-size: 30px;
-  font-weight: bold;
-  margin-bottom: 32px;
+  margin: 0;
+  color: var(--foreground);
+  font-size: 1.75rem;
+  font-weight: 700;
+  letter-spacing: -0.025em;
+`;
+
+const Subtitle = styled.p`
+  margin: 4px 0 24px;
+  color: var(--muted);
+  font-size: 0.875rem;
 `;
 
 const Section = styled.section`
-  border-radius: 16px;
-  border: 1px solid;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
   padding: 24px;
   margin-bottom: 24px;
 `;
@@ -248,7 +261,9 @@ const TokenItem = styled.div`
   align-items: center;
   justify-content: space-between;
   padding: 16px;
+  border: 1px solid var(--border);
   border-radius: 12px;
+  background: var(--surface-secondary);
 `;
 
 const TokenInfo = styled.div`
@@ -300,7 +315,7 @@ const AvatarImg = styled.img`
   border-radius: 6px;
   object-fit: cover;
   flex-shrink: 0;
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.1);
+  box-shadow: 0 0 0 1px var(--border);
 `;
 
 const TokenName = styled.p`
@@ -881,11 +896,9 @@ export default function SettingsClient() {
   if (isLoading) {
     return (
       <PageWrapper style={{ backgroundColor: "var(--color-bg-default)" }}>
-        <Navigation />
         <LoadingMain>
           <div style={{ color: "var(--color-fg-muted)" }}>Loading...</div>
         </LoadingMain>
-        <Footer />
       </PageWrapper>
     );
   }
@@ -896,16 +909,13 @@ export default function SettingsClient() {
 
   return (
     <PageWrapper style={{ backgroundColor: "var(--color-bg-default)" }}>
-      <Navigation />
-
       <MainContent>
         <Title style={{ color: "var(--color-fg-default)" }}>
           Settings
         </Title>
+        <Subtitle>Manage your profile, API tokens, devices, and submitted data.</Subtitle>
 
-        <Section
-          style={{ backgroundColor: "var(--color-bg-default)", borderColor: "var(--color-border-default)" }}
-        >
+        <Section>
           <SectionTitle style={{ color: "var(--color-fg-default)" }}>
             Profile
           </SectionTitle>
@@ -935,9 +945,7 @@ export default function SettingsClient() {
           </InfoBanner>
         </Section>
 
-        <Section
-          style={{ backgroundColor: "var(--color-bg-default)", borderColor: "var(--color-border-default)" }}
-        >
+        <Section>
           <SectionTitle style={{ color: "var(--color-fg-default)" }}>
             API Tokens
           </SectionTitle>
@@ -1010,10 +1018,7 @@ export default function SettingsClient() {
           ) : (
             <TokenList>
               {tokens.map((token) => (
-                <TokenItem
-                  key={token.id}
-                  style={{ backgroundColor: "var(--color-bg-elevated)" }}
-                >
+                <TokenItem key={token.id}>
                   <TokenInfo>
                     <IconWrapper>
                       <KeyIcon size={20} />
@@ -1041,9 +1046,7 @@ export default function SettingsClient() {
           )}
         </Section>
 
-        <Section
-          style={{ backgroundColor: "var(--color-bg-default)", borderColor: "var(--color-border-default)" }}
-        >
+        <Section>
           <SectionTitle style={{ color: "var(--color-fg-default)" }}>
             Devices
           </SectionTitle>
@@ -1070,10 +1073,7 @@ export default function SettingsClient() {
           ) : (
             <TokenList>
               {devices.map((device) => (
-                <TokenItem
-                  key={device.id}
-                  style={{ backgroundColor: "var(--color-bg-elevated)" }}
-                >
+                <TokenItem key={device.id}>
                   {editingDeviceId === device.id ? (
                     <DeviceEditRow>
                       <TextInput
@@ -1143,9 +1143,7 @@ export default function SettingsClient() {
           )}
         </Section>
 
-        <DangerSection
-          style={{ backgroundColor: "var(--color-bg-default)" }}
-        >
+        <DangerSection>
           <DangerSectionTitle>
             Danger Zone
           </DangerSectionTitle>
@@ -1178,8 +1176,6 @@ export default function SettingsClient() {
         </DangerSection>
 
       </MainContent>
-
-      <Footer />
 
       {dangerAction && (
         <DangerConfirmationModal

@@ -22,23 +22,22 @@ export const MetricStrip = styled.dl`
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   margin: 0;
-  border-top: 1px solid var(--service-border);
-  border-bottom: 1px solid var(--service-border);
+  overflow: hidden;
+  border: 1px solid var(--service-border);
+  border-radius: 12px;
+  background: var(--service-surface);
 
   @media (min-width: 720px) {
-    display: flex;
-    max-width: max-content;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 `;
 
 export const MetricItem = styled.div`
   min-width: 0;
   overflow: hidden;
-  padding: 12px 16px 12px 0;
+  padding: 16px;
 
   &:nth-child(2n) {
-    padding-right: 0;
-    padding-left: 16px;
     border-left: 1px solid var(--service-border);
   }
 
@@ -47,17 +46,8 @@ export const MetricItem = styled.div`
   }
 
   @media (min-width: 720px) {
-    min-width: 152px;
-    padding: 12px 20px;
+    padding: 18px 20px;
     border-top: 0 !important;
-
-    &:first-child {
-      padding-left: 0;
-    }
-
-    &:last-child {
-      padding-right: 0;
-    }
 
     &:not(:first-child) {
       border-left: 1px solid var(--service-border);
