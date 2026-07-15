@@ -11,11 +11,11 @@ export interface TokenBreakdownProps {
 }
 
 const TOKEN_MIX_COLORS = {
-  input: "#56b4e9",
-  output: "#009e73",
-  cacheRead: "#cc79a7",
-  cacheWrite: "#e69f00",
-  reasoning: "#d7dde8",
+  input: "var(--token-input)",
+  output: "var(--token-output)",
+  cacheRead: "var(--token-cache-read)",
+  cacheWrite: "var(--token-cache-write)",
+  reasoning: "var(--token-reasoning)",
 } as const;
 
 const BreakdownPanel = styled.section`
@@ -93,7 +93,7 @@ const Marker = styled.span<{ $color: string }>`
   height: 0.5rem;
   background: ${(props) => props.$color};
   border-radius: 2px;
-  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.08);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--service-text) 10%, transparent);
 `;
 
 const Label = styled.dt`

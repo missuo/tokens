@@ -144,7 +144,7 @@ const Button = styled.button`
   border-radius: 8px;
   border: 1px solid var(--service-accent);
   background: var(--service-accent);
-  color: #fff;
+  color: var(--service-accent-foreground);
   font-size: 0.875rem;
   font-weight: 600;
 
@@ -171,7 +171,7 @@ const Button = styled.button`
 
 const ErrorText = styled.p`
   margin: 0;
-  color: #ff8c85;
+  color: var(--danger);
 `;
 
 export default function CreateGroupClient() {

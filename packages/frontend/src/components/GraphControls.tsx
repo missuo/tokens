@@ -20,6 +20,29 @@ interface GraphControlsProps {
   totalTokens: number;
 }
 
+function relativeLuminance(hex: string): number {
+  const match = /^#([0-9a-f]{6})$/i.exec(hex);
+  if (!match) return 0;
+
+  const channels = [0, 2, 4].map((offset) => {
+    const value = Number.parseInt(match[1].slice(offset, offset + 2), 16) / 255;
+    return value <= 0.04045
+      ? value / 12.92
+      : ((value + 0.055) / 1.055) ** 2.4;
+  });
+  return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+}
+
+function paletteForeground(background: string): string {
+  const backgroundLuminance = relativeLuminance(background);
+  const lightContrast = 1.05 / (backgroundLuminance + 0.05);
+  const darkLuminance = relativeLuminance("#0b0d14");
+  const darkContrast =
+    (Math.max(backgroundLuminance, darkLuminance) + 0.05) /
+    (Math.min(backgroundLuminance, darkLuminance) + 0.05);
+  return lightContrast >= darkContrast ? "#ffffff" : "#0b0d14";
+}
+
 export function GraphControls({
   view,
   onViewChange,
@@ -35,6 +58,7 @@ export function GraphControls({
   totalTokens,
 }: GraphControlsProps) {
   const paletteNames = getPaletteNames();
+  const activeViewForeground = paletteForeground(palette.grade3);
 
   const handleClientToggle = (client: ClientType) => {
     onClientFilterChange(toggleClientFilter(client, clientFilter, availableClients));
@@ -50,7 +74,7 @@ export function GraphControls({
           className="rounded-l-full border px-3 py-1.5 text-xs font-semibold transition"
           style={{
             backgroundColor: view === "2d" ? palette.grade3 : "var(--surface-tertiary)",
-            color: view === "2d" ? "#fff" : "var(--foreground)",
+            color: view === "2d" ? activeViewForeground : "var(--foreground)",
             borderColor: view === "2d" ? palette.grade3 : "var(--border)",
           }}
         >
@@ -63,7 +87,7 @@ export function GraphControls({
           className="rounded-r-full border border-l-0 px-3 py-1.5 text-xs font-semibold transition"
           style={{
             backgroundColor: view === "3d" ? palette.grade3 : "var(--surface-tertiary)",
-            color: view === "3d" ? "#fff" : "var(--foreground)",
+            color: view === "3d" ? activeViewForeground : "var(--foreground)",
             borderColor: view === "3d" ? palette.grade3 : "var(--border)",
           }}
         >

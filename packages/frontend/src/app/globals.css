@@ -49,6 +49,10 @@
   --muted: #5b6473;
   --border: #e6e8ec;
   --separator: #e6e8ec;
+  --danger: #b42318;
+  --danger-solid: #b42318;
+  --success: #16794a;
+  --warning: #8a5d00;
 
   --service-canvas: var(--background);
   --service-surface: var(--surface);
@@ -57,11 +61,19 @@
   --service-border-strong: #cfd4dc;
   --service-text: var(--foreground);
   --service-text-muted: var(--muted);
-  --service-accent: var(--accent);
-  --service-accent-hover: #0065e0;
+  --service-accent: #0065e0;
+  --service-accent-hover: #0058c4;
   --service-accent-soft: rgba(0, 115, 255, 0.1);
   --service-accent-foreground: var(--accent-foreground);
   --service-focus: var(--accent);
+  --rank-gold: #7a5700;
+  --rank-silver: #596579;
+  --rank-bronze: #8a4b20;
+  --token-input: #0072b2;
+  --token-output: #007a57;
+  --token-cache-read: #a83e78;
+  --token-cache-write: #946200;
+  --token-reasoning: #596579;
 }
 
 .dark,
@@ -77,6 +89,10 @@
   --muted: #8b94a7;
   --border: #232a39;
   --separator: #232a39;
+  --danger: #ff8c85;
+  --danger-solid: #b42318;
+  --success: #4ade80;
+  --warning: #f4b740;
 
   --service-canvas: var(--background);
   --service-surface: var(--surface);
@@ -88,8 +104,16 @@
   --service-accent: var(--accent);
   --service-accent-hover: #60a5fa;
   --service-accent-soft: rgba(59, 130, 246, 0.12);
-  --service-accent-foreground: var(--accent-foreground);
+  --service-accent-foreground: #07111f;
   --service-focus: var(--accent);
+  --rank-gold: #f4c95d;
+  --rank-silver: #c4ccda;
+  --rank-bronze: #d99a68;
+  --token-input: #56b4e9;
+  --token-output: #4ade80;
+  --token-cache-read: #e58abe;
+  --token-cache-write: #f4b740;
+  --token-reasoning: #d7dde8;
 }
 
 /* Compatibility layer for legacy visualizer code and the newly added service
@@ -132,6 +156,7 @@
   --color-btn-selected-bg: var(--surface);
   --color-badge-bg: var(--service-accent-soft);
   --color-badge-text: var(--accent);
+  --color-success-fg: var(--success);
 }
 
 html {

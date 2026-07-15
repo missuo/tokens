@@ -539,25 +539,33 @@ const ChartSvg = styled.svg`
 `;
 
 const GridLine = styled.line`
-  stroke: rgb(255 255 255 / 0.035);
+  stroke: color-mix(in srgb, var(--service-text) 8%, transparent);
   stroke-width: 1;
   vector-effect: non-scaling-stroke;
 `;
 
 const LayerArea = styled.path<{ $color: string }>`
-  fill: ${(props) => props.$color};
+  fill: color-mix(in srgb, ${(props) => props.$color} 55%, #000);
   fill-opacity: 0.4;
   stroke: none;
+
+  :where(.dark, [data-theme="dark"]) & {
+    fill: ${(props) => props.$color};
+  }
 `;
 
 const LayerLine = styled.path<{ $color: string }>`
   fill: none;
-  stroke: ${(props) => props.$color};
+  stroke: color-mix(in srgb, ${(props) => props.$color} 55%, #000);
   stroke-width: 1;
   stroke-opacity: 1;
   stroke-linecap: round;
   stroke-linejoin: round;
   vector-effect: non-scaling-stroke;
+
+  :where(.dark, [data-theme="dark"]) & {
+    stroke: ${(props) => props.$color};
+  }
 `;
 
 const ActiveRule = styled.line`
@@ -578,10 +586,15 @@ const ActivePoint = styled.span<{
   width: 10px;
   height: 10px;
   background: var(--service-surface);
-  border: 2px solid ${(props) => props.$color};
+  border: 2px solid
+    color-mix(in srgb, ${(props) => props.$color} 55%, #000);
   border-radius: 50%;
   pointer-events: none;
   transform: translate(-50%, -50%);
+
+  :where(.dark, [data-theme="dark"]) & {
+    border-color: ${(props) => props.$color};
+  }
 `;
 
 const DateRange = styled.div`
@@ -641,8 +654,12 @@ const Swatch = styled.span<{ $color: string }>`
   flex: 0 0 auto;
   width: 0.5rem;
   height: 0.5rem;
-  background: ${(props) => props.$color};
+  background: color-mix(in srgb, ${(props) => props.$color} 55%, #000);
   border-radius: 999px;
+
+  :where(.dark, [data-theme="dark"]) & {
+    background: ${(props) => props.$color};
+  }
 `;
 
 const TooltipSurface = styled.div<{ $left: number; $maxHeight: number }>`

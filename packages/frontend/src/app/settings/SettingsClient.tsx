@@ -175,8 +175,8 @@ const PrimaryButton = styled.button`
   padding: 0 14px;
   border-radius: 6px;
   border: 1px solid var(--color-accent-fg);
-  background: var(--color-accent-fg);
-  color: #ffffff;
+  background: var(--service-accent);
+  color: var(--service-accent-foreground);
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;
@@ -192,7 +192,7 @@ const TokenReveal = styled.div`
   padding: 12px;
   border-radius: 6px;
   border: 1px solid var(--color-success-fg);
-  background: rgba(63, 185, 80, 0.08);
+  background: color-mix(in srgb, var(--success) 8%, transparent);
   margin-bottom: 16px;
 `;
 
@@ -230,7 +230,7 @@ const SecondaryButton = styled.button`
 `;
 
 const ErrorText = styled.p`
-  color: #f85149;
+  color: var(--danger);
   font-size: 13px;
   margin: -4px 0 16px;
 `;
@@ -294,12 +294,12 @@ const DangerButton = styled.button`
   font-size: 12px;
   font-weight: 500;
   border-radius: 6px;
-  border: 1px solid #F85149;
+  border: 1px solid var(--danger);
   background: transparent;
-  color: #F85149;
+  color: var(--danger);
   cursor: pointer;
   transition: all 150ms;
-  &:hover { background: #F85149; color: #FFFFFF; }
+  &:hover { background: var(--danger-solid); color: #fff; }
 `;
 
 const InfoBanner = styled.div`
@@ -327,11 +327,11 @@ const TokenName = styled.p`
 // ============================================================================
 
 const DangerSection = styled(Section)`
-  border-color: rgba(248, 81, 73, 0.4);
+  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
 `;
 
 const DangerSectionTitle = styled(SectionTitle)`
-  color: #F85149;
+  color: var(--danger);
 `;
 
 const DangerActionRow = styled.div`
@@ -397,7 +397,7 @@ const ModalCard = styled.div`
 const ModalTitle = styled.h3`
   font-size: 16px;
   font-weight: 600;
-  color: #F85149;
+  color: var(--danger);
   margin-bottom: 12px;
 `;
 
@@ -429,8 +429,9 @@ const ModalInput = styled.input`
   outline: none;
   box-sizing: border-box;
   &:focus {
-    border-color: #F85149;
-    box-shadow: 0 0 0 2px rgba(248, 81, 73, 0.2);
+    border-color: var(--danger);
+    box-shadow: 0 0 0 2px
+      color-mix(in srgb, var(--danger) 20%, transparent);
   }
 `;
 
@@ -460,14 +461,14 @@ const ConfirmDangerButton = styled.button<{ $disabled?: boolean }>`
   font-size: 13px;
   font-weight: 500;
   border-radius: 6px;
-  border: 1px solid #F85149;
-  background: ${({ $disabled }) => ($disabled ? "transparent" : "#F85149")};
-  color: ${({ $disabled }) => ($disabled ? "rgba(248, 81, 73, 0.4)" : "#FFFFFF")};
+  border: 1px solid var(--danger);
+  background: ${({ $disabled }) => ($disabled ? "transparent" : "var(--danger-solid)")};
+  color: ${({ $disabled }) => ($disabled ? "var(--danger)" : "#fff")};
   cursor: ${({ $disabled }) => ($disabled ? "not-allowed" : "pointer")};
   opacity: ${({ $disabled }) => ($disabled ? 0.5 : 1)};
   transition: all 150ms;
   &:hover {
-    background: ${({ $disabled }) => ($disabled ? "transparent" : "#da3633")};
+    background: ${({ $disabled }) => ($disabled ? "transparent" : "#8f1d14")};
   }
 `;
 
@@ -481,7 +482,7 @@ const StepDot = styled.div<{ $active: boolean }>`
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: ${({ $active }) => ($active ? "#F85149" : "var(--color-border-default)")};
+  background: ${({ $active }) => ($active ? "var(--danger)" : "var(--color-border-default)")};
   transition: background 150ms;
 `;
 

@@ -75,8 +75,8 @@ const EmptyHint = styled.p`
 const RetryButton = styled.button`
   margin-top: 16px;
   padding: 8px 16px;
-  background-color: var(--color-primary);
-  color: #fff;
+  background-color: var(--service-accent);
+  color: var(--service-accent-foreground);
   border: none;
   border-radius: 8px;
   cursor: pointer;
@@ -212,9 +212,9 @@ const RankBadge = styled.span`
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 
-  &[data-rank="1"] { color: #f4c95d; }
-  &[data-rank="2"] { color: #c4ccda; }
-  &[data-rank="3"] { color: #d99a68; }
+  &[data-rank="1"] { color: var(--rank-gold); }
+  &[data-rank="2"] { color: var(--rank-silver); }
+  &[data-rank="3"] { color: var(--rank-bronze); }
 `;
 
 const UserContainer = styled(Link)`
@@ -466,7 +466,7 @@ const CopyIconButton = styled.button`
   }
 
   &.copied {
-    color: #3FB950;
+    color: var(--success);
   }
 `;
 
@@ -562,9 +562,9 @@ const ErrorBanner = styled.div`
   margin-bottom: 24px;
   padding: 12px 16px;
   border-radius: 8px;
-  border: 1px solid rgba(248, 81, 73, 0.55);
-  background: rgba(248, 81, 73, 0.1);
-  color: #ff8c85;
+  border: 1px solid color-mix(in srgb, var(--danger) 55%, transparent);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  color: var(--danger);
   font-size: 14px;
   display: flex;
   align-items: center;
@@ -719,7 +719,7 @@ const DateApplyButton = styled.button`
   border-radius: 8px;
   border: 1px solid var(--service-accent);
   background: var(--service-accent);
-  color: #fff;
+  color: var(--service-accent-foreground);
   font-size: 0.875rem;
   font-weight: 500;
 
@@ -786,9 +786,9 @@ const PageButton = styled.button<{ $active?: boolean }>`
   height: 32px;
   padding: 0 8px;
   border-radius: 6px;
-  border: 1px solid ${({ $active }) => $active ? '#0073FF' : 'var(--color-border-default)'};
-  background: ${({ $active }) => $active ? '#0073FF' : 'transparent'};
-  color: ${({ $active }) => $active ? '#fff' : 'var(--color-fg-muted)'};
+  border: 1px solid ${({ $active }) => $active ? 'var(--service-accent)' : 'var(--color-border-default)'};
+  background: ${({ $active }) => $active ? 'var(--service-accent)' : 'transparent'};
+  color: ${({ $active }) => $active ? 'var(--service-accent-foreground)' : 'var(--color-fg-muted)'};
   font-size: 13px;
   cursor: pointer;
   transition: all 150ms;
@@ -797,8 +797,8 @@ const PageButton = styled.button<{ $active?: boolean }>`
   justify-content: center;
 
   &:hover:not(:disabled) {
-    border-color: #0073FF;
-    color: ${({ $active }) => $active ? '#fff' : 'var(--color-fg-default)'};
+    border-color: var(--service-accent);
+    color: ${({ $active }) => $active ? 'var(--service-accent-foreground)' : 'var(--color-fg-default)'};
   }
 
   &:disabled {

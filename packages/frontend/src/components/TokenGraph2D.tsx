@@ -3,7 +3,7 @@
 import { useRef, useEffect, useCallback, useMemo } from "react";
 import { useTheme } from "next-themes";
 import type { DailyContribution, GraphColorPalette, TooltipPosition } from "@/lib/types";
-import { getGradeColor } from "@/lib/themes";
+import { getThemeGradeColor } from "@/lib/themes";
 import { groupByWeek } from "@/lib/utils";
 import { BOX_WIDTH, CELL_SIZE, CANVAS_MARGIN, HEADER_HEIGHT, TEXT_HEIGHT, FONT_SIZE, FONT_FAMILY, DAY_LABELS_SHORT, MONTH_LABELS_SHORT } from "@/lib/constants";
 import { parseISO, getMonth } from "date-fns";
@@ -85,7 +85,7 @@ export function TokenGraph2D({ contributions, palette, year, onDayHover, onDayCl
         const y = HEADER_HEIGHT + dayIndex * CELL_SIZE;
 
         const intensity = day?.intensity ?? 0;
-        const colorHex = getGradeColor(palette, intensity);
+        const colorHex = getThemeGradeColor(palette, intensity, isDark);
         const resolvedColor = colorHex.startsWith("var(") ? graphEmptyCell : colorHex;
         ctx.fillStyle = resolvedColor;
 
@@ -93,7 +93,7 @@ export function TokenGraph2D({ contributions, palette, year, onDayHover, onDayCl
         ctx.fill();
       }
     }
-  }, [contributions, palette, year, weeksData, canvasWidth, canvasHeight, graphBg, graphEmptyCell, graphMuted]);
+  }, [contributions, palette, year, weeksData, canvasWidth, canvasHeight, graphBg, graphEmptyCell, graphMuted, isDark]);
 
   const getDayAtPosition = useCallback(
     (clientX: number, clientY: number): { day: DailyContribution | null; position: TooltipPosition } | null => {

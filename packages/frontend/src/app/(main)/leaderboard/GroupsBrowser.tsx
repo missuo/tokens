@@ -214,7 +214,7 @@ const EmptyState = styled.div`
 
 const ErrorText = styled.p`
   margin: 0 0 12px;
-  color: #ff8c85;
+  color: var(--danger);
 `;
 
 const LoadMoreButton = styled(SecondaryButton)`

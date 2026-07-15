@@ -294,6 +294,11 @@ export default function ProfilePageClient({
                         />
                       </BreakdownArea>
                     )}
+                    {(initialDevices?.length ?? 0) > 0 && (
+                      <DeviceArea>
+                        <ProfileDevices devices={initialDevices ?? []} />
+                      </DeviceArea>
+                    )}
                   </ContributionColumn>
                   <UsageColumn>
                     <UsageArea>
@@ -354,7 +359,9 @@ export default function ProfilePageClient({
             </TabPanel>
           )}
 
-          <ProfileDevices devices={initialDevices ?? []} />
+          {(activeTab !== "activity" || data.contributions.length === 0) && (
+            <ProfileDevices devices={initialDevices ?? []} />
+          )}
         </ContentWrapper>
       </MainContent>
     </PageContainer>
@@ -519,9 +526,9 @@ const ContentWrapper = styled.div`
 const UpdateNotice = styled.p`
   margin: 0;
   padding: 10px 12px;
-  border: 1px solid color-mix(in srgb, #f4b740 28%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warning) 35%, transparent);
   border-radius: 8px;
-  background: color-mix(in srgb, #f4b740 9%, transparent);
+  background: color-mix(in srgb, var(--warning) 9%, transparent);
   color: var(--foreground);
   font-size: 16px;
   line-height: 24px;
@@ -529,7 +536,7 @@ const UpdateNotice = styled.p`
   code {
     padding: 2px 5px;
     border-radius: 4px;
-    background: color-mix(in srgb, #f4b740 12%, transparent);
+    background: color-mix(in srgb, var(--warning) 12%, transparent);
     color: inherit;
     font-size: 0.8125rem;
   }
@@ -648,6 +655,8 @@ const UsageArea = styled(DashboardArea)``;
 const ContributionArea = styled(DashboardArea)``;
 
 const BreakdownArea = styled(DashboardArea)``;
+
+const DeviceArea = styled(DashboardArea)``;
 
 const DetailsArea = styled(DashboardArea)``;
 

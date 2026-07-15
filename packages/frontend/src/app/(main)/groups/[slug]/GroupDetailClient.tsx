@@ -396,7 +396,7 @@ const EmptyState = styled.div`
 
 const ErrorText = styled.p`
   margin: 0;
-  color: #ff8c85;
+  color: var(--danger);
 `;
 
 function isAdminRole(role: GroupRole | undefined): boolean {

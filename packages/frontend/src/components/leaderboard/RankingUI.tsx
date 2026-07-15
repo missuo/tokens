@@ -165,9 +165,9 @@ const MobileRank = styled.span`
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 
-  &[data-rank="1"] { color: #f4c95d; }
-  &[data-rank="2"] { color: #c4ccda; }
-  &[data-rank="3"] { color: #d99a68; }
+  &[data-rank="1"] { color: var(--rank-gold); }
+  &[data-rank="2"] { color: var(--rank-silver); }
+  &[data-rank="3"] { color: var(--rank-bronze); }
 `;
 
 const MobileAvatar = styled.img`
@@ -401,7 +401,7 @@ export const PrimaryActionLink = styled(Link)`
   ${actionStyles}
   border: 1px solid var(--service-accent);
   background: var(--service-accent);
-  color: #fff;
+  color: var(--service-accent-foreground);
 
   &:hover {
     border-color: var(--service-accent-hover);

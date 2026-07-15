@@ -323,6 +323,46 @@ function formatJoined(createdAt: string | null | undefined): string | null {
   });
 }
 
+function ShareIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      width="16"
+      height="16"
+      viewBox="0 0 20 20"
+      fill="none"
+    >
+      <path
+        d="M7.15833 11.2583L12.85 14.575M12.8417 5.42499L7.15833 8.74166M17.5 4.16666C17.5 5.54737 16.3807 6.66666 15 6.66666C13.6193 6.66666 12.5 5.54737 12.5 4.16666C12.5 2.78594 13.6193 1.66666 15 1.66666C16.3807 1.66666 17.5 2.78594 17.5 4.16666ZM7.5 9.99999C7.5 11.3807 6.38071 12.5 5 12.5C3.61929 12.5 2.5 11.3807 2.5 9.99999C2.5 8.61928 3.61929 7.49999 5 7.49999C6.38071 7.49999 7.5 8.61928 7.5 9.99999ZM17.5 15.8333C17.5 17.214 16.3807 18.3333 15 18.3333C13.6193 18.3333 12.5 17.214 12.5 15.8333C12.5 14.4526 13.6193 13.3333 15 13.3333C16.3807 13.3333 17.5 14.4526 17.5 15.8333Z"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.667"
+      />
+    </svg>
+  );
+}
+
+function GitHubIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      width="16"
+      height="16"
+      viewBox="0 0 20 20"
+      fill="none"
+    >
+      <path
+        d="M12.5 18.3333V15C12.6159 13.9561 12.3166 12.9084 11.6666 12.0833C14.1666 12.0833 16.6666 10.4167 16.6666 7.49999C16.7333 6.45832 16.4416 5.43332 15.8333 4.58332C16.0666 3.62499 16.0666 2.62499 15.8333 1.66666C15.8333 1.66666 15 1.66666 13.3333 2.91666C11.1333 2.49999 8.86663 2.49999 6.66663 2.91666C4.99996 1.66666 4.16663 1.66666 4.16663 1.66666C3.91663 2.62499 3.91663 3.62499 4.16663 4.58332C3.55985 5.42989 3.26535 6.46065 3.33329 7.49999C3.33329 10.4167 5.83329 12.0833 8.33329 12.0833C8.00829 12.4917 7.76663 12.9583 7.62496 13.4583C7.48329 13.9583 7.44163 14.4833 7.49996 15M7.49996 15V18.3333M7.49996 15C3.74163 16.6667 3.33329 13.3333 1.66663 13.3333"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.667"
+      />
+    </svg>
+  );
+}
+
 export function ProfileOverview({
   user,
   stats,
@@ -449,13 +489,7 @@ export function ProfileOverview({
             onClick={handleShareClick}
             aria-label={`Share ${displayName}'s profile`}
           >
-            <Image
-              src="/icons/icon-share.svg"
-              alt=""
-              width={16}
-              height={16}
-              aria-hidden="true"
-            />
+            <ShareIcon />
             Share
           </SecondaryAction>
           <GhostAction
@@ -464,13 +498,7 @@ export function ProfileOverview({
             rel="noopener noreferrer"
             aria-label={`View ${user.username}'s GitHub profile (opens in new tab)`}
           >
-            <Image
-              src="/icons/icon-github.svg"
-              alt=""
-              width={16}
-              height={16}
-              aria-hidden="true"
-            />
+            <GitHubIcon />
             GitHub
           </GhostAction>
         </Actions>

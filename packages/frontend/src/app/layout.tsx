@@ -1,10 +1,10 @@
 import type { Metadata, Viewport } from "next";
 import { JetBrains_Mono, Figtree } from "next/font/google";
 import NextTopLoader from "nextjs-toploader";
-import { ToastContainer } from "react-toastify";
 import { Analytics } from "@vercel/analytics/next";
 import { Providers } from "@/lib/providers";
 import { Navigation } from "@/components/layout/Navigation";
+import { ThemedToastContainer } from "@/components/layout/ThemedToastContainer";
 import "./globals.css";
 import "react-toastify/dist/ReactToastify.css";
 
@@ -76,8 +76,8 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
               client-side transition. */}
           <Navigation />
           {children}
+          <ThemedToastContainer />
         </Providers>
-        <ToastContainer position="top-right" theme="dark" />
         <Analytics />
       </body>
     </html>

@@ -123,7 +123,13 @@ function ClientSection({ clientType, clients, totalCost, palette }: ClientSectio
   return (
     <div>
       <div className="mb-3 flex items-center gap-3">
-        <span className="inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-semibold transition hover:scale-105" style={{ backgroundColor: `${clientColor}20`, color: clientColor }}>
+        <span
+          className="inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-semibold transition hover:scale-105"
+          style={{
+            backgroundColor: `${clientColor}20`,
+            color: `color-mix(in srgb, ${clientColor} 60%, var(--foreground))`,
+          }}
+        >
           <SourceLogo sourceId={clientType} height={14} />
           {SOURCE_DISPLAY_NAMES[clientType] || clientType}
         </span>

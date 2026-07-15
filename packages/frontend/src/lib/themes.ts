@@ -205,3 +205,14 @@ export function getDarkGradeColors(
   darkPaletteCache.set(palette, colors);
   return colors;
 }
+
+export function getThemeGradeColor(
+  palette: GraphColorPalette,
+  intensity: 0 | 1 | 2 | 3 | 4,
+  isDark: boolean,
+): string {
+  if (intensity === 0) return palette.grade0;
+  return isDark
+    ? (getDarkGradeColors(palette)[intensity - 1] ?? palette.grade1)
+    : getGradeColor(palette, intensity);
+}

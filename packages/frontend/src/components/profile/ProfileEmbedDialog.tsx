@@ -1139,7 +1139,7 @@ const CodeBlock = styled.pre`
   padding: 10px;
   border: 1px solid var(--service-border);
   border-radius: 8px;
-  background: #080b11;
+  background: var(--service-surface-muted);
   color: var(--service-text);
   font-family: var(--font-mono), ui-monospace, monospace;
   font-size: 0.6875rem;

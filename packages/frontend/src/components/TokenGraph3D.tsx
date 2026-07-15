@@ -3,7 +3,7 @@
 import { useRef, useEffect, useCallback, useState, useMemo } from "react";
 import { useTheme } from "next-themes";
 import type { DailyContribution, GraphColorPalette, TooltipPosition } from "@/lib/types";
-import { getGradeColor } from "@/lib/themes";
+import { getThemeGradeColor } from "@/lib/themes";
 import { groupByWeek, hexToNumber, formatCurrency, formatTokenCount } from "@/lib/utils";
 import { formatContributionDate } from "@/lib/date-utils";
 import { CUBE_SIZE, MAX_CUBE_HEIGHT, MIN_CUBE_HEIGHT, ISO_CANVAS_WIDTH, ISO_CANVAS_HEIGHT } from "@/lib/constants";
@@ -101,7 +101,7 @@ export function TokenGraph3D({
         }
 
         const intensity = day?.intensity ?? 0;
-        const colorHex = getGradeColor(palette, intensity);
+        const colorHex = getThemeGradeColor(palette, intensity, isDark);
         const resolvedColor = colorHex.startsWith("var(") ? (isDark ? "#171b26" : "#f4f5f7") : colorHex;
         const colorNum = hexToNumber(resolvedColor);
 
@@ -170,6 +170,7 @@ export function TokenGraph3D({
   const statLabel = "block text-xs font-bold text-foreground";
   const statSubtext = "hidden text-xs text-muted sm:block";
   const statsBox = "flex justify-between rounded-md border border-line bg-surface px-1 md:px-2";
+  const statColor = getThemeGradeColor(palette, 4, isDark);
 
   return (
     <div ref={containerRef} className="relative w-full">
@@ -186,25 +187,25 @@ export function TokenGraph3D({
         <h5 className="mb-1 text-sm font-semibold text-foreground">Token Usage</h5>
         <div className={statsBox}>
           <div className="p-2">
-            <span className={statValue} style={{ color: palette.grade1 }}>{formatCurrency(totalCost)}</span>
+            <span className={statValue} style={{ color: statColor }}>{formatCurrency(totalCost)}</span>
             <span className={statLabel}>Total</span>
             <span className={statSubtext}>{dateRange.start} → {dateRange.end}</span>
           </div>
           <div className="hidden p-2 min-[1280px]:block">
-            <span className={statValue} style={{ color: palette.grade1 }}>{formatTokenCount(totalTokens)}</span>
+            <span className={statValue} style={{ color: statColor }}>{formatTokenCount(totalTokens)}</span>
             <span className={statLabel}>Tokens</span>
             <span className={statSubtext}>{activeDays} active days</span>
           </div>
           {bestDay && (
             <div className="p-2">
-              <span className={statValue} style={{ color: palette.grade1 }}>{formatCurrency(bestDay.totals.cost)}</span>
+              <span className={statValue} style={{ color: statColor }}>{formatCurrency(bestDay.totals.cost)}</span>
               <span className={statLabel}>Best day</span>
               <span className={statSubtext}>{formatContributionDate(bestDay).split(",")[0]}</span>
             </div>
           )}
         </div>
         <p className="mt-1 text-right text-xs text-muted">
-          Average: <span className="font-bold" style={{ color: palette.grade1 }}>{formatCurrency(activeDays > 0 ? totalCost / activeDays : 0)}</span> / day
+          Average: <span className="font-bold" style={{ color: statColor }}>{formatCurrency(activeDays > 0 ? totalCost / activeDays : 0)}</span> / day
         </p>
       </div>
 
@@ -212,11 +213,11 @@ export function TokenGraph3D({
         <h5 className="mb-1 text-sm font-semibold text-foreground">Streaks</h5>
         <div className={statsBox}>
           <div className="p-2">
-            <span className={statValue} style={{ color: palette.grade1 }}>{longestStreak} <span className="text-base">days</span></span>
+            <span className={statValue} style={{ color: statColor }}>{longestStreak} <span className="text-base">days</span></span>
             <span className={statLabel}>Longest</span>
           </div>
           <div className="p-2">
-            <span className={statValue} style={{ color: palette.grade1 }}>{currentStreak} <span className="text-base">days</span></span>
+            <span className={statValue} style={{ color: statColor }}>{currentStreak} <span className="text-base">days</span></span>
             <span className={statLabel}>Current</span>
           </div>
         </div>

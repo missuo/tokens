@@ -1,7 +1,9 @@
 "use client";
 
 import { useRef } from "react";
+import { useTheme } from "next-themes";
 import type { DailyContribution, TooltipPosition, GraphColorPalette } from "@/lib/types";
+import { getThemeGradeColor } from "@/lib/themes";
 import { formatCurrency, formatTokenCount } from "@/lib/utils";
 import { formatContributionDate } from "@/lib/date-utils";
 
@@ -34,6 +36,7 @@ function useAdjustedPosition(
 
 export function Tooltip({ day, position, visible, palette }: TooltipProps) {
   const tooltipRef = useRef<HTMLDivElement>(null);
+  const { resolvedTheme } = useTheme();
   const adjustedPosition = useAdjustedPosition(position, visible, tooltipRef);
 
   if (!visible || !day || !adjustedPosition) return null;
@@ -51,7 +54,16 @@ export function Tooltip({ day, position, visible, palette }: TooltipProps) {
           <span className="text-sm font-medium text-muted">Total Tokens</span>
           <span
             className="text-xl font-bold tracking-tight"
-            style={{ color: day.intensity >= 3 ? palette.grade1 : day.intensity >= 2 ? palette.grade2 : "var(--foreground)" }}
+            style={{
+              color:
+                day.intensity >= 2
+                  ? getThemeGradeColor(
+                      palette,
+                      day.intensity,
+                      resolvedTheme === "dark",
+                    )
+                  : "var(--foreground)",
+            }}
           >
             {formatTokenCount(totals.tokens)}
           </span>

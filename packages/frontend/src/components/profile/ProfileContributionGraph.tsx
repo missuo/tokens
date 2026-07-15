@@ -928,10 +928,30 @@ export function getContributionColor(
 ): string {
   if (level === 0) return "var(--service-surface-muted)";
 
-  // The shared palettes are light-canvas ramps. Reverse them for this
-  // always-dark surface, then lift only colors that need contrast or a clear
-  // step from the preceding intensity instead of whitening every grade.
+  // The shared palettes are light-canvas ramps. Reverse them for dark mode,
+  // then lift only colors that need contrast or a clear step from the
+  // preceding intensity instead of whitening every grade.
   return getDarkGradeColors(palette)[level - 1] ?? palette.grade1;
+}
+
+function getLightContributionColor(
+  palette: GraphColorPalette,
+  level: ContributionCell["intensity"],
+): string {
+  if (level === 0) return "var(--service-surface-muted)";
+  return [palette.grade1, palette.grade2, palette.grade3, palette.grade4][
+    level - 1
+  ] ?? palette.grade1;
+}
+
+function getContributionColors(
+  palette: GraphColorPalette,
+  level: ContributionCell["intensity"],
+): { light: string; dark: string } {
+  return {
+    light: getLightContributionColor(palette, level),
+    dark: getContributionColor(palette, level),
+  };
 }
 
 function clientHasLogo(client: ClientType): boolean {
@@ -1221,8 +1241,11 @@ const IsometricCell = styled.g<{ $active: boolean; $selected: boolean }>`
 
 const IsometricTop = styled.polygon<{
   $active: boolean;
+  $darkColor: string;
+  $lightColor: string;
   $selected: boolean;
 }>`
+  fill: ${(props) => props.$lightColor};
   stroke: ${(props) =>
     props.$selected
       ? "var(--service-focus)"
@@ -1231,6 +1254,21 @@ const IsometricTop = styled.polygon<{
         : "color-mix(in srgb, var(--service-text) 8%, transparent)"};
   stroke-width: ${(props) => (props.$active || props.$selected ? 1.4 : 0.55)};
   vector-effect: non-scaling-stroke;
+
+  :where(.dark, [data-theme="dark"]) & {
+    fill: ${(props) => props.$darkColor};
+  }
+`;
+
+const IsometricSide = styled.polygon<{
+  $darkColor: string;
+  $lightColor: string;
+}>`
+  fill: ${(props) => props.$lightColor};
+
+  :where(.dark, [data-theme="dark"]) & {
+    fill: ${(props) => props.$darkColor};
+  }
 `;
 
 const MonthRow = styled.div<{ $weeks: number }>`
@@ -1335,8 +1373,9 @@ const Grid = styled.div<{ $weeks: number }>`
 
 const Cell = styled.button<{
   $active: boolean;
-  $color: string;
+  $darkColor: string;
   $inRange: boolean;
+  $lightColor: string;
   $selected: boolean;
 }>`
   display: block;
@@ -1344,7 +1383,7 @@ const Cell = styled.button<{
   padding: 0;
   aspect-ratio: 1;
   visibility: ${(props) => (props.$inRange ? "visible" : "hidden")};
-  background: ${(props) => props.$color};
+  background: ${(props) => props.$lightColor};
   border: 0;
   border-radius: ${PROFILE_CONTRIBUTION_CELL_RADIUS}px;
   box-shadow:
@@ -1356,6 +1395,10 @@ const Cell = styled.button<{
           ? "0 0 0 1px var(--service-text)"
           : "0 0 0 0 transparent"};
   cursor: pointer;
+
+  :where(.dark, [data-theme="dark"]) & {
+    background: ${(props) => props.$darkColor};
+  }
 
   &:disabled {
     cursor: default;
@@ -1434,10 +1477,17 @@ const PalettePreview = styled.span`
   border-radius: 2px;
 `;
 
-const PalettePreviewSwatch = styled.span<{ $color: string }>`
+const PalettePreviewSwatch = styled.span<{
+  $darkColor: string;
+  $lightColor: string;
+}>`
   width: 0.625rem;
   height: 0.625rem;
-  background: ${(props) => props.$color};
+  background: ${(props) => props.$lightColor};
+
+  :where(.dark, [data-theme="dark"]) & {
+    background: ${(props) => props.$darkColor};
+  }
 `;
 
 const Legend = styled.div`
@@ -1454,12 +1504,19 @@ const LegendSwatches = styled.span`
   gap: 0.1875rem;
 `;
 
-const LegendSwatch = styled.span<{ $color: string }>`
+const LegendSwatch = styled.span<{
+  $darkColor: string;
+  $lightColor: string;
+}>`
   width: 0.625rem;
   height: 0.625rem;
-  background: ${(props) => props.$color};
+  background: ${(props) => props.$lightColor};
   border-radius: 2px;
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--service-text) 5%, transparent);
+
+  :where(.dark, [data-theme="dark"]) & {
+    background: ${(props) => props.$darkColor};
+  }
 `;
 
 const CellTooltip = styled.div<{
@@ -2503,54 +2560,65 @@ export function ProfileContributionGraph({
                   data-contribution-hit-surface="2d"
                   onClick={selectNearestCell}
                 >
-                  {calendar.cells.map((cell) => (
-                    <Cell
-                      key={cell.date}
-                      type="button"
-                      ref={(node) => {
-                        if (node && cell.selectable)
-                          cellRefs.current.set(cell.date, node);
-                        else cellRefs.current.delete(cell.date);
-                      }}
-                      disabled={!cell.inRange || !cell.selectable}
-                      tabIndex={
-                        cell.selectable && cell.date === tabbableDate ? 0 : -1
-                      }
-                      aria-hidden={cell.inRange ? undefined : true}
-                      aria-label={cell.inRange ? cellTitle(cell) : undefined}
-                      aria-current={
-                        cell.selectable && cell.date === selectedDate
-                          ? "date"
-                          : undefined
-                      }
-                      aria-pressed={
-                        cell.selectable ? cell.date === selectedDate : undefined
-                      }
-                      aria-controls={
-                        cell.selectable && cell.date === selectedDate
-                          ? breakdownId
-                          : undefined
-                      }
-                      aria-describedby={
-                        tooltip?.cell.date === cell.date ? tooltipId : undefined
-                      }
-                      data-contribution-date={
-                        cell.inRange ? cell.date : undefined
-                      }
-                      $active={tooltip?.cell.date === cell.date}
-                      $color={getContributionColor(palette, cell.intensity)}
-                      $inRange={cell.inRange}
-                      $selected={cell.date === selectedDate}
-                      onClick={() => selectCell(cell)}
-                      onPointerEnter={(event) =>
-                        handleCellPointerEnter(cell, event)
-                      }
-                      onPointerLeave={handleCellPointerLeave}
-                      onFocus={(event) => handleCellFocus(cell, event)}
-                      onBlur={() => setTooltip(null)}
-                      onKeyDown={(event) => handleCellKeyDown(cell, event)}
-                    />
-                  ))}
+                  {calendar.cells.map((cell) => {
+                    const colors = getContributionColors(
+                      palette,
+                      cell.intensity,
+                    );
+                    return (
+                      <Cell
+                        key={cell.date}
+                        type="button"
+                        ref={(node) => {
+                          if (node && cell.selectable)
+                            cellRefs.current.set(cell.date, node);
+                          else cellRefs.current.delete(cell.date);
+                        }}
+                        disabled={!cell.inRange || !cell.selectable}
+                        tabIndex={
+                          cell.selectable && cell.date === tabbableDate ? 0 : -1
+                        }
+                        aria-hidden={cell.inRange ? undefined : true}
+                        aria-label={cell.inRange ? cellTitle(cell) : undefined}
+                        aria-current={
+                          cell.selectable && cell.date === selectedDate
+                            ? "date"
+                            : undefined
+                        }
+                        aria-pressed={
+                          cell.selectable
+                            ? cell.date === selectedDate
+                            : undefined
+                        }
+                        aria-controls={
+                          cell.selectable && cell.date === selectedDate
+                            ? breakdownId
+                            : undefined
+                        }
+                        aria-describedby={
+                          tooltip?.cell.date === cell.date
+                            ? tooltipId
+                            : undefined
+                        }
+                        data-contribution-date={
+                          cell.inRange ? cell.date : undefined
+                        }
+                        $active={tooltip?.cell.date === cell.date}
+                        $darkColor={colors.dark}
+                        $inRange={cell.inRange}
+                        $lightColor={colors.light}
+                        $selected={cell.date === selectedDate}
+                        onClick={() => selectCell(cell)}
+                        onPointerEnter={(event) =>
+                          handleCellPointerEnter(cell, event)
+                        }
+                        onPointerLeave={handleCellPointerLeave}
+                        onFocus={(event) => handleCellFocus(cell, event)}
+                        onBlur={() => setTooltip(null)}
+                        onKeyDown={(event) => handleCellKeyDown(cell, event)}
+                      />
+                    );
+                  })}
                 </Grid>
               </CalendarRow>
             </CalendarBody>
@@ -2568,7 +2636,10 @@ export function ProfileContributionGraph({
                 {isometricGeometry.cells.map((geometry) => {
                   const { cell } = geometry;
                   const faces = contributionCubeFaces(geometry);
-                  const color = getContributionColor(palette, cell.intensity);
+                  const colors = getContributionColors(
+                    palette,
+                    cell.intensity,
+                  );
                   const active = tooltip?.cell.date === cell.date;
                   const selected = selectedDate === cell.date;
                   const interactive = cell.selectable;
@@ -2616,18 +2687,21 @@ export function ProfileContributionGraph({
                         interactive && handleCellKeyDown(cell, event)
                       }
                     >
-                      <polygon
+                      <IsometricSide
                         points={faces.left}
-                        fill={shadeContributionColor(color, 58)}
+                        $darkColor={shadeContributionColor(colors.dark, 58)}
+                        $lightColor={shadeContributionColor(colors.light, 58)}
                       />
-                      <polygon
+                      <IsometricSide
                         points={faces.right}
-                        fill={shadeContributionColor(color, 72)}
+                        $darkColor={shadeContributionColor(colors.dark, 72)}
+                        $lightColor={shadeContributionColor(colors.light, 72)}
                       />
                       <IsometricTop
                         points={faces.top}
-                        fill={color}
                         $active={active}
+                        $darkColor={colors.dark}
+                        $lightColor={colors.light}
                         $selected={selected}
                       />
                     </IsometricCell>
@@ -2651,12 +2725,16 @@ export function ProfileContributionGraph({
             <PaletteControl>
               <span>Color</span>
               <PalettePreview aria-hidden="true">
-                {([1, 2, 3, 4] as const).map((level) => (
-                  <PalettePreviewSwatch
-                    key={level}
-                    $color={getContributionColor(palette, level)}
-                  />
-                ))}
+                {([1, 2, 3, 4] as const).map((level) => {
+                  const colors = getContributionColors(palette, level);
+                  return (
+                    <PalettePreviewSwatch
+                      key={level}
+                      $darkColor={colors.dark}
+                      $lightColor={colors.light}
+                    />
+                  );
+                })}
               </PalettePreview>
               <PaletteSelect
                 name="profile-contribution-palette"
@@ -2676,15 +2754,19 @@ export function ProfileContributionGraph({
             <Legend aria-label="Contribution intensity, low to high">
               <span>Low</span>
               <LegendSwatches>
-                {[0, 1, 2, 3, 4].map((level) => (
-                  <LegendSwatch
-                    key={level}
-                    $color={getContributionColor(
-                      palette,
-                      level as ContributionCell["intensity"],
-                    )}
-                  />
-                ))}
+                {[0, 1, 2, 3, 4].map((level) => {
+                  const colors = getContributionColors(
+                    palette,
+                    level as ContributionCell["intensity"],
+                  );
+                  return (
+                    <LegendSwatch
+                      key={level}
+                      $darkColor={colors.dark}
+                      $lightColor={colors.light}
+                    />
+                  );
+                })}
               </LegendSwatches>
               <span>High</span>
             </Legend>

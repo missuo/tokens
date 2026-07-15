@@ -2,6 +2,7 @@
 
 import styled from "styled-components";
 import type { TokenContributionData, GraphColorPalette } from "@/lib/types";
+import { getDarkGradeColors } from "@/lib/themes";
 import {
   formatCurrency,
   formatTokenCount,
@@ -125,16 +126,24 @@ const StatItemLabel = styled.div`
   overflow-wrap: anywhere;
 `;
 
-const StatItemValue = styled.div<{ $highlight?: boolean; $color?: string }>`
+const StatItemValue = styled.div<{
+  $darkColor?: string;
+  $highlight?: boolean;
+  $lightColor?: string;
+}>`
   font-weight: 700;
   letter-spacing: -0.025em;
   font-size: ${props => props.$highlight ? '20px' : '18px'};
-  color: ${props => props.$color || 'var(--color-fg-default)'};
+  color: ${props => props.$lightColor || 'var(--color-fg-default)'};
   min-width: 0;
   overflow-wrap: anywhere;
 
   @media (max-width: 400px) {
     font-size: ${props => props.$highlight ? '18px' : '16px'};
+  }
+
+  :where(.dark, [data-theme="dark"]) & {
+    color: ${props => props.$darkColor || 'var(--color-fg-default)'};
   }
 `;
 
@@ -168,7 +177,13 @@ export function StatsPanel({ data, palette, totalActiveTimeMs, sessionCount, mcp
       <Heading>Statistics</Heading>
 
       <Grid>
-        <StatItem label="Total Cost" value={formatCurrency(summary.totalCost)} highlightColor={palette.grade1} highlight />
+        <StatItem
+          label="Total Cost"
+          value={formatCurrency(summary.totalCost)}
+          highlightDarkColor={getDarkGradeColors(palette)[3]}
+          highlightLightColor={palette.grade4}
+          highlight
+        />
         <StatItem label="Total Tokens" value={formatTokenCount(summary.totalTokens)} />
         <StatItem label="Active Days" value={`${summary.activeDays} / ${summary.totalDays}`} />
         <StatItem label="Avg / Day" value={formatCurrency(summary.averagePerDay)} />
@@ -198,17 +213,30 @@ interface StatItemProps {
   label: string;
   value: string;
   subValue?: string;
-  highlightColor?: string;
+  highlightDarkColor?: string;
+  highlightLightColor?: string;
   highlight?: boolean;
 }
 
-function StatItem({ label, value, subValue, highlightColor, highlight }: StatItemProps) {
+function StatItem({
+  label,
+  value,
+  subValue,
+  highlightDarkColor,
+  highlightLightColor,
+  highlight,
+}: StatItemProps) {
   return (
     <StatItemContainer>
       <StatItemLabel>{label}</StatItemLabel>
       <StatItemValue
         $highlight={highlight}
-        $color={highlight && highlightColor ? highlightColor : undefined}
+        $darkColor={
+          highlight && highlightDarkColor ? highlightDarkColor : undefined
+        }
+        $lightColor={
+          highlight && highlightLightColor ? highlightLightColor : undefined
+        }
       >
         {value}
       </StatItemValue>

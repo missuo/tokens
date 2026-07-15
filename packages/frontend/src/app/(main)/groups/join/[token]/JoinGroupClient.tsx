@@ -91,7 +91,7 @@ const Button = styled.button`
   border-radius: 8px;
   border: 1px solid var(--service-accent);
   background: var(--service-accent);
-  color: #fff;
+  color: var(--service-accent-foreground);
   font-size: 0.875rem;
   font-weight: 600;
 
