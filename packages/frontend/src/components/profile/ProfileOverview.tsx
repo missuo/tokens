@@ -151,6 +151,7 @@ const Actions = styled.div`
 `;
 
 const actionStyles = css`
+  position: relative;
   display: inline-flex;
   min-height: 34px;
   align-items: center;
@@ -183,9 +184,15 @@ const actionStyles = css`
   }
 
   @media (pointer: coarse) {
-    min-height: 44px;
-    padding-top: 0.65rem;
-    padding-bottom: 0.65rem;
+    min-height: 36px;
+    padding-top: 0.45rem;
+    padding-bottom: 0.45rem;
+
+    &::after {
+      position: absolute;
+      inset: -4px 0;
+      content: "";
+    }
   }
 
   @media (prefers-reduced-motion: reduce) {
