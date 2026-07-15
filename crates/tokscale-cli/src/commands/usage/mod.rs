@@ -524,6 +524,55 @@ fn partition_results(
     (outputs, errors)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+enum UsageFailureStatus {
+    AuthExpired,
+    NeedsAuth,
+    RateLimited,
+    Unavailable,
+}
+
+fn classify_provider_failure(error: &str) -> UsageFailureStatus {
+    if error.contains("AUTH_EXPIRED") {
+        UsageFailureStatus::AuthExpired
+    } else if error.contains("RATE_LIMITED") || error.contains("HTTP 429") {
+        UsageFailureStatus::RateLimited
+    } else if error.contains("NEEDS_AUTH") {
+        UsageFailureStatus::NeedsAuth
+    } else {
+        UsageFailureStatus::Unavailable
+    }
+}
+
+fn usage_json(report: &UsageFetchReport, include_status: bool) -> Result<String> {
+    if !include_status {
+        return Ok(serde_json::to_string_pretty(&report.outputs)?);
+    }
+    let mut rows = report
+        .outputs
+        .iter()
+        .map(|output| {
+            let mut value = serde_json::to_value(output)?;
+            if let Some(object) = value.as_object_mut() {
+                object.insert("status".to_string(), serde_json::json!("live"));
+            }
+            Ok::<serde_json::Value, serde_json::Error>(value)
+        })
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    rows.extend(report.diagnostics.iter().map(|diagnostic| {
+        serde_json::json!({
+            "provider": diagnostic.provider,
+            "account": diagnostic.account.as_ref(),
+            "plan": null,
+            "email": null,
+            "metrics": [],
+            "status": classify_provider_failure(&diagnostic.message),
+        })
+    }));
+    Ok(serde_json::to_string_pretty(&rows)?)
+}
+
 // ── Light-mode rendering ──
 
 const BAR_WIDTH: usize = 12;
@@ -600,15 +649,34 @@ fn render_light(output: &UsageOutput) {
     println!("╰{}╯", "─".repeat(CARD_WIDTH));
 }
 
-pub fn run(json: bool, _light: bool) -> Result<()> {
+pub fn run(json: bool, _light: bool, include_status: bool) -> Result<()> {
+    if include_status {
+        let report = fetch_all_report_with_intent(UsageFetchIntent::CliReadOnly);
+        if json {
+            println!("{}", usage_json(&report, true)?);
+        } else {
+            for output in &report.outputs {
+                render_light(output);
+            }
+            for diagnostic in &report.diagnostics {
+                eprintln!(
+                    "{}: {} — skipped",
+                    diagnostic.display_name(),
+                    diagnostic.message
+                );
+            }
+        }
+        return Ok(());
+    }
+
     let (outputs, errors) = fetch_all_with_errors();
     if json {
         // Keep stdout pure JSON: do NOT emit provider warnings here, since they
         // would corrupt downstream `--json` consumers that read stderr too.
         println!("{}", serde_json::to_string_pretty(&outputs)?);
     } else {
-        for o in &outputs {
-            render_light(o);
+        for output in &outputs {
+            render_light(output);
         }
         // Surface active-but-failed providers (e.g. an expired session cookie)
         // so they don't silently vanish from the output. One concise line per
@@ -756,6 +824,60 @@ mod tests {
 
         assert!(output.account.is_none());
         assert_eq!(output.display_name(), "Codex");
+        Ok(())
+    }
+
+    #[test]
+    fn provider_failure_statuses_are_classified_without_raw_errors() {
+        assert_eq!(
+            classify_provider_failure("AUTH_EXPIRED token=secret"),
+            UsageFailureStatus::AuthExpired
+        );
+        assert_eq!(
+            classify_provider_failure("RATE_LIMITED bearer=secret"),
+            UsageFailureStatus::RateLimited
+        );
+        assert_eq!(
+            classify_provider_failure("NEEDS_AUTH refresh=secret"),
+            UsageFailureStatus::NeedsAuth
+        );
+        assert_eq!(
+            classify_provider_failure("network token=secret"),
+            UsageFailureStatus::Unavailable
+        );
+    }
+
+    #[test]
+    fn status_json_keeps_successes_and_safe_failure_placeholders() -> Result<()> {
+        let report = UsageFetchReport {
+            outputs: vec![UsageOutput {
+                provider: "Codex".to_string(),
+                account: None,
+                plan: Some("Plus".to_string()),
+                email: None,
+                metrics: vec![],
+                reset_credits: None,
+                credit_status: None,
+                spend_control: None,
+            }],
+            diagnostics: vec![UsageFetchDiagnostic::new(
+                "Grok Build",
+                None,
+                "AUTH_EXPIRED token=secret",
+            )],
+        };
+
+        let json = usage_json(&report, true)?;
+        let value: serde_json::Value = serde_json::from_str(&json)?;
+        let rows = value.as_array().expect("top-level usage array");
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["provider"], "Codex");
+        assert_eq!(rows[0]["status"], "live");
+        assert_eq!(rows[1]["provider"], "Grok Build");
+        assert_eq!(rows[1]["status"], "auth-expired");
+        assert_eq!(rows[1]["metrics"], serde_json::json!([]));
+        assert!(!json.contains("secret"));
         Ok(())
     }
 }

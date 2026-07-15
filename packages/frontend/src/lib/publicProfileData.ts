@@ -123,7 +123,8 @@ export async function getPublicProfileResponse(
     }
 
     if (username !== user.username) {
-      const canonicalUrl = new URL(`/api/users/${user.username}`, request.url);
+      const canonicalUrl = new URL(request.url);
+      canonicalUrl.pathname = `/api/users/${user.username}`;
       if (period !== "all") {
         canonicalUrl.searchParams.set("period", period);
       }

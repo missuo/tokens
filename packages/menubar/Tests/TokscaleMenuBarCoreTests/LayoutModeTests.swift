@@ -2,10 +2,10 @@ import XCTest
 @testable import TokscaleMenuBarCore
 
 final class LayoutModeTests: XCTestCase {
-    func testDefaultsToSingle() {
-        XCTAssertEqual(LayoutMode.default, .single)
-        XCTAssertEqual(LayoutMode(storedValue: nil), .single)
-        XCTAssertEqual(LayoutMode(storedValue: "bogus"), .single)
+    func testDefaultsToPaged() {
+        XCTAssertEqual(LayoutMode.default, .paged)
+        XCTAssertEqual(LayoutMode(storedValue: nil), .paged)
+        XCTAssertEqual(LayoutMode(storedValue: "bogus"), .paged)
     }
 
     func testRoundTripsKnownValues() {

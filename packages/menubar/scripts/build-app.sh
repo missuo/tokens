@@ -4,14 +4,14 @@ set -euo pipefail
 package_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$package_dir"
 
-swift build -c debug
+swift build -c release
 
 app_dir="$package_dir/.build/TokscaleMenuBar.app"
 contents_dir="$app_dir/Contents"
 macos_dir="$contents_dir/MacOS"
 
 mkdir -p "$macos_dir"
-cp "$package_dir/.build/debug/tokens-menubar" "$macos_dir/tokens-menubar"
+cp "$package_dir/.build/release/tokens-menubar" "$macos_dir/tokens-menubar"
 
 cat >"$contents_dir/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>

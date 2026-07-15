@@ -264,6 +264,11 @@ enum Commands {
             help = "Show what would be submitted without actually submitting"
         )]
         dry_run: bool,
+        #[arg(
+            long,
+            help = "Authoritatively replace explicitly selected clients within --since/--until"
+        )]
+        replace: bool,
     },
     #[command(about = "Run in the background and submit usage on a recurring interval")]
     Serve {
@@ -325,6 +330,8 @@ enum Commands {
         json: bool,
         #[arg(long, help = "Light terminal output (no TUI)")]
         light: bool,
+        #[arg(long, hide = true)]
+        include_status: bool,
     },
     #[command(about = "Codex account integration commands")]
     Codex {
@@ -758,16 +765,18 @@ fn main() -> Result<()> {
             clients,
             date,
             dry_run,
+            replace,
         }) => {
             reject_unsupported_home_override(&cli.home, "submit")?;
-            let (since, until) = build_date_filter(&date);
-            let year = normalize_year_filter(&date);
             // Bypass settings.json defaultClients for the submit path: we want the
             // submit-specific default_submit_clients() fallback (in run_submit_command)
             // to fire when the user passes no client flags, not the user's general
             // defaultClients view filter (which may exclude clients they still want
             // to upload). Pass an explicit empty defaults slice.
             let clients = build_client_filter_with_defaults(clients, &[]);
+            let replacement = resolve_submit_replacement(replace, clients.as_deref(), &date)?;
+            let (since, until) = build_date_filter(&date);
+            let year = normalize_year_filter(&date);
             run_submit_command(
                 clients,
                 since,
@@ -775,6 +784,7 @@ fn main() -> Result<()> {
                 year,
                 dry_run,
                 SubmitMode::Interactive,
+                replacement,
             )
         }
         Some(Commands::Serve { clients, interval }) => {
@@ -826,9 +836,13 @@ fn main() -> Result<()> {
             reject_unsupported_home_override(&cli.home, "antigravity")?;
             run_antigravity_command(subcommand)
         }
-        Some(Commands::Usage { json, light }) => {
+        Some(Commands::Usage {
+            json,
+            light,
+            include_status,
+        }) => {
             reject_unsupported_home_override(&cli.home, "usage")?;
-            commands::usage::run(json, light)
+            commands::usage::run(json, light, include_status)
         }
         Some(Commands::Codex { subcommand }) => {
             reject_unsupported_home_override(&cli.home, "codex")?;
@@ -4247,6 +4261,16 @@ struct TsSourceContribution {
     tokens: TsTokenBreakdown,
     cost: f64,
     messages: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    provenance: Option<TsClientContributionProvenance>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TsClientContributionProvenance {
+    schema_version: u32,
+    message_count: i32,
+    model_count: u32,
 }
 
 #[derive(serde::Serialize)]
@@ -4324,6 +4348,81 @@ struct TsTimeMetrics {
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
+struct TsClientManifestCoverage {
+    mode: &'static str,
+    start: String,
+    end: String,
+    missing_data: &'static str,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TsClientManifestEntry {
+    client: String,
+    parser_revision: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    coverage: Option<TsClientManifestCoverage>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TsClientManifest {
+    schema_version: u32,
+    clients: Vec<TsClientManifestEntry>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SubmitReplacementCoverage {
+    clients: Vec<String>,
+    start: String,
+    end: String,
+}
+
+fn resolve_submit_replacement(
+    replace: bool,
+    clients: Option<&[String]>,
+    date: &DateRangeFlags,
+) -> Result<Option<SubmitReplacementCoverage>> {
+    if !replace {
+        return Ok(None);
+    }
+    if date.today || date.yesterday || date.week || date.month || date.year.is_some() {
+        return Err(anyhow::anyhow!(
+            "--replace only accepts explicit --since and --until bounds; remove --today/--yesterday/--week/--month/--year"
+        ));
+    }
+
+    let replacement_clients = clients
+        .filter(|clients| !clients.is_empty())
+        .map(<[String]>::to_vec)
+        .ok_or_else(|| anyhow::anyhow!("--replace requires at least one explicit --client"))?;
+    let start = date
+        .since
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("--replace requires a bounded --since date"))?;
+    let end = date
+        .until
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("--replace requires a bounded --until date"))?;
+    let start_date = chrono::NaiveDate::parse_from_str(start, "%Y-%m-%d")
+        .map_err(|_| anyhow::anyhow!("--replace --since must use YYYY-MM-DD"))?;
+    let end_date = chrono::NaiveDate::parse_from_str(end, "%Y-%m-%d")
+        .map_err(|_| anyhow::anyhow!("--replace --until must use YYYY-MM-DD"))?;
+    if start_date > end_date {
+        return Err(anyhow::anyhow!(
+            "--replace --until must be on or after --since"
+        ));
+    }
+
+    Ok(Some(SubmitReplacementCoverage {
+        clients: replacement_clients,
+        start: start.to_string(),
+        end: end.to_string(),
+    }))
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 struct TsTokenContributionData {
     meta: TsExportMeta,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -4335,12 +4434,74 @@ struct TsTokenContributionData {
     time_metrics: Option<TsTimeMetrics>,
     #[serde(skip_serializing_if = "Option::is_none")]
     mcp_servers: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    client_manifest: Option<TsClientManifest>,
+}
+
+fn submit_parser_revision(client: &str) -> u32 {
+    if client == "codex" {
+        2
+    } else {
+        1
+    }
+}
+
+fn build_submit_client_manifest(
+    graph: &tokscale_core::GraphResult,
+    replacement: Option<&SubmitReplacementCoverage>,
+) -> TsClientManifest {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    let mut clients = BTreeSet::new();
+    for day in &graph.contributions {
+        for contribution in &day.clients {
+            clients.insert(contribution.client.clone());
+        }
+    }
+    if let Some(replacement) = replacement {
+        clients.extend(replacement.clients.iter().cloned());
+    }
+
+    let replacement_clients: BTreeMap<&str, &SubmitReplacementCoverage> = replacement
+        .into_iter()
+        .flat_map(|coverage| {
+            coverage
+                .clients
+                .iter()
+                .map(move |client| (client.as_str(), coverage))
+        })
+        .collect();
+
+    TsClientManifest {
+        schema_version: 1,
+        clients: clients
+            .into_iter()
+            .map(|client| {
+                let coverage = replacement_clients.get(client.as_str()).map(|replacement| {
+                    TsClientManifestCoverage {
+                        mode: "full",
+                        start: replacement.start.clone(),
+                        end: replacement.end.clone(),
+                        missing_data: "tombstone",
+                    }
+                });
+                TsClientManifestEntry {
+                    parser_revision: submit_parser_revision(&client),
+                    client,
+                    coverage,
+                }
+            })
+            .collect(),
+    }
 }
 
 fn to_ts_token_contribution_data(
     graph: &tokscale_core::GraphResult,
     device: Option<&device::SubmitDevice>,
+    replacement: Option<&SubmitReplacementCoverage>,
 ) -> TsTokenContributionData {
+    let include_submit_provenance = device.is_some();
+
     TsTokenContributionData {
         meta: TsExportMeta {
             generated_at: graph.meta.generated_at.clone(),
@@ -4354,6 +4515,7 @@ fn to_ts_token_contribution_data(
             id: d.id.clone(),
             name: d.name.clone(),
         }),
+        client_manifest: device.map(|_| build_submit_client_manifest(graph, replacement)),
         summary: TsDataSummary {
             total_tokens: graph.summary.total_tokens,
             total_cost: graph.summary.total_cost,
@@ -4415,6 +4577,13 @@ fn to_ts_token_contribution_data(
                         },
                         cost: s.cost,
                         messages: s.messages,
+                        provenance: include_submit_provenance.then(|| {
+                            TsClientContributionProvenance {
+                                schema_version: submit_parser_revision(&s.client),
+                                message_count: s.messages,
+                                model_count: 1,
+                            }
+                        }),
                     })
                     .collect(),
                 active_time_ms: d.active_time_ms,
@@ -4934,7 +5103,7 @@ fn run_graph_command(
     emit_cursor_setup_warnings(&cursor_setup_warnings);
 
     let processing_time_ms = start.elapsed().as_millis() as u32;
-    let output_data = to_ts_token_contribution_data(&graph_result, None);
+    let output_data = to_ts_token_contribution_data(&graph_result, None, None);
     let json_output = if subagents || work_time {
         // Attach opt-in breakdowns as separate top-level keys so the shared
         // contribution-data shape (and therefore the submit payload) stays
@@ -5278,7 +5447,15 @@ fn run_autosubmit_command(subcommand: commands::autosubmit::AutosubmitSubcommand
             };
 
             let (clients, since, until, year) = commands::autosubmit::submit_filters(&settings);
-            match run_submit_command(clients, since, until, year, false, SubmitMode::Autosubmit) {
+            match run_submit_command(
+                clients,
+                since,
+                until,
+                year,
+                false,
+                SubmitMode::Autosubmit,
+                None,
+            ) {
                 Ok(()) => {
                     commands::autosubmit::record_run_success(
                         chrono::Utc::now().timestamp_millis(),
@@ -5335,6 +5512,7 @@ fn run_submit_command(
     year: Option<String>,
     dry_run: bool,
     mode: SubmitMode,
+    replacement: Option<SubmitReplacementCoverage>,
 ) -> Result<()> {
     use colored::Colorize;
     use std::io::IsTerminal;
@@ -5440,6 +5618,23 @@ fn run_submit_command(
     let excluded_rows = exclude_tokenless_cost_contributions(&mut graph_result);
     report_excluded_tokenless_rows(&excluded_rows);
 
+    if let Some(replacement) = replacement.as_ref() {
+        for client in &replacement.clients {
+            let has_contribution = graph_result
+                .contributions
+                .iter()
+                .any(|day| day.clients.iter().any(|entry| &entry.client == client));
+            if !has_contribution {
+                return Err(anyhow::anyhow!(
+                    "--replace found no {} contributions in {} to {}; refusing an unanchored replacement",
+                    client,
+                    replacement.start,
+                    replacement.end
+                ));
+            }
+        }
+    }
+
     println!("{}", "  Data to submit:".white());
     println!(
         "{}",
@@ -5494,7 +5689,8 @@ fn run_submit_command(
     let api_url = auth::get_api_base_url();
 
     let submit_device = device::resolve_submit_device()?;
-    let submit_payload = to_ts_token_contribution_data(&graph_result, Some(&submit_device));
+    let submit_payload =
+        to_ts_token_contribution_data(&graph_result, Some(&submit_device), replacement.as_ref());
 
     let response = rt.block_on(async {
         reqwest::Client::new()
@@ -7672,13 +7868,216 @@ mod tests {
             name: Some("Test device".to_string()),
         };
 
-        let payload = to_ts_token_contribution_data(&graph, Some(&device));
+        let payload = to_ts_token_contribution_data(&graph, Some(&device), None);
 
         assert_eq!(payload.device.as_ref().unwrap().id, "dev_test");
         assert_eq!(
             payload.device.as_ref().unwrap().name.as_deref(),
             Some("Test device")
         );
+    }
+
+    #[test]
+    fn test_submit_payload_versions_client_parser_provenance_without_changing_graph_json() {
+        let graph = graph_result_with_contributions(vec![day_with_clients(
+            "2026-12-31",
+            30,
+            vec![
+                client_contribution("codex", "gpt-5.5", "openai", 20, 2.0, 2),
+                client_contribution("claude", "claude-sonnet-4", "anthropic", 10, 1.0, 1),
+            ],
+        )]);
+        let device = device::SubmitDevice {
+            id: "dev_test".to_string(),
+            name: None,
+        };
+
+        let submit_json =
+            serde_json::to_value(to_ts_token_contribution_data(&graph, Some(&device), None))
+                .unwrap();
+        let submit_clients = submit_json["contributions"][0]["clients"]
+            .as_array()
+            .unwrap();
+        let codex = submit_clients
+            .iter()
+            .find(|client| client["client"] == "codex")
+            .unwrap();
+        let claude = submit_clients
+            .iter()
+            .find(|client| client["client"] == "claude")
+            .unwrap();
+
+        assert_eq!(codex["provenance"]["schemaVersion"], 2);
+        assert_eq!(codex["provenance"]["messageCount"], 2);
+        assert_eq!(codex["provenance"]["modelCount"], 1);
+        assert_eq!(claude["provenance"]["schemaVersion"], 1);
+
+        let manifest = &submit_json["clientManifest"];
+        assert_eq!(manifest["schemaVersion"], 1);
+        let manifest_clients = manifest["clients"].as_array().unwrap();
+        let codex_manifest = manifest_clients
+            .iter()
+            .find(|client| client["client"] == "codex")
+            .unwrap();
+        let claude_manifest = manifest_clients
+            .iter()
+            .find(|client| client["client"] == "claude")
+            .unwrap();
+        assert_eq!(codex_manifest["parserRevision"], 2);
+        assert!(codex_manifest.get("coverage").is_none());
+        assert_eq!(claude_manifest["parserRevision"], 1);
+        assert!(claude_manifest.get("coverage").is_none());
+
+        let graph_json =
+            serde_json::to_value(to_ts_token_contribution_data(&graph, None, None)).unwrap();
+        assert!(graph_json.get("clientManifest").is_none());
+        for client in graph_json["contributions"][0]["clients"]
+            .as_array()
+            .unwrap()
+        {
+            assert!(client.get("provenance").is_none());
+        }
+    }
+
+    #[test]
+    fn test_submit_replacement_payload_declares_bounded_tombstone_coverage() {
+        let graph = graph_result_with_contributions(vec![daily_contribution(
+            "2026-07-12",
+            20,
+            2.50,
+            "codex",
+            "gpt-5.5",
+        )]);
+        let device = device::SubmitDevice {
+            id: "dev_test".to_string(),
+            name: None,
+        };
+        let replacement = SubmitReplacementCoverage {
+            clients: vec!["codex".to_string()],
+            start: "2026-04-17".to_string(),
+            end: "2026-07-12".to_string(),
+        };
+
+        let payload = serde_json::to_value(to_ts_token_contribution_data(
+            &graph,
+            Some(&device),
+            Some(&replacement),
+        ))
+        .unwrap();
+
+        assert_eq!(
+            payload["clientManifest"],
+            serde_json::json!({
+                "schemaVersion": 1,
+                "clients": [{
+                    "client": "codex",
+                    "parserRevision": 2,
+                    "coverage": {
+                        "mode": "full",
+                        "start": "2026-04-17",
+                        "end": "2026-07-12",
+                        "missingData": "tombstone"
+                    }
+                }]
+            })
+        );
+    }
+
+    #[test]
+    fn test_submit_replace_command_parses_explicit_client_and_bounded_dates() {
+        let cli = Cli::try_parse_from([
+            "tokens",
+            "submit",
+            "-c",
+            "codex",
+            "--since",
+            "2026-04-17",
+            "--until",
+            "2026-07-12",
+            "--replace",
+        ])
+        .expect("bounded submit replacement should parse");
+
+        let Some(Commands::Submit {
+            clients,
+            date,
+            dry_run,
+            replace,
+        }) = cli.command
+        else {
+            panic!("expected submit command");
+        };
+
+        assert_eq!(clients.clients, vec![ClientFilter::Codex]);
+        assert_eq!(date.since.as_deref(), Some("2026-04-17"));
+        assert_eq!(date.until.as_deref(), Some("2026-07-12"));
+        assert!(!dry_run);
+        assert!(replace);
+    }
+
+    #[test]
+    fn test_submit_replacement_requires_explicit_client_and_raw_bounds() {
+        let clients = vec!["codex".to_string()];
+        let bounded = DateRangeFlags {
+            since: Some("2026-04-17".to_string()),
+            until: Some("2026-07-12".to_string()),
+            ..DateRangeFlags::default()
+        };
+
+        assert_eq!(
+            resolve_submit_replacement(true, Some(&clients), &bounded).unwrap(),
+            Some(SubmitReplacementCoverage {
+                clients,
+                start: "2026-04-17".to_string(),
+                end: "2026-07-12".to_string(),
+            })
+        );
+        assert!(resolve_submit_replacement(true, None, &bounded)
+            .unwrap_err()
+            .to_string()
+            .contains("explicit --client"));
+
+        let missing_until = DateRangeFlags {
+            since: Some("2026-04-17".to_string()),
+            ..DateRangeFlags::default()
+        };
+        assert!(
+            resolve_submit_replacement(true, Some(&["codex".to_string()]), &missing_until)
+                .unwrap_err()
+                .to_string()
+                .contains("--until")
+        );
+    }
+
+    #[test]
+    fn test_submit_replacement_rejects_partial_scan_filters_and_invalid_ranges() {
+        let clients = ["codex".to_string()];
+        let with_year = DateRangeFlags {
+            since: Some("2025-01-01".to_string()),
+            until: Some("2026-12-31".to_string()),
+            year: Some("2026".to_string()),
+            ..DateRangeFlags::default()
+        };
+        assert!(resolve_submit_replacement(true, Some(&clients), &with_year)
+            .unwrap_err()
+            .to_string()
+            .contains("explicit --since and --until"));
+
+        let with_week = DateRangeFlags {
+            week: true,
+            ..DateRangeFlags::default()
+        };
+        assert!(resolve_submit_replacement(true, Some(&clients), &with_week).is_err());
+
+        let reversed = DateRangeFlags {
+            since: Some("2026-07-12".to_string()),
+            until: Some("2026-04-17".to_string()),
+            ..DateRangeFlags::default()
+        };
+        assert!(resolve_submit_replacement(true, Some(&clients), &reversed)
+            .unwrap_err()
+            .to_string()
+            .contains("on or after"));
     }
 
     #[test]

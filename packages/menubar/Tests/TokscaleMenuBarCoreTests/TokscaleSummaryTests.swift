@@ -144,6 +144,23 @@ final class TokscaleSummaryTests: XCTestCase {
         XCTAssertEqual(summary.collapsed.state, "stale")
     }
 
+    func testFreshTodayDoesNotMaskStaleHistory() throws {
+        let data = sampleSummaryJSON(
+            generatedAt: "2026-06-04T02:59:00Z",
+            topJSON: #""client":"codex","model":"gpt-5.5""#,
+            accuracyJSON: #""confidence":"medium","sourceKinds":["local-scan"],"warnings":[]"#,
+            healthExtraJSON: #", "historyGeneratedAt":"2026-06-02T23:00:00Z""#
+        ).data(using: .utf8)!
+        var summary = try TokscaleSummary.decode(data)
+        let now = try isoDate("2026-06-04T03:00:00Z")
+
+        XCTAssertTrue(summary.needsScanOnOpen(now: now, minimumInterval: 60))
+        summary.refreshFreshness(now: now)
+
+        XCTAssertTrue(summary.stale)
+        XCTAssertEqual(summary.staleReason, "history-older-than-26h")
+    }
+
     func testSummaryRequestsOpenRefreshWhenStaleOrOlderThanMinimumInterval() throws {
         var staleSummary = try TokscaleSummary.decode(sampleSummaryData())
         staleSummary.refreshFreshness(now: try isoDate("2026-06-04T04:26:00Z"))
@@ -257,7 +274,7 @@ final class TokscaleSummaryTests: XCTestCase {
 
         XCTAssertEqual(dashboard.hero.title, "$399")
         XCTAssertEqual(dashboard.hero.subtitle, "4 AI clients - local cache")
-        XCTAssertEqual(dashboard.hero.progressLabel, "199% of daily average")
+        XCTAssertEqual(dashboard.hero.progressLabel, "199% of account avg")
         XCTAssertEqual(dashboard.hero.progress, 0.99, accuracy: 0.01)
         XCTAssertEqual(dashboard.clientLabels, ["Codex", "Claude", "Gemini", "OpenClaw"])
         XCTAssertEqual(dashboard.metrics[0], .init(title: "Today", value: "$398.56", detail: "522.6M tokens - 2501 messages"))
@@ -281,6 +298,7 @@ final class TokscaleSummaryTests: XCTestCase {
         XCTAssertEqual(dashboard.providers[0].share, 0.50, accuracy: 0.01)
         XCTAssertEqual(dashboard.providerDetails(for: "codex").title, "Codex")
         XCTAssertEqual(dashboard.providerDetails(for: "codex").model, "gpt-5.5")
+        XCTAssertEqual(dashboard.providerFocus(for: "codex").modelCostDetail, "gpt-5.5 $280.00 / composer $70.00")
         XCTAssertEqual(dashboard.providerDetails(for: "claude").title, "Claude")
     }
 
@@ -293,6 +311,7 @@ final class TokscaleSummaryTests: XCTestCase {
         XCTAssertEqual(claude.id, "claude")
         XCTAssertEqual(claude.title, "Claude")
         XCTAssertEqual(claude.topModel, "claude-sonnet")
+        XCTAssertEqual(claude.modelCostDetail, "claude-fable-5")
         XCTAssertEqual(claude.today, "$30.00 · 20M")
         XCTAssertEqual(claude.quotaWindows.map(\.title), ["5h", "Week"])
         XCTAssertEqual(claude.primaryQuota?.title, "5h")
@@ -328,6 +347,192 @@ final class TokscaleSummaryTests: XCTestCase {
         XCTAssertEqual(primaryQuota.detail(for: .used), "28% left")
         XCTAssertEqual(primaryQuota.progress(for: .used), 0.72, accuracy: 0.01)
         XCTAssertEqual(claude.weeklyQuota?.title, "Week")
+    }
+
+    func testDashboardModelIncludesGrokQuotaOnBoard() throws {
+        let data = sampleSummaryJSON(
+            topJSON: #""client":"codex","model":"gpt-5.5""#,
+            accuracyJSON: #""confidence":"medium","sourceKinds":["local-scan"],"warnings":[]"#,
+            quotaJSON: """
+            [
+              {
+                "provider": "Grok",
+                "plan": "SuperGrok",
+                "windows": [
+                  {
+                    "label": "Credits",
+                    "usedPercent": 15.0,
+                    "remainingPercent": 85.0,
+                    "remainingLabel": "85.0% left",
+                    "resetsAt": "2026-07-01T00:00:00+00:00"
+                  }
+                ]
+              }
+            ]
+            """
+        ).data(using: .utf8)!
+        let summary = try TokscaleSummary.decode(data)
+
+        let grok = try XCTUnwrap(TokscaleDashboardModel(summary: summary).quotaBoardProviders.first { $0.id == "grok" })
+
+        XCTAssertEqual(grok.title, "Grok")
+        XCTAssertEqual(grok.primaryQuota?.title, "Credits")
+        XCTAssertEqual(grok.primaryQuota?.value(for: .remaining), "85.0% left")
+        XCTAssertEqual(grok.primaryQuota?.detail(for: .remaining), "15% used")
+    }
+
+    func testDashboardMatchesGrokBuildAndShowsExpiredAuthStatus() throws {
+        let data = sampleSummaryJSON(
+            topJSON: #""client":"codex","model":"gpt-5.5""#,
+            accuracyJSON: #""confidence":"medium","sourceKinds":["local-scan"],"warnings":[]"#,
+            quotaJSON: """
+            [
+              {
+                "provider": "Grok Build",
+                "plan": null,
+                "status": "auth-expired",
+                "windows": []
+              }
+            ]
+            """
+        ).data(using: .utf8)!
+        let summary = try TokscaleSummary.decode(data)
+
+        let grok = TokscaleDashboardModel(summary: summary).providerFocus(for: "grok")
+
+        XCTAssertEqual(grok.quotaStatus, "Auth expired")
+        XCTAssertEqual(grok.quotaStatusDetail, "Sign in to Grok to refresh credits.")
+    }
+
+    func testDashboardShowsCachedQuotaWhenRefreshIsRateLimited() throws {
+        let data = sampleSummaryJSON(
+            topJSON: #""client":"claude","model":"claude-sonnet""#,
+            accuracyJSON: #""confidence":"medium","sourceKinds":["local-scan"],"warnings":[]"#,
+            quotaJSON: """
+            [
+              {
+                "provider": "Claude",
+                "plan": "Max",
+                "status": "rate-limited",
+                "windows": [
+                  {
+                    "label": "Session",
+                    "usedPercent": 8.0,
+                    "remainingPercent": 92.0,
+                    "resetsAt": null
+                  }
+                ]
+              }
+            ]
+            """
+        ).data(using: .utf8)!
+        let summary = try TokscaleSummary.decode(data)
+
+        let claude = TokscaleDashboardModel(summary: summary).providerFocus(for: "claude")
+
+        XCTAssertEqual(claude.quotaStatus, "Cached")
+        XCTAssertEqual(claude.quotaStatusDetail, "Rate limited; kept last successful quota.")
+        XCTAssertEqual(claude.primaryQuota?.title, "5h")
+    }
+
+    func testDashboardModelUsesSingleSharedGrokCreditQuota() throws {
+        let data = """
+        {
+          "version": 1,
+          "generatedAt": "2026-06-16T02:00:00Z",
+          "stale": false,
+          "collapsed": {"metric": "todayCost", "label": "$4.00", "state": "normal"},
+          "today": {"date": "2026-06-16", "costUsd": 4.0, "tokens": 4000, "messages": 12},
+          "totals": {
+            "costUsd": 12.0,
+            "tokens": 12000,
+            "activeDays": 1,
+            "clients": ["grok"],
+            "models": 2
+          },
+          "providers": [
+            {
+              "client": "grok",
+              "costUsd": 12.0,
+              "tokens": 12000,
+              "messages": 36,
+              "todayCostUsd": 4.0,
+              "todayTokens": 4000,
+              "todayMessages": 12,
+              "topModel": "grok-build",
+              "models": [
+                {
+                  "model": "grok-build",
+                  "costUsd": 8.0,
+                  "tokens": 8000,
+                  "messages": 24,
+                  "todayCostUsd": 3.0,
+                  "todayTokens": 3000,
+                  "todayMessages": 9
+                },
+                {
+                  "model": "grok-composer-2.5-fast",
+                  "costUsd": 4.0,
+                  "tokens": 4000,
+                  "messages": 12,
+                  "todayCostUsd": 1.0,
+                  "todayTokens": 1000,
+                  "todayMessages": 3
+                }
+              ]
+            }
+          ],
+          "quota": [
+            {
+              "provider": "Grok",
+              "plan": "SuperGrok",
+              "windows": [
+                {
+                  "label": "Credits",
+                  "usedPercent": 20.0,
+                  "remainingPercent": 80.0,
+                  "remainingLabel": "80.0% left",
+                  "resetsAt": "2026-07-01T00:00:00+00:00"
+                }
+              ]
+            }
+          ],
+          "history": [],
+          "top": {"client": "grok", "model": "grok-build"},
+          "health": {
+            "summaryPath": "/tmp/summary.json",
+            "lastScanDurationMs": 100,
+            "quotaRefreshedAt": "2026-06-16T02:00:00Z",
+            "warnings": []
+          },
+          "accuracy": {"confidence": "high", "sourceKinds": ["local-scan"], "warnings": []}
+        }
+        """.data(using: .utf8)!
+        let summary = try TokscaleSummary.decode(data)
+
+        let grok = try XCTUnwrap(TokscaleDashboardModel(summary: summary).quotaBoardProviders.first { $0.id == "grok" })
+
+        XCTAssertEqual(grok.quotaWindows.count, 1)
+        XCTAssertEqual(grok.primaryQuota?.title, "Credits")
+        XCTAssertEqual(grok.primaryQuota?.value(for: .remaining), "80.0% left")
+        XCTAssertEqual(grok.modelCostDetail, "grok $3.00 / composer $1.00")
+    }
+
+    func testProviderFocusUsesTodayCacheHitInsteadOfLifetimeValue() throws {
+        var dictionary = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: sampleSummaryData()) as? [String: Any]
+        )
+        var providers = try XCTUnwrap(dictionary["providers"] as? [[String: Any]])
+        let index = try XCTUnwrap(providers.firstIndex { ($0["client"] as? String) == "claude" })
+        providers[index]["cacheHitPercent"] = 97.6
+        providers[index]["todayCacheHitPercent"] = 42.5
+        dictionary["providers"] = providers
+        let data = try JSONSerialization.data(withJSONObject: dictionary)
+        let summary = try TokscaleSummary.decode(data)
+
+        let claude = TokscaleDashboardModel(summary: summary).providerFocus(for: "claude")
+
+        XCTAssertEqual(claude.cacheHitPercent, 42.5, accuracy: 0.01)
     }
 
     func testDashboardTreatsQuotaRefreshAsLiveWhenHistoryIsStale() throws {
@@ -491,7 +696,27 @@ final class TokscaleSummaryTests: XCTestCase {
               "todayCostUsd": 350.0,
               "todayTokens": 500000000,
               "todayMessages": 2400,
-              "topModel": "gpt-5.5"
+              "topModel": "gpt-5.5",
+              "models": [
+                {
+                  "model": "gpt-5.5",
+                  "costUsd": 9000.0,
+                  "tokens": 12000000000,
+                  "messages": 40000,
+                  "todayCostUsd": 280.0,
+                  "todayTokens": 400000000,
+                  "todayMessages": 1900
+                },
+                {
+                  "model": "codex-composer",
+                  "costUsd": 3000.0,
+                  "tokens": 4000000000,
+                  "messages": 12000,
+                  "todayCostUsd": 70.0,
+                  "todayTokens": 100000000,
+                  "todayMessages": 500
+                }
+              ]
             },
             {
               "client": "claude",
@@ -501,7 +726,27 @@ final class TokscaleSummaryTests: XCTestCase {
               "todayCostUsd": 30.0,
               "todayTokens": 20000000,
               "todayMessages": 90,
-              "topModel": "claude-sonnet"
+              "topModel": "claude-sonnet",
+              "models": [
+                {
+                  "model": "claude-sonnet",
+                  "costUsd": 5900.0,
+                  "tokens": 8500000000,
+                  "messages": 27000,
+                  "todayCostUsd": 0.0,
+                  "todayTokens": 0,
+                  "todayMessages": 0
+                },
+                {
+                  "model": "claude-fable-5",
+                  "costUsd": 100.0,
+                  "tokens": 500000000,
+                  "messages": 1000,
+                  "todayCostUsd": 0.0,
+                  "todayTokens": 20000000,
+                  "todayMessages": 90
+                }
+              ]
             },
             {
               "client": "gemini",

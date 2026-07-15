@@ -254,19 +254,319 @@ describe('POST /api/submit - Client-Level Merge', () => {
         provenance?: { schemaVersion: number; messageCount: number; modelCount: number };
       };
       client.provenance = {
-        schemaVersion: 1,
+        schemaVersion: 2,
+        messageCount: 7,
+        modelCount: 1,
+      };
+
+      const result = validateSubmission({
+        ...payload,
+        device: { id: 'dev_test' },
+        clientManifest: {
+          schemaVersion: 1,
+          clients: [{ client: 'codex', parserRevision: 2 }],
+        },
+      });
+
+      expect(result.valid).toBe(true);
+      expect(result.data?.contributions[0].clients[0].provenance).toEqual({
+        schemaVersion: 2,
+        messageCount: 7,
+        modelCount: 1,
+      });
+      expect(result.data?.clientManifest?.clients).toEqual([
+        { client: 'codex', parserRevision: 2 },
+      ]);
+    });
+
+    it('requires a matching manifest for revision 2 provenance', () => {
+      const payload = createMockSubmissionData({ clients: ['codex'] });
+      const client = payload.contributions[0].clients[0] as {
+        provenance?: { schemaVersion: number; messageCount: number; modelCount: number };
+      };
+      client.provenance = { schemaVersion: 2, messageCount: 7, modelCount: 1 };
+
+      const result = validateSubmission({
+        ...payload,
+        device: { id: 'dev_test' },
+      });
+
+      expect(result.valid).toBe(false);
+      expect(result.errors.join('\n')).toContain(
+        'codex revision 2 requires a matching clientManifest entry'
+      );
+    });
+
+    it('accepts bounded authoritative replacement coverage', () => {
+      const payload = createMockSubmissionData({ clients: ['codex'] });
+      const client = payload.contributions[0].clients[0] as {
+        provenance?: { schemaVersion: number; messageCount: number; modelCount: number };
+      };
+      client.provenance = { schemaVersion: 2, messageCount: 7, modelCount: 1 };
+
+      const result = validateSubmission({
+        ...payload,
+        device: { id: 'dev_test' },
+        clientManifest: {
+          schemaVersion: 1,
+          clients: [{
+            client: 'codex',
+            parserRevision: 2,
+            coverage: {
+              mode: 'full',
+              start: '2024-12-01',
+              end: '2024-12-01',
+              missingData: 'tombstone',
+            },
+          }],
+        },
+      });
+
+      expect(result.valid).toBe(true);
+      expect(result.data?.clientManifest?.clients[0].coverage).toEqual({
+        mode: 'full',
+        start: '2024-12-01',
+        end: '2024-12-01',
+        missingData: 'tombstone',
+      });
+    });
+
+    it('rejects unsupported and duplicate manifest entries', () => {
+      const payload = createMockSubmissionData({ clients: ['codex'] });
+
+      const unsupported = validateSubmission({
+        ...payload,
+        device: { id: 'dev_test' },
+        clientManifest: {
+          schemaVersion: 2,
+          clients: [{ client: 'codex', parserRevision: 1 }],
+        },
+      });
+      const duplicate = validateSubmission({
+        ...payload,
+        device: { id: 'dev_test' },
+        clientManifest: {
+          schemaVersion: 1,
+          clients: [
+            { client: 'codex', parserRevision: 1 },
+            { client: 'codex', parserRevision: 1 },
+          ],
+        },
+      });
+
+      expect(unsupported.valid).toBe(false);
+      expect(unsupported.errors.join('\n')).toContain('clientManifest.schemaVersion');
+      expect(duplicate.valid).toBe(false);
+      expect(duplicate.errors.join('\n')).toContain(
+        'clientManifest contains duplicate client codex'
+      );
+    });
+
+    it('rejects manifest revision mismatches and unanchored replacement coverage', () => {
+      const payload = createMockSubmissionData({ clients: ['codex'] });
+      const client = payload.contributions[0].clients[0] as {
+        provenance?: { schemaVersion: number; messageCount: number; modelCount: number };
+      };
+      client.provenance = { schemaVersion: 2, messageCount: 7, modelCount: 1 };
+
+      const mismatch = validateSubmission({
+        ...payload,
+        device: { id: 'dev_test' },
+        clientManifest: {
+          schemaVersion: 1,
+          clients: [{ client: 'codex', parserRevision: 1 }],
+        },
+      });
+      const unanchored = validateSubmission({
+        ...createMockSubmissionData({ clients: ['claude'] }),
+        device: { id: 'dev_test' },
+        clientManifest: {
+          schemaVersion: 1,
+          clients: [{
+            client: 'codex',
+            parserRevision: 2,
+            coverage: {
+              mode: 'full',
+              start: '2024-12-01',
+              end: '2024-12-01',
+              missingData: 'tombstone',
+            },
+          }],
+        },
+      });
+
+      expect(mismatch.valid).toBe(false);
+      expect(mismatch.errors.join('\n')).toContain(
+        'codex manifest revision must match contribution revision 2'
+      );
+      expect(unanchored.valid).toBe(false);
+      expect(unanchored.errors.join('\n')).toContain(
+        'full coverage for codex requires at least one submitted contribution'
+      );
+    });
+
+    it('normalizes kilocode in replacement manifests together with contributions', () => {
+      const payload = createMockSubmissionData({
+        clients: ['kilocode' as ClientType],
+      });
+
+      const result = validateSubmission({
+        ...payload,
+        device: { id: 'dev_test' },
+        clientManifest: {
+          schemaVersion: 1,
+          clients: [{
+            client: 'kilocode',
+            parserRevision: 1,
+            coverage: {
+              mode: 'full',
+              start: '2024-12-01',
+              end: '2024-12-01',
+              missingData: 'tombstone',
+            },
+          }],
+        },
+      });
+
+      expect(result.valid).toBe(true);
+      expect(result.data?.clientManifest?.clients[0].client).toBe('kilo');
+      expect(result.data?.contributions[0].clients[0].client).toBe('kilo');
+    });
+
+    it('rejects client provenance newer than the server supports', () => {
+      const payload = createMockSubmissionData({ clients: ['codex'] });
+      const client = payload.contributions[0].clients[0] as {
+        provenance?: { schemaVersion: number; messageCount: number; modelCount: number };
+      };
+      client.provenance = {
+        schemaVersion: 999,
         messageCount: 7,
         modelCount: 1,
       };
 
       const result = validateSubmission(payload);
 
-      expect(result.valid).toBe(true);
-      expect(result.data?.contributions[0].clients[0].provenance).toEqual({
-        schemaVersion: 1,
-        messageCount: 7,
+      expect(result.valid).toBe(false);
+      expect(result.errors.some((error) => error.includes('schemaVersion'))).toBe(true);
+    });
+
+    it('rejects revision 2 provenance for non-Codex clients', () => {
+      const payload = createMockSubmissionData({ clients: ['claude'] });
+      const client = payload.contributions[0].clients[0] as {
+        provenance?: { schemaVersion: number; messageCount: number; modelCount: number };
+      };
+      client.provenance = {
+        schemaVersion: 2,
+        messageCount: 5,
         modelCount: 1,
+      };
+
+      const result = validateSubmission(payload);
+
+      expect(result.valid).toBe(false);
+      expect(
+        result.errors.some((error) =>
+          error.includes('claude provenance schemaVersion must be at most 1')
+        )
+      ).toBe(true);
+    });
+
+    it('accepts revision 1 provenance for non-Codex clients', () => {
+      const payload = createMockSubmissionData({ clients: ['claude'] });
+      const client = payload.contributions[0].clients[0] as {
+        provenance?: { schemaVersion: number; messageCount: number; modelCount: number };
+      };
+      client.provenance = {
+        schemaVersion: 1,
+        messageCount: 5,
+        modelCount: 1,
+      };
+
+      const result = validateSubmission(payload);
+
+      expect(result.valid).toBe(true);
+      expect(result.data?.contributions[0].clients[0].provenance?.schemaVersion).toBe(1);
+    });
+
+    it('rejects mixed revisions for the same client across days', () => {
+      const payload = createMockSubmissionData({
+        clients: ['codex'],
+        contributions: [
+          {
+            date: '2024-12-01',
+            clients: [{
+              client: 'codex',
+              modelId: 'gpt-5.5',
+              cost: 1,
+              tokens: { input: 100, output: 50, cacheRead: 0, cacheWrite: 0 },
+              messages: 1,
+            }],
+          },
+          {
+            date: '2024-12-02',
+            clients: [{
+              client: 'codex',
+              modelId: 'gpt-5.5-mini',
+              cost: 2,
+              tokens: { input: 200, output: 100, cacheRead: 0, cacheWrite: 0 },
+              messages: 2,
+            }],
+          },
+        ],
       });
+      const first = payload.contributions[0].clients[0] as {
+        provenance?: { schemaVersion: number; messageCount: number; modelCount: number };
+      };
+      first.provenance = { schemaVersion: 2, messageCount: 1, modelCount: 1 };
+
+      const result = validateSubmission(payload);
+
+      expect(result.valid).toBe(false);
+      expect(
+        result.errors.some((error) =>
+          error.includes('codex provenance schemaVersion must be consistent')
+        )
+      ).toBe(true);
+    });
+
+    it('rejects mixed revisions for two models of the same client', () => {
+      const payload = createMockSubmissionData({
+        clients: ['codex'],
+        contributions: [{
+          date: '2024-12-01',
+          clients: [
+            {
+              client: 'codex',
+              modelId: 'gpt-5.5',
+              cost: 1,
+              tokens: { input: 100, output: 50, cacheRead: 0, cacheWrite: 0 },
+              messages: 1,
+            },
+            {
+              client: 'codex',
+              modelId: 'gpt-5.5-mini',
+              cost: 2,
+              tokens: { input: 200, output: 100, cacheRead: 0, cacheWrite: 0 },
+              messages: 2,
+            },
+          ],
+        }],
+      });
+      const first = payload.contributions[0].clients[0] as {
+        provenance?: { schemaVersion: number; messageCount: number; modelCount: number };
+      };
+      const second = payload.contributions[0].clients[1] as typeof first;
+      first.provenance = { schemaVersion: 2, messageCount: 1, modelCount: 1 };
+      second.provenance = { schemaVersion: 1, messageCount: 2, modelCount: 1 };
+
+      const result = validateSubmission(payload);
+
+      expect(result.valid).toBe(false);
+      expect(
+        result.errors.some((error) =>
+          error.includes('codex provenance schemaVersion must be consistent')
+        )
+      ).toBe(true);
     });
   });
 
