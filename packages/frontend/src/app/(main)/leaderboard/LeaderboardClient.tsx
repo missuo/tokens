@@ -26,6 +26,10 @@ import {
 import { parseCustomDateRange } from "@/lib/leaderboard/dateRange";
 import type { LeaderboardData, LeaderboardUser, Period } from "@/lib/leaderboard/types";
 
+const HOMEBREW_INSTALL_COMMAND = "brew install owo-network/brew/tokens";
+const LOGIN_COMMAND = "tokens login";
+const START_SERVICE_COMMAND = "brew services start tokens";
+
 const Section = styled.div`
   display: grid;
   gap: 10px;
@@ -1516,7 +1520,10 @@ export default function LeaderboardClient({ initialData, currentUser, initialSor
 
       <CTASection>
         <CTATitle>Join the Leaderboard</CTATitle>
-        <CTADescription>Install Tokens CLI and submit your usage data:</CTADescription>
+        <CTADescription>
+          Install the CLI, sign in once, and submit automatically in the
+          background:
+        </CTADescription>
         <CodeBlock>
           {mounted && typeof window !== "undefined" && window.location.hostname !== "tokens.ci" && (
             <CodeLine>
@@ -1536,30 +1543,43 @@ export default function LeaderboardClient({ initialData, currentUser, initialSor
           )}
           <CodeLine>
             <CommandPrompt>$</CommandPrompt>
-            <CommandPrefix>bunx</CommandPrefix>
-            <CommandName>tokens</CommandName>
-            <CommandArg>login</CommandArg>
+            <CommandPrefix>brew</CommandPrefix>
+            <CommandName>install</CommandName>
+            <CommandArg>owo-network/brew/tokens</CommandArg>
             <CopyIconButton
               type="button"
-              onClick={() => handleCopyCommand("bunx tokens-cli login")}
-              className={copiedCommand === "bunx tokens-cli login" ? "copied" : ""}
+              onClick={() => handleCopyCommand(HOMEBREW_INSTALL_COMMAND)}
+              className={copiedCommand === HOMEBREW_INSTALL_COMMAND ? "copied" : ""}
               aria-label="Copy command"
             >
-              {copiedCommand === "bunx tokens-cli login" ? <CheckIcon size={16} /> : <CopyIcon size={16} />}
+              {copiedCommand === HOMEBREW_INSTALL_COMMAND ? <CheckIcon size={16} /> : <CopyIcon size={16} />}
             </CopyIconButton>
           </CodeLine>
           <CodeLine>
             <CommandPrompt>$</CommandPrompt>
-            <CommandPrefix>bunx</CommandPrefix>
             <CommandName>tokens</CommandName>
-            <CommandArg>submit</CommandArg>
+            <CommandArg>login</CommandArg>
             <CopyIconButton
               type="button"
-              onClick={() => handleCopyCommand("bunx tokens-cli submit")}
-              className={copiedCommand === "bunx tokens-cli submit" ? "copied" : ""}
+              onClick={() => handleCopyCommand(LOGIN_COMMAND)}
+              className={copiedCommand === LOGIN_COMMAND ? "copied" : ""}
               aria-label="Copy command"
             >
-              {copiedCommand === "bunx tokens-cli submit" ? <CheckIcon size={16} /> : <CopyIcon size={16} />}
+              {copiedCommand === LOGIN_COMMAND ? <CheckIcon size={16} /> : <CopyIcon size={16} />}
+            </CopyIconButton>
+          </CodeLine>
+          <CodeLine>
+            <CommandPrompt>$</CommandPrompt>
+            <CommandPrefix>brew</CommandPrefix>
+            <CommandName>services</CommandName>
+            <CommandArg>start tokens</CommandArg>
+            <CopyIconButton
+              type="button"
+              onClick={() => handleCopyCommand(START_SERVICE_COMMAND)}
+              className={copiedCommand === START_SERVICE_COMMAND ? "copied" : ""}
+              aria-label="Copy command"
+            >
+              {copiedCommand === START_SERVICE_COMMAND ? <CheckIcon size={16} /> : <CopyIcon size={16} />}
             </CopyIconButton>
           </CodeLine>
         </CodeBlock>
