@@ -26,9 +26,54 @@ import {
 import { parseCustomDateRange } from "@/lib/leaderboard/dateRange";
 import type { LeaderboardData, LeaderboardUser, Period } from "@/lib/leaderboard/types";
 
-const HOMEBREW_INSTALL_COMMAND = "brew install owo-network/brew/tokens";
-const LOGIN_COMMAND = "tokens login";
-const START_SERVICE_COMMAND = "brew services start tokens";
+type InstallPlatform = "macos" | "windows-linux";
+
+interface InstallCommand {
+  command: string;
+  prefix?: string;
+  name: string;
+  arg: string;
+}
+
+const INSTALL_COMMANDS: Record<InstallPlatform, readonly InstallCommand[]> = {
+  macos: [
+    {
+      command: "brew install owo-network/brew/tokens",
+      prefix: "brew",
+      name: "install",
+      arg: "owo-network/brew/tokens",
+    },
+    { command: "tokens login", name: "tokens", arg: "login" },
+    {
+      command: "brew services start tokens",
+      prefix: "brew",
+      name: "services",
+      arg: "start tokens",
+    },
+  ],
+  "windows-linux": [
+    {
+      command: "bunx tokens-cli@latest login",
+      prefix: "bunx",
+      name: "tokens-cli@latest",
+      arg: "login",
+    },
+    {
+      command: "bunx tokens-cli@latest submit",
+      prefix: "bunx",
+      name: "tokens-cli@latest",
+      arg: "submit",
+    },
+  ],
+};
+
+const INSTALL_PLATFORM_OPTIONS: readonly {
+  value: InstallPlatform;
+  label: string;
+}[] = [
+  { value: "macos", label: "macOS" },
+  { value: "windows-linux", label: "Windows / Linux" },
+];
 
 const Section = styled.div`
   display: grid;
@@ -384,6 +429,10 @@ const CTATitle = styled.h2`
 const CTADescription = styled.p`
   margin-bottom: 16px;
   color: var(--service-text-muted);
+`;
+
+const CTAPlatformSelector = styled.div`
+  margin-bottom: 12px;
 `;
 
 const CodeBlock = styled.div`
@@ -982,6 +1031,7 @@ export default function LeaderboardClient({ initialData, currentUser, initialSor
   const [data, setData] = useState<LeaderboardData>(initialData);
   const [error, setError] = useState<string | null>(null);
   const [copiedCommand, setCopiedCommand] = useState<string | null>(null);
+  const [installPlatform, setInstallPlatform] = useState<InstallPlatform>("macos");
   // Server/client divergence note: when ?period=custom&from=BAD&to=BAD is
   // requested, the server falls back to period="all" (see page.tsx) while the
   // client keeps period="custom" from the URL. This is intentionally safe
@@ -1011,6 +1061,16 @@ export default function LeaderboardClient({ initialData, currentUser, initialSor
 
   useEffect(() => {
     setLocalToday(getLocalTodayDate());
+  }, []);
+
+  useEffect(() => {
+    const userAgent = window.navigator.userAgent;
+    const isWindows = /Windows/i.test(userAgent);
+    const isDesktopLinux = /Linux/i.test(userAgent) && !/Android/i.test(userAgent);
+
+    if (isWindows || isDesktopLinux) {
+      setInstallPlatform("windows-linux");
+    }
   }, []);
 
   const { leaderboardSortBy, setLeaderboardSort, mounted } = useSettings();
@@ -1521,9 +1581,16 @@ export default function LeaderboardClient({ initialData, currentUser, initialSor
       <CTASection>
         <CTATitle>Join the Leaderboard</CTATitle>
         <CTADescription>
-          Install the CLI, sign in once, and submit automatically in the
-          background:
+          Choose your platform, sign in once, and submit your local usage:
         </CTADescription>
+        <CTAPlatformSelector>
+          <SegmentedControl
+            label="CLI platform"
+            value={installPlatform}
+            options={INSTALL_PLATFORM_OPTIONS}
+            onChange={setInstallPlatform}
+          />
+        </CTAPlatformSelector>
         <CodeBlock>
           {mounted && typeof window !== "undefined" && window.location.hostname !== "tokens.ci" && (
             <CodeLine>
@@ -1541,47 +1608,22 @@ export default function LeaderboardClient({ initialData, currentUser, initialSor
               </CopyIconButton>
             </CodeLine>
           )}
-          <CodeLine>
-            <CommandPrompt>$</CommandPrompt>
-            <CommandPrefix>brew</CommandPrefix>
-            <CommandName>install</CommandName>
-            <CommandArg>owo-network/brew/tokens</CommandArg>
-            <CopyIconButton
-              type="button"
-              onClick={() => handleCopyCommand(HOMEBREW_INSTALL_COMMAND)}
-              className={copiedCommand === HOMEBREW_INSTALL_COMMAND ? "copied" : ""}
-              aria-label="Copy command"
-            >
-              {copiedCommand === HOMEBREW_INSTALL_COMMAND ? <CheckIcon size={16} /> : <CopyIcon size={16} />}
-            </CopyIconButton>
-          </CodeLine>
-          <CodeLine>
-            <CommandPrompt>$</CommandPrompt>
-            <CommandName>tokens</CommandName>
-            <CommandArg>login</CommandArg>
-            <CopyIconButton
-              type="button"
-              onClick={() => handleCopyCommand(LOGIN_COMMAND)}
-              className={copiedCommand === LOGIN_COMMAND ? "copied" : ""}
-              aria-label="Copy command"
-            >
-              {copiedCommand === LOGIN_COMMAND ? <CheckIcon size={16} /> : <CopyIcon size={16} />}
-            </CopyIconButton>
-          </CodeLine>
-          <CodeLine>
-            <CommandPrompt>$</CommandPrompt>
-            <CommandPrefix>brew</CommandPrefix>
-            <CommandName>services</CommandName>
-            <CommandArg>start tokens</CommandArg>
-            <CopyIconButton
-              type="button"
-              onClick={() => handleCopyCommand(START_SERVICE_COMMAND)}
-              className={copiedCommand === START_SERVICE_COMMAND ? "copied" : ""}
-              aria-label="Copy command"
-            >
-              {copiedCommand === START_SERVICE_COMMAND ? <CheckIcon size={16} /> : <CopyIcon size={16} />}
-            </CopyIconButton>
-          </CodeLine>
+          {INSTALL_COMMANDS[installPlatform].map(({ command, prefix, name, arg }) => (
+            <CodeLine key={command}>
+              <CommandPrompt>$</CommandPrompt>
+              {prefix && <CommandPrefix>{prefix}</CommandPrefix>}
+              <CommandName>{name}</CommandName>
+              <CommandArg>{arg}</CommandArg>
+              <CopyIconButton
+                type="button"
+                onClick={() => handleCopyCommand(command)}
+                className={copiedCommand === command ? "copied" : ""}
+                aria-label={`Copy ${command}`}
+              >
+                {copiedCommand === command ? <CheckIcon size={16} /> : <CopyIcon size={16} />}
+              </CopyIconButton>
+            </CodeLine>
+          ))}
         </CodeBlock>
       </CTASection>
     </>
