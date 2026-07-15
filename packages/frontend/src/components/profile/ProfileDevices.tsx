@@ -39,16 +39,27 @@ export interface ProfileDevicesProps {
 }
 
 const DevicesSection = styled.section`
-  display: grid;
-  gap: 0.5rem;
+  overflow: hidden;
+  border: 1px solid var(--service-border);
+  border-radius: 12px;
+  background: var(--service-surface);
+  color: var(--service-text);
 `;
 
 const SectionHeading = styled.h2`
   margin: 0;
+  padding: 0.875rem 1rem;
+  border-bottom: 1px solid var(--service-border);
   color: var(--service-text);
-  font-size: 1rem;
-  font-weight: 500;
-  line-height: 1.25;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+`;
+
+const DevicesList = styled(ListCard)`
+  border-top: 0;
+  border-bottom: 0;
 `;
 
 const DeviceName = styled.span`
@@ -86,7 +97,7 @@ export function ProfileDevices({ devices, className }: ProfileDevicesProps) {
         Devices · all-time
       </SectionHeading>
 
-      <ListCard>
+      <DevicesList>
         <ListTable>
           <ListCaption>Usage by device</ListCaption>
           <ListHead>
@@ -139,7 +150,7 @@ export function ProfileDevices({ devices, className }: ProfileDevicesProps) {
             ))}
           </ListBody>
         </ListTable>
-      </ListCard>
+      </DevicesList>
     </DevicesSection>
   );
 }
