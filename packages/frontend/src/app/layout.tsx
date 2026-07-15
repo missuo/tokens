@@ -4,6 +4,7 @@ import NextTopLoader from "nextjs-toploader";
 import { Analytics } from "@vercel/analytics/next";
 import { Providers } from "@/lib/providers";
 import { Navigation } from "@/components/layout/Navigation";
+import { StyledComponentsRegistry } from "@/components/layout/StyledComponentsRegistry";
 import { ThemedToastContainer } from "@/components/layout/ThemedToastContainer";
 import "./globals.css";
 import "react-toastify/dist/ReactToastify.css";
@@ -69,16 +70,18 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
       className={`${figtree.variable} ${jetbrainsMono.variable}`}
     >
       <body className="font-sans">
-        <NextTopLoader color="#0073FF" showSpinner={false} />
-        <Providers>
-          {/* Rendered once here so it persists across route changes (no remount
-              flicker) and switching Leaderboard <-> Profile is a seamless
-              client-side transition. */}
-          <Navigation />
-          {children}
-          <ThemedToastContainer />
-        </Providers>
-        <Analytics />
+        <StyledComponentsRegistry>
+          <NextTopLoader color="#0073FF" showSpinner={false} />
+          <Providers>
+            {/* Rendered once here so it persists across route changes (no remount
+                flicker) and switching Leaderboard <-> Profile is a seamless
+                client-side transition. */}
+            <Navigation />
+            {children}
+            <ThemedToastContainer />
+          </Providers>
+          <Analytics />
+        </StyledComponentsRegistry>
       </body>
     </html>
   );

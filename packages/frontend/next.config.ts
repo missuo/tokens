@@ -1,6 +1,10 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  compiler: {
+    styledComponents: true,
+  },
+
   // Allow images from GitHub
   images: {
     remotePatterns: [
