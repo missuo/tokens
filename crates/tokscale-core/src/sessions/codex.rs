@@ -41,6 +41,17 @@ pub struct CodexPayload {
     pub model_info: Option<CodexModelInfo>,
     pub info: Option<CodexInfo>,
     pub turn_id: Option<String>,
+    /// Unix timestamp (seconds) from `task_started` events. Legacy Codex turns
+    /// may use UUID v4 ids, so this is their only causal ordering signal.
+    /// Confirmed against codex-rs (`TurnStartedEvent::started_at`, serialized
+    /// under `task_started`): documented as "Unix timestamp (in seconds)",
+    /// `Option<i64>`. Deserialized leniently anyway: int/float values coerce
+    /// to `i64`, and any other JSON type (string, object, ...) decodes as
+    /// `None` rather than failing the whole `task_started` entry. A strict
+    /// `Option<i64>` would make a wrong-typed value reject deserialization of
+    /// the entire JSONL line, silently dropping the rest of that payload too.
+    #[serde(default, deserialize_with = "deserialize_lenient_i64")]
+    pub started_at: Option<i64>,
     pub source: Option<Value>,
     /// Thread origin from session_meta. `"user"` marks a human-initiated fork
     /// (e.g. a VS Code "fork conversation"), which replays parent history but
@@ -57,6 +68,21 @@ pub struct CodexPayload {
     /// system-injected context (`<environment_context>`, `<system-reminder>`,
     /// `<user_instructions>`, …) begins with `<`.
     pub message: Option<String>,
+}
+
+/// Lenient `Option<i64>` deserializer for `CodexPayload::started_at`. Coerces
+/// JSON integers and floats to `i64`; any other type (string, bool, object,
+/// array) or `null`/absent decodes as `None` instead of failing the entry.
+fn deserialize_lenient_i64<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<Value>::deserialize(deserializer)?;
+    Ok(value.and_then(|v| {
+        v.as_i64()
+            .or_else(|| v.as_u64().map(|u| u as i64))
+            .or_else(|| v.as_f64().map(|f| f as i64))
+    }))
 }
 
 #[derive(Debug, Deserialize)]
@@ -337,12 +363,23 @@ fn parse_codex_reader<R: BufRead>(
                             && payload.payload_type.as_deref() == Some("task_started")
                         {
                             // The child's own turn is introduced by a
-                            // `task_started`; remember its turn_id so the gate can
-                            // recognize the child's own same-millisecond turn.
-                            if let Some(turn_id) = payload.turn_id.as_deref() {
-                                state
-                                    .forked_child_task_started_turn_ids
-                                    .insert(turn_id.to_string());
+                            // `task_started`; remember it only when its id or
+                            // timestamp places it at/after the child session.
+                            // Nested child logs can replay ancestor task_started
+                            // events before the child's live turn.
+                            if forked_child_task_starts_own_session(
+                                &state,
+                                payload.turn_id.as_deref(),
+                                payload.started_at,
+                            ) {
+                                // Safety of this branch is coupled to
+                                // `forked_child_task_starts_own_session`
+                                // returning false when `turn_id` is `None`.
+                                if let Some(turn_id) = payload.turn_id.as_deref() {
+                                    state
+                                        .forked_child_task_started_turn_ids
+                                        .insert(turn_id.to_string());
+                                }
                             }
                         }
                         if entry.entry_type == "session_meta" {
@@ -743,7 +780,12 @@ fn forked_child_turn_starts_own_session(state: &CodexParseState, turn_id: Option
     match (turn_id, codex_uuid_v7_order_key(child_session_id)) {
         (Some(turn_id), Some(child_key)) => {
             let Some(turn_key) = codex_uuid_v7_order_key(turn_id) else {
-                return true;
+                // Nested child logs can replay legacy UUID v4 turns from an
+                // ancestor. Only a child-local task_started event may end the
+                // replay gate for a non-v7 subagent turn. Human forks do not
+                // emit task_started, so retain their existing fallback.
+                return state.forked_child_is_user_fork
+                    || state.forked_child_task_started_turn_ids.contains(turn_id);
             };
             // Compare only the UUID v7 48-bit millisecond timestamp (the first
             // 12 hex of the order key), not the full id. The child's own turn is
@@ -783,6 +825,37 @@ fn forked_child_turn_starts_own_session(state: &CodexParseState, turn_id: Option
         }
         _ => true,
     }
+}
+
+fn forked_child_task_starts_own_session(
+    state: &CodexParseState,
+    turn_id: Option<&str>,
+    started_at: Option<i64>,
+) -> bool {
+    let (Some(turn_id), Some(child_session_id)) =
+        (turn_id, state.forked_child_session_id.as_deref())
+    else {
+        return false;
+    };
+    let Some(child_key) = codex_uuid_v7_order_key(child_session_id) else {
+        return true;
+    };
+
+    if let Some(turn_key) = codex_uuid_v7_order_key(turn_id) {
+        return turn_key[..12] >= child_key[..12];
+    }
+
+    let Some(started_at) = started_at else {
+        return false;
+    };
+    let Ok(child_started_at_ms) = i64::from_str_radix(&child_key[..12], 16) else {
+        return false;
+    };
+
+    // `child_started_at_ms / 1000` floors to the child's fork second, so a
+    // legacy replay whose `started_at` lands in that same integer second
+    // (but strictly before the child's sub-second fork instant) is admitted.
+    started_at >= child_started_at_ms / 1000
 }
 
 fn codex_uuid_v7_order_key(id: &str) -> Option<String> {
@@ -2276,6 +2349,130 @@ mod tests {
         assert_eq!(child_messages.len(), 1);
         assert_eq!(child_messages[0].tokens.input, 20);
         assert_eq!(child_messages[0].tokens.output, 2);
+    }
+
+    #[test]
+    fn test_nested_child_skips_replayed_legacy_uuid_v4_turn() {
+        // Nested Codex child logs can replay an ancestor turn whose legacy UUID
+        // v4 id cannot be ordered against the child's UUID v7 session id. Its
+        // task_started timestamp still predates the child, so it must not open
+        // the gate or count the inherited token snapshot.
+        let child = create_test_file(concat!(
+            r#"{"timestamp":"2026-05-05T21:52:10.197Z","type":"session_meta","payload":{"id":"019e5c03-1f5d-7000-8000-000000000001","forked_from_id":"019e5c03-0000-7000-8000-000000000001","source":{"subagent":{"thread_spawn":{"parent_thread_id":"019e5c03-0000-7000-8000-000000000001","depth":2}}},"thread_source":"subagent","model_provider":"openai","cwd":"/repo"}}"#,
+            "\n",
+            r#"{"timestamp":"2026-05-05T21:52:10.197Z","type":"session_meta","payload":{"id":"019e5c03-0000-7000-8000-000000000001","forked_from_id":"019e5b00-0000-7000-8000-000000000001","source":{"subagent":{"thread_spawn":{"parent_thread_id":"019e5b00-0000-7000-8000-000000000001","depth":1}}},"thread_source":"subagent","model_provider":"openai","cwd":"/repo"}}"#,
+            "\n",
+            r#"{"timestamp":"2026-05-05T21:52:10.197Z","type":"session_meta","payload":{"id":"019e5b00-0000-7000-8000-000000000001","source":"cli","thread_source":"user","model_provider":"openai","cwd":"/repo"}}"#,
+            "\n",
+            r#"{"timestamp":"2026-05-05T21:52:10.197Z","type":"event_msg","payload":{"type":"task_started","turn_id":"81d2f55b-894b-4d67-b75b-436ead477f65","started_at":1778017800}}"#,
+            "\n",
+            r#"{"timestamp":"2026-05-05T21:52:10.197Z","type":"turn_context","payload":{"turn_id":"81d2f55b-894b-4d67-b75b-436ead477f65","model":"gpt-5.5","cwd":"/repo"}}"#,
+            "\n",
+            r#"{"timestamp":"2026-05-05T21:52:10.198Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":300,"output_tokens":30,"total_tokens":330},"last_token_usage":{"input_tokens":300,"output_tokens":30,"total_tokens":330}}}}"#,
+            "\n",
+            r#"{"timestamp":"2026-05-05T21:52:10.610Z","type":"event_msg","payload":{"type":"task_started","turn_id":"019e5c03-2100-7000-8000-000000000001","started_at":1779660169}}"#,
+            "\n",
+            r#"{"timestamp":"2026-05-05T21:52:10.611Z","type":"turn_context","payload":{"turn_id":"019e5c03-2100-7000-8000-000000000001","model":"gpt-5.5","cwd":"/repo"}}"#,
+            "\n",
+            r#"{"timestamp":"2026-05-05T21:52:10.612Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":320,"output_tokens":32,"total_tokens":352},"last_token_usage":{"input_tokens":20,"output_tokens":2,"total_tokens":22}}}}"#,
+            "\n"
+        ));
+
+        let child_messages = parse_codex_file(child.path());
+
+        assert_eq!(child_messages.len(), 1);
+        assert_eq!(child_messages[0].tokens.input, 20);
+        assert_eq!(child_messages[0].tokens.output, 2);
+    }
+
+    #[test]
+    fn test_forked_child_legacy_turn_pins_seconds_unit_contract() {
+        // Pins the `started_at` unit contract used by
+        // `forked_child_task_starts_own_session`: it compares against the
+        // child's fork second (`started_at >= child_started_at_ms / 1000`),
+        // so a legacy replayed turn timestamped exactly one second before
+        // the child's fork second must stay rejected, while one landing on
+        // that same second must be admitted. The child's UUID v7 id here
+        // (`018bcfe5-6800-...`) encodes ms=1700000000000, i.e.
+        // floor(ms/1000) == 1700000000, a round multiple of 1000 so there is
+        // no ambiguity from the ms->s truncation.
+        let child = create_test_file(concat!(
+            r#"{"timestamp":"2023-11-14T22:13:20.000Z","type":"session_meta","payload":{"id":"018bcfe5-6800-7000-8000-000000000001","forked_from_id":"018bcfe5-0000-7000-8000-000000000001","source":{"subagent":{"thread_spawn":{"parent_thread_id":"018bcfe5-0000-7000-8000-000000000001","depth":2}}},"thread_source":"subagent","model_provider":"openai","cwd":"/repo"}}"#,
+            "\n",
+            r#"{"timestamp":"2023-11-14T22:13:20.000Z","type":"session_meta","payload":{"id":"018bcfe5-0000-7000-8000-000000000001","forked_from_id":"018bcfe4-0000-7000-8000-000000000001","source":{"subagent":{"thread_spawn":{"parent_thread_id":"018bcfe4-0000-7000-8000-000000000001","depth":1}}},"thread_source":"subagent","model_provider":"openai","cwd":"/repo"}}"#,
+            "\n",
+            r#"{"timestamp":"2023-11-14T22:13:20.000Z","type":"session_meta","payload":{"id":"018bcfe4-0000-7000-8000-000000000001","source":"cli","thread_source":"user","model_provider":"openai","cwd":"/repo"}}"#,
+            "\n",
+            // legacy turn one second BEFORE the child's fork second
+            // (1700000000) -- must NOT open the gate or count its token
+            // snapshot.
+            r#"{"timestamp":"2023-11-14T22:13:19.000Z","type":"event_msg","payload":{"type":"task_started","turn_id":"71d2f55b-894b-4d67-b75b-436ead477f65","started_at":1699999999}}"#,
+            "\n",
+            r#"{"timestamp":"2023-11-14T22:13:19.000Z","type":"turn_context","payload":{"turn_id":"71d2f55b-894b-4d67-b75b-436ead477f65","model":"gpt-5.5","cwd":"/repo"}}"#,
+            "\n",
+            r#"{"timestamp":"2023-11-14T22:13:19.100Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":300,"output_tokens":30,"total_tokens":330},"last_token_usage":{"input_tokens":300,"output_tokens":30,"total_tokens":330}}}}"#,
+            "\n",
+            // legacy turn exactly AT the child's fork second -- must be
+            // admitted.
+            r#"{"timestamp":"2023-11-14T22:13:20.100Z","type":"event_msg","payload":{"type":"task_started","turn_id":"82d2f55b-894b-4d67-b75b-436ead477f66","started_at":1700000000}}"#,
+            "\n",
+            r#"{"timestamp":"2023-11-14T22:13:20.200Z","type":"turn_context","payload":{"turn_id":"82d2f55b-894b-4d67-b75b-436ead477f66","model":"gpt-5.5","cwd":"/repo"}}"#,
+            "\n",
+            r#"{"timestamp":"2023-11-14T22:13:20.300Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":320,"output_tokens":32,"total_tokens":352},"last_token_usage":{"input_tokens":20,"output_tokens":2,"total_tokens":22}}}}"#,
+            "\n"
+        ));
+
+        let child_messages = parse_codex_file(child.path());
+
+        assert_eq!(child_messages.len(), 1);
+        assert_eq!(child_messages[0].tokens.input, 20);
+        assert_eq!(child_messages[0].tokens.output, 2);
+    }
+
+    #[test]
+    fn test_forked_child_task_started_non_numeric_started_at_does_not_fail_parsing() {
+        // A `task_started` event with a non-integer `started_at` (e.g. a
+        // string, from a malformed or unexpected log) must not fail
+        // deserialization of the whole JSONL line -- it should decode with
+        // `started_at: None`, which keeps the replay gate closed (same as a
+        // missing timestamp) and still allows the rest of the file,
+        // including a valid subsequent `task_started`, to parse normally.
+        let child = create_test_file(concat!(
+            r#"{"timestamp":"2026-05-05T21:52:10.000Z","type":"session_meta","payload":{"id":"019e5c03-1e99-7000-8000-000000000001","forked_from_id":"019e5b00-0000-7000-8000-000000000001","source":{"subagent":{"thread_spawn":{"parent_thread_id":"019e5b00-0000-7000-8000-000000000001","depth":1}}},"model_provider":"openai","agent_nickname":"worker","cwd":"/repo"}}"#,
+            "\n",
+            r#"{"timestamp":"2026-05-05T21:52:10.000Z","type":"session_meta","payload":{"id":"019e5b00-0000-7000-8000-000000000001","source":"vscode","model_provider":"openai","cwd":"/repo"}}"#,
+            "\n",
+            r#"{"timestamp":"2026-05-05T21:52:10.100Z","type":"turn_context","payload":{"turn_id":"019e5b00-0001-7000-8000-000000000001","model":"gpt-5.5","cwd":"/repo"}}"#,
+            "\n",
+            r#"{"timestamp":"2026-05-05T21:52:10.200Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":300,"output_tokens":30,"total_tokens":330},"last_token_usage":{"input_tokens":300,"output_tokens":30,"total_tokens":330}}}}"#,
+            "\n",
+            // legacy task_started with a malformed (non-numeric) started_at
+            // -- must decode with started_at: None (not fail the whole
+            // entry), so the gate stays closed rather than opening on a
+            // wrong-typed value.
+            r#"{"timestamp":"2026-05-05T21:52:15.000Z","type":"event_msg","payload":{"type":"task_started","turn_id":"71d2f55b-894b-4d67-b75b-436ead477f65","started_at":"not-a-number"}}"#,
+            "\n",
+            // the child's real own turn, announced by a well-formed
+            // task_started -- proves the malformed line above didn't corrupt
+            // parser state or halt parsing of the rest of the file.
+            r#"{"timestamp":"2026-05-05T21:52:20.000Z","type":"event_msg","payload":{"type":"task_started","turn_id":"019e5c03-6425-7000-8000-000000000001"}}"#,
+            "\n",
+            r#"{"timestamp":"2026-05-05T21:52:20.100Z","type":"turn_context","payload":{"turn_id":"019e5c03-6425-7000-8000-000000000001","model":"gpt-5.5","cwd":"/repo"}}"#,
+            "\n",
+            r#"{"timestamp":"2026-05-05T21:52:20.200Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":320,"output_tokens":32,"total_tokens":352},"last_token_usage":{"input_tokens":20,"output_tokens":2,"total_tokens":22}}}}"#,
+            "\n"
+        ));
+
+        let parsed = parse_codex_file_incremental(child.path(), 0, CodexParseState::default());
+
+        // The malformed line did not abort file-level parsing.
+        assert!(parsed.parse_succeeded);
+        // The malformed task_started did not open the gate; only the
+        // well-formed one that follows (admitted via the UUID v7 ordering
+        // path) did.
+        assert_eq!(parsed.messages.len(), 1);
+        assert_eq!(parsed.messages[0].tokens.input, 20);
+        assert_eq!(parsed.messages[0].tokens.output, 2);
     }
 
     #[test]
