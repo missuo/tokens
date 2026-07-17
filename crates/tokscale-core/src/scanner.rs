@@ -12,18 +12,16 @@ use crate::sessions::{normalize_workspace_key, workspace_label_from_key};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-/// Emit a one-time `tracing::warn!` if `path` does not start with the user's
-/// home directory. The scan is NOT blocked — this is a heads-up only.
-fn warn_if_escapes_home(client_id: ClientId, path: &Path) {
-    if let Some(home) = dirs::home_dir() {
-        if !path.starts_with(&home) {
-            tracing::warn!(
-                client = client_id.as_str(),
-                path = %path.display(),
-                home = %home.display(),
-                "extra scan path is outside $HOME — verify this is intentional"
-            );
-        }
+/// Emit a one-time `tracing::warn!` if `path` does not start with the scan's
+/// supplied home directory. The scan is NOT blocked — this is a heads-up only.
+fn warn_if_escapes_home(home: &Path, client_id: ClientId, path: &Path) {
+    if !path.starts_with(home) {
+        tracing::warn!(
+            client = client_id.as_str(),
+            path = %path.display(),
+            home = %home.display(),
+            "extra scan path is outside $HOME — verify this is intentional"
+        );
     }
 }
 
@@ -1178,7 +1176,7 @@ fn scan_all_clients_with_env_strategy_inner(
     }
 
     for (client_id, path) in extra_scan_paths_for(scanner_settings, &enabled_with_devin_lookup) {
-        warn_if_escapes_home(client_id, &path);
+        warn_if_escapes_home(Path::new(home_dir), client_id, &path);
         if client_id == ClientId::DevinCli {
             devin_cli_roots.push(path);
         } else {
@@ -1275,7 +1273,7 @@ fn scan_all_clients_with_env_strategy_inner(
     if use_env_roots {
         let extra_dirs_val = std::env::var("TOKENS_EXTRA_DIRS").unwrap_or_default();
         for (client_id, path) in parse_extra_dirs(&extra_dirs_val, &enabled_with_devin_lookup) {
-            warn_if_escapes_home(client_id, &PathBuf::from(&path));
+            warn_if_escapes_home(Path::new(home_dir), client_id, &PathBuf::from(&path));
             if client_id == ClientId::DevinCli {
                 devin_cli_roots.push(PathBuf::from(path));
             } else {
@@ -1672,8 +1670,14 @@ fn scan_all_clients_with_env_strategy_inner(
                 result.zed_db = Some(macos_path);
             }
         }
+        if !use_env_roots && result.zed_db.is_none() {
+            let windows_path = PathBuf::from(home_dir).join("AppData/Local/Zed/threads/threads.db");
+            if windows_path.is_file() {
+                result.zed_db = Some(windows_path);
+            }
+        }
         #[cfg(target_os = "windows")]
-        if result.zed_db.is_none() {
+        if use_env_roots && result.zed_db.is_none() {
             if let Some(local_app_data) = dirs::data_local_dir() {
                 let windows_path = local_app_data.join("Zed/threads/threads.db");
                 if windows_path.is_file() {
@@ -3155,6 +3159,26 @@ mod tests {
     }
 
     #[test]
+    fn test_scan_all_clients_with_scanner_settings_discovers_zed_windows_local_appdata_home() {
+        let dir = TempDir::new().unwrap();
+        let home = dir.path();
+
+        let windows_threads_dir = home.join("AppData/Local/Zed/threads");
+        fs::create_dir_all(&windows_threads_dir).unwrap();
+        let threads_db = windows_threads_dir.join("threads.db");
+        File::create(&threads_db).unwrap();
+
+        let result = scan_all_clients_with_scanner_settings(
+            home.to_str().unwrap(),
+            &["zed".to_string()],
+            false,
+            &ScannerSettings::default(),
+        );
+
+        assert_eq!(result.zed_db.as_ref(), Some(&threads_db));
+    }
+
+    #[test]
     fn test_scan_all_clients_with_scanner_settings_merges_zed_extra_threads_db() {
         let dir = TempDir::new().unwrap();
         let home = dir.path();
@@ -4449,17 +4473,10 @@ mod tests {
     #[test]
     #[serial]
     fn test_extra_scan_path_outside_home_does_not_block_scan() {
-        // Use a tempdir that is guaranteed to be outside the real $HOME
-        // (tempfile creates dirs under /tmp on Unix, %TEMP% on Windows).
+        let fake_home = TempDir::new().unwrap();
         let outside_home = TempDir::new().unwrap();
         let outside_path = outside_home.path();
-
-        // Ensure it is truly outside home (skip the test if somehow inside).
-        if let Some(home) = dirs::home_dir() {
-            if outside_path.starts_with(&home) {
-                return; // unexpected environment — skip rather than false-fail
-            }
-        }
+        assert!(!outside_path.starts_with(fake_home.path()));
 
         // Populate with a valid session file so the scanner has something to find.
         let session_dir = outside_path.join("sessions");
@@ -4476,7 +4493,6 @@ mod tests {
         };
 
         // The scan must complete without panicking.
-        let fake_home = TempDir::new().unwrap();
         let _result = scan_all_clients_with_env_strategy(
             fake_home.path().to_str().unwrap(),
             &["claude".to_string()],
