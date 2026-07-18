@@ -512,7 +512,8 @@ describe("POST /api/submit auth path", () => {
       displayName: "Test device",
     }));
     expect(tx.execute).toHaveBeenCalledTimes(1);
-    expect(flattenSqlChunks(tx.execute.mock.calls[0][0])).toEqual(
+    const insertChunks = flattenSqlChunks(tx.execute.mock.calls[0][0]);
+    expect(insertChunks).toEqual(
       expect.arrayContaining([
         expect.stringContaining("INSERT INTO daily_breakdown"),
         "submission-1",
@@ -521,6 +522,20 @@ describe("POST /api/submit auth path", () => {
         expect.stringContaining('"schemaVersion":2'),
       ]),
     );
+    // Expand/contract bridge invariant: the daily_breakdown INSERT must use an
+    // UNQUALIFIED `ON CONFLICT DO NOTHING` (no named constraint) so it survives
+    // the migration that swaps the table's unique key from (submission_id, date)
+    // to (submission_id, submitted_device_id, date). Naming either column set
+    // would throw 42P10 against the other schema during the deploy window.
+    expect(insertChunks).toEqual(
+      expect.arrayContaining([expect.stringContaining("ON CONFLICT DO NOTHING")]),
+    );
+    expect(
+      insertChunks.some(
+        (chunk) =>
+          typeof chunk === "string" && chunk.includes("ON CONFLICT (submission_id, date)"),
+      ),
+    ).toBe(false);
     expect(submissionUpdateValues).toEqual(
       expect.objectContaining({
         mcpServers: ["github", "slack"],

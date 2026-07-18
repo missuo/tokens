@@ -377,11 +377,11 @@ export async function POST(request: Request) {
         // Race note: two concurrent submits from the same user can both reach
         // this branch before either has committed. The second UPDATE will try
         // to re-stamp submitted_device_id on rows the first already claimed,
-        // which can violate the (submission_id, submitted_device_id, date)
-        // unique constraint. The ON CONFLICT DO NOTHING below makes the UPDATE
-        // skip conflicting rows rather than throw, and the outer try/catch falls
-        // through to the normal insert path if a unique violation still escapes
-        // (e.g. via a concurrent INSERT racing the UPDATE window).
+        // which can violate a daily_breakdown unique constraint. The UPDATE's
+        // own NOT EXISTS dup predicate below skips rows that would collide, and
+        // the savepoint + outer try/catch fall through to the normal insert
+        // path if a unique violation still escapes (e.g. via a concurrent
+        // INSERT racing the UPDATE window).
         try {
           // Wrap the UPDATE in a savepoint so a unique-constraint violation
           // from a concurrent submit does not poison the enclosing
@@ -630,11 +630,27 @@ export async function POST(request: Request) {
       // Batch INSERT new days via raw SQL VALUES list, chunked to stay under
       // PostgreSQL's 65,535 bound-parameter limit (10 params/row here --
       // a large historical backfill can otherwise exceed it in one statement).
-      // ON CONFLICT (submission_id, date) DO UPDATE is a defensive fallback
-      // for a concurrent submit racing this one between the SELECT above and
-      // this INSERT -- existingDaysMap already covers every device for this
-      // submission, so under normal (non-racing) conditions every row here is
-      // a genuinely new date.
+      //
+      // The conflict clause is intentionally UN-QUALIFIED (`ON CONFLICT DO
+      // NOTHING`, no column/constraint target). This is an expand/contract
+      // migration bridge: an upcoming migration swaps daily_breakdown's unique
+      // key from (submission_id, date) to (submission_id, submitted_device_id,
+      // date). Because prod applies migrations before the new build promotes,
+      // THIS code must run correctly against BOTH keys during the deploy window
+      // -- naming either column set would make the other schema throw 42P10
+      // ("no unique or exclusion constraint matching the ON CONFLICT
+      // specification") for the duration of that build. An unqualified target
+      // matches whichever unique constraint currently exists.
+      //
+      // DO NOTHING (not DO UPDATE) is correct here: existingDaysMap already
+      // routed every date that has a row for this submission to the toUpdate
+      // path above (an UPDATE keyed by row id, itself constraint-agnostic), so
+      // toInsert holds only genuinely-new dates. The conflict clause is purely
+      // a race net for a concurrent submit that inserted the same key between
+      // the SELECT ... FOR UPDATE above and this INSERT. Skipping the raced row
+      // is safe: STEP 3d below recomputes the submission's denormalized totals
+      // by summing the surviving daily_breakdown rows, so the winner's row is
+      // still counted.
       for (let i = 0; i < toInsert.length; i += INSERT_CHUNK_SIZE) {
         const chunk = toInsert.slice(i, i + INSERT_CHUNK_SIZE);
         const insertValuesClauses = chunk.map(
@@ -650,15 +666,7 @@ export async function POST(request: Request) {
             input_tokens, output_tokens, timestamp_ms, active_time_ms, source_breakdown
           )
           VALUES ${insertValuesList}
-          ON CONFLICT (submission_id, date) DO UPDATE SET
-            submitted_device_id = EXCLUDED.submitted_device_id,
-            tokens = EXCLUDED.tokens,
-            cost = EXCLUDED.cost,
-            input_tokens = EXCLUDED.input_tokens,
-            output_tokens = EXCLUDED.output_tokens,
-            timestamp_ms = EXCLUDED.timestamp_ms,
-            active_time_ms = EXCLUDED.active_time_ms,
-            source_breakdown = EXCLUDED.source_breakdown
+          ON CONFLICT DO NOTHING
         `);
       }
 
