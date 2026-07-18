@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { resolveSortByParam } from "@/lib/leaderboard/constants";
+import {
+  resolveLeaderboardTokenFormat,
+  resolveSortByParam,
+} from "@/lib/leaderboard/constants";
 
 describe("resolveSortByParam", () => {
   it("keeps absent values available for persisted preference fallback", () => {
@@ -17,5 +20,18 @@ describe("resolveSortByParam", () => {
     expect(resolveSortByParam("time")).toBe("tokens");
     expect(resolveSortByParam("unknown")).toBe("tokens");
     expect(resolveSortByParam("")).toBe("tokens");
+  });
+});
+
+describe("resolveLeaderboardTokenFormat", () => {
+  it("preserves supported display formats", () => {
+    expect(resolveLeaderboardTokenFormat("full")).toBe("full");
+    expect(resolveLeaderboardTokenFormat("compact")).toBe("compact");
+  });
+
+  it("defaults missing or invalid stored preferences to full values", () => {
+    expect(resolveLeaderboardTokenFormat(undefined)).toBe("full");
+    expect(resolveLeaderboardTokenFormat(null)).toBe("full");
+    expect(resolveLeaderboardTokenFormat("abbreviated")).toBe("full");
   });
 });
