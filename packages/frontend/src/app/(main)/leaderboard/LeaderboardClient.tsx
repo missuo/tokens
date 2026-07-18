@@ -20,8 +20,10 @@ import { getLeaderboardPeriodLabel } from "@/components/leaderboard/presentation
 import { formatCurrency, formatNumber } from "@/lib/utils";
 import { useSettings } from "@/lib/useSettings";
 import {
+  DEFAULT_LEADERBOARD_TOKEN_FORMAT,
   resolveSortByParam,
   type LeaderboardSortBy,
+  type LeaderboardTokenFormat,
 } from "@/lib/leaderboard/constants";
 import { parseCustomDateRange } from "@/lib/leaderboard/dateRange";
 import type { LeaderboardData, LeaderboardUser, Period } from "@/lib/leaderboard/types";
@@ -195,6 +197,43 @@ const TableHeaderCell = styled.th`
   }
 `;
 
+const TokenFormatToggle = styled.button`
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  margin: -6px -8px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+
+  &:hover {
+    background: var(--service-surface-muted);
+    color: var(--service-text);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--service-focus);
+    outline-offset: 1px;
+  }
+`;
+
+const TokenFormatBadge = styled.span`
+  padding: 1px 5px;
+  border: 1px solid var(--service-border-strong);
+  border-radius: 999px;
+  background: var(--service-surface-muted);
+  color: var(--service-text-muted);
+  font-size: 0.625rem;
+  font-weight: 600;
+  line-height: 1.4;
+  letter-spacing: 0.02em;
+`;
+
 const TableBody = styled.tbody``;
 
 const TableRow = styled.tr`
@@ -340,22 +379,6 @@ const TokenValue = styled.span`
 
   @media (min-width: 640px) {
     font-size: 0.9375rem;
-  }
-`;
-
-const TokenValueFull = styled.span`
-  display: none;
-
-  @media (min-width: 768px) {
-    display: inline;
-  }
-`;
-
-const TokenValueAbbrev = styled.span`
-  display: inline;
-
-  @media (min-width: 768px) {
-    display: none;
   }
 `;
 
@@ -900,16 +923,21 @@ function isValidLeaderboardData(data: unknown): data is LeaderboardData {
 interface LeaderboardRowProps {
   user: LeaderboardUser;
   isCurrentUser: boolean;
+  tokenFormat: LeaderboardTokenFormat;
   onRowClick: (username: string) => void;
 }
 
 const LeaderboardRow = memo(function LeaderboardRow({
   user,
   isCurrentUser,
+  tokenFormat,
   onRowClick,
 }: LeaderboardRowProps) {
   const formattedTokens = useMemo(() => user.totalTokens.toLocaleString('en-US'), [user.totalTokens]);
   const formattedCost = useMemo(() => user.totalCost.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2 }), [user.totalCost]);
+  const displayedTokens = tokenFormat === "compact"
+    ? formatNumber(user.totalTokens)
+    : formattedTokens;
 
   return (
     <TableRow
@@ -949,8 +977,7 @@ const LeaderboardRow = memo(function LeaderboardRow({
       <TableCell className="text-right">
         <CombinedValueContainer>
           <TokenValue title={formattedTokens}>
-            <TokenValueFull>{formattedTokens}</TokenValueFull>
-            <TokenValueAbbrev>{formatNumber(user.totalTokens)}</TokenValueAbbrev>
+            {displayedTokens}
           </TokenValue>
           <CostValue title={formattedCost}>
             {formatCurrency(user.totalCost)}
@@ -1073,7 +1100,13 @@ export default function LeaderboardClient({ initialData, currentUser, initialSor
     }
   }, []);
 
-  const { leaderboardSortBy, setLeaderboardSort, mounted } = useSettings();
+  const {
+    leaderboardSortBy,
+    setLeaderboardSort,
+    leaderboardTokenFormat,
+    setLeaderboardTokenFormat,
+    mounted,
+  } = useSettings();
 
   // Precedence for the active sort column:
   //   1. URL `?sortBy=` on first paint wins (preserves shareable links), but
@@ -1085,6 +1118,9 @@ export default function LeaderboardClient({ initialData, currentUser, initialSor
   const effectiveSortBy = urlSortOverride
     ? urlSortOverride
     : (mounted ? leaderboardSortBy : initialSortBy);
+  const effectiveTokenFormat = mounted
+    ? leaderboardTokenFormat
+    : DEFAULT_LEADERBOARD_TOKEN_FORMAT;
   const requestedPage = data.pagination.totalPages > 0
     ? Math.min(page, data.pagination.totalPages)
     : page;
@@ -1490,7 +1526,24 @@ export default function LeaderboardClient({ initialData, currentUser, initialSor
                       <TableHeaderCell className="rank-cell">Rank</TableHeaderCell>
                       <TableHeaderCell>User</TableHeaderCell>
                       <TableHeaderCell className="text-right hidden-cost-mobile">Cost</TableHeaderCell>
-                      <TableHeaderCell className="text-right">Tokens</TableHeaderCell>
+                      <TableHeaderCell className="text-right" scope="col">
+                        <TokenFormatToggle
+                          type="button"
+                          aria-label="Tokens: use compact values"
+                          aria-pressed={effectiveTokenFormat === "compact"}
+                          title={effectiveTokenFormat === "compact"
+                            ? "Compact token values shown; click to show full values"
+                            : "Full token values shown; click to show compact values"}
+                          onClick={() => setLeaderboardTokenFormat(
+                            effectiveTokenFormat === "compact" ? "full" : "compact",
+                          )}
+                        >
+                          Tokens
+                          <TokenFormatBadge aria-hidden="true">
+                            {effectiveTokenFormat === "compact" ? "K/M/B/T" : "123"}
+                          </TokenFormatBadge>
+                        </TokenFormatToggle>
+                      </TableHeaderCell>
                     </tr>
                   </TableHead>
                   <TableBody>
@@ -1499,6 +1552,7 @@ export default function LeaderboardClient({ initialData, currentUser, initialSor
                         key={user.userId}
                         user={user}
                         isCurrentUser={!!(currentUser && user.username === currentUser.username)}
+                        tokenFormat={effectiveTokenFormat}
                         onRowClick={handleRowClick}
                       />
                     ))}

@@ -4,21 +4,26 @@ import { useCallback, useEffect, useSyncExternalStore } from "react";
 import type { ColorPaletteName } from "./themes";
 import { DEFAULT_PALETTE } from "./themes";
 import {
+  type LeaderboardTokenFormat,
   type LeaderboardSortBy,
+  DEFAULT_LEADERBOARD_TOKEN_FORMAT,
   SORT_BY_COOKIE_NAME,
   isValidSortBy,
+  resolveLeaderboardTokenFormat,
 } from "./leaderboard/constants";
 
-export type { LeaderboardSortBy };
+export type { LeaderboardSortBy, LeaderboardTokenFormat };
 
 export interface Settings {
   paletteName: ColorPaletteName;
   leaderboardSortBy: LeaderboardSortBy;
+  leaderboardTokenFormat: LeaderboardTokenFormat;
 }
 
 const DEFAULT_SETTINGS: Settings = {
   paletteName: DEFAULT_PALETTE,
   leaderboardSortBy: "tokens",
+  leaderboardTokenFormat: DEFAULT_LEADERBOARD_TOKEN_FORMAT,
 };
 
 const STORAGE_KEY = "tokscale-settings";
@@ -54,6 +59,9 @@ function getStoredSettings(): Settings {
       leaderboardSortBy: isValidSortBy(parsed.leaderboardSortBy)
         ? parsed.leaderboardSortBy
         : DEFAULT_SETTINGS.leaderboardSortBy,
+      leaderboardTokenFormat: resolveLeaderboardTokenFormat(
+        parsed.leaderboardTokenFormat,
+      ),
     };
     return cachedSettings;
   } catch {
@@ -115,7 +123,8 @@ export function useSettings() {
 
   useEffect(() => {
     // Theme (light/dark) is owned entirely by next-themes via the ThemeProvider,
-    // which follows the system preference by default. We only persist the sort.
+    // which follows the system preference by default. Only the sort also needs
+    // a cookie because the server reads it; other preferences stay client-only.
     setSortByCookie(settings.leaderboardSortBy);
   }, [settings.leaderboardSortBy]);
 
@@ -128,11 +137,20 @@ export function useSettings() {
     saveSettings({ ...getStoredSettings(), leaderboardSortBy: sortBy });
   }, []);
 
+  const setLeaderboardTokenFormat = useCallback(
+    (tokenFormat: LeaderboardTokenFormat) => {
+      saveSettings({ ...getStoredSettings(), leaderboardTokenFormat: tokenFormat });
+    },
+    [],
+  );
+
   return {
     paletteName: settings.paletteName,
     setPalette,
     leaderboardSortBy: settings.leaderboardSortBy,
     setLeaderboardSort,
+    leaderboardTokenFormat: settings.leaderboardTokenFormat,
+    setLeaderboardTokenFormat,
     mounted,
   };
 }
