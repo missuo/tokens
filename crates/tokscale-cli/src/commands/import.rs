@@ -243,10 +243,10 @@ pub fn parse_clawdboard_export(json: &str) -> Result<ImportOutcome> {
                     suspect_cost_rows += 1;
                 }
 
-                mb_input += tokens.input;
-                mb_output += tokens.output;
-                mb_cache_read += tokens.cache_read;
-                mb_cache_write += tokens.cache_write;
+                mb_input = mb_input.saturating_add(tokens.input);
+                mb_output = mb_output.saturating_add(tokens.output);
+                mb_cache_read = mb_cache_read.saturating_add(tokens.cache_read);
+                mb_cache_write = mb_cache_write.saturating_add(tokens.cache_write);
                 mb_cost += cost;
 
                 add_row(day, &client, &mb.model_name, tokens, cost);
@@ -261,11 +261,16 @@ pub fn parse_clawdboard_export(json: &str) -> Result<ImportOutcome> {
                 || agg.cache_read_tokens != 0
                 || agg.cache_creation_tokens != 0;
             if agg_tokens_present {
-                let agg_total = agg.input_tokens.max(0)
-                    + agg.output_tokens.max(0)
-                    + agg.cache_read_tokens.max(0)
-                    + agg.cache_creation_tokens.max(0);
-                let mb_total = mb_input + mb_output + mb_cache_read + mb_cache_write;
+                let agg_total = agg
+                    .input_tokens
+                    .max(0)
+                    .saturating_add(agg.output_tokens.max(0))
+                    .saturating_add(agg.cache_read_tokens.max(0))
+                    .saturating_add(agg.cache_creation_tokens.max(0));
+                let mb_total = mb_input
+                    .saturating_add(mb_output)
+                    .saturating_add(mb_cache_read)
+                    .saturating_add(mb_cache_write);
                 if tokens_diverge(mb_total, agg_total) {
                     breakdown_reconciliation_warnings.push(format!(
                         "{} {}: modelBreakdowns sum to {} token(s) but aggregate totals report {}",
@@ -526,6 +531,46 @@ mod tests {
         }
       ]
     }"#;
+
+    #[test]
+    fn extreme_token_counts_saturate_without_panicking() {
+        // Two model breakdowns each at i64::MAX must saturate the per-day
+        // reconciliation accumulators instead of overflowing (debug panic /
+        // release wrap), and must not produce a spurious mismatch warning
+        // when the aggregate totals are equally extreme.
+        let max = i64::MAX;
+        let sample = format!(
+            r#"{{
+              "exportedAt": "2026-07-14T17:45:44.315Z",
+              "profile": {{ "name": "example", "githubUsername": "example" }},
+              "dailyAggregates": [
+                {{
+                  "date": "2026-05-11",
+                  "source": "codex",
+                  "machineId": "m1",
+                  "inputTokens": {max},
+                  "outputTokens": {max},
+                  "modelsUsed": ["gpt-5.5"],
+                  "modelBreakdowns": [
+                    {{ "modelName": "gpt-5.5", "cost": 1.0, "inputTokens": {max},
+                      "outputTokens": 0, "cacheReadTokens": 0, "cacheCreationTokens": 0 }},
+                    {{ "modelName": "gpt-5.5-mini", "cost": 1.0, "inputTokens": {max},
+                      "outputTokens": 0, "cacheReadTokens": 0, "cacheCreationTokens": 0 }}
+                  ]
+                }}
+              ]
+            }}"#
+        );
+
+        let out = parse_clawdboard_export(&sample).unwrap();
+        assert_eq!(out.graph.contributions.len(), 1);
+        assert_eq!(out.graph.contributions[0].totals.tokens, i64::MAX);
+        assert!(
+            out.breakdown_reconciliation_warnings.is_empty(),
+            "saturated totals on both sides must not be reported as divergent: {:?}",
+            out.breakdown_reconciliation_warnings
+        );
+    }
 
     #[test]
     fn parses_dates_and_client_rows() {
