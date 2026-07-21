@@ -246,6 +246,26 @@ enum Commands {
         )]
         today_only: bool,
     },
+    #[command(
+        about = "Import historical usage from a third-party aggregate export (e.g. clawdboard) into tokscale JSON"
+    )]
+    Import {
+        #[arg(help = "Path to the export file to import")]
+        file: String,
+        #[arg(
+            long,
+            default_value = "clawdboard",
+            help = "Export format (currently only 'clawdboard')"
+        )]
+        format: String,
+        #[arg(
+            long,
+            help = "Write normalized tokscale JSON to this file instead of stdout"
+        )]
+        output: Option<String>,
+        #[arg(long, help = "Parse and summarize only; do not emit normalized JSON")]
+        dry_run: bool,
+    },
     #[command(about = "Launch interactive TUI with optional filters")]
     Tui {
         #[command(flatten)]
@@ -743,6 +763,15 @@ fn main() -> Result<()> {
                 work_time,
                 today_only,
             )
+        }
+        Some(Commands::Import {
+            file,
+            format,
+            output,
+            dry_run,
+        }) => {
+            reject_unsupported_home_override(&cli.home, "import")?;
+            run_import_command(file, format, output, dry_run)
         }
         Some(Commands::Tui { clients, date }) => {
             ensure_home_supported_for_tui(&cli.home)?;
@@ -5192,6 +5221,211 @@ fn run_graph_command(
     } else {
         println!("{}", json_output);
     }
+
+    Ok(())
+}
+
+/// Import a third-party aggregate export (currently clawdboard) and emit it as
+/// standard tokscale JSON — the same shape `tokscale graph` produces.
+///
+/// This deliberately does NOT upload: backfilled aggregates cannot be verified
+/// the way locally-scanned sessions are, so submitting them requires
+/// server-side support for tagging backfilled data distinctly from live CLI
+/// usage. See https://github.com/junhoyeo/tokscale/issues/888.
+fn run_import_command(
+    file: String,
+    format: String,
+    output: Option<String>,
+    dry_run: bool,
+) -> Result<()> {
+    use colored::Colorize;
+
+    let fmt = format.trim().to_lowercase();
+    if !commands::import::SUPPORTED_FORMATS.contains(&fmt.as_str()) {
+        return Err(anyhow::anyhow!(
+            "Unsupported import format '{}'. Supported: {}",
+            format,
+            commands::import::SUPPORTED_FORMATS.join(", ")
+        ));
+    }
+
+    // All human-readable banners/summaries/warnings go to stderr so stdout
+    // stays pure JSON when no --output path is given (matching `tokscale
+    // graph`'s behavior) — e.g. `tokscale import export.json > out.json`
+    // must produce a valid JSON file.
+    eprintln!("\n  {}\n", "Tokscale - Import Usage Data".cyan());
+
+    let contents = std::fs::read_to_string(&file)
+        .map_err(|e| anyhow::anyhow!("Failed to read '{}': {}", file, e))?;
+    let outcome = commands::import::parse_export(&fmt, &contents)?;
+    let graph = &outcome.graph;
+
+    eprintln!("{}", "  Imported data:".white());
+    eprintln!(
+        "{}",
+        format!(
+            "    Date range: {} to {}",
+            graph.meta.date_range_start, graph.meta.date_range_end
+        )
+        .bright_black()
+    );
+    eprintln!(
+        "{}",
+        format!("    Active days: {}", graph.summary.active_days).bright_black()
+    );
+    eprintln!(
+        "{}",
+        format!(
+            "    Total tokens: {}",
+            format_tokens_with_commas(graph.summary.total_tokens)
+        )
+        .bright_black()
+    );
+    eprintln!(
+        "{}",
+        format!(
+            "    Total cost: {}",
+            format_currency(graph.summary.total_cost)
+        )
+        .bright_black()
+    );
+    if !graph.summary.clients.is_empty() {
+        eprintln!(
+            "{}",
+            format!("    Clients: {}", graph.summary.clients.join(", ")).bright_black()
+        );
+    }
+    eprintln!(
+        "{}",
+        format!("    Models: {}", graph.summary.models.len()).bright_black()
+    );
+
+    if !outcome.unknown_clients.is_empty() {
+        eprintln!(
+            "\n  {}",
+            format!(
+                "Warning: unrecognized client id(s): {}. The leaderboard only \
+                 accepts known clients, so these would be rejected on submit.",
+                outcome.unknown_clients.join(", ")
+            )
+            .yellow()
+        );
+    }
+
+    if outcome.negative_values_clamped > 0 {
+        eprintln!(
+            "{}",
+            format!(
+                "\n  Warning: {} negative token/cost value(s) in the export were clamped to \
+                 zero.",
+                outcome.negative_values_clamped
+            )
+            .yellow()
+        );
+    }
+
+    if outcome.suspect_cost_rows > 0 {
+        eprintln!(
+            "{}",
+            format!(
+                "\n  Warning: {} modelBreakdown row(s) have cost > 0 but all token fields are \
+                 0. The server rejects submissions shaped like this (\"Cost submitted without \
+                 tokens\"), so these rows would be rejected if ever uploaded.",
+                outcome.suspect_cost_rows
+            )
+            .yellow()
+        );
+    }
+
+    if outcome.future_dated_rows > 0 {
+        eprintln!(
+            "{}",
+            format!(
+                "\n  Warning: {} row(s) are dated in the future. The submit endpoint rejects \
+                 dates too far ahead, so these rows would be rejected if ever uploaded.",
+                outcome.future_dated_rows
+            )
+            .yellow()
+        );
+    }
+
+    if outcome.unparseable_cost_rows > 0 {
+        eprintln!(
+            "{}",
+            format!(
+                "\n  Warning: {} totalCost value(s) in the export could not be parsed and were \
+                 treated as 0.",
+                outcome.unparseable_cost_rows
+            )
+            .yellow()
+        );
+    }
+
+    if outcome.non_finite_cost_rows > 0 {
+        eprintln!(
+            "{}",
+            format!(
+                "\n  Warning: {} cost value(s) in the export were non-finite (NaN/Infinity) \
+                 and were sanitized to 0.",
+                outcome.non_finite_cost_rows
+            )
+            .yellow()
+        );
+    }
+
+    if outcome.multi_model_fallback_rows > 0 {
+        eprintln!(
+            "{}",
+            format!(
+                "\n  Warning: {} row(s) had no per-model breakdown and multiple models used; \
+                 all usage in those rows was attributed to the first model only.",
+                outcome.multi_model_fallback_rows
+            )
+            .yellow()
+        );
+    }
+
+    for warning in &outcome.breakdown_reconciliation_warnings {
+        eprintln!("{}", format!("\n  Warning: {}", warning).yellow());
+    }
+
+    if dry_run {
+        eprintln!(
+            "{}",
+            "\n  Dry run - not emitting normalized JSON.\n".yellow()
+        );
+        return Ok(());
+    }
+
+    let mut payload = to_ts_token_contribution_data(graph, None);
+    // The imported data has no MCP provenance of its own — it's derived
+    // purely from a third-party clawdboard export. Reusing the graph/submit
+    // converter would otherwise embed the *local* machine's configured MCP
+    // server names, leaking unrelated metadata into a file that should only
+    // reflect the export's contents.
+    payload.mcp_servers = None;
+    let json_output = serde_json::to_string_pretty(&payload)?;
+
+    if let Some(output_path) = output {
+        std::fs::write(&output_path, json_output)?;
+        eprintln!(
+            "{}",
+            format!("\n  ✓ Normalized tokscale data written to {}", output_path).green()
+        );
+    } else {
+        println!("{}", json_output);
+    }
+
+    // Be explicit about the upload boundary so nobody assumes `import` puts
+    // data on the leaderboard.
+    eprintln!(
+        "{}",
+        "\n  Note: import only converts data to tokscale's format; it does not \
+         upload to the leaderboard.\n  Uploading backfilled history needs \
+         server-side support for tagging it distinctly from live CLI usage \
+         (see https://github.com/junhoyeo/tokscale/issues/888).\n"
+            .bright_black()
+    );
 
     Ok(())
 }
