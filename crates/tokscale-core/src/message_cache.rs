@@ -21,7 +21,10 @@ use std::time::UNIX_EPOCH;
 // revalidated without reparsing the sidechain on every warm scan, while a
 // later-created parent transcript still invalidates the entry.
 // 3: UnifiedMessage gained agent_run_id for the opt-in subagent breakdown.
-const CACHE_FORMAT_VERSION: u32 = 3;
+// 4: UnifiedMessage gained session_title, changing the bincode payload layout.
+// Old shards must read as Stale (silent rebuild), not Invalid (corruption
+// warning), so the format version moves with the struct.
+const CACHE_FORMAT_VERSION: u32 = 4;
 // V2 intentionally starts cold and leaves source-message-cache.bin untouched:
 // the monolith did not record a trustworthy parser owner for migration.
 const CACHE_SHARD_DIRNAME: &str = "source-message-cache-v2";

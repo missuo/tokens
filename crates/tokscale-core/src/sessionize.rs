@@ -496,6 +496,7 @@ mod tests {
             agent: None,
             agent_run_id: None,
             dedup_key: None,
+            session_title: None,
             is_turn_start: false,
             duration_ms: None,
         }

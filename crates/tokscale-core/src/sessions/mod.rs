@@ -83,6 +83,12 @@ pub struct UnifiedMessage {
     #[serde(default)]
     pub agent_run_id: Option<String>,
     pub dedup_key: Option<String>,
+    /// Human-readable session title/name when the source client stores one
+    /// (e.g. OpenCode's `session.title` column). `None` for clients that
+    /// don't record a title; the Sessions tab falls back to showing just
+    /// the session ID in that case.
+    #[serde(default)]
+    pub session_title: Option<String>,
     /// True if this message is the first assistant response after a user turn.
     /// Used to count user interaction turns (as opposed to API message count).
     #[serde(default)]
@@ -363,6 +369,7 @@ impl UnifiedMessage {
             agent,
             agent_run_id: None,
             dedup_key,
+            session_title: None,
             is_turn_start: false,
         }
     }
