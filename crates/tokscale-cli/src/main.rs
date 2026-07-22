@@ -5397,7 +5397,7 @@ fn run_import_command(
         return Ok(());
     }
 
-    let mut payload = to_ts_token_contribution_data(graph, None);
+    let mut payload = to_ts_token_contribution_data(graph, None, None);
     // The imported data has no MCP provenance of its own — it's derived
     // purely from a third-party clawdboard export. Reusing the graph/submit
     // converter would otherwise embed the *local* machine's configured MCP

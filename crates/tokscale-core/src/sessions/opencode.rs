@@ -569,7 +569,7 @@ fn legacy_migration_cache_paths() -> Vec<std::path::PathBuf> {
 
     [
         crate::paths::legacy_dirs_cache_dir().map(|d| d.join(MIGRATION_CACHE_FILENAME)),
-        crate::paths::legacy_dot_cache_tokens_dir().map(|d| d.join(MIGRATION_CACHE_FILENAME)),
+        crate::paths::legacy_dot_cache_tokscale_dir().map(|d| d.join(MIGRATION_CACHE_FILENAME)),
     ]
     .into_iter()
     .flatten()

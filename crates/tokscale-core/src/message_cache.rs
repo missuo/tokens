@@ -2343,6 +2343,7 @@ mod tests {
             None,
             false,
             &crate::scanner::ScannerSettings::default(),
+            false,
         );
         assert_eq!(first.len(), 1);
         assert_eq!(first[0].tokens.input, i64::MAX);
@@ -2375,6 +2376,7 @@ mod tests {
             None,
             false,
             &crate::scanner::ScannerSettings::default(),
+            false,
         );
         assert_eq!(second, first);
 

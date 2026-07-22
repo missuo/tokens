@@ -34,3 +34,5 @@ self-host/
 .next/
 .vercel
 .env*.local
+__pycache__/
+tokens-export-*.json

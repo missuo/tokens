@@ -3802,6 +3802,7 @@ mod tests {
             pricing,
             false,
             &scanner::ScannerSettings::default(),
+            false,
         )
     }
 
