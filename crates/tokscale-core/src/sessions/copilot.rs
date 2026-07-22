@@ -55,7 +55,7 @@ pub fn parse_copilot_file(path: &Path) -> Vec<UnifiedMessage> {
     let agent_turn_response_ids =
         candidate_response_ids(&candidates, CopilotUsageSource::AgentTurnLog);
 
-    candidates
+    let emitted_candidates = candidates
         .into_iter()
         .filter(|candidate| {
             should_emit_candidate(
@@ -68,6 +68,10 @@ pub fn parse_copilot_file(path: &Path) -> Vec<UnifiedMessage> {
                 &agent_turn_response_ids,
             )
         })
+        .collect();
+
+    merge_duplicate_candidates(emitted_candidates)
+        .into_iter()
         .map(CopilotUsageCandidate::into_message)
         .collect()
 }
@@ -96,9 +100,11 @@ struct CopilotUsageCandidate {
     session_id: String,
     timestamp_ms: i64,
     duration_ms: Option<i64>,
+    inclusive_input_tokens: i64,
     tokens: TokenBreakdown,
     dedup_key: String,
     agent: Option<String>,
+    agent_is_direct: bool,
 }
 
 #[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
@@ -124,6 +130,43 @@ impl CopilotUsageCandidate {
         message.duration_ms = self.duration_ms;
         message.agent = self.agent;
         message
+    }
+
+    fn merge_duplicate(&mut self, duplicate: Self) {
+        self.inclusive_input_tokens = self
+            .inclusive_input_tokens
+            .max(duplicate.inclusive_input_tokens);
+        self.tokens = normalize_input_tokens(
+            self.inclusive_input_tokens,
+            self.tokens.output.max(duplicate.tokens.output),
+            self.tokens.cache_read.max(duplicate.tokens.cache_read),
+            self.tokens.cache_write.max(duplicate.tokens.cache_write),
+            self.tokens.reasoning.max(duplicate.tokens.reasoning),
+        );
+
+        let timestamp_ms = self.timestamp_ms.min(duplicate.timestamp_ms);
+        let end_timestamp_ms = self
+            .duration_ms
+            .map(|duration| self.timestamp_ms.saturating_add(duration))
+            .max(
+                duplicate
+                    .duration_ms
+                    .map(|duration| duplicate.timestamp_ms.saturating_add(duration)),
+            );
+        self.timestamp_ms = timestamp_ms;
+        self.duration_ms = end_timestamp_ms.and_then(|end_timestamp_ms| {
+            let duration_ms = end_timestamp_ms.saturating_sub(timestamp_ms);
+            (duration_ms > 0).then_some(duration_ms)
+        });
+
+        let duplicate_agent = duplicate.agent.filter(|agent| !agent.is_empty());
+        if duplicate.agent_is_direct && !self.agent_is_direct && duplicate_agent.is_some() {
+            self.agent = duplicate_agent;
+            self.agent_is_direct = true;
+        } else if self.agent.as_deref().is_none_or(|agent| agent.is_empty()) {
+            self.agent_is_direct = duplicate.agent_is_direct && duplicate_agent.is_some();
+            self.agent = duplicate_agent;
+        }
     }
 }
 
@@ -421,6 +464,8 @@ fn candidate_from_attributes(
         timestamp_ms,
         index,
     );
+    let direct_agent = first_non_empty_attr(attributes, &["gen_ai.agent.id"]).map(str::to_string);
+    let agent_is_direct = direct_agent.is_some();
 
     Some(CopilotUsageCandidate {
         source,
@@ -431,6 +476,7 @@ fn candidate_from_attributes(
         session_id,
         timestamp_ms,
         duration_ms,
+        inclusive_input_tokens: input.max(0),
         tokens,
         dedup_key,
         // Per-record attribution first: when a chat/inference record carries its
@@ -438,9 +484,8 @@ fn candidate_from_attributes(
         // it so sub-agents are not mis-attributed to the trace's first agent.
         // Fall back to the trace-level agent (typically from the invoke_agent
         // span) only when the record itself has none.
-        agent: first_non_empty_attr(attributes, &["gen_ai.agent.id"])
-            .map(str::to_string)
-            .or_else(|| trace_context.and_then(|tc| tc.agent_id.clone())),
+        agent: direct_agent.or_else(|| trace_context.and_then(|tc| tc.agent_id.clone())),
+        agent_is_direct,
     })
 }
 
@@ -508,6 +553,24 @@ fn should_emit_candidate(
                 && !response_match(agent_turn_response_ids)
         }
     }
+}
+
+fn merge_duplicate_candidates(
+    candidates: Vec<CopilotUsageCandidate>,
+) -> Vec<CopilotUsageCandidate> {
+    let mut merged: Vec<CopilotUsageCandidate> = Vec::with_capacity(candidates.len());
+    let mut indexes: HashMap<String, usize> = HashMap::with_capacity(candidates.len());
+
+    for candidate in candidates {
+        if let Some(index) = indexes.get(&candidate.dedup_key).copied() {
+            merged[index].merge_duplicate(candidate);
+        } else {
+            indexes.insert(candidate.dedup_key.clone(), merged.len());
+            merged.push(candidate);
+        }
+    }
+
+    merged
 }
 
 const MODEL_ATTRS: &[&str] = &["gen_ai.response.model", "gen_ai.request.model"];
@@ -1488,5 +1551,167 @@ mod tests {
             messages[0].dedup_key.as_deref(),
             Some("agent-turn:trace-session-upgrade:4")
         );
+    }
+
+    #[test]
+    fn test_parse_copilot_merges_duplicate_spans_monotonically() {
+        let root = r#"{"type":"span","traceId":"trace-merge","spanId":"invoke-root","name":"invoke_agent","startTime":[1775934259,0],"endTime":[1775934269,0],"attributes":{"gen_ai.operation.name":"invoke_agent","gen_ai.response.model":"gpt-5.4-mini","gen_ai.agent.id":"root-agent","gen_ai.usage.input_tokens":999,"gen_ai.usage.output_tokens":999}}"#;
+        let first = r#"{"type":"span","traceId":"trace-merge","spanId":"span-merge","parentSpanId":"invoke-root","name":"chat gpt-5.4-mini","startTime":[1775934260,0],"endTime":[1775934263,0],"attributes":{"gen_ai.operation.name":"chat","gen_ai.request.model":"gpt-5.4-mini","gen_ai.response.model":"gpt-5.4-mini","gen_ai.conversation.id":"conv-merge","gen_ai.usage.input_tokens":100,"gen_ai.usage.output_tokens":20,"gen_ai.usage.cache_read.input_tokens":30,"gen_ai.usage.cache_write.input_tokens":40,"gen_ai.usage.reasoning_tokens":50}}"#;
+        let second = r#"{"type":"span","traceId":"trace-merge","spanId":"span-merge","parentSpanId":"invoke-root","name":"chat gpt-5.4-mini","startTime":[1775934262,0],"endTime":[1775934268,0],"attributes":{"gen_ai.operation.name":"chat","gen_ai.request.model":"gpt-5.4-mini","gen_ai.response.model":"gpt-5.4-mini","gen_ai.conversation.id":"conv-merge","gen_ai.agent.id":"agent-merge","gen_ai.usage.input_tokens":200,"gen_ai.usage.output_tokens":10,"gen_ai.usage.cache_read.input_tokens":40,"gen_ai.usage.cache_write.input_tokens":20,"gen_ai.usage.reasoning_tokens":60}}"#;
+        let forward_file = create_test_file(&format!("{root}\n{first}\n{second}\n"));
+        let reverse_file = create_test_file(&format!("{root}\n{second}\n{first}\n"));
+
+        let forward = parse_copilot_file(forward_file.path());
+        let reverse = parse_copilot_file(reverse_file.path());
+
+        assert_eq!(forward, reverse);
+        assert_eq!(forward.len(), 1);
+        let message = &forward[0];
+        assert_eq!(message.tokens.input, 160);
+        assert_eq!(message.tokens.output, 20);
+        assert_eq!(message.tokens.cache_read, 40);
+        assert_eq!(message.tokens.cache_write, 40);
+        assert_eq!(message.tokens.reasoning, 60);
+        assert_eq!(message.timestamp, 1_775_934_260_000);
+        assert_eq!(message.duration_ms, Some(8_000));
+        assert_eq!(message.agent.as_deref(), Some("agent-merge"));
+        assert_eq!(message.dedup_key.as_deref(), Some("trace-merge:span-merge"));
+    }
+
+    #[test]
+    fn test_parse_copilot_duplicate_normalizes_merged_cache_read() {
+        let content = concat!(
+            r#"{"type":"span","traceId":"trace-cache-merge","spanId":"span-cache-merge","name":"chat gpt-5.4-mini","attributes":{"gen_ai.operation.name":"chat","gen_ai.response.model":"gpt-5.4-mini","gen_ai.usage.input_tokens":1000,"gen_ai.usage.output_tokens":10}}"#,
+            "\n",
+            r#"{"type":"span","traceId":"trace-cache-merge","spanId":"span-cache-merge","name":"chat gpt-5.4-mini","attributes":{"gen_ai.operation.name":"chat","gen_ai.response.model":"gpt-5.4-mini","gen_ai.usage.input_tokens":1000,"gen_ai.usage.output_tokens":10,"gen_ai.usage.cache_read.input_tokens":500}}"#,
+        );
+        let file = create_test_file(content);
+
+        let messages = parse_copilot_file(file.path());
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].tokens.input, 500);
+        assert_eq!(messages[0].tokens.cache_read, 500);
+    }
+
+    #[test]
+    fn test_parse_copilot_duplicate_keeps_primary_identity() {
+        let content = concat!(
+            r#"{"type":"span","traceId":"trace-identity","spanId":"span-identity","name":"chat claude-sonnet-4.5","startTime":[1775934260,0],"attributes":{"gen_ai.operation.name":"chat","gen_ai.request.model":"claude-sonnet-4.5","gen_ai.response.model":"claude-sonnet-4.5","gen_ai.conversation.id":"primary-session","gen_ai.usage.input_tokens":10,"gen_ai.usage.output_tokens":2}}"#,
+            "\n",
+            r#"{"type":"span","traceId":"trace-identity","spanId":"span-identity","name":"chat gpt-5.4","startTime":[1775934261,0],"attributes":{"gen_ai.operation.name":"chat","gen_ai.request.model":"gpt-5.4","gen_ai.response.model":"gpt-5.4","gen_ai.conversation.id":"duplicate-session","gen_ai.usage.input_tokens":20,"gen_ai.usage.output_tokens":3}}"#,
+        );
+        let file = create_test_file(content);
+
+        let messages = parse_copilot_file(file.path());
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].model_id, "claude-sonnet-4.5");
+        assert_eq!(messages[0].provider_id, "anthropic");
+        assert_eq!(messages[0].session_id, "primary-session");
+    }
+
+    #[test]
+    fn test_parse_copilot_keeps_different_duplicate_keys() {
+        let content = concat!(
+            r#"{"type":"span","traceId":"trace-keys","spanId":"span-a","name":"chat gpt-5.4-mini","startTime":[1775934260,0],"attributes":{"gen_ai.operation.name":"chat","gen_ai.response.model":"gpt-5.4-mini","gen_ai.usage.input_tokens":10,"gen_ai.usage.output_tokens":2}}"#,
+            "\n",
+            r#"{"type":"span","traceId":"trace-keys","spanId":"span-b","name":"chat gpt-5.4-mini","startTime":[1775934261,0],"attributes":{"gen_ai.operation.name":"chat","gen_ai.response.model":"gpt-5.4-mini","gen_ai.usage.input_tokens":20,"gen_ai.usage.output_tokens":3}}"#,
+        );
+        let file = create_test_file(content);
+
+        let messages = parse_copilot_file(file.path());
+
+        assert_eq!(messages.len(), 2);
+        assert!(messages.iter().any(|message| {
+            message.dedup_key.as_deref() == Some("trace-keys:span-a") && message.tokens.input == 10
+        }));
+        assert!(messages.iter().any(|message| {
+            message.dedup_key.as_deref() == Some("trace-keys:span-b") && message.tokens.input == 20
+        }));
+    }
+
+    #[test]
+    fn test_parse_copilot_priority_filtered_duplicate_does_not_merge() {
+        let content = concat!(
+            r#"{"type":"span","traceId":"trace-priority","spanId":"span-priority","name":"chat gpt-5.4-mini","startTime":[1775934260,0],"endTime":[1775934261,0],"attributes":{"gen_ai.operation.name":"chat","gen_ai.response.model":"gpt-5.4-mini","gen_ai.usage.input_tokens":11,"gen_ai.usage.output_tokens":2}}"#,
+            "\n",
+            r#"{"type":"span","traceId":"trace-priority","spanId":"span-priority","name":"invoke_agent gpt-5.4-mini","startTime":[1775934260,0],"endTime":[1775934269,0],"attributes":{"gen_ai.operation.name":"invoke_agent","gen_ai.response.model":"gpt-5.4-mini","gen_ai.usage.input_tokens":999,"gen_ai.usage.output_tokens":999}}"#,
+        );
+        let file = create_test_file(content);
+
+        let messages = parse_copilot_file(file.path());
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(
+            messages[0].dedup_key.as_deref(),
+            Some("trace-priority:span-priority")
+        );
+        assert_eq!(messages[0].tokens.input, 11);
+        assert_eq!(messages[0].tokens.output, 2);
+    }
+
+    #[test]
+    fn test_merge_copilot_duplicate_recovers_agent_and_keeps_primary_identity() {
+        let primary = CopilotUsageCandidate {
+            source: CopilotUsageSource::ChatSpan,
+            trace_id: Some("trace-merge-helper".to_string()),
+            response_id: None,
+            model: "primary-model".to_string(),
+            provider_id: "primary-provider".to_string(),
+            session_id: "primary-session".to_string(),
+            timestamp_ms: 100,
+            duration_ms: Some(20),
+            inclusive_input_tokens: 40,
+            tokens: TokenBreakdown {
+                input: 10,
+                output: 2,
+                cache_read: 30,
+                cache_write: 4,
+                reasoning: 5,
+            },
+            dedup_key: "same-key".to_string(),
+            agent: Some("fallback-agent".to_string()),
+            agent_is_direct: false,
+        };
+        let duplicate = CopilotUsageCandidate {
+            source: CopilotUsageSource::AgentSummarySpan,
+            trace_id: Some("trace-duplicate".to_string()),
+            response_id: Some("response-duplicate".to_string()),
+            model: "duplicate-model".to_string(),
+            provider_id: "duplicate-provider".to_string(),
+            session_id: "duplicate-session".to_string(),
+            timestamp_ms: 90,
+            duration_ms: Some(30),
+            inclusive_input_tokens: 60,
+            tokens: TokenBreakdown {
+                input: 20,
+                output: 1,
+                cache_read: 40,
+                cache_write: 8,
+                reasoning: 6,
+            },
+            dedup_key: "same-key".to_string(),
+            agent: Some("recovered-agent".to_string()),
+            agent_is_direct: true,
+        };
+
+        let merged = merge_duplicate_candidates(vec![primary, duplicate]);
+
+        assert_eq!(merged.len(), 1);
+        let candidate = &merged[0];
+        assert!(candidate.source == CopilotUsageSource::ChatSpan);
+        assert_eq!(candidate.trace_id.as_deref(), Some("trace-merge-helper"));
+        assert_eq!(candidate.model, "primary-model");
+        assert_eq!(candidate.provider_id, "primary-provider");
+        assert_eq!(candidate.session_id, "primary-session");
+        assert_eq!(candidate.timestamp_ms, 90);
+        assert_eq!(candidate.duration_ms, Some(30));
+        assert_eq!(candidate.tokens.input, 20);
+        assert_eq!(candidate.tokens.output, 2);
+        assert_eq!(candidate.tokens.cache_read, 40);
+        assert_eq!(candidate.tokens.cache_write, 8);
+        assert_eq!(candidate.tokens.reasoning, 6);
+        assert_eq!(candidate.agent.as_deref(), Some("recovered-agent"));
     }
 }
