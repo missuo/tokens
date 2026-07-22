@@ -227,7 +227,7 @@ mod tests {
     fn make_app(clients: Vec<ClientFilter>) -> App {
         let app = App::new_with_cached_data(
             TuiConfig {
-                theme: "tokscale".to_string(),
+                theme: "tokens".to_string(),
                 refresh: 0,
                 sessions_path: None,
                 clients: None,

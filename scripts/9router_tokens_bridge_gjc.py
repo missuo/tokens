@@ -1,24 +1,24 @@
 #!/usr/bin/env python3
-"""Bridge 9Router usage into tokscale via gjc-format JSONL files.
+"""Bridge 9Router usage into tokens via gjc-format JSONL files.
 
 Reads 9Router request details from ~/.9router/db/data.sqlite (and all
-backup DBs from previous upgrades) and writes JSONL files that tokscale's
+backup DBs from previous upgrades) and writes JSONL files that tokens's
 gjc client parser can consume.
 
 Usage:
-    python3 scripts/9router_tokscale_bridge_gjc.py
+    python3 scripts/9router_tokens_bridge_gjc.py
 
-Then add to ~/.config/tokscale/settings.json:
-    {"scanner": {"extraScanPaths": {"gjc": ["/home/USER/.local/share/9router-tokscale/sessions"]}}}
+Then add to ~/.config/tokens/settings.json:
+    {"scanner": {"extraScanPaths": {"gjc": ["/home/USER/.local/share/9router-tokens/sessions"]}}}
 
 CRITICAL cost policy: for PAID models, do NOT emit usage.cost in the JSONL
 output. The gjc parser treats any present cost.total (even 0.0) as
-CostSource::ProviderReported, which prevents tokscale from repricing via its
-pricing database. Omitting the cost field lets tokscale reprice from
+CostSource::ProviderReported, which prevents tokens from repricing via its
+pricing database. Omitting the cost field lets tokens reprice from
 tokens + pricing data.
 
 For FREE-tier models (ids ending in "-free" or ":free"), the bridge embeds
-"cost": {"total": 0.0} on purpose: tokscale's pricing lookup strips the
+"cost": {"total": 0.0} on purpose: tokens's pricing lookup strips the
 "-free" suffix, so an omitted cost would reprice e.g. kimi-k2.5-free at the
 PAID kimi-k2.5 rate. The authoritative $0.00 pins free usage at zero cost
 while tokens still count.
@@ -35,7 +35,7 @@ from datetime import datetime, timezone
 from urllib.parse import quote
 
 ROUTER_DB = Path.home() / ".9router" / "db" / "data.sqlite"
-BRIDGE_DIR = Path.home() / ".local" / "share" / "9router-tokscale" / "sessions"
+BRIDGE_DIR = Path.home() / ".local" / "share" / "9router-tokens" / "sessions"
 
 def discover_router_dbs() -> list[Path]:
     """Discover the current 9Router DB and all backup DBs.
@@ -130,7 +130,7 @@ def compute_token_buckets(tokens: dict) -> tuple[int, int, int, int]:
 def is_free_model(model: str) -> bool:
     """Return True for free-tier model ids (ending in "-free" or ":free").
 
-    Tokscale's pricing lookup strips the "-free" suffix before matching, so
+    Tokens's pricing lookup strips the "-free" suffix before matching, so
     a free variant left without an embedded cost would be repriced at the
     PAID base-model rate. Free rows therefore embed an authoritative $0.00.
     """
@@ -184,7 +184,7 @@ def convert_row_to_entry(row, stats: dict | None = None) -> dict | None:
     if not provider and "/" in model:
         provider = model.split("/", 1)[0].lstrip("@")
     # Use local timezone (not UTC) so bridge file dates align with
-    # tokscale --today / --since/--until, which use chrono::Local.
+    # tokens --today / --since/--until, which use chrono::Local.
     date_str = datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc).astimezone().strftime("%Y-%m-%d")
 
     msg = {
@@ -200,7 +200,7 @@ def convert_row_to_entry(row, stats: dict | None = None) -> dict | None:
             "totalTokens": total,
         },
     }
-    # Paid models omit usage.cost so tokscale reprices from tokens + pricing
+    # Paid models omit usage.cost so tokens reprices from tokens + pricing
     # data. Free variants embed an authoritative $0.00: the pricing lookup
     # strips "-free", so omitting cost would bill them at the paid rate.
     if is_free_model(model):
@@ -290,7 +290,7 @@ def run():
     print(f"Bridge files written to: {BRIDGE_DIR}")
     print(f"Files: {len(messages_by_date)}, Messages: {total_entries}")
     print()
-    print("Add this to ~/.config/tokscale/settings.json:")
+    print("Add this to ~/.config/tokens/settings.json:")
     print(
         json.dumps(
             {
@@ -304,7 +304,7 @@ def run():
         )
     )
     print()
-    print("Then run: tokscale graph --client 9router")
+    print("Then run: tokens graph --client 9router")
 
 if __name__ == "__main__":
     run()

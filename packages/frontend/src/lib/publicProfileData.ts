@@ -663,7 +663,7 @@ export async function loadPublicProfileForPage(
       const query = period === "all" ? "" : `?period=${period}`;
       const response = await getPublicProfileResponse(
         new Request(
-          `http://tokscale.internal/api/users/${encodeURIComponent(username)}${query}`,
+          `http://tokens.internal/api/users/${encodeURIComponent(username)}${query}`,
         ),
         { params: Promise.resolve({ username }) },
       );

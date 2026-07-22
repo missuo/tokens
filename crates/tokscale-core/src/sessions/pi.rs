@@ -396,7 +396,7 @@ not valid json
     #[test]
     fn test_parse_pi_skips_leading_title_record() {
         // given: current OMP builds write a `title` metadata record before
-        // `session` (tokscale#802) — the parser must skip it, not discard
+        // `session` (tokens#802) — the parser must skip it, not discard
         // the whole file.
         let content = r#"{"type":"title","v":1,"title":"Comment on GitHub issue","source":"auto","updatedAt":"2026-07-02T18:08:49.723Z"}
 {"type":"session","id":"pi_ses_005","timestamp":"2026-07-02T18:07:14.690Z","cwd":"/tmp"}

@@ -75,7 +75,7 @@ fn legacy_cache_files() -> Vec<PathBuf> {
         return Vec::new();
     }
 
-    crate::paths::legacy_dot_cache_tokscale_dir()
+    crate::paths::legacy_dot_cache_tokens_dir()
         .map(|dir| vec![dir.join("tui-data-cache.json")])
         .unwrap_or_default()
 }

@@ -2140,7 +2140,7 @@ impl App {
 
     fn export_to_json(&mut self) {
         let filename = format!(
-            "tokscale-export-{}.json",
+            "tokens-export-{}.json",
             chrono::Utc::now().format("%Y%m%d-%H%M%S")
         );
 

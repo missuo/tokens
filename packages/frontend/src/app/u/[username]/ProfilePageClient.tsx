@@ -238,7 +238,7 @@ export default function ProfilePageClient({
           {data.hasBackfill && (
             <BackfillBadge
               role="note"
-              title="Totals include usage imported from a third-party export via `tokscale import`, not only locally-scanned CLI sessions."
+              title="Totals include usage imported from a third-party export via `tokens import`, not only locally-scanned CLI sessions."
             >
               includes imported history
             </BackfillBadge>

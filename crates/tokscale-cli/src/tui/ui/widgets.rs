@@ -3,7 +3,7 @@ use ratatui::widgets::{Cell, ScrollbarState};
 use tokscale_core::ClientId;
 
 use crate::tui::client_ui;
-use crate::tui::config::TokscaleConfig;
+use crate::tui::config::TokensConfig;
 use crate::tui::themes::Theme;
 
 pub fn format_tokens_compact(tokens: u64) -> String {
@@ -204,9 +204,7 @@ fn known_provider_palette(provider_lower: &str) -> Option<&'static [(u8, u8, u8)
 /// vendor palette of their own and return `false`, so callers can color by the
 /// model's own vendor instead of the neutral "unknown" gray.
 pub fn provider_has_palette(provider: &str) -> bool {
-    TokscaleConfig::load()
-        .get_provider_color(provider)
-        .is_some()
+    TokensConfig::load().get_provider_color(provider).is_some()
         || known_provider_palette(&provider.to_lowercase()).is_some()
 }
 
@@ -214,7 +212,7 @@ pub fn provider_has_palette(provider: &str) -> bool {
 /// Honors `[colors.providers]` config overrides at every rank by deriving
 /// a 7-step lighten-to-white palette from the override base color.
 pub fn get_provider_shade(provider: &str, rank: usize) -> Color {
-    if let Some(base) = TokscaleConfig::load().get_provider_color(provider) {
+    if let Some(base) = TokensConfig::load().get_provider_color(provider) {
         return shade_from_base(base, rank);
     }
 
@@ -379,7 +377,7 @@ pub fn get_provider_from_model(model: &str) -> &'static str {
 }
 
 pub fn get_client_color(client: &str) -> Color {
-    let config = TokscaleConfig::load();
+    let config = TokensConfig::load();
     if let Some(color) = config.get_client_color(client) {
         return color;
     }
@@ -406,7 +404,7 @@ pub fn get_client_color(client: &str) -> Color {
 }
 
 pub fn get_client_display_name(client: &str) -> String {
-    let config = TokscaleConfig::load();
+    let config = TokensConfig::load();
     if let Some(name) = config.get_client_display_name(client) {
         return name.to_string();
     }
@@ -421,7 +419,7 @@ pub fn get_client_display_name(client: &str) -> String {
 }
 
 pub fn get_provider_display_name(provider: &str) -> String {
-    let config = TokscaleConfig::load();
+    let config = TokensConfig::load();
     if let Some(name) = config.get_provider_display_name(provider) {
         return name.to_string();
     }
@@ -444,7 +442,7 @@ pub fn get_provider_display_name(provider: &str) -> String {
 
 /// Display name for a SINGLE provider id (no comma-joined lists — the public
 /// `get_provider_display_name` splits those first).
-fn map_single_provider(provider: &str, config: &TokscaleConfig) -> String {
+fn map_single_provider(provider: &str, config: &TokensConfig) -> String {
     if let Some(name) = config.get_provider_display_name(provider) {
         return name.to_string();
     }

@@ -225,7 +225,7 @@ export async function POST(request: Request) {
     const warnings = [...validation.warnings];
 
     // Phase 1 backfill-provenance persistence (issue #888): a submission
-    // tagged `provenance.origin === "backfill"` (from `tokscale import`)
+    // tagged `provenance.origin === "backfill"` (from `tokens import`)
     // sets the sticky submissions.has_backfill flag and stamps a per-client
     // origin tag into daily_breakdown.source_breakdown. The tag is excluded
     // from generateSubmissionHash, so it never affects idempotency.

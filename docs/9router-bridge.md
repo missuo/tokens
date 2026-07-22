@@ -1,11 +1,11 @@
-# 9Router ↔ tokscale Bridge
+# 9Router ↔ tokens Bridge
 
-Bridges 9Router usage data into tokscale via gjc-format JSONL files, enabling
-tokscale's analytics, graph, and cost estimation for 9Router API calls.
+Bridges 9Router usage data into tokens via gjc-format JSONL files, enabling
+tokens's analytics, graph, and cost estimation for 9Router API calls.
 
 ## Files
 
-- `scripts/9router_tokscale_bridge_gjc.py` — Python bridge script
+- `scripts/9router_tokens_bridge_gjc.py` — Python bridge script
 - `scripts/9router_custom_pricing.json` — Custom pricing for non-free models
 - `docs/9router-bridge.md` — This file
 
@@ -13,7 +13,7 @@ tokscale's analytics, graph, and cost estimation for 9Router API calls.
 
 ### 1. Merge custom pricing
 
-> **Warning:** Do not `cp` this file over `~/.config/tokscale/custom-pricing.json`
+> **Warning:** Do not `cp` this file over `~/.config/tokens/custom-pricing.json`
 > — if you already have overrides there, a plain copy silently destroys them.
 > Merge the 9Router entries in instead. If the file doesn't exist yet, this
 > also handles creating it.
@@ -24,33 +24,33 @@ tokscale's analytics, graph, and cost estimation for 9Router API calls.
 > entries on any key collision.
 
 ```bash
-mkdir -p ~/.config/tokscale
-if [ -f ~/.config/tokscale/custom-pricing.json ]; then
+mkdir -p ~/.config/tokens
+if [ -f ~/.config/tokens/custom-pricing.json ]; then
   # Object addition in jq is right-biased (right operand wins on key
   # collisions), so the user's existing models must be the RIGHT operand.
   jq -s '.[0].models = (.[1].models + .[0].models) | .[0]' \
-    ~/.config/tokscale/custom-pricing.json scripts/9router_custom_pricing.json \
-    > ~/.config/tokscale/custom-pricing.json.tmp \
-  && mv ~/.config/tokscale/custom-pricing.json.tmp ~/.config/tokscale/custom-pricing.json
+    ~/.config/tokens/custom-pricing.json scripts/9router_custom_pricing.json \
+    > ~/.config/tokens/custom-pricing.json.tmp \
+  && mv ~/.config/tokens/custom-pricing.json.tmp ~/.config/tokens/custom-pricing.json
 else
-  cp scripts/9router_custom_pricing.json ~/.config/tokscale/custom-pricing.json
+  cp scripts/9router_custom_pricing.json ~/.config/tokens/custom-pricing.json
 fi
 ```
 
-Alternatively, open `~/.config/tokscale/custom-pricing.json` and manually
+Alternatively, open `~/.config/tokens/custom-pricing.json` and manually
 append the entries from `scripts/9router_custom_pricing.json`'s `models` key.
 
-### 2. Configure tokscale scanner
+### 2. Configure tokens scanner
 
-Add the bridge output directory to your tokscale settings file (default
-`~/.config/tokscale/settings.json`; override with `TOKSCALE_CONFIG_DIR` or
+Add the bridge output directory to your tokens settings file (default
+`~/.config/tokens/settings.json`; override with `TOKENS_CONFIG_DIR` or
 `XDG_CONFIG_HOME`):
 
 ```json
 {
   "scanner": {
     "extraScanPaths": {
-      "gjc": ["/home/USER/.local/share/9router-tokscale/sessions"]
+      "gjc": ["/home/USER/.local/share/9router-tokens/sessions"]
     }
   }
 }
@@ -59,15 +59,15 @@ Add the bridge output directory to your tokscale settings file (default
 ### 3. Run the bridge
 
 ```bash
-python3 scripts/9router_tokscale_bridge_gjc.py
+python3 scripts/9router_tokens_bridge_gjc.py
 ```
 
 ### 4. Verify
 
 ```bash
-tokscale graph --client 9router
-tokscale models --client 9router
-tokscale pricing "deepseek-ai/deepseek-v4-flash"
+tokens graph --client 9router
+tokens models --client 9router
+tokens pricing "deepseek-ai/deepseek-v4-flash"
 ```
 
 Bridge messages are stamped with client `9router`. `--client 9router`
@@ -78,8 +78,8 @@ gjc sessions *plus* bridge data (9Router data is gjc-format).
 
 1. Bridge reads 9Router's SQLite database (`~/.9router/db/data.sqlite`)
 2. Extracts token usage from `requestDetails` table
-3. Writes gjc-format JSONL files grouped by date to `~/.local/share/9router-tokscale/sessions/`
-4. Tokscale's gjc parser reads these files and applies pricing from its database + custom pricing
+3. Writes gjc-format JSONL files grouped by date to `~/.local/share/9router-tokens/sessions/`
+4. Tokens's gjc parser reads these files and applies pricing from its database + custom pricing
 
 ## Critical: Cost Field Policy
 
@@ -92,7 +92,7 @@ database. Omitting the cost field causes `embedded_cost` to return
 tokens + pricing data.
 
 For **free-tier models** (ids ending in `-free` or `:free`, case-insensitive),
-the bridge does the opposite: it embeds `"cost": {"total": 0.0}`. Tokscale's
+the bridge does the opposite: it embeds `"cost": {"total": 0.0}`. Tokens's
 pricing lookup strips the `-free` suffix before matching, so an omitted cost
 would reprice e.g. `kimi-k2.5-free` at the *paid* `kimi-k2.5` rate. The
 embedded authoritative `$0.00` pins free usage at zero cost while tokens are
@@ -100,7 +100,7 @@ still counted.
 
 ## Provider Inference
 
-For tokscale's pricing lookup to work, the bridge reads the `provider` column
+For tokens's pricing lookup to work, the bridge reads the `provider` column
 from 9Router's database. When the provider field is empty and the model ID
 contains a `/` (e.g. `deepseek-ai/deepseek-v4-flash`), the bridge derives the
 provider hint from the first path segment:
@@ -138,7 +138,7 @@ Models with `:free` suffix or `*-free` suffix are free tier. The custom pricing
 file only covers paid models. For free models the bridge embeds an
 authoritative `"cost": {"total": 0.0}` in each row (see "Critical: Cost Field
 Policy" above), so they show `$0.00` cost instead of being repriced at the
-paid base-model rate after tokscale strips the `-free` suffix.
+paid base-model rate after tokens strips the `-free` suffix.
 
 ## Known Limitations
 
@@ -151,34 +151,34 @@ paid base-model rate after tokscale strips the `-free` suffix.
 ## Automation
 
 A systemd user timer runs the bridge every 10 minutes automatically so
-`tokscale --today` stays current without manual intervention.
+`tokens --today` stays current without manual intervention.
 
 ### One-time setup
 
 ```bash
 # Install the bridge script where the systemd unit expects it
-mkdir -p ~/.local/share/9router-tokscale/
-cp ~/Documents/Rust/tokscale/scripts/9router_tokscale_bridge_gjc.py ~/.local/share/9router-tokscale/9router_tokscale_bridge_gjc.py
+mkdir -p ~/.local/share/9router-tokens/
+cp ~/Documents/Rust/tokens/scripts/9router_tokens_bridge_gjc.py ~/.local/share/9router-tokens/9router_tokens_bridge_gjc.py
 mkdir -p ~/.config/systemd/user/
-cp ~/Documents/Rust/tokscale/scripts/systemd/9router-tokscale-bridge.{service,timer} ~/.config/systemd/user/
+cp ~/Documents/Rust/tokens/scripts/systemd/9router-tokens-bridge.{service,timer} ~/.config/systemd/user/
 loginctl enable-linger $USER   # so timers run without an active login session
 systemctl --user daemon-reload
-systemctl --user enable --now 9router-tokscale-bridge.timer
+systemctl --user enable --now 9router-tokens-bridge.timer
 # Verify:
 systemctl --user list-timers | grep 9router
-systemctl --user start 9router-tokscale-bridge.service   # first run, no waiting
-journalctl --user -u 9router-tokscale-bridge.service -n 20
+systemctl --user start 9router-tokens-bridge.service   # first run, no waiting
+journalctl --user -u 9router-tokens-bridge.service -n 20
 ```
 
 ### How it works
 
-The timer fires `9router-tokscale-bridge.service` every 10 minutes. Each run
+The timer fires `9router-tokens-bridge.service` every 10 minutes. Each run
 reads the 9Router SQLite DB and writes gjc-format JSONL files grouped by local
 date. The `Persistent=true` setting ensures missed runs (hibernate, reboot) are
 caught up immediately on next boot.
 
 ### Troubleshooting
 
-- Check timer status: `systemctl --user status 9router-tokscale-bridge.timer`
-- Check last run: `journalctl --user -u 9router-tokscale-bridge.service -n 20`
+- Check timer status: `systemctl --user status 9router-tokens-bridge.timer`
+- Check last run: `journalctl --user -u 9router-tokens-bridge.service -n 20`
 - Reinstall units: repeat the one-time setup commands above (units are overwritten in place)

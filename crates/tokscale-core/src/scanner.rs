@@ -2579,7 +2579,7 @@ mod tests {
         let previous = std::env::var("TOKENS_HEADLESS_DIR").ok();
         unsafe { std::env::remove_var("TOKENS_HEADLESS_DIR") };
 
-        let home = "/tmp/tokscale-test-home";
+        let home = "/tmp/tokens-test-home";
         let roots = headless_roots(home);
         let config_root = PathBuf::from(format!("{}/.config/tokens/headless", home));
         let mac_root = PathBuf::from(format!(

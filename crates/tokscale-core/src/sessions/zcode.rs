@@ -11,7 +11,7 @@
 //! When token usage is present in the transcript (fields like `usage`,
 //! `token_usage`, or `input_tokens`/`output_tokens`), those authoritative
 //! counts are used. When absent, tokens are estimated at ~4 chars/token,
-//! consistent with tokscale's other estimated sources (see CommandCode, Kiro).
+//! consistent with tokens's other estimated sources (see CommandCode, Kiro).
 
 use super::utils::{back_anchor_timestamp, file_modified_timestamp_ms, open_readonly_sqlite};
 use super::{normalize_workspace_key, workspace_label_from_key, UnifiedMessage};

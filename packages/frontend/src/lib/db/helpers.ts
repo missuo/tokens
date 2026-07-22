@@ -19,7 +19,7 @@ export interface ClientBreakdownProvenanceData {
   modelCount: number;
   /**
    * "backfill" when this client's contribution was written by a
-   * backfill-origin submission (`tokscale import`); absent (or "cli") for
+   * backfill-origin submission (`tokens import`); absent (or "cli") for
    * locally-scanned CLI usage. Preserved by deriveClientBreakdownProvenance
    * so merges do not silently drop the tag.
    */

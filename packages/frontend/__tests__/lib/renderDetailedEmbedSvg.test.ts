@@ -16,6 +16,7 @@ const mockStats: UserEmbedStats = {
     totalCost: 42.42,
     submissionCount: 7,
     rank: 3,
+    hasBackfill: false,
     rankTotal: 80,
     updatedAt: "2026-02-24T00:00:00.000Z",
   },

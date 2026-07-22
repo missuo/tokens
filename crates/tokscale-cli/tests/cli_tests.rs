@@ -535,7 +535,7 @@ fn write_pricing_cache(base: &Path, timestamp: u64) {
 
     // Seed all three locations so the test exercises the same fallback
     // chain the binary uses post-#470: canonical
-    // <config_dir>/cache/, then legacy dirs::cache_dir()/tokscale, then
+    // <config_dir>/cache/, then legacy dirs::cache_dir()/tokens, then
     // ~/.cache/tokens. Without the canonical path seeded, CI runners
     // where dirs::cache_dir() resolves outside the sandboxed HOME (e.g.
     // some Linux runners with XDG_CACHE_HOME set globally) miss the
@@ -678,7 +678,7 @@ fn settings_json_path(base: &Path) -> std::path::PathBuf {
 }
 
 /// Writes a minimal clawdboard account export to `<dir>/export.json` and
-/// returns its path, for exercising `tokscale import`.
+/// returns its path, for exercising `tokens import`.
 fn write_clawdboard_export_fixture(dir: &Path) -> std::path::PathBuf {
     let path = dir.join("export.json");
     fs::write(
@@ -709,7 +709,7 @@ fn write_clawdboard_export_fixture(dir: &Path) -> std::path::PathBuf {
 
 /// Writes a `.claude/.mcp.json` under `home` declaring a locally configured
 /// MCP server, so tests can verify that data derived purely from an
-/// external export (e.g. `tokscale import`) does not leak it.
+/// external export (e.g. `tokens import`) does not leak it.
 fn write_local_mcp_config(home: &Path) {
     let dir = home.join(".claude");
     fs::create_dir_all(&dir).unwrap();
@@ -902,9 +902,9 @@ fn test_graph_command_help() {
 
 #[test]
 fn test_import_stdout_is_pure_json() {
-    // `tokscale import export.json > out.json` must produce a valid JSON
+    // `tokens import export.json > out.json` must produce a valid JSON
     // file: no human-readable banners/summaries/warnings on stdout, only
-    // the serialized payload (matching how `tokscale graph` behaves).
+    // the serialized payload (matching how `tokens graph` behaves).
     let home = TempDir::new().unwrap();
     let export_path = write_clawdboard_export_fixture(home.path());
 
@@ -2527,7 +2527,7 @@ fn add_alias_variant_message(tmp: &Path) {
 
 /// Writes a tokens `settings.json` with the given `modelAliases` object into
 /// the sandbox config dir that `cmd_with_home` points at
-/// (`XDG_CONFIG_HOME/tokscale`). `cmd_with_home` clears `TOKENS_CONFIG_DIR`, so
+/// (`XDG_CONFIG_HOME/tokens`). `cmd_with_home` clears `TOKENS_CONFIG_DIR`, so
 /// the config must live under the pinned XDG path to be read.
 fn write_model_aliases(tmp: &Path, aliases_json: &str) {
     let config_dir = tmp.join(".config/tokens");

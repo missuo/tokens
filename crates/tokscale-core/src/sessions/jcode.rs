@@ -88,7 +88,7 @@ fn tokens_from_usage(usage: &JcodeTokenUsage) -> TokenBreakdown {
         reported_input
     } else {
         // OpenAI-style APIs report cached tokens as a subset of input_tokens.
-        // Tokscale prices input and cache buckets independently, so remove that
+        // Tokens prices input and cache buckets independently, so remove that
         // overlap here rather than charging cached reads twice.
         reported_input.saturating_sub(cache_read.min(reported_input))
     };

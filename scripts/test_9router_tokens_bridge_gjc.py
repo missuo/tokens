@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Tests for scripts/9router_tokscale_bridge_gjc.py.
+"""Tests for scripts/9router_tokens_bridge_gjc.py.
 
-Run with: python3 -m pytest scripts/test_9router_tokscale_bridge_gjc.py
+Run with: python3 -m pytest scripts/test_9router_tokens_bridge_gjc.py
 
 The bridge module's filename starts with a digit ("9router_..."), which is
 not a valid Python identifier, so it can't be imported with a plain
@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-MODULE_PATH = Path(__file__).parent / "9router_tokscale_bridge_gjc.py"
+MODULE_PATH = Path(__file__).parent / "9router_tokens_bridge_gjc.py"
 spec = importlib.util.spec_from_file_location("bridge_9router", MODULE_PATH)
 bridge = importlib.util.module_from_spec(spec)
 sys.modules["bridge_9router"] = bridge
@@ -305,7 +305,7 @@ def test_convert_row_to_entry_unknown_when_both_model_sources_missing():
 def test_convert_row_to_entry_buckets_by_local_date():
     # ts_ms is derived from the ISO timestamp, then the bucket date is
     # computed via .astimezone() (local time), not UTC. Compare against the
-    # same conversion tokscale's bridge performs so the test tracks the
+    # same conversion tokens's bridge performs so the test tracks the
     # implementation's documented local-date behavior rather than hardcoding
     # a timezone-dependent literal.
     from datetime import datetime, timezone
@@ -372,7 +372,7 @@ def test_convert_row_to_entry_stamps_9router_source():
     ],
 )
 def test_convert_row_to_entry_free_model_embeds_zero_cost(model):
-    # Tokscale's pricing lookup strips the "-free" suffix, so an omitted
+    # Tokens's pricing lookup strips the "-free" suffix, so an omitted
     # cost would reprice the free variant at the PAID base-model rate.
     # Free rows must carry an authoritative $0.00 (cost.total present ⇒
     # CostSource::ProviderReported ⇒ no repricing), tokens still counted.

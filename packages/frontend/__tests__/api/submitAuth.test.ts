@@ -954,7 +954,7 @@ describe("POST /api/submit auth path", () => {
         };
         return builder;
       }),
-      execute: vi.fn(() => Promise.resolve()),
+      execute: vi.fn((..._args: unknown[]) => Promise.resolve()),
       // Nested transaction (Postgres SAVEPOINT). Mock just invokes the
       // callback with the same tx so calls inside the savepoint still
       // count toward tx.execute / tx.update / etc.
@@ -1292,7 +1292,7 @@ describe("POST /api/submit auth path", () => {
           return Promise.resolve();
         }),
       })),
-      execute: vi.fn(() => Promise.resolve()),
+      execute: vi.fn((..._args: unknown[]) => Promise.resolve()),
       transaction: vi.fn(async (callback: (sp: typeof tx) => Promise<unknown>) =>
         callback(tx)
       ),

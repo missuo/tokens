@@ -1,5 +1,5 @@
 {
-  "$schema": "https://tokscale.ai/custom-pricing.schema.json",
+  "$schema": "https://tokens.ci/custom-pricing.schema.json",
   "models": {
     "deepseek-ai/deepseek-v4-flash": {
       "input_cost_per_million_tokens": 0.14,

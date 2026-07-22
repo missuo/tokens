@@ -1,16 +1,16 @@
 //! Import historical usage from third-party aggregate exports.
 //!
 //! Currently supports the clawdboard.ai account export ("daily aggregates").
-//! The importer normalizes that export into tokscale's native [`GraphResult`],
-//! which the CLI then writes out as standard tokscale JSON (identical in shape
-//! to `tokscale graph`) for review, archival, or a future server-supported
+//! The importer normalizes that export into tokens's native [`GraphResult`],
+//! which the CLI then writes out as standard tokens JSON (identical in shape
+//! to `tokens graph`) for review, archival, or a future server-supported
 //! backfill.
 //!
-//! Motivation: `tokscale submit` computes totals from *raw* local session
+//! Motivation: `tokens submit` computes totals from *raw* local session
 //! files. Once those files are gone (Claude Code deletes transcripts after
 //! `cleanupPeriodDays`, default 30), earlier months can never be re-scanned,
 //! even though a competing dashboard may still hold the aggregates. This
-//! importer recovers that history into tokscale's format.
+//! importer recovers that history into tokens's format.
 //!
 //! IMPORTANT — upload boundary: importing only *normalizes* data to a file. It
 //! does not submit anything to the leaderboard. Backfilled aggregates are not
@@ -32,9 +32,9 @@ pub const SUPPORTED_FORMATS: &[&str] = &["clawdboard"];
 
 /// Result of a successful import.
 pub struct ImportOutcome {
-    /// Normalized usage, ready to serialize as tokscale JSON.
+    /// Normalized usage, ready to serialize as tokens JSON.
     pub graph: GraphResult,
-    /// Client ids present in the export that tokscale does not recognize.
+    /// Client ids present in the export that tokens does not recognize.
     /// The leaderboard rejects unknown clients, so these are surfaced to the
     /// caller as a warning rather than silently dropped or silently kept.
     pub unknown_clients: Vec<String>,
@@ -69,7 +69,7 @@ pub struct ImportOutcome {
     pub breakdown_reconciliation_warnings: Vec<String>,
 }
 
-/// Parse an export of the given `format` into normalized tokscale data.
+/// Parse an export of the given `format` into normalized tokens data.
 pub fn parse_export(format: &str, json: &str) -> Result<ImportOutcome> {
     match format {
         "clawdboard" => parse_clawdboard_export(json),
@@ -136,7 +136,7 @@ struct ClawdboardModelBreakdown {
 // Normalization
 // ---------------------------------------------------------------------------
 
-/// Map a clawdboard `source` id to a canonical tokscale client id.
+/// Map a clawdboard `source` id to a canonical tokens client id.
 fn normalize_client_id(source: &str) -> String {
     match source.trim().to_lowercase().as_str() {
         "claude-code" | "claude_code" | "claudecode" => "claude".to_string(),
@@ -151,7 +151,7 @@ struct DayBuilder {
     clients: BTreeMap<String, ClientContribution>,
 }
 
-/// Parse a clawdboard account export into normalized tokscale data.
+/// Parse a clawdboard account export into normalized tokens data.
 ///
 /// Grouping: one [`DailyContribution`] per calendar date; within a day, one
 /// [`ClientContribution`] per (client, model), summed across every aggregate

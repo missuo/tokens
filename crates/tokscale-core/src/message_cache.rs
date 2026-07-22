@@ -69,7 +69,7 @@ fn fallback_cache_dir() -> Option<PathBuf> {
 #[cfg(unix)]
 fn user_scoped_temp_dir() -> Option<PathBuf> {
     let uid = unsafe { libc::geteuid() };
-    Some(std::env::temp_dir().join(format!("tokscale-uid-{uid}")))
+    Some(std::env::temp_dir().join(format!("tokens-uid-{uid}")))
 }
 
 #[cfg(not(unix))]
@@ -78,7 +78,7 @@ fn user_scoped_temp_dir() -> Option<PathBuf> {
         .or_else(|| std::env::var_os("USER"))
         .map(|user| {
             let mut path = std::env::temp_dir();
-            path.push(format!("tokscale-user-{}", user.to_string_lossy()));
+            path.push(format!("tokens-user-{}", user.to_string_lossy()));
             path
         })
 }

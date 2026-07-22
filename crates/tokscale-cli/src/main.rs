@@ -247,7 +247,7 @@ enum Commands {
         today_only: bool,
     },
     #[command(
-        about = "Import historical usage from a third-party aggregate export (e.g. clawdboard) into tokscale JSON"
+        about = "Import historical usage from a third-party aggregate export (e.g. clawdboard) into tokens JSON"
     )]
     Import {
         #[arg(help = "Path to the export file to import")]
@@ -260,7 +260,7 @@ enum Commands {
         format: String,
         #[arg(
             long,
-            help = "Write normalized tokscale JSON to this file instead of stdout"
+            help = "Write normalized tokens JSON to this file instead of stdout"
         )]
         output: Option<String>,
         #[arg(long, help = "Parse and summarize only; do not emit normalized JSON")]
@@ -1324,7 +1324,7 @@ fn build_client_filter_with_defaults(
     // Defaults only apply when the user passed no canonical `--client` flags.
     // CLI flags always win — predictable semantics over "merge". Unknown /
     // typo'd ids are dropped silently so a stale settings.json entry never
-    // breaks tokscale.
+    // breaks tokens.
     if ordered.is_empty() {
         for raw in defaults {
             if let Some(client) = ClientFilter::from_filter_str(raw) {
@@ -5226,7 +5226,7 @@ fn run_graph_command(
 }
 
 /// Import a third-party aggregate export (currently clawdboard) and emit it as
-/// standard tokscale JSON — the same shape `tokscale graph` produces.
+/// standard tokens JSON — the same shape `tokens graph` produces.
 ///
 /// This deliberately does NOT upload: backfilled aggregates cannot be verified
 /// the way locally-scanned sessions are, so submitting them requires
@@ -5250,10 +5250,10 @@ fn run_import_command(
     }
 
     // All human-readable banners/summaries/warnings go to stderr so stdout
-    // stays pure JSON when no --output path is given (matching `tokscale
-    // graph`'s behavior) — e.g. `tokscale import export.json > out.json`
+    // stays pure JSON when no --output path is given (matching `tokens
+    // graph`'s behavior) — e.g. `tokens import export.json > out.json`
     // must produce a valid JSON file.
-    eprintln!("\n  {}\n", "Tokscale - Import Usage Data".cyan());
+    eprintln!("\n  {}\n", "Tokens - Import Usage Data".cyan());
 
     let contents = std::fs::read_to_string(&file)
         .map_err(|e| anyhow::anyhow!("Failed to read '{}': {}", file, e))?;
@@ -5410,7 +5410,7 @@ fn run_import_command(
         std::fs::write(&output_path, json_output)?;
         eprintln!(
             "{}",
-            format!("\n  ✓ Normalized tokscale data written to {}", output_path).green()
+            format!("\n  ✓ Normalized tokens data written to {}", output_path).green()
         );
     } else {
         println!("{}", json_output);
@@ -5420,7 +5420,7 @@ fn run_import_command(
     // data on the leaderboard.
     eprintln!(
         "{}",
-        "\n  Note: import only converts data to tokscale's format; it does not \
+        "\n  Note: import only converts data to tokens's format; it does not \
          upload to the leaderboard.\n  Uploading backfilled history needs \
          server-side support for tagging it distinctly from live CLI usage \
          (see https://github.com/junhoyeo/tokscale/issues/888).\n"
@@ -7227,7 +7227,7 @@ mod tests {
     #[test]
     fn test_build_client_filter_defaults_dropped_for_unknown_ids() {
         // Stale settings entry (e.g. removed/renamed client) → silently
-        // dropped, never errors. Ensures a typo never breaks tokscale.
+        // dropped, never errors. Ensures a typo never breaks tokens.
         let flags = ClientFlags::default();
         let defaults = vec!["opencode".to_string(), "not-a-client".to_string()];
         assert_eq!(

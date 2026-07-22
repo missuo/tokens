@@ -36,7 +36,7 @@ if (!databaseUrl) {
 // builds (rapid pushes, a manual redeploy overlapping an in-flight one) can
 // race two `drizzle-kit migrate` runs against each other. Hold a session
 // lock for the lifetime of this process to serialize them.
-const LOCK_KEY = "tokscale_drizzle_migrate";
+const LOCK_KEY = "tokens_drizzle_migrate";
 const MAX_LOCK_ATTEMPTS = 60;
 const MAX_ATTEMPTS = 5;
 const RETRY_DELAY_MS = 3000;

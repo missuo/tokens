@@ -1,5 +1,5 @@
 [Unit]
-Description=Run the 9Router → tokscale bridge every 10 minutes
+Description=Run the 9Router → tokens bridge every 10 minutes
 
 [Timer]
 OnBootSec=2min
@@ -10,7 +10,7 @@ AccuracySec=30s
 # Persist the last trigger time across reboots so a run missed while the
 # machine was off (hibernate, shutdown) fires as soon as possible on boot.
 Persistent=true
-Unit=9router-tokscale-bridge.service
+Unit=9router-tokens-bridge.service
 
 [Install]
 WantedBy=timers.target

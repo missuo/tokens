@@ -264,7 +264,7 @@ pub fn parse_opencode_file(path: &Path) -> Option<UnifiedMessage> {
 
 /// OpenCode computes per-message cost at request time from its own pricing
 /// data (models.dev), so a positive `cost` is authoritative and must survive
-/// tokscale's LiteLLM repricing pass. A zero cost usually means OpenCode
+/// tokens's LiteLLM repricing pass. A zero cost usually means OpenCode
 /// itself had no pricing for the model — leave it `Unknown` so
 /// `apply_pricing_if_available` can still estimate.
 fn mark_opencode_cost_source(unified: &mut UnifiedMessage) {
@@ -569,7 +569,7 @@ fn legacy_migration_cache_paths() -> Vec<std::path::PathBuf> {
 
     [
         crate::paths::legacy_dirs_cache_dir().map(|d| d.join(MIGRATION_CACHE_FILENAME)),
-        crate::paths::legacy_dot_cache_tokscale_dir().map(|d| d.join(MIGRATION_CACHE_FILENAME)),
+        crate::paths::legacy_dot_cache_tokens_dir().map(|d| d.join(MIGRATION_CACHE_FILENAME)),
     ]
     .into_iter()
     .flatten()
@@ -685,7 +685,7 @@ mod tests {
 
     /// Build a database shaped like OpenCode v2 (`opencode-next.db`): an empty
     /// `message` table plus the `session_message` + `session` tables that hold
-    /// the real per-message data. Mirrors the columns tokscale actually reads.
+    /// the real per-message data. Mirrors the columns tokens actually reads.
     fn create_opencode_v2_sqlite_db(db_path: &Path) -> Connection {
         let conn = Connection::open(db_path).unwrap();
         conn.execute_batch(

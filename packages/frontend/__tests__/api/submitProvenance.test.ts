@@ -137,7 +137,8 @@ vi.mock("@/lib/validation/submission", () => ({
   generateSubmissionHash: mockState.generateSubmissionHash,
 }));
 
-vi.mock("@/lib/db/helpers", () => ({
+vi.mock("@/lib/db/helpers", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/lib/db/helpers")>()),
   mergeClientBreakdownsWithRegressionGuard: mockState.mergeClientBreakdownsWithRegressionGuard,
   recalculateDayTotals: mockState.recalculateDayTotals,
   deriveClientBreakdownProvenance: mockState.deriveClientBreakdownProvenance,
@@ -543,7 +544,7 @@ describe("POST /api/submit backfill provenance persistence (phase 1)", () => {
     primeDataMocks(); // live CLI submit, no provenance
 
     // The user's submissions row already exists (and, in the database, is
-    // already flagged hasBackfill=true from an earlier `tokscale import`).
+    // already flagged hasBackfill=true from an earlier `tokens import`).
     const capture = buildMockTx(
       [
         [{ id: "submission-existing" }],

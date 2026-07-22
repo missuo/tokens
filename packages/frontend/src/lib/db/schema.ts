@@ -195,7 +195,7 @@ export const submissions = pgTable(
     /**
      * True once ANY accepted submission for this user carried a
      * submission-level `provenance.origin === "backfill"` tag (e.g. from
-     * `tokscale import`). Sticky: later live CLI submits never reset it,
+     * `tokens import`). Sticky: later live CLI submits never reset it,
      * because the merged totals still include the imported history.
      */
     hasBackfill: boolean("has_backfill").notNull().default(false),
@@ -316,7 +316,7 @@ export const dailyBreakdown = pgTable(
             modelCount: number;
             /**
              * "backfill" when this client's contribution came from a
-             * backfill-origin submission (`tokscale import`); absent/"cli"
+             * backfill-origin submission (`tokens import`); absent/"cli"
              * for locally-scanned usage.
              */
             origin?: "cli" | "backfill";

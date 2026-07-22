@@ -2796,7 +2796,7 @@ fn pricing_multiplier(message: &UnifiedMessage) -> f64 {
     //
     // The multiplier is keyed on the message's `provider_id`, not on the
     // provenance of the matched LiteLLM pricing row. Today this is safe because
-    // tokscale's bundled LiteLLM dataset only carries upstream-provider rows
+    // tokens's bundled LiteLLM dataset only carries upstream-provider rows
     // (anthropic, openai, google) for the underlying models. If a future
     // LiteLLM update adds rows under provider `zed.dev` that already include
     // Zed's markup, this function would double-bill — revisit by threading

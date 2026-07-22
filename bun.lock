@@ -2,7 +2,7 @@
   "lockfileVersion": 1,
   "workspaces": {
     "": {
-      "name": "tokscale-monorepo",
+      "name": "tokens-monorepo",
       "devDependencies": {
         "@resvg/resvg-js": "^2.6.2",
         "@types/node": "^20.0.0",
