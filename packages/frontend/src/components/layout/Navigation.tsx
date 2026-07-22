@@ -197,10 +197,11 @@ export function Navigation() {
             href={TESTFLIGHT_URL}
             target="_blank"
             rel="noopener noreferrer"
-            className="group hidden h-9 items-center gap-2 rounded-lg border border-line bg-surface pl-1.5 pr-3 text-sm font-medium text-foreground transition hover:border-foreground/20 sm:flex"
+            aria-label="Download the iOS app on TestFlight"
+            className="group flex h-9 items-center gap-2 rounded-lg border border-line bg-surface px-1.5 text-sm font-medium text-foreground transition hover:border-foreground/20 sm:pr-3"
           >
             <TestFlightIcon />
-            <span className="leading-none">
+            <span className="hidden leading-none sm:inline">
               iOS App
               <span className="ml-1.5 rounded-[4px] bg-foreground/8 px-1 py-0.5 align-middle font-mono text-[10px] font-semibold uppercase tracking-wide text-muted">
                 beta
