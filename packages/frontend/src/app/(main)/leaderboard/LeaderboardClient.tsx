@@ -1148,7 +1148,7 @@ export default function LeaderboardClient({ initialData, currentUser, initialSor
     // Preserve ?view= when it's present (e.g. view=users navigated explicitly)
     const currentView = searchParams.get("view");
     if (currentView) params.set("view", currentView);
-    if (period !== "all") params.set("period", period);
+    if (period !== "today") params.set("period", period);
     if (requestedPage > 1) params.set("page", String(requestedPage));
     if (effectiveSortBy !== "tokens") params.set("sortBy", effectiveSortBy);
     if (period === "custom" && appliedFrom) params.set("from", appliedFrom);
@@ -1393,11 +1393,11 @@ export default function LeaderboardClient({ initialData, currentUser, initialSor
         <SegmentedControl
           label="Leaderboard period"
           options={[
-            { value: "all" as Period, label: "All time" },
-            { value: "last-month" as Period, label: "Last month" },
-            { value: "month" as Period, label: "This month" },
-            { value: "week" as Period, label: "This week" },
             { value: "today" as Period, label: "Today" },
+            { value: "all" as Period, label: "All time" },
+            { value: "week" as Period, label: "This week" },
+            { value: "month" as Period, label: "This month" },
+            { value: "last-month" as Period, label: "Last month" },
             { value: "custom" as Period, label: "Custom" },
           ]}
           value={period}

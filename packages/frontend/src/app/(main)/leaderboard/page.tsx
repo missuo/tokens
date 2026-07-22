@@ -20,7 +20,7 @@ function isMissingDatabaseUrl(error: unknown): boolean {
 
 const VALID_PERIODS: Period[] = ["all", "month", "last-month", "week", "today", "custom"];
 
-function createEmptyLeaderboardData(sortBy: SortBy): LeaderboardData {
+function createEmptyLeaderboardData(period: Period, sortBy: SortBy): LeaderboardData {
   return {
     users: [],
     pagination: {
@@ -36,7 +36,7 @@ function createEmptyLeaderboardData(sortBy: SortBy): LeaderboardData {
       totalCost: 0,
       uniqueUsers: 0,
     },
-    period: "all",
+    period,
     sortBy,
   };
 }
@@ -92,7 +92,7 @@ async function LeaderboardWithPreferences({
   let period: Period =
     periodParam && VALID_PERIODS.includes(periodParam as Period)
       ? (periodParam as Period)
-      : "all";
+      : "today";
 
   const customDateRange =
     period === "custom" ? parseCustomDateRange(fromParam, toParam) : null;
@@ -107,7 +107,7 @@ async function LeaderboardWithPreferences({
   const [initialData, session] = await Promise.all([
     getLeaderboardData(period, pageParam, 50, sortBy, searchParam, customFrom, customTo).catch((error) => {
       if (isMissingDatabaseUrl(error)) {
-        return createEmptyLeaderboardData(sortBy);
+        return createEmptyLeaderboardData(period, sortBy);
       }
       throw error;
     }),
