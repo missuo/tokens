@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useId } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useTheme } from "next-themes";
@@ -18,6 +18,33 @@ function GitHubIcon({ size = 18 }: { size?: number }) {
   return (
     <svg aria-hidden="true" width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
       <path d="M12 0C5.374 0 0 5.373 0 12C0 17.302 3.438 21.8 8.207 23.387C8.806 23.498 9 23.126 9 22.81V20.576C5.662 21.302 4.967 19.16 4.967 19.16C4.421 17.773 3.634 17.404 3.634 17.404C2.545 16.659 3.717 16.675 3.717 16.675C4.922 16.759 5.556 17.912 5.556 17.912C6.626 19.746 8.363 19.216 9.048 18.909C9.155 18.134 9.466 17.604 9.81 17.305C7.145 17 4.343 15.971 4.343 11.374C4.343 10.063 4.812 8.993 5.579 8.153C5.455 7.85 5.044 6.629 5.696 4.977C5.696 4.977 6.704 4.655 8.997 6.207C9.954 5.941 10.98 5.808 12 5.803C13.02 5.808 14.047 5.941 15.006 6.207C17.297 4.655 18.303 4.977 18.303 4.977C18.956 6.63 18.545 7.851 18.421 8.153C19.19 8.993 19.656 10.064 19.656 11.374C19.656 15.983 16.849 16.998 14.177 17.295C14.607 17.667 15 18.397 15 19.517V22.81C15 23.129 15.192 23.504 15.801 23.386C20.566 21.797 24 17.3 24 12C24 5.373 18.627 0 12 0Z" />
+    </svg>
+  );
+}
+
+const TESTFLIGHT_URL = "https://testflight.apple.com/join/NWmvqqTX";
+
+function TestFlightIcon({ size = 20 }: { size?: number }) {
+  const gradientId = useId();
+  return (
+    <svg width={size} height={size} viewBox="0 0 28 28" aria-hidden="true" className="shrink-0">
+      <defs>
+        <linearGradient id={gradientId} x1="14" y1="0" x2="14" y2="28" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#40BEFF" />
+          <stop offset="1" stopColor="#0A6BFF" />
+        </linearGradient>
+      </defs>
+      <rect width="28" height="28" rx="6.5" fill={`url(#${gradientId})`} />
+      <g
+        fill="#fff"
+        className="transition-transform duration-700 ease-out group-hover:rotate-[360deg]"
+        style={{ transformOrigin: "14px 14px" }}
+      >
+        <ellipse cx="14" cy="8" rx="2.6" ry="4.3" />
+        <ellipse cx="14" cy="8" rx="2.6" ry="4.3" transform="rotate(120 14 14)" />
+        <ellipse cx="14" cy="8" rx="2.6" ry="4.3" transform="rotate(240 14 14)" />
+        <circle cx="14" cy="14" r="2" />
+      </g>
     </svg>
   );
 }
@@ -166,6 +193,20 @@ export function Navigation() {
         </div>
 
         <div className="ml-auto flex items-center gap-2">
+          <a
+            href={TESTFLIGHT_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="group hidden h-9 items-center gap-2 rounded-lg border border-line bg-surface pl-1.5 pr-3 text-sm font-medium text-foreground transition hover:border-foreground/20 sm:flex"
+          >
+            <TestFlightIcon />
+            <span className="leading-none">
+              iOS App
+              <span className="ml-1.5 rounded-[4px] bg-foreground/8 px-1 py-0.5 align-middle font-mono text-[10px] font-semibold uppercase tracking-wide text-muted">
+                beta
+              </span>
+            </span>
+          </a>
           <ThemeToggle />
           {isLoading ? (
             <div className="h-9 w-9 animate-pulse rounded-lg bg-foreground/10" />
@@ -199,6 +240,19 @@ export function Navigation() {
                 <Link href="/local" onClick={() => setMobileOpen(false)} className="block rounded-lg px-3 py-2 text-sm font-medium text-foreground transition hover:bg-foreground/5">
                   Local Viewer
                 </Link>
+                <a
+                  href={TESTFLIGHT_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={() => setMobileOpen(false)}
+                  className="group mt-1 flex items-center gap-2.5 rounded-lg border-t border-line px-3 pb-2 pt-2.5 text-sm font-medium text-foreground transition hover:bg-foreground/5"
+                >
+                  <TestFlightIcon size={22} />
+                  <span className="flex flex-col leading-tight">
+                    iOS App
+                    <span className="font-mono text-[10px] font-normal text-muted">Get it on TestFlight</span>
+                  </span>
+                </a>
               </PopoverContent>
             </Popover>
           </div>
