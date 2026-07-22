@@ -8,6 +8,7 @@ import type { UserEmbedStats, EmbedTodayUsage, EmbedTodayClient } from "./getUse
 import type { ClientType } from "../types";
 import { formatNumber, formatCurrency } from "../format";
 import { SOURCE_DISPLAY_NAMES, SOURCE_COLORS } from "../constants";
+import { clientLogoSvg } from "./clientLogoSvg";
 import {
   type EmbedTheme,
   type EmbedColorName,
@@ -122,8 +123,18 @@ export function renderDetailedEmbedSvg(
     let y = 128;
     const shownClients = clients.slice(0, MAX_CLIENTS);
     for (const client of shownClients) {
-      const color = clientColor(client.source, palette.brand);
-      add(`  <circle cx="${PAD + 5}" cy="${y - 4}" r="5" fill="${color}"/>`);
+      const logo = clientLogoSvg(client.source, {
+        x: PAD - 1,
+        y: y - 12,
+        size: 14,
+        monoColor: palette.text,
+      });
+      if (logo) {
+        add(`  ${logo}`);
+      } else {
+        const color = clientColor(client.source, palette.brand);
+        add(`  <circle cx="${PAD + 5}" cy="${y - 4}" r="5" fill="${color}"/>`);
+      }
       add(`  <text x="${PAD + 18}" y="${y}" fill="${palette.text}" font-size="14" font-weight="700" font-family="${FIGTREE_FONT_STACK}">${escapeXml(clientLabel(client.source))}</text>`);
       add(`  <text x="${W - PAD}" y="${y}" fill="${palette.cost}" font-size="13" font-weight="700" text-anchor="end" font-family="${FIGTREE_FONT_STACK}">${escapeXml(formatCurrency(client.cost, costCompact))}</text>`);
       y += 22;

@@ -16,7 +16,7 @@
     },
     "packages/cli": {
       "name": "tokens-cli",
-      "version": "3.0.3",
+      "version": "3.1.0",
       "bin": {
         "tokens": "./bin.js",
       },
@@ -37,35 +37,35 @@
     },
     "packages/cli-darwin-arm64": {
       "name": "tokens-cli-darwin-arm64",
-      "version": "3.0.3",
+      "version": "3.1.0",
     },
     "packages/cli-darwin-x64": {
       "name": "tokens-cli-darwin-x64",
-      "version": "3.0.3",
+      "version": "3.1.0",
     },
     "packages/cli-linux-arm64-gnu": {
       "name": "tokens-cli-linux-arm64-gnu",
-      "version": "3.0.3",
+      "version": "3.1.0",
     },
     "packages/cli-linux-arm64-musl": {
       "name": "tokens-cli-linux-arm64-musl",
-      "version": "3.0.3",
+      "version": "3.1.0",
     },
     "packages/cli-linux-x64-gnu": {
       "name": "tokens-cli-linux-x64-gnu",
-      "version": "3.0.3",
+      "version": "3.1.0",
     },
     "packages/cli-linux-x64-musl": {
       "name": "tokens-cli-linux-x64-musl",
-      "version": "3.0.3",
+      "version": "3.1.0",
     },
     "packages/cli-win32-arm64-msvc": {
       "name": "tokens-cli-win32-arm64-msvc",
-      "version": "3.0.3",
+      "version": "3.1.0",
     },
     "packages/cli-win32-x64-msvc": {
       "name": "tokens-cli-win32-x64-msvc",
-      "version": "3.0.3",
+      "version": "3.1.0",
     },
     "packages/frontend": {
       "name": "@tokens/frontend",
@@ -73,6 +73,7 @@
       "dependencies": {
         "@heroui/react": "^3.1.0",
         "@heroui/styles": "^3.1.0",
+        "@lobehub/icons-static-svg": "^1.94.0",
         "@neondatabase/serverless": "^0.10.4",
         "@radix-ui/react-tooltip": "^1.2.8",
         "@tailwindcss/postcss": "^4.3.0",
@@ -341,6 +342,8 @@
     "@jridgewell/sourcemap-codec": ["@jridgewell/sourcemap-codec@1.5.5", "", {}, "sha512-cYQ9310grqxueWbl+WuIUIaiUaDcj7WOq5fVhEljNVgRfOUhY9fy2zTvfoqWsnebh8Sl70VScFbICvJnLKB0Og=="],
 
     "@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.31", "", { "dependencies": { "@jridgewell/resolve-uri": "^3.1.0", "@jridgewell/sourcemap-codec": "^1.4.14" } }, "sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw=="],
+
+    "@lobehub/icons-static-svg": ["@lobehub/icons-static-svg@1.94.0", "", {}, "sha512-Inx1TYkjLH6YeHOIHeVW9+OM/xxRnk8TmcQVKquFUDBmE3X9sUuRGt7kALrrDBNNAbrWz7Qq6fAiFj9E9Mmw9Q=="],
 
     "@napi-rs/wasm-runtime": ["@napi-rs/wasm-runtime@0.2.12", "", { "dependencies": { "@emnapi/core": "^1.4.3", "@emnapi/runtime": "^1.4.3", "@tybys/wasm-util": "^0.10.0" } }, "sha512-ZVWUcfwY4E/yPitQJl481FjFo3K22D6qF0DuFH6Y/nbnE11GY5uguDxZMGXPQ8WQ0128MXQD7TnfHyK4oWoIJQ=="],
 
