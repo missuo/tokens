@@ -6,7 +6,6 @@ import { getSessionFromRequest } from "@/lib/auth/requestSession";
 import { db, submissions, submittedDevices } from "@/lib/db";
 import { normalizeUsernameCacheKey, revalidateUsernamePaths } from "@/lib/db/usernameLookup";
 import { getBearerToken } from "../../../../lib/auth/bearerToken";
-import { revalidateUserGroupLeaderboards } from "@/lib/groups/cache";
 
 async function resolveUser(request: Request): Promise<{ id: string; username: string } | null> {
   const token = getBearerToken(request.headers.get("Authorization"));
@@ -56,12 +55,6 @@ export async function DELETE(request: Request) {
       revalidateTag(`embed-user:${usernameCacheKey}:cost`, "max");
     } catch (cacheError) {
       console.error("Public cache invalidation failed after deletion:", cacheError);
-    }
-
-    try {
-      await revalidateUserGroupLeaderboards(user.id);
-    } catch (cacheError) {
-      console.error("Group cache invalidation failed after deletion:", cacheError);
     }
 
     try {

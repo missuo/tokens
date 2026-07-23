@@ -6,7 +6,6 @@ const mockState = vi.hoisted(() => {
   const clearSession = vi.fn();
   const revalidateTag = vi.fn();
   const revalidatePath = vi.fn();
-  const revalidateUserGroupLeaderboards = vi.fn();
   const revalidateUsernamePaths = vi.fn((username: string) => {
     const lower = username.toLowerCase();
     const variants = username === lower ? [username] : [username, lower];
@@ -45,7 +44,6 @@ const mockState = vi.hoisted(() => {
     clearSession,
     revalidateTag,
     revalidatePath,
-    revalidateUserGroupLeaderboards,
     revalidateUsernamePaths,
     eq,
     db,
@@ -56,7 +54,6 @@ const mockState = vi.hoisted(() => {
       clearSession.mockReset();
       revalidateTag.mockReset();
       revalidatePath.mockReset();
-      revalidateUserGroupLeaderboards.mockReset();
       revalidateUsernamePaths.mockClear();
       eq.mockClear();
       db.delete.mockClear();
@@ -101,10 +98,6 @@ vi.mock("@/lib/db/usernameLookup", () => ({
   revalidateUsernamePaths: mockState.revalidateUsernamePaths,
 }));
 
-vi.mock("@/lib/groups/cache", () => ({
-  revalidateUserGroupLeaderboards: mockState.revalidateUserGroupLeaderboards,
-}));
-
 type ModuleExports = typeof import("../../src/app/api/settings/account/route");
 
 let DELETE: ModuleExports["DELETE"];
@@ -140,7 +133,6 @@ describe("DELETE /api/settings/account", () => {
     expect(response.status).toBe(401);
     expect(await response.json()).toEqual({ error: "Not authenticated" });
     expect(mockState.db.delete).not.toHaveBeenCalled();
-    expect(mockState.revalidateUserGroupLeaderboards).not.toHaveBeenCalled();
   });
 
   it("returns 401 when Origin is missing and never touches the DB", async () => {
@@ -202,12 +194,6 @@ describe("DELETE /api/settings/account", () => {
 
     // Group leaderboard revalidation must run BEFORE the user row delete —
     // the helper reads group membership rows that the delete cascades away.
-    expect(mockState.revalidateUserGroupLeaderboards).toHaveBeenCalledWith(
-      "user-1"
-    );
-    expect(
-      mockState.revalidateUserGroupLeaderboards.mock.invocationCallOrder[0]
-    ).toBeLessThan(mockState.db.delete.mock.invocationCallOrder[0]);
 
     expect(mockState.revalidateTag).toHaveBeenCalledTimes(7);
     expect(mockState.revalidateTag).toHaveBeenNthCalledWith(1, "leaderboard", "max");
@@ -267,9 +253,6 @@ describe("DELETE /api/settings/account", () => {
     });
     mockState.setDeletedRows([{ id: "user-1" }]);
     mockState.clearSession.mockRejectedValue(new Error("cookie error"));
-    mockState.revalidateUserGroupLeaderboards.mockRejectedValue(
-      new Error("group cache unavailable")
-    );
 
     const response = await DELETE(createRequest());
 

@@ -6,7 +6,6 @@ const mockState = vi.hoisted(() => {
   const generateSubmissionHash = vi.fn(() => "submission-hash");
   const revalidateTag = vi.fn();
   const revalidateUsernamePaths = vi.fn();
-  const revalidateUserGroupLeaderboards = vi.fn();
   const mergeClientBreakdowns = vi.fn();
   const mergeClientBreakdownsWithRegressionGuard = vi.fn();
   const recalculateDayTotals = vi.fn();
@@ -28,7 +27,6 @@ const mockState = vi.hoisted(() => {
     generateSubmissionHash,
     revalidateTag,
     revalidateUsernamePaths,
-    revalidateUserGroupLeaderboards,
     mergeClientBreakdowns,
     mergeClientBreakdownsWithRegressionGuard,
     recalculateDayTotals,
@@ -42,7 +40,6 @@ const mockState = vi.hoisted(() => {
       generateSubmissionHash.mockClear();
       revalidateTag.mockClear();
       revalidateUsernamePaths.mockReset();
-      revalidateUserGroupLeaderboards.mockReset();
       mergeClientBreakdowns.mockReset();
       mergeClientBreakdownsWithRegressionGuard.mockReset();
       recalculateDayTotals.mockReset();
@@ -125,10 +122,6 @@ vi.mock("@/lib/db/helpers", async (importOriginal) => ({
 vi.mock("@/lib/db/usernameLookup", () => ({
   normalizeUsernameCacheKey: (username: string) => username.toLowerCase(),
   revalidateUsernamePaths: mockState.revalidateUsernamePaths,
-}));
-
-vi.mock("@/lib/groups/cache", () => ({
-  revalidateUserGroupLeaderboards: mockState.revalidateUserGroupLeaderboards,
 }));
 
 type ModuleExports = typeof import("../../src/app/api/submit/route");
@@ -394,9 +387,6 @@ describe("POST /api/submit auth path", () => {
       outputTokens: 5,
     });
     mockState.mergeTimestampMs.mockImplementation((_existing: unknown, incoming: unknown) => incoming);
-    mockState.revalidateUserGroupLeaderboards.mockRejectedValueOnce(
-      new Error("group cache unavailable")
-    );
 
     const selectResults = [
       [],
@@ -545,7 +535,6 @@ describe("POST /api/submit auth path", () => {
     expect(mockState.revalidateTag).toHaveBeenNthCalledWith(2, "user:alice", "max");
     expect(mockState.revalidateTag).toHaveBeenNthCalledWith(3, "user-rank", "max");
     expect(mockState.revalidateTag).toHaveBeenNthCalledWith(4, "user-rank:alice", "max");
-    expect(mockState.revalidateUserGroupLeaderboards).toHaveBeenCalledWith("user-1");
     expect(mockState.revalidateUsernamePaths).toHaveBeenCalledWith("Alice");
   });
 
