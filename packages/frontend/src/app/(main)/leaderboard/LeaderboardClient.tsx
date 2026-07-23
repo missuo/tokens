@@ -1321,7 +1321,6 @@ export default function LeaderboardClient({ initialData, currentUser, initialSor
             <MetricValue
               $accent
               aria-label={`Tokens ${data.stats.totalTokens.toLocaleString("en-US")}`}
-              title={data.stats.totalTokens.toLocaleString("en-US")}
             >
               <HoverTooltip data-tooltip={data.stats.totalTokens.toLocaleString('en-US')}>
                 {formatNumber(data.stats.totalTokens)}
@@ -1332,7 +1331,6 @@ export default function LeaderboardClient({ initialData, currentUser, initialSor
             <MetricLabel>Cost</MetricLabel>
             <MetricValue
               aria-label={`Cost ${data.stats.totalCost.toLocaleString("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2 })}`}
-              title={data.stats.totalCost.toLocaleString("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2 })}
             >
               <HoverTooltip data-tooltip={data.stats.totalCost.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2 })}>
                 {formatCurrency(data.stats.totalCost)}
