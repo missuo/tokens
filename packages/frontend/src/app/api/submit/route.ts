@@ -30,6 +30,9 @@ const LEGACY_SUBMIT_DEVICE_NAME = "Legacy submissions";
 // inserted row binds 10 params, so chunk large backfills (e.g. ~6,500+ days)
 // across multiple INSERT statements to stay well under that limit.
 const INSERT_CHUNK_SIZE = 1000;
+// Below this many tokens, an exact cross-device (tokens, input) match could
+// plausibly be a coincidence, so the duplicate guard leaves it alone.
+const CROSS_DEVICE_DUP_MIN_TOKENS = 10_000;
 
 // "kilocode" is a legacy alias of "kilo" (mirrors LEGACY_CLIENT_ALIASES in
 // lib/validation/submission.ts and lib/publicProfileData.ts). Incoming
@@ -452,6 +455,7 @@ export async function POST(request: Request) {
         .select({
           date: dailyBreakdown.date,
           sourceBreakdown: dailyBreakdown.sourceBreakdown,
+          submittedDeviceId: dailyBreakdown.submittedDeviceId,
         })
         .from(dailyBreakdown)
         .where(eq(dailyBreakdown.submissionId, submissionId))
@@ -461,6 +465,33 @@ export async function POST(request: Request) {
       const existingDaysMap = new Map(
         existingDeviceDays.map((d) => [d.date, d])
       );
+
+      // Cross-device duplicate guard. The v4.6.1 per-device migration handed
+      // the pre-migration merged day rows to a single device; every OTHER
+      // device then re-submitted the same history as brand-new rows, double
+      // counting it (fixed once by a one-off dedup on 2026-07-24). This map
+      // lets the merge loop below refuse to re-attach a client-day to this
+      // device when an identical copy (same tokens AND same input) already
+      // lives on another of the user's devices — independent machines cannot
+      // produce byte-identical counts, so an exact match is always the legacy
+      // copy trying to come back.
+      const otherDeviceClientSignatures = new Map<string, Map<string, Set<string>>>();
+      for (const day of allExistingDays) {
+        if (day.submittedDeviceId === submittedDevice.id) continue;
+        const clients = normalizeClientBreakdownAliases(
+          (day.sourceBreakdown || {}) as Record<string, ClientBreakdownData>
+        );
+        let dayMap = otherDeviceClientSignatures.get(day.date);
+        if (!dayMap) {
+          dayMap = new Map();
+          otherDeviceClientSignatures.set(day.date, dayMap);
+        }
+        for (const [client, clientData] of Object.entries(clients)) {
+          const signatures = dayMap.get(client) ?? new Set<string>();
+          signatures.add(`${clientData.tokens ?? 0}:${clientData.input ?? 0}`);
+          dayMap.set(client, signatures);
+        }
+      }
       const storedClientRevisionFloors = deriveStoredClientRevisionFloors(
         allExistingDays.map((day) =>
           (day.sourceBreakdown || {}) as Record<string, ClientBreakdownData>
@@ -548,6 +579,32 @@ export async function POST(request: Request) {
 
         const existingDay = existingDaysMap.get(incomingDay.date);
 
+        // Refuse to attach a client-day to this device when an identical copy
+        // already lives on another device (see guard construction above).
+        const skippedDuplicateClients = new Set<string>();
+        const daySignatures = otherDeviceClientSignatures.get(incomingDay.date);
+        if (daySignatures) {
+          const storedClientsForDay = existingDay
+            ? normalizeClientBreakdownAliases(
+                (existingDay.sourceBreakdown || {}) as Record<string, ClientBreakdownData>
+              )
+            : {};
+          for (const [client, clientData] of Object.entries(incomingClientBreakdown)) {
+            // Already attributed to this device: the normal same-device merge
+            // (with its regression guard) is the right path.
+            if (storedClientsForDay[client]) continue;
+            const tokens = clientData.tokens ?? 0;
+            if (tokens < CROSS_DEVICE_DUP_MIN_TOKENS) continue;
+            if (daySignatures.get(client)?.has(`${tokens}:${clientData.input ?? 0}`)) {
+              delete incomingClientBreakdown[client];
+              skippedDuplicateClients.add(client);
+              warnings.push(
+                `Day ${incomingDay.date}: Skipped ${client} — identical usage is already recorded from another of your devices.`
+              );
+            }
+          }
+        }
+
         if (existingDay) {
           const storedClientBreakdown = normalizeClientBreakdownAliases(
             (existingDay.sourceBreakdown || {}) as Record<string, ClientBreakdownData>
@@ -569,7 +626,9 @@ export async function POST(request: Request) {
             incomingClientBreakdown,
             new Set(
               Array.from(submittedClients).filter(
-                (client) => !rejectedClients.has(client)
+                (client) =>
+                  !rejectedClients.has(client) &&
+                  !skippedDuplicateClients.has(client)
               )
             )
           );
