@@ -4,7 +4,7 @@ import * as Tooltip from "@radix-ui/react-tooltip";
 import styled from "styled-components";
 
 const VERIFIED_TOOLTIP =
-  "Verified — earned by adding two or more social links (website included) to your GitHub profile.";
+  "Verified — earned by adding two or more social links (website included) to your GitHub profile. Status refreshes every 24 hours.";
 
 export interface VerifiedBadgeProps {
   size?: number;

@@ -1,0 +1,33 @@
+name: Refresh Social Links
+
+on:
+  schedule:
+    # Daily; drives the 24h verified-badge refresh promise in the UI tooltip.
+    - cron: "20 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  refresh:
+    name: Refresh verified-badge social links
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Trigger refresh endpoint
+        env:
+          CRON_SECRET: ${{ secrets.TOKENS_CRON_SECRET }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${CRON_SECRET}" ]; then
+            echo "TOKENS_CRON_SECRET secret is required." >&2
+            exit 1
+          fi
+
+          curl -fsS -X POST \
+            -H "Authorization: Bearer ${CRON_SECRET}" \
+            --max-time 60 \
+            https://tokens.ci/api/cron/refresh-social-links

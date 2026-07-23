@@ -43,6 +43,7 @@ services:
       GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID}
       GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET}
       CSRF_ALLOWED_ORIGINS: ${CSRF_ALLOWED_ORIGINS}
+      CRON_SECRET: ${CRON_SECRET:-}
     # Published only to localhost so your host Nginx can reverse-proxy it;
     # nothing is exposed on the public interface. Host port is configurable via
     # APP_PORT in .env (container always listens on 3000 internally).
