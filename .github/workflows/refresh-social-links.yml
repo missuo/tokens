@@ -16,18 +16,46 @@ jobs:
     timeout-minutes: 5
 
     steps:
-      - name: Trigger refresh endpoint
+      - name: Configure SSH
         env:
-          CRON_SECRET: ${{ secrets.TOKENS_CRON_SECRET }}
+          DEPLOY_HOST: ${{ secrets.TOKENS_DEPLOY_HOST }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.TOKENS_DEPLOY_KNOWN_HOSTS }}
+          DEPLOY_SSH_KEY: ${{ secrets.TOKENS_DEPLOY_SSH_KEY }}
         run: |
           set -euo pipefail
 
-          if [ -z "${CRON_SECRET}" ]; then
-            echo "TOKENS_CRON_SECRET secret is required." >&2
+          if [ -z "${DEPLOY_SSH_KEY}" ] || [ -z "${DEPLOY_HOST}" ]; then
+            echo "TOKENS_DEPLOY_SSH_KEY and TOKENS_DEPLOY_HOST secrets are required." >&2
             exit 1
           fi
 
-          curl -fsS -X POST \
-            -H "Authorization: Bearer ${CRON_SECRET}" \
-            --max-time 60 \
-            https://tokens.ci/api/cron/refresh-social-links
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+
+          printf '%s\n' "${DEPLOY_SSH_KEY}" | tr -d '\r' > ~/.ssh/tokens_deploy
+          chmod 600 ~/.ssh/tokens_deploy
+
+          if [ -n "${DEPLOY_KNOWN_HOSTS}" ]; then
+            printf '%s\n' "${DEPLOY_KNOWN_HOSTS}" | tr -d '\r' > ~/.ssh/known_hosts
+          else
+            ssh-keyscan -T 10 -H "${DEPLOY_HOST}" > ~/.ssh/known_hosts
+          fi
+          chmod 600 ~/.ssh/known_hosts
+
+      # The public edge blocks GitHub-runner POSTs, so trigger the endpoint
+      # from the server itself over the deploy SSH channel. CRON_SECRET is
+      # read from the server-side .env — no extra repo secret involved.
+      - name: Trigger refresh endpoint on server
+        env:
+          DEPLOY_HOST: ${{ secrets.TOKENS_DEPLOY_HOST }}
+        run: |
+          set -euo pipefail
+
+          ssh -i ~/.ssh/tokens_deploy -o IdentitiesOnly=yes "root@${DEPLOY_HOST}" <<'EOF'
+            set -euo pipefail
+            secret="$(grep '^CRON_SECRET=' /root/tokens/packages/frontend/.env | cut -d= -f2-)"
+            curl -fsS -X POST \
+              -H "Authorization: Bearer ${secret}" \
+              --max-time 60 \
+              http://127.0.0.1:3001/api/cron/refresh-social-links
+          EOF
