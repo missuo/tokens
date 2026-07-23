@@ -66,9 +66,6 @@ export const usersRelations = relations(users, ({ many }) => ({
   apiTokens: many(apiTokens),
   submissions: many(submissions),
   submittedDevices: many(submittedDevices),
-  groupMemberships: many(groupMembers, { relationName: "memberUser" }),
-  createdGroups: many(groups, { relationName: "groupCreator" }),
-  createdGroupInvites: many(groupInvites, { relationName: "groupInviteCreator" }),
 }));
 
 // ============================================================================
@@ -361,143 +358,6 @@ export const dailyBreakdownRelations = relations(dailyBreakdown, ({ one }) => ({
 }));
 
 // ============================================================================
-// GROUPS
-// ============================================================================
-export const groupRoles = ["owner", "admin", "member"] as const;
-export type GroupRole = (typeof groupRoles)[number];
-
-export const groupInviteStatuses = ["pending", "accepted", "declined", "expired"] as const;
-export type GroupInviteStatus = (typeof groupInviteStatuses)[number];
-
-export const groups = pgTable(
-  "groups",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    name: varchar("name", { length: 100 }).notNull(),
-    slug: varchar("slug", { length: 100 }).notNull().unique(),
-    description: text("description"),
-    avatarUrl: text("avatar_url"),
-    isPublic: boolean("is_public").notNull().default(true),
-    createdBy: uuid("created_by")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
-    createdAt: timestamp("created_at", { withTimezone: true })
-      .notNull()
-      .defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true })
-      .notNull()
-      .defaultNow(),
-  },
-  (table) => [
-    index("idx_groups_created_by").on(table.createdBy),
-    index("idx_groups_visibility_updated").on(table.isPublic, table.updatedAt),
-  ]
-);
-
-export const groupsRelations = relations(groups, ({ one, many }) => ({
-  creator: one(users, {
-    fields: [groups.createdBy],
-    references: [users.id],
-    relationName: "groupCreator",
-  }),
-  members: many(groupMembers),
-  invites: many(groupInvites),
-}));
-
-export const groupMembers = pgTable(
-  "group_members",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    groupId: uuid("group_id")
-      .notNull()
-      .references(() => groups.id, { onDelete: "cascade" }),
-    userId: uuid("user_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
-    role: varchar("role", { length: 10 }).notNull().default("member").$type<GroupRole>(),
-    invitedBy: uuid("invited_by").references(() => users.id, { onDelete: "set null" }),
-    joinedAt: timestamp("joined_at", { withTimezone: true })
-      .notNull()
-      .defaultNow(),
-  },
-  (table) => [
-    index("idx_group_members_user_id").on(table.userId),
-    // FK coverage: cascade-delete of an inviter does a seq scan without this.
-    index("idx_group_members_invited_by").on(table.invitedBy),
-    unique("group_members_group_user_unique").on(table.groupId, table.userId),
-  ]
-);
-
-export const groupMembersRelations = relations(groupMembers, ({ one }) => ({
-  group: one(groups, {
-    fields: [groupMembers.groupId],
-    references: [groups.id],
-  }),
-  user: one(users, {
-    fields: [groupMembers.userId],
-    references: [users.id],
-    relationName: "memberUser",
-  }),
-  inviter: one(users, {
-    fields: [groupMembers.invitedBy],
-    references: [users.id],
-    relationName: "memberInviter",
-  }),
-}));
-
-export const groupInvites = pgTable(
-  "group_invites",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    groupId: uuid("group_id")
-      .notNull()
-      .references(() => groups.id, { onDelete: "cascade" }),
-    invitedUsername: varchar("invited_username", { length: 39 }),
-    invitedUsernameNormalized: varchar("invited_username_normalized", { length: 39 }),
-    invitedUserId: uuid("invited_user_id").references(() => users.id, { onDelete: "cascade" }),
-    invitedBy: uuid("invited_by")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
-    role: varchar("role", { length: 10 }).notNull().default("member").$type<GroupRole>(),
-    status: varchar("status", { length: 10 }).notNull().default("pending").$type<GroupInviteStatus>(),
-    tokenHash: varchar("token_hash", { length: 64 }).notNull().unique(),
-    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
-    acceptedAt: timestamp("accepted_at", { withTimezone: true }),
-    createdAt: timestamp("created_at", { withTimezone: true })
-      .notNull()
-      .defaultNow(),
-  },
-  (table) => [
-    index("idx_group_invites_group_status").on(table.groupId, table.status),
-    index("idx_group_invites_invited_user_status").on(table.invitedUserId, table.status),
-    index("idx_group_invites_invited_username_status").on(
-      table.invitedUsernameNormalized,
-      table.status
-    ),
-    index("idx_group_invites_expires_at").on(table.expiresAt),
-    // FK coverage: cascade-delete of an inviter does a seq scan without this.
-    index("idx_group_invites_invited_by").on(table.invitedBy),
-  ]
-);
-
-export const groupInvitesRelations = relations(groupInvites, ({ one }) => ({
-  group: one(groups, {
-    fields: [groupInvites.groupId],
-    references: [groups.id],
-  }),
-  invitedUser: one(users, {
-    fields: [groupInvites.invitedUserId],
-    references: [users.id],
-    relationName: "groupInviteTarget",
-  }),
-  inviter: one(users, {
-    fields: [groupInvites.invitedBy],
-    references: [users.id],
-    relationName: "groupInviteCreator",
-  }),
-}));
-
-// ============================================================================
 // TYPE EXPORTS
 // ============================================================================
 export type User = typeof users.$inferSelect;
@@ -514,9 +374,3 @@ export type SubmittedDevice = typeof submittedDevices.$inferSelect;
 export type NewSubmittedDevice = typeof submittedDevices.$inferInsert;
 export type DailyBreakdown = typeof dailyBreakdown.$inferSelect;
 export type NewDailyBreakdown = typeof dailyBreakdown.$inferInsert;
-export type Group = typeof groups.$inferSelect;
-export type NewGroup = typeof groups.$inferInsert;
-export type GroupMember = typeof groupMembers.$inferSelect;
-export type NewGroupMember = typeof groupMembers.$inferInsert;
-export type GroupInvite = typeof groupInvites.$inferSelect;
-export type NewGroupInvite = typeof groupInvites.$inferInsert;

@@ -22,7 +22,6 @@ import {
   type ClientBreakdownData,
 } from "@/lib/db/helpers";
 import { normalizeUsernameCacheKey, revalidateUsernamePaths } from "@/lib/db/usernameLookup";
-import { revalidateUserGroupLeaderboards } from "@/lib/groups/cache";
 import { LEGACY_DEVICE_KEY } from "@/lib/devices/shared";
 
 const LEGACY_SUBMIT_DEVICE_KEY = LEGACY_DEVICE_KEY;
@@ -824,12 +823,6 @@ export async function POST(request: Request) {
       revalidateTag(`user-rank:${usernameCacheKey}`, "max");
     } catch (e) {
       console.error("Public cache invalidation failed:", e);
-    }
-
-    try {
-      await revalidateUserGroupLeaderboards(tokenRecord.userId);
-    } catch (e) {
-      console.error("Group leaderboard cache invalidation failed:", e);
     }
 
     try {

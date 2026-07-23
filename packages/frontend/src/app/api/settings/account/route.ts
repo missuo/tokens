@@ -8,7 +8,6 @@ import {
   normalizeUsernameCacheKey,
   revalidateUsernamePaths,
 } from "@/lib/db/usernameLookup";
-import { revalidateUserGroupLeaderboards } from "@/lib/groups/cache";
 
 export async function DELETE(request: Request) {
   try {
@@ -25,20 +24,8 @@ export async function DELETE(request: Request) {
     const username = session.username;
     const usernameCacheKey = normalizeUsernameCacheKey(username);
 
-    // Group leaderboard invalidation must run BEFORE the user row delete:
-    // the helper resolves the user's group membership rows, and the delete
-    // below cascades those rows away. Best-effort like all revalidation.
-    try {
-      await revalidateUserGroupLeaderboards(session.id);
-    } catch (cacheError) {
-      console.error(
-        "Group cache invalidation failed before account deletion:",
-        cacheError
-      );
-    }
-
     // Delete the user row — all related data (sessions, apiTokens,
-    // submissions → dailyBreakdown, deviceCodes, group memberships)
+    // submissions → dailyBreakdown, deviceCodes)
     // cascades automatically via ON DELETE CASCADE foreign keys.
     const deletedRows = await db
       .delete(users)

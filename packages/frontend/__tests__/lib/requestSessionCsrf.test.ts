@@ -46,7 +46,7 @@ function makeRequest(
   method: string,
   headers: Record<string, string> = {}
 ): Request {
-  return new Request("http://localhost:3000/api/groups", {
+  return new Request("http://localhost:3000/api/settings/tokens", {
     method,
     headers,
   });
@@ -117,7 +117,7 @@ describe("getSessionFromRequest — CSRF origin check (B6)", () => {
     mockState.getSession.mockResolvedValue(validUser);
 
     const result = await getSessionFromRequest(
-      new Request("https://tokens.ci/api/groups", {
+      new Request("https://tokens.ci/api/settings/tokens", {
         method: "POST",
         headers: {
           Cookie: "tt_session=session-token",

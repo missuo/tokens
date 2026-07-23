@@ -9,10 +9,7 @@ import {
   resolveSortByParam,
 } from "@/lib/leaderboard/constants";
 import { parseCustomDateRange } from "@/lib/leaderboard/dateRange";
-import { listPublicGroups, listUserGroups } from "@/lib/groups/queries";
 import LeaderboardClient from "./LeaderboardClient";
-import GroupsBrowser from "./GroupsBrowser";
-import ViewSelector, { type LeaderboardView } from "./ViewSelector";
 
 function isMissingDatabaseUrl(error: unknown): boolean {
   return error instanceof Error && error.message === "DATABASE_URL environment variable is not set";
@@ -41,10 +38,6 @@ function createEmptyLeaderboardData(period: Period, sortBy: SortBy): Leaderboard
   };
 }
 
-function resolveView(raw: string | string[] | undefined): LeaderboardView {
-  return raw === "groups" ? "groups" : "users";
-}
-
 interface PageProps {
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }
@@ -65,17 +58,6 @@ async function LeaderboardWithPreferences({
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }) {
   const [cookieStore, searchParams] = await Promise.all([cookies(), searchParamsPromise]);
-  const view = resolveView(searchParams.view);
-
-  if (view === "groups") {
-    return (
-      <>
-        <ViewSelector current="groups" searchParams={searchParams} />
-        <GroupsView />
-      </>
-    );
-  }
-
   const sortByCookie = cookieStore.get(SORT_BY_COOKIE_NAME)?.value;
   const periodParam = typeof searchParams.period === "string" ? searchParams.period : null;
   const pageParam =
@@ -129,57 +111,11 @@ async function LeaderboardWithPreferences({
     : null;
 
   return (
-    <>
-      <ViewSelector current="users" searchParams={searchParams} />
-      <LeaderboardClient
-        initialData={initialData}
-        currentUser={session}
-        initialSortBy={sortBy}
-        initialUserRank={initialUserRank}
-      />
-    </>
-  );
-}
-
-async function GroupsView() {
-  const emptyPagination = {
-    page: 1,
-    limit: 20,
-    total: 0,
-    totalPages: 0,
-    hasNext: false,
-    hasPrev: false,
-  } as const;
-
-  const session = await getSession().catch((error) => {
-    if (isMissingDatabaseUrl(error)) return null;
-    throw error;
-  });
-
-  const [publicGroups, myGroups] = await Promise.all([
-    listPublicGroups(1, 20).catch((error) => {
-      if (isMissingDatabaseUrl(error)) {
-        return { groups: [], pagination: emptyPagination };
-      }
-      throw error;
-    }),
-    session
-      ? listUserGroups(session.id, 1, 20).catch((error) => {
-          if (isMissingDatabaseUrl(error)) {
-            return { groups: [], pagination: emptyPagination };
-          }
-          throw error;
-        })
-      : Promise.resolve(null),
-  ]);
-
-  return (
-    <GroupsBrowser
+    <LeaderboardClient
+      initialData={initialData}
       currentUser={session}
-      initialPublicGroups={publicGroups.groups}
-      initialMyGroups={myGroups?.groups ?? []}
-      initialPublicPagination={publicGroups.pagination}
-      initialMyPagination={myGroups?.pagination ?? emptyPagination}
+      initialSortBy={sortBy}
+      initialUserRank={initialUserRank}
     />
   );
 }

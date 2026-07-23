@@ -1182,9 +1182,6 @@ export default function LeaderboardClient({ initialData, currentUser, initialSor
       return;
     }
     const params = new URLSearchParams();
-    // Preserve ?view= when it's present (e.g. view=users navigated explicitly)
-    const currentView = searchParams.get("view");
-    if (currentView) params.set("view", currentView);
     if (period !== "today") params.set("period", period);
     if (requestedPage > 1) params.set("page", String(requestedPage));
     if (effectiveSortBy !== "tokens") params.set("sortBy", effectiveSortBy);

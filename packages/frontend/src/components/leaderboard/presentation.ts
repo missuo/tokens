@@ -43,22 +43,6 @@ function parseCalendarDate(value?: string): CalendarDate | null {
   return { year, month, day };
 }
 
-export function getGroupMonogram(name: string): string {
-  const words = name.trim().split(/\s+/u).filter(Boolean);
-  if (words.length === 0) return "TG";
-
-  const letters = words.length > 1
-    ? [Array.from(words[0])[0], Array.from(words[1])[0]]
-    : Array.from(words[0]).slice(0, 2);
-
-  return letters.join("").toLocaleUpperCase("en-US");
-}
-
-export function formatGroupMemberCount(count: number): string {
-  const safeCount = Number.isFinite(count) ? Math.max(0, Math.trunc(count)) : 0;
-  return `${safeCount.toLocaleString("en-US")} ${safeCount === 1 ? "member" : "members"}`;
-}
-
 export function getLeaderboardPeriodLabel(
   period: Period,
   from?: string,

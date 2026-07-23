@@ -3,21 +3,6 @@
 import Link from "next/link";
 import styled from "styled-components";
 import { VerifiedBadge } from "@/components/ui/VerifiedBadge";
-import { getGroupMonogram } from "./presentation";
-
-export const CompactBadge = styled.span`
-  display: inline-flex;
-  min-height: 22px;
-  align-items: center;
-  padding: 0 8px;
-  border: 1px solid var(--service-border);
-  border-radius: 999px;
-  background: var(--service-surface-muted);
-  color: var(--service-text-muted);
-  font-size: 0.75rem;
-  font-weight: 500;
-  white-space: nowrap;
-`;
 
 export const MetricStrip = styled.dl`
   display: grid;
@@ -84,44 +69,6 @@ export const MetricValue = styled.dd<{ $accent?: boolean }>`
     font-size: 1.125rem;
   }
 `;
-
-const Mark = styled.span<{ $size: "compact" | "detail" }>`
-  display: inline-grid;
-  width: ${({ $size }) => $size === "detail" ? "64px" : "42px"};
-  height: ${({ $size }) => $size === "detail" ? "64px" : "42px"};
-  flex: 0 0 auto;
-  place-items: center;
-  overflow: hidden;
-  border: 1px solid var(--service-border-strong);
-  border-radius: ${({ $size }) => $size === "detail" ? "12px" : "9px"};
-  background: var(--service-surface-muted);
-  color: var(--service-accent-hover);
-  font-size: ${({ $size }) => $size === "detail" ? "1rem" : "0.75rem"};
-  font-weight: 600;
-  letter-spacing: 0.04em;
-`;
-
-const MarkImage = styled.img`
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-`;
-
-export function GroupMark({
-  name,
-  avatarUrl,
-  size = "compact",
-}: {
-  name: string;
-  avatarUrl?: string | null;
-  size?: "compact" | "detail";
-}) {
-  return (
-    <Mark $size={size} aria-hidden="true">
-      {avatarUrl ? <MarkImage src={avatarUrl} alt="" /> : getGroupMonogram(name)}
-    </Mark>
-  );
-}
 
 export const MobileRankingList = styled.ol`
   margin: 0;
