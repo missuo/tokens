@@ -8,6 +8,7 @@ import {
 import { sanitizeAuthReturnTo } from "@/lib/auth/returnTo";
 import { createSession, setSessionCookie } from "@/lib/auth/session";
 import { db, users } from "@/lib/db";
+import { syncGitHubSocialLinks } from "@/lib/githubSocials";
 import { eq } from "drizzle-orm";
 
 export async function GET(request: Request) {
@@ -95,6 +96,10 @@ export async function GET(request: Request) {
 
       userId = newUser.id;
     }
+
+    // Refresh the social-links snapshot in the background; login must not
+    // wait on the GitHub API.
+    void syncGitHubSocialLinks(githubUser.login);
 
     // Create session
     const sessionToken = await createSession(userId, {

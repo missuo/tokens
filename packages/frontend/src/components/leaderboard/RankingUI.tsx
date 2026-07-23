@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import styled from "styled-components";
+import { VerifiedBadge } from "@/components/ui/VerifiedBadge";
 import { getGroupMonogram } from "./presentation";
 
 export const CompactBadge = styled.span`
@@ -170,15 +171,26 @@ const MobileRank = styled.span`
   &[data-rank="3"] { color: var(--rank-bronze); }
 `;
 
-const MobileAvatar = styled.img`
+const MobileAvatarWrap = styled.span`
+  position: relative;
   grid-row: 1 / 3;
+  display: inline-flex;
+  align-self: center;
+`;
+
+const MobileAvatar = styled.img`
   width: 38px;
   height: 38px;
-  align-self: center;
   border-radius: 50%;
   object-fit: cover;
   outline: 1px solid var(--service-border);
   outline-offset: -1px;
+`;
+
+const MobileVerifiedBadge = styled(VerifiedBadge)`
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
 `;
 
 const MobileIdentity = styled.div`
@@ -242,6 +254,7 @@ export function MobileRankingRow({
   avatarUrl,
   username,
   displayName,
+  verified = false,
   primaryLabel,
   primaryValue,
   meta,
@@ -252,6 +265,7 @@ export function MobileRankingRow({
   avatarUrl: string | null;
   username: string;
   displayName: string;
+  verified?: boolean;
   primaryLabel: string;
   primaryValue: string;
   meta: string;
@@ -265,10 +279,13 @@ export function MobileRankingRow({
         aria-current={isCurrentUser ? "true" : undefined}
       >
         <MobileRank data-rank={rank <= 3 ? rank : undefined}>#{rank}</MobileRank>
-        <MobileAvatar
-          src={avatarUrl || `https://github.com/${username}.png`}
-          alt=""
-        />
+        <MobileAvatarWrap>
+          <MobileAvatar
+            src={avatarUrl || `https://github.com/${username}.png`}
+            alt=""
+          />
+          {verified && <MobileVerifiedBadge size={13} />}
+        </MobileAvatarWrap>
         <MobileIdentity>
           <MobileName>{displayName}</MobileName>
           <MobileUsername>@{username}</MobileUsername>

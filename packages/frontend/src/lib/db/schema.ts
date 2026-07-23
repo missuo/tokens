@@ -32,6 +32,15 @@ export const users = pgTable(
     displayName: varchar("display_name", { length: 255 }),
     avatarUrl: text("avatar_url"),
     email: varchar("email", { length: 255 }),
+    /**
+     * Snapshot of the user's public GitHub social links (website + recognized
+     * social accounts), refreshed on login and on profile views. An array of
+     * {provider, url}; >= 2 entries marks the user as verified.
+     */
+    socialLinks: jsonb("social_links"),
+    socialLinksSyncedAt: timestamp("social_links_synced_at", {
+      withTimezone: true,
+    }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

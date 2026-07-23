@@ -239,6 +239,7 @@ describe("period leaderboard data", () => {
       "totalTokens",
       "userId",
       "username",
+      "verified",
     ]);
     expect(leaderboard.stats).toEqual({
       totalTokens: 1250,
@@ -250,6 +251,7 @@ describe("period leaderboard data", () => {
       "username",
       "displayName",
       "avatarUrl",
+      "verified",
       "tokens",
       "cost",
       "sourceBreakdown",
