@@ -24,6 +24,7 @@ import {
   type ProfileStatsData,
   type ProfileTab,
   type ProfileContributionView,
+  type ProfileSocialLink,
   type ProfileUser,
 } from "@/components/profile";
 import type { DailyContribution } from "@/lib/types";
@@ -82,6 +83,7 @@ function getProfileChartRange(
 interface ProfilePageClientProps {
   initialData: ProfileData;
   initialDevices?: ProfileDevice[];
+  socialLinks?: ProfileSocialLink[];
   username: string;
 }
 
@@ -90,6 +92,7 @@ const EARLY_ADOPTERS = ["code-yeongyu", "gtg7784", "qodot"];
 export default function ProfilePageClient({
   initialData,
   initialDevices,
+  socialLinks,
   username,
 }: ProfilePageClientProps) {
   const [activeTab, setActiveTab] = useState<ProfileTab>("activity");
@@ -233,6 +236,7 @@ export default function ProfilePageClient({
             stats={stats}
             lastUpdated={data.updatedAt ?? undefined}
             period={period}
+            socialLinks={socialLinks}
           />
 
           {data.hasBackfill && (

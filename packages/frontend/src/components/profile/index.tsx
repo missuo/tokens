@@ -39,4 +39,13 @@ export type { ProfileDevice, ProfileDevicesProps } from "./ProfileDevices";
 export { ProfileHabits } from "./ProfileHabits";
 export type { ProfileHabitsProps } from "./ProfileHabits";
 
-export type { ModelUsage, ProfileStatsData, ProfileUser } from "./types";
+export { ProfileSocialLinks } from "./ProfileSocialLinks";
+export type { ProfileSocialLinksProps } from "./ProfileSocialLinks";
+
+export type {
+  ModelUsage,
+  ProfileSocialLink,
+  ProfileSocialProvider,
+  ProfileStatsData,
+  ProfileUser,
+} from "./types";

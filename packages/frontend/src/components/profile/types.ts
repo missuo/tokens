@@ -1,3 +1,26 @@
+/**
+ * Providers we render icons for. GitHub's social_accounts API also returns
+ * "generic" and other unrecognized providers — those are intentionally
+ * dropped so the profile only shows known platforms.
+ */
+export type ProfileSocialProvider =
+  | "website"
+  | "twitter"
+  | "linkedin"
+  | "instagram"
+  | "facebook"
+  | "mastodon"
+  | "bluesky"
+  | "youtube"
+  | "twitch"
+  | "reddit"
+  | "npm";
+
+export interface ProfileSocialLink {
+  provider: ProfileSocialProvider;
+  url: string;
+}
+
 export interface ProfileUser {
   username: string;
   displayName: string | null;

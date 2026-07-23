@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { notFound, permanentRedirect } from 'next/navigation';
 import type { ProfileDevice } from '@/components/profile';
+import { getGitHubSocialLinks } from '@/lib/githubSocials';
 import { loadPublicProfileDevicesForPage } from '@/lib/publicProfileDevices';
 import { loadPublicProfileForPage } from '@/lib/publicProfileData';
 import ProfilePageClient, { type ProfileData } from './ProfilePageClient';
@@ -92,9 +93,10 @@ export default async function ProfilePage({
   const { username } = await params;
   const resolvedSearchParams = await searchParams;
   const period = parseProfilePeriod(resolvedSearchParams.period);
-  const [data, devices] = await Promise.all([
+  const [data, devices, socialLinks] = await Promise.all([
     getProfileData(username, period),
     getProfileDevices(username),
+    getGitHubSocialLinks(username),
   ]);
 
   if (!data) {
@@ -105,5 +107,12 @@ export default async function ProfilePage({
     permanentRedirect(`/u/${data.user.username}${period === "all" ? "" : `?period=${period}`}`);
   }
 
-  return <ProfilePageClient initialData={data} initialDevices={devices} username={username} />;
+  return (
+    <ProfilePageClient
+      initialData={data}
+      initialDevices={devices}
+      socialLinks={socialLinks}
+      username={username}
+    />
+  );
 }

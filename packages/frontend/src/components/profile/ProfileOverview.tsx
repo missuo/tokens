@@ -6,13 +6,15 @@ import styled, { css } from "styled-components";
 import { toast } from "react-toastify";
 import { formatCurrency, formatNumber } from "@/lib/utils";
 import { ProfileEmbedDialog } from "./ProfileEmbedDialog";
-import type { ProfileStatsData, ProfileUser } from "./types";
+import { ProfileSocialLinks } from "./ProfileSocialLinks";
+import type { ProfileSocialLink, ProfileStatsData, ProfileUser } from "./types";
 
 export interface ProfileOverviewProps {
   user: ProfileUser;
   stats: ProfileStatsData;
   lastUpdated?: string | null;
   period?: "all" | "month" | "week";
+  socialLinks?: ProfileSocialLink[];
   className?: string;
 }
 
@@ -375,6 +377,7 @@ export function ProfileOverview({
   stats,
   lastUpdated,
   period = "all",
+  socialLinks,
   className,
 }: ProfileOverviewProps) {
   const [isEmbedDialogOpen, setIsEmbedDialogOpen] = useState(false);
@@ -479,6 +482,10 @@ export function ProfileOverview({
                   </MetadataItem>
                 )}
               </Metadata>
+            )}
+
+            {socialLinks && socialLinks.length > 0 && (
+              <ProfileSocialLinks links={socialLinks} />
             )}
           </IdentityCopy>
         </Identity>
