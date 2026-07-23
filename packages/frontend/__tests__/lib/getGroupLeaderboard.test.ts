@@ -245,6 +245,7 @@ describe("group leaderboard data", () => {
       "totalTokens",
       "userId",
       "username",
+      "verified",
     ]);
     expect(selectedKeys(1)).toEqual([
       "userId",

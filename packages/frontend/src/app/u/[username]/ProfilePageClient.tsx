@@ -28,6 +28,7 @@ import {
   type ProfileUser,
 } from "@/components/profile";
 import type { DailyContribution } from "@/lib/types";
+import { isVerifiedBySocialLinks } from "@/lib/socialVerification";
 import { useSettings } from "@/lib/useSettings";
 
 type ProfilePeriod = "all" | "week" | "month";
@@ -237,6 +238,7 @@ export default function ProfilePageClient({
             lastUpdated={data.updatedAt ?? undefined}
             period={period}
             socialLinks={socialLinks}
+            verified={isVerifiedBySocialLinks(socialLinks)}
           />
 
           {data.hasBackfill && (

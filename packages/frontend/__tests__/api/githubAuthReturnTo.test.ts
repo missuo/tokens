@@ -107,6 +107,10 @@ vi.mock("drizzle-orm", () => ({
   eq: vi.fn(() => "eq"),
 }));
 
+vi.mock("@/lib/githubSocials", () => ({
+  syncGitHubSocialLinks: vi.fn(async () => []),
+}));
+
 type StartRouteExports = typeof import("../../src/app/api/auth/github/route");
 type CallbackRouteExports = typeof import("../../src/app/api/auth/github/callback/route");
 

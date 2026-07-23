@@ -1,4 +1,6 @@
 import { unstable_cache } from "next/cache";
+import { db, users } from "@/lib/db";
+import { usernameEqualsIgnoreCase } from "@/lib/db/usernameLookup";
 import type {
   ProfileSocialLink,
   ProfileSocialProvider,
@@ -135,10 +137,43 @@ async function fetchGitHubSocialLinks(
   return links;
 }
 
+async function persistSocialLinks(
+  username: string,
+  links: ProfileSocialLink[],
+): Promise<void> {
+  try {
+    await db
+      .update(users)
+      .set({ socialLinks: links, socialLinksSyncedAt: new Date() })
+      .where(usernameEqualsIgnoreCase(username));
+  } catch {
+    // The snapshot column powers the leaderboard verified badge; failing to
+    // refresh it must never break the caller.
+  }
+}
+
+/**
+ * Fetch the user's current social links from GitHub and persist the snapshot
+ * on their users row (used by the leaderboard verified badge). Never throws.
+ */
+export async function syncGitHubSocialLinks(
+  username: string,
+): Promise<ProfileSocialLink[]> {
+  try {
+    const links = await fetchGitHubSocialLinks(username);
+    await persistSocialLinks(username, links);
+    return links;
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Social links from the user's public GitHub profile: the website field plus
  * recognized entries from the social accounts API. Failures resolve to an
  * empty list — this is a profile enrichment, never a render blocker.
+ * Refreshes also persist the snapshot to the users row (at most once per
+ * cache window per user).
  */
 export function getGitHubSocialLinks(
   username: string,
@@ -146,13 +181,7 @@ export function getGitHubSocialLinks(
   const cacheKey = username.toLowerCase();
 
   return unstable_cache(
-    async () => {
-      try {
-        return await fetchGitHubSocialLinks(username);
-      } catch {
-        return [];
-      }
-    },
+    () => syncGitHubSocialLinks(username),
     [`github-socials:${cacheKey}`],
     {
       tags: ["github-socials", `github-socials:${cacheKey}`],

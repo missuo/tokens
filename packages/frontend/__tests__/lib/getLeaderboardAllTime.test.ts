@@ -348,6 +348,7 @@ describe("all-time leaderboard queries", () => {
       "username",
       "displayName",
       "avatarUrl",
+      "verified",
       "totalTokens",
       "totalCost",
     ]);
@@ -364,6 +365,7 @@ describe("all-time leaderboard queries", () => {
       "totalTokens",
       "userId",
       "username",
+      "verified",
     ]);
     expect(leaderboard.stats).toEqual({
       totalTokens: 3000,
@@ -407,6 +409,7 @@ describe("all-time leaderboard queries", () => {
       "totalTokens",
       "userId",
       "username",
+      "verified",
     ]);
   });
 

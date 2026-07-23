@@ -6,6 +6,7 @@ import { useRouter } from "nextjs-toploader/app";
 import { useSearchParams, usePathname } from "next/navigation";
 import styled from "styled-components";
 import { CopyIcon, CheckIcon, SearchIcon, XIcon } from "@/components/ui/Icons";
+import { VerifiedBadge } from "@/components/ui/VerifiedBadge";
 import { LeaderboardSkeleton } from "@/components/Skeleton";
 import {
   MetricItem,
@@ -327,6 +328,18 @@ const DesktopAvatar = styled.img`
   object-fit: cover;
   outline: 1px solid var(--service-border);
   outline-offset: -1px;
+`;
+
+const AvatarWrap = styled.span`
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+`;
+
+const AvatarVerifiedBadge = styled(VerifiedBadge)`
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
 `;
 
 const UserInfo = styled.div`
@@ -975,10 +988,13 @@ const LeaderboardRow = memo(function LeaderboardRow({
           onClick={(event) => event.stopPropagation()}
           aria-current={isCurrentUser ? "true" : undefined}
         >
-          <DesktopAvatar
-            src={user.avatarUrl || `https://github.com/${user.username}.png`}
-            alt=""
-          />
+          <AvatarWrap>
+            <DesktopAvatar
+              src={user.avatarUrl || `https://github.com/${user.username}.png`}
+              alt=""
+            />
+            {user.verified && <AvatarVerifiedBadge size={14} />}
+          </AvatarWrap>
           <UserInfo>
             <UserDisplayName>
               {user.displayName || user.username}
@@ -1031,6 +1047,7 @@ function LeaderboardMobileRow({
       avatarUrl={user.avatarUrl}
       username={user.username}
       displayName={user.displayName || user.username}
+      verified={user.verified}
       primaryLabel={primary.label}
       primaryValue={primary.value}
       meta={secondary}
@@ -1392,10 +1409,13 @@ export default function LeaderboardClient({ initialData, currentUser, initialSor
           }}
         >
           <CurrentUserInfo>
-            <CurrentUserAvatar
-              src={currentUser.avatarUrl || `https://github.com/${currentUser.username}.png`}
-              alt=""
-            />
+            <AvatarWrap>
+              <CurrentUserAvatar
+                src={currentUser.avatarUrl || `https://github.com/${currentUser.username}.png`}
+                alt=""
+              />
+              {currentUserRank.verified && <AvatarVerifiedBadge size={14} />}
+            </AvatarWrap>
             <CurrentUserDetails>
               <CurrentUserName>
                 {currentUser.displayName || currentUser.username}

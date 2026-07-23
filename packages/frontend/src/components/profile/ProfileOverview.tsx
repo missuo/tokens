@@ -5,6 +5,7 @@ import Image from "next/image";
 import styled, { css } from "styled-components";
 import { toast } from "react-toastify";
 import { formatCurrency, formatNumber } from "@/lib/utils";
+import { VerifiedBadge } from "@/components/ui/VerifiedBadge";
 import { ProfileEmbedDialog } from "./ProfileEmbedDialog";
 import { ProfileSocialLinks } from "./ProfileSocialLinks";
 import type { ProfileSocialLink, ProfileStatsData, ProfileUser } from "./types";
@@ -15,6 +16,7 @@ export interface ProfileOverviewProps {
   lastUpdated?: string | null;
   period?: "all" | "month" | "week";
   socialLinks?: ProfileSocialLink[];
+  verified?: boolean;
   className?: string;
 }
 
@@ -48,6 +50,11 @@ const Identity = styled.div`
   gap: 1rem;
 `;
 
+const AvatarShell = styled.div`
+  position: relative;
+  flex: 0 0 auto;
+`;
+
 const Avatar = styled.div`
   position: relative;
   width: 72px;
@@ -62,6 +69,12 @@ const Avatar = styled.div`
     width: 80px;
     height: 80px;
   }
+`;
+
+const AvatarVerifiedBadge = styled(VerifiedBadge)`
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
 `;
 
 const AvatarImage = styled(Image)`
@@ -378,6 +391,7 @@ export function ProfileOverview({
   lastUpdated,
   period = "all",
   socialLinks,
+  verified = false,
   className,
 }: ProfileOverviewProps) {
   const [isEmbedDialogOpen, setIsEmbedDialogOpen] = useState(false);
@@ -451,15 +465,18 @@ export function ProfileOverview({
     >
       <OverviewHeader>
         <Identity>
-          <Avatar>
-            <AvatarImage
-              src={avatarUrl}
-              alt={`${displayName}'s avatar`}
-              fill
-              sizes="(min-width: 640px) 80px, 72px"
-              priority
-            />
-          </Avatar>
+          <AvatarShell>
+            <Avatar>
+              <AvatarImage
+                src={avatarUrl}
+                alt={`${displayName}'s avatar`}
+                fill
+                sizes="(min-width: 640px) 80px, 72px"
+                priority
+              />
+            </Avatar>
+            {verified && <AvatarVerifiedBadge size={22} />}
+          </AvatarShell>
 
           <IdentityCopy>
             <DisplayName id="profile-overview-heading">

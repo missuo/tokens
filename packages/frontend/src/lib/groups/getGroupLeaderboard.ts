@@ -190,6 +190,8 @@ function buildPeriodGroupLeaderboardData(
       username: row.username,
       displayName: row.displayName,
       avatarUrl: row.avatarUrl,
+      // Groups UI never renders the badge; the feature is being removed.
+      verified: false,
       role: row.role,
       totalTokens: row.tokens,
       totalCost: row.cost,
@@ -317,6 +319,7 @@ async function fetchAllTimeRows(groupId: string, sortBy: SortBy, search: string 
     username: row.username,
     displayName: row.displayName,
     avatarUrl: row.avatarUrl,
+    verified: false,
     role: row.role,
     totalTokens: Number(row.totalTokens) || 0,
     totalCost: Number(row.totalCost) || 0,
