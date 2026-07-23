@@ -22,6 +22,7 @@ jobs:
     steps:
       - name: Configure SSH
         env:
+          DEPLOY_HOST: ${{ secrets.TOKENS_DEPLOY_HOST }}
           DEPLOY_KNOWN_HOSTS: ${{ secrets.TOKENS_DEPLOY_KNOWN_HOSTS }}
           DEPLOY_SSH_KEY: ${{ secrets.TOKENS_DEPLOY_SSH_KEY }}
         run: |
@@ -29,6 +30,11 @@ jobs:
 
           if [ -z "${DEPLOY_SSH_KEY}" ]; then
             echo "TOKENS_DEPLOY_SSH_KEY secret is required." >&2
+            exit 1
+          fi
+
+          if [ -z "${DEPLOY_HOST}" ]; then
+            echo "TOKENS_DEPLOY_HOST secret is required." >&2
             exit 1
           fi
 
@@ -41,15 +47,17 @@ jobs:
           if [ -n "${DEPLOY_KNOWN_HOSTS}" ]; then
             printf '%s\n' "${DEPLOY_KNOWN_HOSTS}" | tr -d '\r' > ~/.ssh/known_hosts
           else
-            ssh-keyscan -T 10 -H 23.191.8.35 > ~/.ssh/known_hosts
+            ssh-keyscan -T 10 -H "${DEPLOY_HOST}" > ~/.ssh/known_hosts
           fi
           chmod 600 ~/.ssh/known_hosts
 
       - name: Deploy on server
+        env:
+          DEPLOY_HOST: ${{ secrets.TOKENS_DEPLOY_HOST }}
         run: |
           set -euo pipefail
 
-          ssh -i ~/.ssh/tokens_deploy -o IdentitiesOnly=yes root@23.191.8.35 <<'EOF'
+          ssh -i ~/.ssh/tokens_deploy -o IdentitiesOnly=yes "root@${DEPLOY_HOST}" <<'EOF'
             set -euo pipefail
             cd /root/tokens
             git pull --ff-only
