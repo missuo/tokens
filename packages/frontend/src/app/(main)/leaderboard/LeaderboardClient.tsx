@@ -654,6 +654,19 @@ const ErrorBanner = styled.div`
   gap: 8px;
 `;
 
+const NoticeBanner = styled.div`
+  margin-bottom: 24px;
+  padding: 12px 16px;
+  border-radius: 8px;
+  border: 1px solid var(--service-border);
+  background: var(--service-surface-muted);
+  color: var(--service-text-muted);
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+`;
+
 const SortLabel = styled.span`
   color: var(--service-text-muted);
   font-size: 0.8125rem;
@@ -1204,6 +1217,9 @@ export default function LeaderboardClient({ initialData, currentUser, initialSor
       signal: abortController.signal,
     })
       .then((res) => {
+        // 404 means the user simply has no submissions in this period —
+        // that's an empty state, not a failure.
+        if (res.status === 404) return null;
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json();
       })
@@ -1351,6 +1367,16 @@ export default function LeaderboardClient({ initialData, currentUser, initialSor
         <ErrorBanner>
           <span>Unable to load your ranking. Please refresh the page.</span>
         </ErrorBanner>
+      )}
+
+      {currentUser && !currentUserRankError && !currentUserRank && !isLoading && (
+        <NoticeBanner>
+          <span>
+            {period === "today"
+              ? "You haven't submitted any usage today yet."
+              : "No submissions from you in this period yet."}
+          </span>
+        </NoticeBanner>
       )}
 
       {currentUser && currentUserRank && (
