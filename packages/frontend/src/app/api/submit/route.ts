@@ -31,7 +31,7 @@ const LEGACY_SUBMIT_DEVICE_NAME = "Legacy submissions";
 // across multiple INSERT statements to stay well under that limit.
 const INSERT_CHUNK_SIZE = 1000;
 // Below this many tokens, an exact cross-device (tokens, input) match could
-// plausibly be a coincidence, so the duplicate guard leaves it alone.
+// plausibly be a coincidence, so the reclaim logic leaves it alone.
 const CROSS_DEVICE_DUP_MIN_TOKENS = 10_000;
 
 // "kilocode" is a legacy alias of "kilo" (mirrors LEGACY_CLIENT_ALIASES in
@@ -453,6 +453,7 @@ export async function POST(request: Request) {
       // devices (and the legacy bucket), not just the submitting device.
       const allExistingDays = await tx
         .select({
+          id: dailyBreakdown.id,
           date: dailyBreakdown.date,
           sourceBreakdown: dailyBreakdown.sourceBreakdown,
           submittedDeviceId: dailyBreakdown.submittedDeviceId,
@@ -466,32 +467,47 @@ export async function POST(request: Request) {
         existingDeviceDays.map((d) => [d.date, d])
       );
 
-      // Cross-device duplicate guard. The v4.6.1 per-device migration handed
-      // the pre-migration merged day rows to a single device; every OTHER
-      // device then re-submitted the same history as brand-new rows, double
-      // counting it (fixed once by a one-off dedup on 2026-07-24). This map
-      // lets the merge loop below refuse to re-attach a client-day to this
-      // device when an identical copy (same tokens AND same input) already
-      // lives on another of the user's devices — independent machines cannot
-      // produce byte-identical counts, so an exact match is always the legacy
-      // copy trying to come back.
-      const otherDeviceClientSignatures = new Map<string, Map<string, Set<string>>>();
+      // Cross-device reclaim. The v4.6.1 per-device migration handed the
+      // pre-migration merged day rows to whichever device happened to hold
+      // them, so a user's history can sit under the wrong device. A device
+      // submitting a client-day from its own local files is the proof of
+      // ownership: an identical copy (same tokens AND same input — counts
+      // independent machines cannot coincide on) found on ANOTHER device is
+      // always the legacy misattributed twin, so ownership moves to the
+      // submitter and the stale twin is stripped. This lets every account's
+      // per-device attribution converge to local truth through the normal
+      // auto-submit cycle, with no manual repair.
+      interface LegacyTwinRef {
+        rowId: string;
+        originalKey: string;
+      }
+      const otherDeviceClientSignatures = new Map<
+        string,
+        Map<string, Map<string, LegacyTwinRef[]>>
+      >();
       for (const day of allExistingDays) {
         if (day.submittedDeviceId === submittedDevice.id) continue;
-        const clients = normalizeClientBreakdownAliases(
-          (day.sourceBreakdown || {}) as Record<string, ClientBreakdownData>
-        );
+        const rawBreakdown = (day.sourceBreakdown || {}) as Record<string, ClientBreakdownData>;
         let dayMap = otherDeviceClientSignatures.get(day.date);
         if (!dayMap) {
           dayMap = new Map();
           otherDeviceClientSignatures.set(day.date, dayMap);
         }
-        for (const [client, clientData] of Object.entries(clients)) {
-          const signatures = dayMap.get(client) ?? new Set<string>();
-          signatures.add(`${clientData.tokens ?? 0}:${clientData.input ?? 0}`);
-          dayMap.set(client, signatures);
+        for (const [originalKey, clientData] of Object.entries(rawBreakdown)) {
+          const client = originalKey === "kilocode" ? "kilo" : originalKey;
+          let sigMap = dayMap.get(client);
+          if (!sigMap) {
+            sigMap = new Map();
+            dayMap.set(client, sigMap);
+          }
+          const signature = `${clientData.tokens ?? 0}:${clientData.input ?? 0}`;
+          const refs = sigMap.get(signature) ?? [];
+          refs.push({ rowId: day.id, originalKey });
+          sigMap.set(signature, refs);
         }
       }
+      // rowId -> original client keys to strip from that (other-device) row.
+      const reclaimedTwins = new Map<string, Set<string>>();
       const storedClientRevisionFloors = deriveStoredClientRevisionFloors(
         allExistingDays.map((day) =>
           (day.sourceBreakdown || {}) as Record<string, ClientBreakdownData>
@@ -579,29 +595,29 @@ export async function POST(request: Request) {
 
         const existingDay = existingDaysMap.get(incomingDay.date);
 
-        // Refuse to attach a client-day to this device when an identical copy
-        // already lives on another device (see guard construction above).
-        const skippedDuplicateClients = new Set<string>();
+        // Reclaim identical legacy twins from other devices (see map
+        // construction above): the incoming copy is attached to this device
+        // normally, and the stale twin is queued for stripping.
         const daySignatures = otherDeviceClientSignatures.get(incomingDay.date);
         if (daySignatures) {
-          const storedClientsForDay = existingDay
-            ? normalizeClientBreakdownAliases(
-                (existingDay.sourceBreakdown || {}) as Record<string, ClientBreakdownData>
-              )
-            : {};
           for (const [client, clientData] of Object.entries(incomingClientBreakdown)) {
-            // Already attributed to this device: the normal same-device merge
-            // (with its regression guard) is the right path.
-            if (storedClientsForDay[client]) continue;
             const tokens = clientData.tokens ?? 0;
             if (tokens < CROSS_DEVICE_DUP_MIN_TOKENS) continue;
-            if (daySignatures.get(client)?.has(`${tokens}:${clientData.input ?? 0}`)) {
-              delete incomingClientBreakdown[client];
-              skippedDuplicateClients.add(client);
-              warnings.push(
-                `Day ${incomingDay.date}: Skipped ${client} — identical usage is already recorded from another of your devices.`
-              );
+            const refs = daySignatures
+              .get(client)
+              ?.get(`${tokens}:${clientData.input ?? 0}`);
+            if (!refs || refs.length === 0) continue;
+            for (const ref of refs) {
+              let keys = reclaimedTwins.get(ref.rowId);
+              if (!keys) {
+                keys = new Set();
+                reclaimedTwins.set(ref.rowId, keys);
+              }
+              keys.add(ref.originalKey);
             }
+            warnings.push(
+              `Day ${incomingDay.date}: Reclaimed ${client} from another of your devices (identical legacy copy).`
+            );
           }
         }
 
@@ -626,9 +642,7 @@ export async function POST(request: Request) {
             incomingClientBreakdown,
             new Set(
               Array.from(submittedClients).filter(
-                (client) =>
-                  !rejectedClients.has(client) &&
-                  !skippedDuplicateClients.has(client)
+                (client) => !rejectedClients.has(client)
               )
             )
           );
@@ -704,6 +718,39 @@ export async function POST(request: Request) {
           activeTimeMs: existingDay.activeTimeMs ?? null,
           sourceBreakdown: coverageResult.mergeBase,
         });
+      }
+
+      // Apply queued reclaims: strip moved client-days from their old
+      // (other-device) rows and recompute those rows' totals. Runs before the
+      // submission-total recompute below, so totals net out exactly — a
+      // reclaim moves usage between devices, never changes the account total.
+      if (reclaimedTwins.size > 0) {
+        const rowsById = new Map(allExistingDays.map((day) => [day.id, day]));
+        for (const [rowId, keys] of reclaimedTwins) {
+          const row = rowsById.get(rowId);
+          if (!row) continue;
+          const remaining = {
+            ...((row.sourceBreakdown || {}) as Record<string, ClientBreakdownData>),
+          };
+          for (const key of keys) {
+            delete remaining[key];
+          }
+          if (Object.keys(remaining).length === 0) {
+            await tx.delete(dailyBreakdown).where(eq(dailyBreakdown.id, rowId));
+          } else {
+            const totals = recalculateDayTotals(remaining);
+            await tx
+              .update(dailyBreakdown)
+              .set({
+                tokens: totals.tokens,
+                cost: totals.cost.toFixed(4),
+                inputTokens: totals.inputTokens,
+                outputTokens: totals.outputTokens,
+                sourceBreakdown: remaining,
+              })
+              .where(eq(dailyBreakdown.id, rowId));
+          }
+        }
       }
 
       // Batch INSERT new days via raw SQL VALUES list, chunked to stay under
