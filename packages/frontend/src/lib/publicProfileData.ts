@@ -166,6 +166,7 @@ export async function getPublicProfileResponse(
             cliVersion: submissions.cliVersion,
             schemaVersion: submissions.schemaVersion,
             mcpServers: submissions.mcpServers,
+            hasBackfill: submissions.hasBackfill,
           })
           .from(submissions)
           .where(eq(submissions.userId, user.id))
@@ -626,6 +627,9 @@ export async function getPublicProfileResponse(
         ? periodModels
         : latestSubmission?.modelsUsed || [],
       mcpServers: latestSubmission?.mcpServers || [],
+      // Sticky per-user flag: true once any accepted submission carried a
+      // backfill provenance tag (badge-only; ranking is unaffected).
+      hasBackfill: latestSubmission?.hasBackfill ?? false,
       modelUsage,
       contributions: graphContributions,
     });
@@ -659,7 +663,7 @@ export async function loadPublicProfileForPage(
       const query = period === "all" ? "" : `?period=${period}`;
       const response = await getPublicProfileResponse(
         new Request(
-          `http://tokscale.internal/api/users/${encodeURIComponent(username)}${query}`,
+          `http://tokens.internal/api/users/${encodeURIComponent(username)}${query}`,
         ),
         { params: Promise.resolve({ username }) },
       );

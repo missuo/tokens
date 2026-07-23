@@ -64,6 +64,8 @@ export interface UserEmbedStats {
     /** Total number of ranked users, for rendering "rank N of total". */
     rankTotal?: number | null;
     updatedAt: string | null;
+    /** True once any accepted submission carried a backfill provenance tag. */
+    hasBackfill: boolean;
   };
 }
 
@@ -81,6 +83,7 @@ async function fetchUserEmbedStats(
       totalCost: sql<number>`COALESCE(CAST(${submissions.totalCost} AS DECIMAL(18,4)), 0)`,
       submissionCount: sql<number>`COALESCE(${submissions.submitCount}, 0)`,
       updatedAt: submissions.updatedAt,
+      hasBackfill: sql<boolean>`COALESCE(${submissions.hasBackfill}, false)`,
     })
     .from(users)
     .leftJoin(submissions, eq(submissions.userId, users.id))
@@ -140,6 +143,7 @@ async function fetchUserEmbedStats(
       rank,
       rankTotal,
       updatedAt: result.updatedAt?.toISOString() || null,
+      hasBackfill: Boolean(result.hasBackfill),
     },
   };
 }

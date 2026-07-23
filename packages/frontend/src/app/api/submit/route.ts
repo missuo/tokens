@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { revalidateTag } from "next/cache";
 import { db, apiTokens, submissions, submittedDevices, dailyBreakdown } from "@/lib/db";
-import { eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import {
   validateSubmission,
   generateSubmissionHash,
@@ -13,6 +13,7 @@ import {
   mergeClientBreakdownsWithRegressionGuard,
   recalculateDayTotals,
   clientContributionToBreakdownData,
+  deriveClientBreakdownProvenance,
   aggregateIncomingClientBreakdowns,
   deriveStoredClientRevisionFloors,
   filterClientBreakdownsByRevisionFloor,
@@ -26,6 +27,70 @@ import { LEGACY_DEVICE_KEY } from "@/lib/devices/shared";
 
 const LEGACY_SUBMIT_DEVICE_KEY = LEGACY_DEVICE_KEY;
 const LEGACY_SUBMIT_DEVICE_NAME = "Legacy submissions";
+// PostgreSQL caps a single statement at 65,535 bound parameters. Each
+// inserted row binds 10 params, so chunk large backfills (e.g. ~6,500+ days)
+// across multiple INSERT statements to stay well under that limit.
+const INSERT_CHUNK_SIZE = 1000;
+
+// "kilocode" is a legacy alias of "kilo" (mirrors LEGACY_CLIENT_ALIASES in
+// lib/validation/submission.ts and lib/publicProfileData.ts). Incoming
+// contributions are already normalized to "kilo" by validateSubmission's
+// preprocessing, but a daily_breakdown row's stored source_breakdown JSON
+// can still carry a "kilocode" key written before that normalization
+// existed. Fold it into "kilo" before merging so the day-level merge treats
+// the two as the SAME client instead of summing them as disjoint clients
+// (which would double-count the same underlying usage).
+const LEGACY_CLIENT_ALIASES: Record<string, string> = { kilocode: "kilo" };
+
+function mergeModelBreakdowns(
+  target: Record<string, ClientBreakdownData["models"][string]>,
+  incoming: Record<string, ClientBreakdownData["models"][string]>
+): void {
+  for (const [modelId, modelData] of Object.entries(incoming)) {
+    const existingModel = target[modelId];
+    if (existingModel) {
+      existingModel.tokens += modelData.tokens || 0;
+      existingModel.cost += modelData.cost || 0;
+      existingModel.input += modelData.input || 0;
+      existingModel.output += modelData.output || 0;
+      existingModel.cacheRead += modelData.cacheRead || 0;
+      existingModel.cacheWrite += modelData.cacheWrite || 0;
+      existingModel.reasoning = (existingModel.reasoning || 0) + (modelData.reasoning || 0);
+      existingModel.messages += modelData.messages || 0;
+    } else {
+      target[modelId] = { ...modelData };
+    }
+  }
+}
+
+function normalizeClientBreakdownAliases(
+  breakdown: Record<string, ClientBreakdownData>
+): Record<string, ClientBreakdownData> {
+  const normalized: Record<string, ClientBreakdownData> = {};
+
+  for (const [rawClientName, data] of Object.entries(breakdown)) {
+    const clientName = LEGACY_CLIENT_ALIASES[rawClientName] ?? rawClientName;
+    const existing = normalized[clientName];
+
+    if (!existing) {
+      normalized[clientName] = { ...data, models: { ...data.models } };
+      continue;
+    }
+
+    existing.tokens += data.tokens || 0;
+    existing.cost += data.cost || 0;
+    existing.input += data.input || 0;
+    existing.output += data.output || 0;
+    existing.cacheRead += data.cacheRead || 0;
+    existing.cacheWrite += data.cacheWrite || 0;
+    existing.reasoning = (existing.reasoning || 0) + (data.reasoning || 0);
+    existing.messages += data.messages || 0;
+    mergeModelBreakdowns(existing.models, data.models || {});
+    existing.provenance = deriveClientBreakdownProvenance(existing);
+  }
+
+  return normalized;
+}
 
 function normalizeSubmissionData(data: unknown): void {
   if (!data || typeof data !== "object") return;
@@ -159,6 +224,13 @@ export async function POST(request: Request) {
     const data = validation.data;
     const warnings = [...validation.warnings];
 
+    // Phase 1 backfill-provenance persistence (issue #888): a submission
+    // tagged `provenance.origin === "backfill"` (from `tokens import`)
+    // sets the sticky submissions.has_backfill flag and stamps a per-client
+    // origin tag into daily_breakdown.source_breakdown. The tag is excluded
+    // from generateSubmissionHash, so it never affects idempotency.
+    const isBackfill = data.provenance?.origin === "backfill";
+
     if (data.contributions.length === 0) {
       return NextResponse.json(
         { error: "No contribution data to submit" },
@@ -226,6 +298,7 @@ export async function POST(request: Request) {
                 modelsUsed: [],
                 cliVersion: data.meta.version,
                 submissionHash: generateSubmissionHash(hashData),
+                hasBackfill: isBackfill,
               })
               .returning({ id: submissions.id })
           );
@@ -279,27 +352,28 @@ export async function POST(request: Request) {
       // ------------------------------------------
       // STEP 3b: Fetch existing daily breakdown for merge
       // ------------------------------------------
-      const fetchExistingSubmissionDays = () =>
+      const fetchExistingDeviceDays = () =>
         tx
           .select({
             id: dailyBreakdown.id,
-            submittedDeviceId: dailyBreakdown.submittedDeviceId,
             date: dailyBreakdown.date,
             timestampMs: dailyBreakdown.timestampMs,
             activeTimeMs: dailyBreakdown.activeTimeMs,
             sourceBreakdown: dailyBreakdown.sourceBreakdown,
           })
           .from(dailyBreakdown)
-          .where(eq(dailyBreakdown.submissionId, submissionId))
+          .where(
+            and(
+              eq(dailyBreakdown.submissionId, submissionId),
+              eq(dailyBreakdown.submittedDeviceId, submittedDevice.id)
+            )
+          )
           .for('update');
 
-      let allExistingDays = await fetchExistingSubmissionDays();
-      let existingDays = allExistingDays.filter(
-        (day) => day.submittedDeviceId === submittedDevice.id
-      );
+      let existingDeviceDays = await fetchExistingDeviceDays();
 
       if (
-        existingDays.length === 0 &&
+        existingDeviceDays.length === 0 &&
         !isNewSubmission &&
         submitDevice.key !== LEGACY_SUBMIT_DEVICE_KEY
       ) {
@@ -312,10 +386,10 @@ export async function POST(request: Request) {
         // this branch before either has committed. The second UPDATE will try
         // to re-stamp submitted_device_id on rows the first already claimed,
         // which can violate the (submission_id, submitted_device_id, date)
-        // unique constraint. The ON CONFLICT DO NOTHING below makes the UPDATE
-        // skip conflicting rows rather than throw, and the outer try/catch falls
-        // through to the normal insert path if a unique violation still escapes
-        // (e.g. via a concurrent INSERT racing the UPDATE window).
+        // unique constraint. The NOT EXISTS dup guard below makes the UPDATE
+        // skip rows that would collide, and the savepoint + outer try/catch
+        // fall through to the normal insert path if a unique violation still
+        // escapes (e.g. via a concurrent INSERT racing the UPDATE window).
         try {
           // Wrap the UPDATE in a savepoint so a unique-constraint violation
           // from a concurrent submit does not poison the enclosing
@@ -354,21 +428,39 @@ export async function POST(request: Request) {
             `);
           });
         } catch (adoptionErr) {
-          // Unique constraint hit from a concurrent submit racing this UPDATE.
-          // Savepoint rolled back; outer tx is still usable.
-          // fetchExistingDeviceDays() below will pick up rows already claimed
-          // by the other request, and subsequent logic will merge rather than
-          // re-adopt.
+          // Only a unique-constraint violation (23505) from a concurrent submit
+          // racing this UPDATE is a recoverable fall-through: the savepoint
+          // rolled back, the outer tx is still usable, and fetchExistingDeviceDays()
+          // below picks up rows the other request already claimed so subsequent
+          // logic merges rather than re-adopts.
+          //
+          // Any other failure (timeout, deadlock, permission error) leaves the
+          // legacy rows unclaimed. Falling through would then insert the incoming
+          // device's overlapping history as a SECOND row, silently inflating
+          // totals. Re-throw so the request fails loudly instead of double-counting.
+          if (!isUniqueConstraintViolation(adoptionErr)) {
+            throw adoptionErr;
+          }
           console.warn("Legacy adoption conflict (concurrent submit), falling through:", adoptionErr);
         }
-        allExistingDays = await fetchExistingSubmissionDays();
-        existingDays = allExistingDays.filter(
-          (day) => day.submittedDeviceId === submittedDevice.id
-        );
+        existingDeviceDays = await fetchExistingDeviceDays();
       }
 
+      // Fetch every device's rows for this submission so the account-wide
+      // parser revision floors below consider data submitted from other
+      // devices (and the legacy bucket), not just the submitting device.
+      const allExistingDays = await tx
+        .select({
+          date: dailyBreakdown.date,
+          sourceBreakdown: dailyBreakdown.sourceBreakdown,
+        })
+        .from(dailyBreakdown)
+        .where(eq(dailyBreakdown.submissionId, submissionId))
+        .for('update');
+
+
       const existingDaysMap = new Map(
-        existingDays.map((d) => [d.date, d])
+        existingDeviceDays.map((d) => [d.date, d])
       );
       const storedClientRevisionFloors = deriveStoredClientRevisionFloors(
         allExistingDays.map((day) =>
@@ -441,13 +533,26 @@ export async function POST(request: Request) {
           )
         );
 
+        if (isBackfill) {
+          // Stamp the per-client origin tag AFTER provenance derivation so it
+          // is persisted alongside the coverage metrics. The merge helper
+          // re-derives provenance via deriveClientBreakdownProvenance, which
+          // carries `origin` through, so the tag survives the merge path too.
+          for (const clientBreakdown of Object.values(incomingClientBreakdown)) {
+            clientBreakdown.provenance = {
+              ...(clientBreakdown.provenance ??
+                deriveClientBreakdownProvenance(clientBreakdown)),
+              origin: "backfill",
+            };
+          }
+        }
+
         const existingDay = existingDaysMap.get(incomingDay.date);
 
         if (existingDay) {
-          const storedClientBreakdown = (existingDay.sourceBreakdown || {}) as Record<
-            string,
-            ClientBreakdownData
-          >;
+          const storedClientBreakdown = normalizeClientBreakdownAliases(
+            (existingDay.sourceBreakdown || {}) as Record<string, ClientBreakdownData>
+          );
           const coverageResult = applyAuthoritativeClientCoverage(
             storedClientBreakdown,
             incomingClientBreakdown,
@@ -507,12 +612,11 @@ export async function POST(request: Request) {
         }
       }
 
-      for (const existingDay of existingDays) {
+      for (const existingDay of existingDeviceDays) {
         if (incomingDates.has(existingDay.date)) continue;
-        const storedClientBreakdown = (existingDay.sourceBreakdown || {}) as Record<
-          string,
-          ClientBreakdownData
-        >;
+        const storedClientBreakdown = normalizeClientBreakdownAliases(
+          (existingDay.sourceBreakdown || {}) as Record<string, ClientBreakdownData>
+        );
         const coverageResult = applyAuthoritativeClientCoverage(
           storedClientBreakdown,
           {},
@@ -544,18 +648,49 @@ export async function POST(request: Request) {
         });
       }
 
-      // Batch INSERT new days
-      if (toInsert.length > 0) {
-        await tx.insert(dailyBreakdown).values(toInsert);
+      // Batch INSERT new days via raw SQL VALUES list, chunked to stay under
+      // PostgreSQL's 65,535 bound-parameter limit (10 params/row here --
+      // a large historical backfill can otherwise exceed it in one statement).
+      // ON CONFLICT (submission_id, submitted_device_id, date) is a defensive
+      // fallback for concurrent submits from the same device racing between
+      // the SELECT above and this INSERT. Distinct devices own distinct rows,
+      // so their independent usage remains additive.
+      for (let i = 0; i < toInsert.length; i += INSERT_CHUNK_SIZE) {
+        const chunk = toInsert.slice(i, i + INSERT_CHUNK_SIZE);
+        const insertValuesClauses = chunk.map(
+          (row) =>
+            sql`(${row.submissionId}::uuid, ${row.submittedDeviceId}::uuid, ${row.date}, ${row.tokens}::bigint, ${row.cost}::numeric(14,4), ${row.inputTokens}::bigint, ${row.outputTokens}::bigint, ${row.timestampMs}::bigint, ${row.activeTimeMs}::bigint, ${JSON.stringify(row.sourceBreakdown)}::jsonb)`
+        );
+
+        const insertValuesList = sql.join(insertValuesClauses, sql`, `);
+
+        await tx.execute(sql`
+          INSERT INTO daily_breakdown (
+            submission_id, submitted_device_id, date, tokens, cost,
+            input_tokens, output_tokens, timestamp_ms, active_time_ms, source_breakdown
+          )
+          VALUES ${insertValuesList}
+          ON CONFLICT (submission_id, submitted_device_id, date) DO UPDATE SET
+            tokens = EXCLUDED.tokens,
+            cost = EXCLUDED.cost,
+            input_tokens = EXCLUDED.input_tokens,
+            output_tokens = EXCLUDED.output_tokens,
+            timestamp_ms = EXCLUDED.timestamp_ms,
+            active_time_ms = EXCLUDED.active_time_ms,
+            source_breakdown = EXCLUDED.source_breakdown
+        `);
       }
 
       if (toDelete.length > 0) {
         await tx.delete(dailyBreakdown).where(inArray(dailyBreakdown.id, toDelete));
       }
 
-      // Batch UPDATE existing days via raw SQL VALUES list
-      if (toUpdate.length > 0) {
-        const valuesClauses = toUpdate.map(
+      // Batch UPDATE existing rows for this device via a raw SQL VALUES list,
+      // chunked for the same parameter-limit reason as the INSERT above.
+      // Device ownership is immutable here: another device writes its own row.
+      for (let i = 0; i < toUpdate.length; i += INSERT_CHUNK_SIZE) {
+        const chunk = toUpdate.slice(i, i + INSERT_CHUNK_SIZE);
+        const valuesClauses = chunk.map(
           (row) =>
             sql`(${row.id}::uuid, ${row.tokens}::bigint, ${row.cost}::numeric(14,4), ${row.inputTokens}::bigint, ${row.outputTokens}::bigint, ${row.timestampMs}::bigint, ${row.activeTimeMs}::bigint, ${JSON.stringify(row.sourceBreakdown)}::jsonb)`
         );
@@ -647,6 +782,10 @@ export async function POST(request: Request) {
            modelsUsed: Array.from(allModels),
           cliVersion: data.meta.version,
           submissionHash: generateSubmissionHash(hashData),
+          // Sticky: only ever set to true. A later live CLI submit omits the
+          // key entirely, so it can never reset an account's backfill flag —
+          // the merged totals still include the imported history.
+          ...(isBackfill ? { hasBackfill: true } : {}),
           submitCount: sql`COALESCE(submit_count, 0) + 1`,
           schemaVersion: sql`GREATEST(COALESCE(${submissions.schemaVersion}, 0), ${submitDevice.schemaVersion})`,
           totalActiveTimeMs: aggregates.totalActiveTimeMs,

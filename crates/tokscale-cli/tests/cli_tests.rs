@@ -535,7 +535,7 @@ fn write_pricing_cache(base: &Path, timestamp: u64) {
 
     // Seed all three locations so the test exercises the same fallback
     // chain the binary uses post-#470: canonical
-    // <config_dir>/cache/, then legacy dirs::cache_dir()/tokscale, then
+    // <config_dir>/cache/, then legacy dirs::cache_dir()/tokens, then
     // ~/.cache/tokens. Without the canonical path seeded, CI runners
     // where dirs::cache_dir() resolves outside the sandboxed HOME (e.g.
     // some Linux runners with XDG_CACHE_HOME set globally) miss the
@@ -675,6 +675,49 @@ fn settings_json_path(base: &Path) -> std::path::PathBuf {
     } else {
         base.join(".config").join("tokens").join("settings.json")
     }
+}
+
+/// Writes a minimal clawdboard account export to `<dir>/export.json` and
+/// returns its path, for exercising `tokens import`.
+fn write_clawdboard_export_fixture(dir: &Path) -> std::path::PathBuf {
+    let path = dir.join("export.json");
+    fs::write(
+        &path,
+        r#"{
+          "dailyAggregates": [
+            {
+              "date": "2026-05-11",
+              "source": "codex",
+              "machineId": "m1",
+              "inputTokens": 100,
+              "outputTokens": 50,
+              "cacheCreationTokens": 0,
+              "cacheReadTokens": 10,
+              "totalCost": "0.50",
+              "modelsUsed": ["gpt-5.5"],
+              "modelBreakdowns": [
+                { "modelName": "gpt-5.5", "cost": 0.5, "inputTokens": 100,
+                  "outputTokens": 50, "cacheReadTokens": 10, "cacheCreationTokens": 0 }
+              ]
+            }
+          ]
+        }"#,
+    )
+    .unwrap();
+    path
+}
+
+/// Writes a `.claude/.mcp.json` under `home` declaring a locally configured
+/// MCP server, so tests can verify that data derived purely from an
+/// external export (e.g. `tokens import`) does not leak it.
+fn write_local_mcp_config(home: &Path) {
+    let dir = home.join(".claude");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        dir.join(".mcp.json"),
+        r#"{"mcpServers":{"local-only-test-server":{"command":"echo"}}}"#,
+    )
+    .unwrap();
 }
 
 fn write_codex_token_session(dir: &Path, name: &str, model: &str, input: i64, output: i64) {
@@ -855,6 +898,65 @@ fn test_graph_command_help() {
         .assert()
         .success()
         .stdout(predicate::str::contains("Export contribution graph data"));
+}
+
+#[test]
+fn test_import_stdout_is_pure_json() {
+    // `tokens import export.json > out.json` must produce a valid JSON
+    // file: no human-readable banners/summaries/warnings on stdout, only
+    // the serialized payload (matching how `tokens graph` behaves).
+    let home = TempDir::new().unwrap();
+    let export_path = write_clawdboard_export_fixture(home.path());
+
+    let output = cmd_with_home(home.path())
+        .args(["import", export_path.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap_or_else(|e| {
+        panic!(
+            "stdout was not pure JSON: {e}\nstdout: {}",
+            String::from_utf8_lossy(&output.stdout)
+        )
+    });
+    assert!(json["summary"]["totalTokens"].as_i64().unwrap() > 0);
+
+    // The human-readable banner belongs on stderr, not stdout.
+    assert!(String::from_utf8_lossy(&output.stderr).contains("Import Usage Data"));
+}
+
+#[test]
+fn test_import_does_not_leak_local_mcp_servers() {
+    // Reusing the graph/submit converter must not embed the local
+    // machine's configured MCP server names into data derived purely from
+    // a third-party clawdboard export.
+    let home = TempDir::new().unwrap();
+    write_local_mcp_config(home.path());
+    let export_path = write_clawdboard_export_fixture(home.path());
+
+    let output = cmd_with_home(home.path())
+        .args(["import", export_path.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(
+        json.get("mcpServers").is_none() || json["mcpServers"].is_null(),
+        "import output should not carry mcpServers: {json}"
+    );
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("local-only-test-server"));
 }
 
 #[test]
@@ -2425,7 +2527,7 @@ fn add_alias_variant_message(tmp: &Path) {
 
 /// Writes a tokens `settings.json` with the given `modelAliases` object into
 /// the sandbox config dir that `cmd_with_home` points at
-/// (`XDG_CONFIG_HOME/tokscale`). `cmd_with_home` clears `TOKENS_CONFIG_DIR`, so
+/// (`XDG_CONFIG_HOME/tokens`). `cmd_with_home` clears `TOKENS_CONFIG_DIR`, so
 /// the config must live under the pinned XDG path to be read.
 fn write_model_aliases(tmp: &Path, aliases_json: &str) {
     let config_dir = tmp.join(".config/tokens");
