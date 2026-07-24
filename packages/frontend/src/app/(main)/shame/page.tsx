@@ -58,24 +58,45 @@ function formatBanDate(date: Date | null): string {
   return date.toISOString().slice(0, 10);
 }
 
+/**
+ * Cheaters ban themselves partly to promote a brand carried in their
+ * username, so the page never prints it in full: showing "fis*****de"
+ * documents the ban without handing them the advertising they wanted.
+ */
+function maskUsername(username: string): string {
+  if (username.length <= 3) {
+    return `${username[0] ?? ""}${"*".repeat(Math.max(username.length - 1, 2))}`;
+  }
+  const keepEnd = username.length >= 7 ? 2 : 1;
+  const start = username.slice(0, 2);
+  const end = username.slice(username.length - keepEnd);
+  return `${start}${"*".repeat(username.length - 2 - keepEnd)}${end}`;
+}
+
 function BannedUserCard({ user }: { user: BannedUserRow }) {
-  const avatar = user.avatarUrl || `https://github.com/${user.username}.png`;
+  const masked = maskUsername(user.username);
 
   return (
     <article className="rounded-xl border border-danger/30 bg-surface p-5">
       <div className="flex items-start gap-4">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={avatar}
-          alt={user.username}
-          width={48}
-          height={48}
-          className="h-12 w-12 shrink-0 rounded-lg object-cover opacity-80 grayscale ring-1 ring-line"
-        />
+        {user.avatarUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={user.avatarUrl}
+            alt={masked}
+            width={48}
+            height={48}
+            className="h-12 w-12 shrink-0 rounded-lg object-cover opacity-80 grayscale ring-1 ring-line"
+          />
+        ) : (
+          <div className="grid h-12 w-12 shrink-0 place-items-center rounded-lg bg-foreground/10 font-mono text-lg font-bold text-muted ring-1 ring-line">
+            {user.username[0]?.toUpperCase() ?? "?"}
+          </div>
+        )}
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
             <h2 className="truncate font-mono text-base font-bold text-foreground">
-              @{user.username}
+              @{masked}
             </h2>
             <span className="rounded-md bg-danger/10 px-2 py-0.5 font-mono text-[11px] font-semibold uppercase tracking-wide text-danger">
               Banned
@@ -134,7 +155,8 @@ export default async function HallOfShamePage({ searchParams }: PageProps) {
             listed here submitted fraudulent usage data and are permanently
             banned: they cannot sign in or submit again, and none of their data
             counts toward any ranking. Their forged records are preserved as
-            evidence.
+            evidence. Usernames are partially masked — cheaters don&apos;t get
+            free publicity here.
           </p>
         </header>
 
