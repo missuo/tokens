@@ -37,6 +37,7 @@ export async function getPublicProfileDevicesResponse(
         username: users.username,
         displayName: users.displayName,
         avatarUrl: users.avatarUrl,
+        bannedAt: users.bannedAt,
       })
       .from(users)
       .where(usernameEqualsIgnoreCase(username))
@@ -45,6 +46,18 @@ export async function getPublicProfileDevicesResponse(
     const user = getSingleUsernameMatch(matchingUsers, username);
     if (!user) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
+    }
+
+    // Banned users expose no usage data, device stats included.
+    if (user.bannedAt) {
+      return NextResponse.json({
+        user: {
+          username: user.username,
+          displayName: user.displayName,
+          avatarUrl: user.avatarUrl,
+        },
+        devices: [],
+      });
     }
 
     const rows = await db

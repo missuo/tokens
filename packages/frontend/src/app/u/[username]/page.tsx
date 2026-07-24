@@ -5,6 +5,7 @@ import { getGitHubSocialLinks } from '@/lib/githubSocials';
 import { loadPublicProfileDevicesForPage } from '@/lib/publicProfileDevices';
 import { loadPublicProfileForPage } from '@/lib/publicProfileData';
 import ProfilePageClient, { type ProfileData } from './ProfilePageClient';
+import BannedProfileView, { type BannedProfileData } from './BannedProfileView';
 
 export const revalidate = 60;
 
@@ -21,7 +22,7 @@ function parseProfilePeriod(value: string | string[] | undefined): ProfilePeriod
 async function getProfileData(
   username: string,
   period: ProfilePeriod,
-): Promise<ProfileData | null> {
+): Promise<ProfileData | BannedProfileData | null> {
   // Calling the shared server handler keeps Vercel Deployment Protection out
   // of the render path. A server-side HTTP self-fetch is anonymous and is
   // redirected to Vercel's HTML login page on protected preview deployments.
@@ -42,7 +43,14 @@ async function getProfileData(
     return null;
   }
 
-  return result.data as ProfileData;
+  const data = result.data as ProfileData | BannedProfileData;
+  return data;
+}
+
+function isBannedProfile(
+  data: ProfileData | BannedProfileData,
+): data is BannedProfileData {
+  return "banned" in data && data.banned === true;
 }
 
 // Devices are an enrichment on top of the core profile: if this fetch fails
@@ -105,6 +113,10 @@ export default async function ProfilePage({
 
   if (data.user?.username && data.user.username !== username) {
     permanentRedirect(`/u/${data.user.username}${period === "all" ? "" : `?period=${period}`}`);
+  }
+
+  if (isBannedProfile(data)) {
+    return <BannedProfileView data={data} />;
   }
 
   return (

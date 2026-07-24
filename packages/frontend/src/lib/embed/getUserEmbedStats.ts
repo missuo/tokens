@@ -6,7 +6,7 @@ import {
   normalizeUsernameCacheKey,
   usernameEqualsIgnoreCase,
 } from "@/lib/db/usernameLookup";
-import { eq, sql, and, gte } from "drizzle-orm";
+import { eq, sql, and, gte, isNull } from "drizzle-orm";
 import { getContributionIntensity, getContributionWindow } from "./embedShared";
 
 export type EmbedSortBy = "tokens" | "cost";
@@ -87,7 +87,9 @@ async function fetchUserEmbedStats(
     })
     .from(users)
     .leftJoin(submissions, eq(submissions.userId, users.id))
-    .where(usernameEqualsIgnoreCase(username))
+    // Banned users render as "not found": embed badges are exactly the
+    // advertising surface a leaderboard cheater is after.
+    .where(and(usernameEqualsIgnoreCase(username), isNull(users.bannedAt)))
     .limit(USERNAME_LOOKUP_LIMIT);
   const result = getSingleUsernameMatch(matchingUsers, username);
 
@@ -107,18 +109,19 @@ async function fetchUserEmbedStats(
     const rankResult = await db.execute<{ rank: number; total: number }>(sql`
       WITH ranked AS (
         SELECT
-          user_id,
+          s.user_id,
           RANK() OVER (
             ORDER BY
               ${
                 sortBy === "cost"
-                  ? sql`CAST(total_cost AS DECIMAL(18,4)) DESC`
-                  : sql`total_tokens DESC`
+                  ? sql`CAST(s.total_cost AS DECIMAL(18,4)) DESC`
+                  : sql`s.total_tokens DESC`
               }
           ) AS rank
-        FROM submissions
+        FROM submissions s
+        JOIN users u ON u.id = s.user_id AND u.banned_at IS NULL
       )
-      SELECT rank, (SELECT COUNT(*)::int FROM submissions) AS total
+      SELECT rank, (SELECT COUNT(*)::int FROM ranked) AS total
       FROM ranked WHERE user_id = ${result.id}
     `);
 
@@ -174,7 +177,7 @@ async function fetchUserEmbedContributions(
   const matchingUsers = await db
     .select({ id: users.id })
     .from(users)
-    .where(usernameEqualsIgnoreCase(username))
+    .where(and(usernameEqualsIgnoreCase(username), isNull(users.bannedAt)))
     .limit(USERNAME_LOOKUP_LIMIT);
   const user = getSingleUsernameMatch(matchingUsers, username);
 
@@ -258,7 +261,7 @@ async function fetchUserEmbedToday(username: string): Promise<EmbedTodayUsage | 
   const matchingUsers = await db
     .select({ id: users.id })
     .from(users)
-    .where(usernameEqualsIgnoreCase(username))
+    .where(and(usernameEqualsIgnoreCase(username), isNull(users.bannedAt)))
     .limit(USERNAME_LOOKUP_LIMIT);
   const user = getSingleUsernameMatch(matchingUsers, username);
 

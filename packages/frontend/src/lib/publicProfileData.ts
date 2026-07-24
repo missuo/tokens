@@ -112,6 +112,8 @@ export async function getPublicProfileResponse(
         displayName: users.displayName,
         avatarUrl: users.avatarUrl,
         createdAt: users.createdAt,
+        bannedAt: users.bannedAt,
+        banReason: users.banReason,
       })
       .from(users)
       .where(usernameEqualsIgnoreCase(username))
@@ -129,6 +131,22 @@ export async function getPublicProfileResponse(
         canonicalUrl.searchParams.set("period", period);
       }
       return NextResponse.redirect(canonicalUrl, 308);
+    }
+
+    // Banned profiles stay reachable but expose no usage data: just enough
+    // identity to render the ban notice.
+    if (user.bannedAt) {
+      return NextResponse.json({
+        banned: true,
+        bannedAt: user.bannedAt.toISOString(),
+        banReason: user.banReason,
+        user: {
+          username: user.username,
+          displayName: user.displayName,
+          avatarUrl: user.avatarUrl,
+          createdAt: user.createdAt.toISOString(),
+        },
+      });
     }
 
     const dailyBreakdownFilter = periodRange
@@ -176,10 +194,11 @@ export async function getPublicProfileResponse(
         db.execute<{ rank: number }>(sql`
         WITH user_totals AS (
           SELECT
-            user_id,
-            SUM(total_tokens) as total_tokens
-          FROM submissions
-          GROUP BY user_id
+            s.user_id,
+            SUM(s.total_tokens) as total_tokens
+          FROM submissions s
+          JOIN users u ON u.id = s.user_id AND u.banned_at IS NULL
+          GROUP BY s.user_id
         ),
         ranked AS (
           SELECT
