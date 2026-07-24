@@ -33,6 +33,7 @@ const mockState = vi.hoisted(() => {
   const or = vi.fn(() => "or");
   const gte = vi.fn(() => "gte");
   const lte = vi.fn(() => "lte");
+  const isNull = vi.fn(() => "isNull");
   const sql = Object.assign(
     vi.fn((strings: TemplateStringsArray, ...values: unknown[]) => ({
       strings: Array.from(strings),
@@ -76,6 +77,7 @@ const mockState = vi.hoisted(() => {
     or,
     gte,
     lte,
+    isNull,
     sql,
     reset() {
       awaitedResults.length = 0;
@@ -87,6 +89,7 @@ const mockState = vi.hoisted(() => {
       or.mockClear();
       gte.mockClear();
       lte.mockClear();
+      isNull.mockClear();
       sql.mockClear();
       sql.raw.mockClear();
     },
@@ -133,6 +136,7 @@ vi.mock("drizzle-orm", () => ({
   or: mockState.or,
   gte: mockState.gte,
   lte: mockState.lte,
+  isNull: mockState.isNull,
   sql: mockState.sql,
 }));
 

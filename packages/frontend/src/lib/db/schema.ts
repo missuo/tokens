@@ -41,6 +41,14 @@ export const users = pgTable(
     socialLinksSyncedAt: timestamp("social_links_synced_at", {
       withTimezone: true,
     }),
+    /**
+     * Non-null once the user is banned. Banned users cannot authenticate
+     * (web session, OAuth login, or API token) and are excluded from every
+     * leaderboard, but their submitted rows are retained as evidence and
+     * listed on the Hall of Shame together with banReason.
+     */
+    bannedAt: timestamp("banned_at", { withTimezone: true }),
+    banReason: text("ban_reason"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

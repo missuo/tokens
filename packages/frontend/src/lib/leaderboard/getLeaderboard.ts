@@ -6,7 +6,7 @@ import {
   normalizeUsernameCacheKey,
   usernameEqualsIgnoreCase,
 } from "@/lib/db/usernameLookup";
-import { eq, desc, sql, and, or, gte, lte } from "drizzle-orm";
+import { eq, desc, sql, and, or, gte, lte, isNull } from "drizzle-orm";
 import type { LeaderboardData, LeaderboardUser, Period, SortBy } from "@/lib/leaderboard/types";
 import {
   escapeLikePattern,
@@ -318,7 +318,8 @@ async function fetchPeriodLeaderboardRows(
     .where(
       and(
         gte(dailyBreakdown.date, dateRange.start),
-        lte(dailyBreakdown.date, dateRange.end)
+        lte(dailyBreakdown.date, dateRange.end),
+        isNull(users.bannedAt)
       )
     );
 
@@ -386,7 +387,7 @@ async function fetchLeaderboardData(
       })
       .from(submissions)
       .innerJoin(users, eq(submissions.userId, users.id))
-      .where(hasDirectiveFilters ? and(...directiveConditions) : undefined)
+      .where(and(isNull(users.bannedAt), ...directiveConditions))
       .groupBy(users.id, users.username, users.displayName, users.avatarUrl)
       .as("ranked");
     const rankedSecondaryOrderByColumn = sortBy === "cost"
@@ -426,7 +427,9 @@ async function fetchLeaderboardData(
         totalCost: sql<number>`SUM(CAST(${submissions.totalCost} AS DECIMAL(18,4)))`,
         uniqueUsers: sql<number>`COUNT(DISTINCT ${submissions.userId})`,
       })
-      .from(submissions);
+      .from(submissions)
+      .innerJoin(users, eq(submissions.userId, users.id))
+      .where(isNull(users.bannedAt));
 
     return {
       users: (results as RankedLeaderboardDbRow[]).map((row) => ({
@@ -471,6 +474,7 @@ async function fetchLeaderboardData(
     })
     .from(submissions)
     .innerJoin(users, eq(submissions.userId, users.id))
+    .where(isNull(users.bannedAt))
     .groupBy(users.id, users.username, users.displayName, users.avatarUrl)
     .orderBy(
       desc(orderByColumn),
@@ -488,7 +492,9 @@ async function fetchLeaderboardData(
         totalCost: sql<number>`SUM(CAST(${submissions.totalCost} AS DECIMAL(18,4)))`,
         uniqueUsers: sql<number>`COUNT(DISTINCT ${submissions.userId})`,
       })
-      .from(submissions),
+      .from(submissions)
+      .innerJoin(users, eq(submissions.userId, users.id))
+      .where(isNull(users.bannedAt)),
   ]);
 
   const totalUsers = Number(globalStats[0]?.uniqueUsers) || 0;
@@ -567,7 +573,7 @@ async function fetchUserRank(
   const userResult = await db
     .select({ id: users.id, username: users.username, displayName: users.displayName, avatarUrl: users.avatarUrl, verified: verifiedExpr() })
     .from(users)
-    .where(usernameEqualsIgnoreCase(username))
+    .where(and(usernameEqualsIgnoreCase(username), isNull(users.bannedAt)))
     .limit(USERNAME_LOOKUP_LIMIT);
 
   const user = getSingleUsernameMatch(userResult, username);
@@ -610,6 +616,8 @@ async function fetchUserRank(
           total: compareColumn.as("total"),
         })
         .from(submissions)
+        .innerJoin(users, eq(submissions.userId, users.id))
+        .where(isNull(users.bannedAt))
         .groupBy(submissions.userId)
         .having(sql`${compareColumn} > ${userCompareValue}`)
         .as("higher_ranked")

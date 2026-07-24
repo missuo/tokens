@@ -69,6 +69,12 @@ export async function GET(request: Request) {
     let userId: string;
 
     if (existingUser.length > 0) {
+      // Banned accounts may not sign in again; every user is tied to a
+      // GitHub identity, so the ban follows the github_id.
+      if (existingUser[0].bannedAt) {
+        return NextResponse.redirect(`${baseUrl}/shame?error=account_banned`);
+      }
+
       // Update existing user
       userId = existingUser[0].id;
       await db

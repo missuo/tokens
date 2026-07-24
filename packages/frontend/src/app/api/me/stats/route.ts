@@ -87,6 +87,13 @@ export async function GET(request: Request) {
       );
     }
 
+    if (authResult.status === "banned") {
+      return NextResponse.json(
+        { error: "This account has been banned for violating the platform rules" },
+        { status: 403 }
+      );
+    }
+
     const [submission] = await db
       .select({ id: submissions.id })
       .from(submissions)

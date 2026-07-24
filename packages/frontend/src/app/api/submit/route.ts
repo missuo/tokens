@@ -192,6 +192,13 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "API token has expired" }, { status: 401 });
     }
 
+    if (authResult.status === "banned") {
+      return NextResponse.json(
+        { error: "This account has been banned for violating the platform rules" },
+        { status: 403 }
+      );
+    }
+
     const tokenRecord = authResult;
 
     // ========================================

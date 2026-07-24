@@ -46,6 +46,12 @@ export async function getSession(): Promise<SessionUser | null> {
 
   const { user } = result[0];
 
+  // Banned users keep their rows but lose all access; their existing
+  // sessions stop resolving instead of being individually revoked.
+  if (user.bannedAt) {
+    return null;
+  }
+
   return {
     id: user.id,
     username: user.username,

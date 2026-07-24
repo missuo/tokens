@@ -136,6 +136,7 @@ function UserMenu({ user, onSignOut }: { user: User; onSignOut: () => void }) {
 
 const NAV_LINKS = [
   { href: "/leaderboard", label: "Leaderboard", authOnly: false, match: (p: string) => p === "/leaderboard" },
+  { href: "/shame", label: "Hall of Shame", authOnly: false, match: (p: string) => p === "/shame" },
   { href: "/profile", label: "Profile", authOnly: true, match: (p: string) => p === "/profile" || p.startsWith("/u/") },
 ] as const;
 
