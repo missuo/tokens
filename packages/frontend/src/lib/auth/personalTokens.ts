@@ -36,6 +36,7 @@ export interface AuthenticatedPersonalToken {
 export type PersonalTokenAuthResult =
   | { status: "invalid" }
   | { status: "expired" }
+  | { status: "banned" }
   | ({ status: "valid" } & AuthenticatedPersonalToken);
 
 export interface AuthenticatePersonalTokenOptions {
@@ -206,6 +207,7 @@ export async function authenticatePersonalToken(
       username: users.username,
       displayName: users.displayName,
       avatarUrl: users.avatarUrl,
+      bannedAt: users.bannedAt,
       expiresAt: apiTokens.expiresAt,
     })
     .from(apiTokens)
@@ -218,6 +220,10 @@ export async function authenticatePersonalToken(
   }
 
   const record = result[0];
+
+  if (record.bannedAt) {
+    return { status: "banned" };
+  }
 
   if (record.expiresAt && record.expiresAt <= new Date()) {
     return { status: "expired" };

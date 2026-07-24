@@ -31,6 +31,7 @@ const mockState = vi.hoisted(() => {
   const or = vi.fn((...conditions: unknown[]) => ({ kind: "or", conditions }));
   const gte = vi.fn(() => "gte");
   const lte = vi.fn(() => "lte");
+  const isNull = vi.fn(() => "isNull");
   const sql = Object.assign(
     vi.fn((strings: TemplateStringsArray, ...values: unknown[]) => ({
       strings: Array.from(strings),
@@ -88,6 +89,7 @@ const mockState = vi.hoisted(() => {
     or,
     gte,
     lte,
+    isNull,
     sql,
     reset() {
       periodRows.length = 0;
@@ -99,6 +101,7 @@ const mockState = vi.hoisted(() => {
       or.mockClear();
       gte.mockClear();
       lte.mockClear();
+      isNull.mockClear();
       sql.mockClear();
       sql.raw.mockClear();
     },
@@ -145,6 +148,7 @@ vi.mock("drizzle-orm", () => ({
   or: mockState.or,
   gte: mockState.gte,
   lte: mockState.lte,
+  isNull: mockState.isNull,
   sql: mockState.sql,
 }));
 
@@ -409,7 +413,10 @@ describe("all-time leaderboard directives", () => {
 
     expect(mockState.or).toHaveBeenCalledTimes(2);
     expect(mockState.or.mock.calls.map((call) => call.length)).toEqual([2, 1]);
+    // The ranked subquery always filters out banned users, so the directive
+    // conditions are combined together with the isNull(bannedAt) guard.
     expect(mockState.and).toHaveBeenCalledWith(
+      "isNull",
       mockState.or.mock.results[0]?.value,
       mockState.or.mock.results[1]?.value
     );

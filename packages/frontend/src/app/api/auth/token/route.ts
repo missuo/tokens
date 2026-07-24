@@ -27,6 +27,13 @@ export async function GET(request: Request) {
       );
     }
 
+    if (authResult.status === "banned") {
+      return NextResponse.json(
+        { error: "This account has been banned for violating the platform rules" },
+        { status: 403 }
+      );
+    }
+
     return NextResponse.json({
       user: {
         username: authResult.username,

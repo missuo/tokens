@@ -148,6 +148,13 @@
       "when": 1784826575021,
       "tag": "0020_drop_group_tables",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1784918833530,
+      "tag": "0021_add_user_bans",
+      "breakpoints": true
     }
   ]
 }
