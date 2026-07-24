@@ -14,6 +14,7 @@ export const metadata: Metadata = {
 export const revalidate = 300;
 
 interface BannedUserRow {
+  id: string;
   username: string;
   displayName: string | null;
   avatarUrl: string | null;
@@ -31,6 +32,7 @@ async function getBannedUsers(): Promise<BannedUserRow[]> {
   try {
     return await db
       .select({
+        id: users.id,
         username: users.username,
         displayName: users.displayName,
         avatarUrl: users.avatarUrl,
@@ -166,8 +168,10 @@ export default async function HallOfShamePage({ searchParams }: PageProps) {
               No banned accounts. Keep it that way.
             </p>
           ) : (
+            // Keyed by opaque id: a username key would leak the unmasked
+            // name into the serialized RSC payload in the page source.
             bannedUsers.map((user) => (
-              <BannedUserCard key={user.username} user={user} />
+              <BannedUserCard key={user.id} user={user} />
             ))
           )}
         </section>
