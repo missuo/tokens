@@ -285,8 +285,6 @@ export default function Leaderboard({
   }, [initialData.users, sortBy]);
 
   const { pagination, stats, users } = initialData;
-  const selfOnPage =
-    currentUser != null && users.some((u) => u.userId === currentUser.id);
 
   return (
     <div className={cn(CONTAINER, "pb-24 pt-10 sm:pt-14")}>
@@ -376,10 +374,13 @@ export default function Leaderboard({
       {/* Own standing, anchored directly under the period controls so it is
           visible without paginating to wherever the rank happens to fall. It
           follows the period/sort query like the table does, because the server
-          recomputes it per period. Suppressed when the row is already visible
-          in the table below, so the same row never renders twice on one
-          screen. */}
-      {initialUserRank && !selfOnPage && (
+          recomputes it per period.
+
+          Shown unconditionally, including when the same row is also visible in
+          the table below. A block that appeared and disappeared as you paged
+          would read as a glitch; a fixed anchor that is always in the same
+          place is worth more than avoiding one duplicated row. */}
+      {initialUserRank && (
         <div
           className={cn("mt-4 transition-opacity", pending && "opacity-50")}
           aria-busy={pending}
