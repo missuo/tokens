@@ -1801,8 +1801,7 @@ fn run_import_command(
         "{}",
         "\n  Note: import only converts data to tokens's format; it does not \
          upload to the leaderboard.\n  Uploading backfilled history needs \
-         server-side support for tagging it distinctly from live CLI usage \
-         (see https://github.com/junhoyeo/tokscale/issues/888).\n"
+         server-side support for tagging it distinctly from live CLI usage.\n"
             .bright_black()
     );
 
