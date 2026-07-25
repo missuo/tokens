@@ -1814,6 +1814,7 @@ struct SubmitResponse {
     submission_id: Option<String>,
     #[allow(dead_code)]
     username: Option<String>,
+    #[serde(default)]
     metrics: Option<SubmitMetrics>,
     warnings: Option<Vec<String>>,
     error: Option<String>,
@@ -1822,14 +1823,61 @@ struct SubmitResponse {
 
 #[derive(serde::Deserialize)]
 struct SubmitMetrics {
-    #[serde(rename = "totalTokens")]
+    #[serde(rename = "totalTokens", default, deserialize_with = "de_lenient_i64")]
     total_tokens: Option<i64>,
-    #[serde(rename = "totalCost")]
+    #[serde(rename = "totalCost", default, deserialize_with = "de_lenient_f64")]
     total_cost: Option<f64>,
     #[serde(rename = "activeDays")]
     active_days: Option<i32>,
     #[allow(dead_code)]
     sources: Option<Vec<String>>,
+}
+
+/// Accept a JSON number *or* a numeric string.
+///
+/// Postgres `bigint` reaches the API's JSON as a string (`"22301189081"`),
+/// because the driver will not risk precision loss by coercing int8 to a JS
+/// number. A strict `Option<i64>` therefore failed on that one field, which
+/// failed the whole `SubmitResponse`, which left every field `None` — so the
+/// summary printed empty *and* the server's warnings about preserved data were
+/// silently discarded. Being lenient here keeps one field's wire type from
+/// costing us the entire response.
+fn de_lenient_i64<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize;
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum NumberOrString {
+        Number(i64),
+        String(String),
+    }
+    Ok(match Option::<NumberOrString>::deserialize(deserializer)? {
+        Some(NumberOrString::Number(n)) => Some(n),
+        Some(NumberOrString::String(s)) => s.trim().parse().ok(),
+        None => None,
+    })
+}
+
+/// Same leniency for `numeric`/`decimal` columns, which arrive as strings for
+/// the same reason.
+fn de_lenient_f64<'de, D>(deserializer: D) -> Result<Option<f64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize;
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum NumberOrString {
+        Number(f64),
+        String(String),
+    }
+    Ok(match Option::<NumberOrString>::deserialize(deserializer)? {
+        Some(NumberOrString::Number(n)) => Some(n),
+        Some(NumberOrString::String(s)) => s.trim().parse().ok(),
+        None => None,
+    })
 }
 
 /// A client row dropped from a submission because it carried cost without any
@@ -2335,19 +2383,27 @@ fn run_submit_command(
     match response {
         Ok(resp) => {
             let status = resp.status();
-            let body: SubmitResponse =
-                rt.block_on(async { resp.json().await })
-                    .unwrap_or_else(|_| SubmitResponse {
-                        submission_id: None,
-                        username: None,
-                        metrics: None,
-                        warnings: None,
-                        error: Some(format!(
-                            "Server returned {} with unparseable response",
-                            status
-                        )),
-                        details: None,
-                    });
+            let raw = rt
+                .block_on(async { resp.text().await })
+                .unwrap_or_default();
+            // Keep the parse failure rather than swallowing it: a 2xx whose body
+            // we cannot read still means we are showing the user nothing the
+            // server said, including its warnings. That must be loud.
+            let parse_error = match serde_json::from_str::<SubmitResponse>(&raw) {
+                Ok(_) => None,
+                Err(err) => Some(err.to_string()),
+            };
+            let body: SubmitResponse = serde_json::from_str(&raw).unwrap_or(SubmitResponse {
+                submission_id: None,
+                username: None,
+                metrics: None,
+                warnings: None,
+                error: Some(format!(
+                    "Server returned {} with unparseable response",
+                    status
+                )),
+                details: None,
+            });
 
             if !status.is_success() {
                 let error = body
@@ -2369,6 +2425,18 @@ fn run_submit_command(
 
             println!("\n  {}", "Successfully submitted!".green());
             println!();
+            if let Some(err) = &parse_error {
+                eprintln!(
+                    "{}",
+                    format!(
+                        "  Note: the server accepted the submission but its response \
+                         could not be read ({err}); any warnings it returned are not \
+                         shown below."
+                    )
+                    .yellow()
+                );
+                println!();
+            }
             println!("{}", "  Summary:".white());
             if let Some(id) = body.submission_id {
                 println!("{}", format!("    Submission ID: {}", id).bright_black());

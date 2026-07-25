@@ -956,7 +956,12 @@ export async function POST(request: Request) {
         submissionId,
         isNewSubmission,
         metrics: {
-          totalTokens: aggregates.totalTokens,
+          // `::bigint` reaches us as a string — the driver will not coerce int8
+          // to a JS number on its own. Send a real number: the field is typed
+          // `sql<number>` above, /api/leaderboard already serializes it that
+          // way, and a string here breaks strictly-typed clients. Totals are
+          // far below 2^53, so this is lossless.
+          totalTokens: Number(aggregates.totalTokens),
           totalCost: parseFloat(aggregates.totalCost),
           dateRange: {
             start: aggregates.dateStart,
