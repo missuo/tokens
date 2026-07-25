@@ -19,18 +19,11 @@ use std::time::Duration;
 #[command(name = "tokens")]
 #[command(author, version, about = "AI token usage analytics")]
 struct Cli {
+    // No global flags: the filters that used to live here (--json, --client,
+    // --today/--week/--since/...) only ever fed the report commands, which are
+    // gone. The subcommands that still need them declare their own.
     #[command(subcommand)]
     command: Option<Commands>,
-
-    #[arg(long, help = "Output as JSON")]
-    json: bool,
-
-    #[command(flatten)]
-    clients: ClientFlags,
-
-    #[command(flatten)]
-    date: DateRangeFlags,
-
 }
 
 #[derive(Subcommand)]
@@ -289,12 +282,11 @@ enum WarpSubcommand {
 }
 
 fn main() -> Result<()> {
-
     let cli = Cli::parse();
-    // Install user-configured model aliases once, before any report/graph/TUI
-    // path runs, so model-name variants fold consistently across every command.
-    // Honors the global `--home` override exactly like scanner settings; an
-    // empty or absent config is a strict no-op.
+
+    // Install user-configured model aliases once, before any scan runs, so
+    // model-name variants fold consistently across every command. An empty or
+    // absent config is a strict no-op.
     tokens_core::model_alias::set_global(&settings::load_model_aliases());
 
     // Pin the date-bucketing timezone before any scanning so usage is
