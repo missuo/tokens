@@ -167,12 +167,6 @@ while IFS=$'\t' read -r package_dir artifact_name binary_name; do
     chmod +x "${stage_dir}/bin/${binary_name}"
   fi
 
-  if [[ -f "${artifact_dir}/libFoundationModels.dylib" ]]; then
-    cp "${artifact_dir}/libFoundationModels.dylib" "${stage_dir}/bin/libFoundationModels.dylib"
-  elif [[ "${package_dir}" == "cli-darwin-arm64" ]]; then
-    fail "Missing libFoundationModels.dylib in ${artifact_dir}"
-  fi
-
   package_name="$(node --input-type=module - "${stage_dir}/package.json" <<'NODE'
 import fs from "node:fs";
 const manifest = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
