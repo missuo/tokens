@@ -73,7 +73,7 @@ export function GraphControls({
           aria-label="2D view"
           className="rounded-l-full border px-3 py-1.5 text-xs font-semibold transition"
           style={{
-            backgroundColor: view === "2d" ? palette.grade3 : "var(--surface-tertiary)",
+            backgroundColor: view === "2d" ? palette.grade3 : "var(--accent)",
             color: view === "2d" ? activeViewForeground : "var(--foreground)",
             borderColor: view === "2d" ? palette.grade3 : "var(--border)",
           }}
@@ -86,7 +86,7 @@ export function GraphControls({
           aria-label="3D view"
           className="rounded-r-full border border-l-0 px-3 py-1.5 text-xs font-semibold transition"
           style={{
-            backgroundColor: view === "3d" ? palette.grade3 : "var(--surface-tertiary)",
+            backgroundColor: view === "3d" ? palette.grade3 : "var(--accent)",
             color: view === "3d" ? activeViewForeground : "var(--foreground)",
             borderColor: view === "3d" ? palette.grade3 : "var(--border)",
           }}
@@ -100,7 +100,7 @@ export function GraphControls({
           value={paletteName}
           onChange={(e) => onPaletteChange(e.target.value as ColorPaletteName)}
           aria-label="Color palette"
-          className="cursor-pointer rounded-lg border border-border bg-[var(--surface-tertiary)] px-2 py-1.5 text-xs font-medium text-foreground"
+          className="cursor-pointer rounded-lg border border-border bg-accent px-2 py-1.5 text-xs font-medium text-foreground"
         >
           {paletteNames.map((name) => (
             <option key={name} value={name}>

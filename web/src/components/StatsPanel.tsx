@@ -1,9 +1,9 @@
 "use client";
 
-import styled from "styled-components";
 import type { TokenContributionData, GraphColorPalette } from "@/lib/types";
 import { getDarkGradeColors } from "@/lib/themes";
 import {
+  cn,
   formatCurrency,
   formatTokenCount,
   calculateCurrentStreak,
@@ -21,148 +21,22 @@ interface StatsPanelProps {
   mcpServers?: string[];
 }
 
-const Container = styled.div`
-  border-radius: 16px;
-  border: 1px solid;
-  padding: 24px;
-  box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
-  transition: box-shadow 0.15s ease-in-out;
-  background-color: var(--color-card-bg);
-  border-color: var(--color-border-default);
-
-  &:hover {
-    box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
-  }
-`;
-
-const Heading = styled.h3`
-  font-size: 14px;
-  font-weight: 700;
-  margin-bottom: 16px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--color-fg-muted);
-`;
-
-const Grid = styled.div`
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 24px;
-
-  @media (max-width: 560px) {
-    gap: 16px;
-  }
-
-  @media (max-width: 400px) {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  @media (min-width: 640px) {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
-  @media (min-width: 768px) {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-  }
-`;
-
-const SourcesContainer = styled.div`
-  margin-top: 24px;
-  padding-top: 24px;
-  border-top: 1px solid;
-  border-color: var(--color-border-default);
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: center;
-`;
-
-const SourcesLabel = styled.span`
-  font-size: 12px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  margin-right: 12px;
-  color: var(--color-fg-muted);
-
-  @media (max-width: 480px) {
-    width: 100%;
-    margin-right: 0;
-  }
-`;
-
-const SourceBadge = styled.span<{ $backgroundColor: string }>`
-  font-size: 12px;
-  padding: 6px 12px;
-  border-radius: 9999px;
-  font-weight: 500;
-  transition: all 200ms ease-in-out;
-  background-color: ${props => props.$backgroundColor};
-  color: var(--color-fg-default);
-  max-width: 100%;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-
-  &:hover {
-    transform: scale(1.05);
-  }
-`;
-
-const StatItemContainer = styled.div`
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-`;
-
-const StatItemLabel = styled.div`
-  font-size: 12px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--color-fg-muted);
-  overflow-wrap: anywhere;
-`;
-
-const StatItemValue = styled.div<{
-  $darkColor?: string;
-  $highlight?: boolean;
-  $lightColor?: string;
-}>`
-  font-weight: 700;
-  letter-spacing: -0.025em;
-  font-size: ${props => props.$highlight ? '20px' : '18px'};
-  color: ${props => props.$lightColor || 'var(--color-fg-default)'};
-  min-width: 0;
-  overflow-wrap: anywhere;
-
-  @media (max-width: 400px) {
-    font-size: ${props => props.$highlight ? '18px' : '16px'};
-  }
-
-  :where(.dark, [data-theme="dark"]) & {
-    color: ${props => props.$darkColor || 'var(--color-fg-default)'};
-  }
-`;
-
-const StatItemSubValue = styled.div`
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--color-fg-muted);
-`;
-
 function BadgeList({ label, items, palette }: { label: string; items: string[]; palette: GraphColorPalette }) {
   return (
-    <SourcesContainer>
-      <SourcesLabel>{label}:</SourcesLabel>
+    <div className="mt-6 flex flex-wrap items-center gap-2 border-t border-border pt-6">
+      <span className="mr-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground max-[480px]:mr-0 max-[480px]:w-full">
+        {label}:
+      </span>
       {items.map((item) => (
-        <SourceBadge key={item} $backgroundColor={`${palette.grade3}20`}>
+        <span
+          key={item}
+          style={{ backgroundColor: `${palette.grade3}20` }}
+          className="min-w-0 max-w-full truncate rounded-full px-3 py-1.5 text-xs font-medium text-foreground transition-all duration-200 hover:scale-105"
+        >
           {item}
-        </SourceBadge>
+        </span>
       ))}
-    </SourcesContainer>
+    </div>
   );
 }
 
@@ -173,10 +47,14 @@ export function StatsPanel({ data, palette, totalActiveTimeMs, sessionCount, mcp
   const bestDay = findBestDay(contributions);
 
   return (
-    <Container>
-      <Heading>Statistics</Heading>
+    <div className="rounded-2xl border border-border bg-card p-6 shadow-sm transition-shadow duration-150 hover:shadow-md">
+      <h3 className="mb-4 text-sm font-bold uppercase tracking-wider text-muted-foreground">
+        Statistics
+      </h3>
 
-      <Grid>
+      {/* 2 up on phones, 1 below 400px, 3 from sm, 4 from md — the same
+          breakpoints the styled grid used. */}
+      <div className="grid grid-cols-2 gap-6 max-[560px]:gap-4 max-[400px]:grid-cols-1 sm:grid-cols-3 md:grid-cols-4">
         <StatItem
           label="Total Cost"
           value={formatCurrency(summary.totalCost)}
@@ -199,13 +77,13 @@ export function StatsPanel({ data, palette, totalActiveTimeMs, sessionCount, mcp
         {sessionCount != null && sessionCount > 0 && (
           <StatItem label="Sessions" value={sessionCount.toString()} />
         )}
-      </Grid>
+      </div>
 
       <BadgeList label="Clients" items={summary.clients} palette={palette} />
       {mcpServers && mcpServers.length > 0 && (
         <BadgeList label="MCPs" items={mcpServers} palette={palette} />
       )}
-    </Container>
+    </div>
   );
 }
 
@@ -227,20 +105,31 @@ function StatItem({
   highlight,
 }: StatItemProps) {
   return (
-    <StatItemContainer>
-      <StatItemLabel>{label}</StatItemLabel>
-      <StatItemValue
-        $highlight={highlight}
-        $darkColor={
-          highlight && highlightDarkColor ? highlightDarkColor : undefined
+    <div className="flex min-w-0 flex-col gap-1">
+      <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground [overflow-wrap:anywhere]">
+        {label}
+      </div>
+      {/* The highlight colour differs per theme, and both values are runtime
+          palette values, so they ride in as custom properties rather than as
+          two impossible-to-generate Tailwind classes. Unhighlighted stats fall
+          back to the foreground on both sides. */}
+      <div
+        style={
+          {
+            "--stat": highlight && highlightLightColor ? highlightLightColor : "var(--foreground)",
+            "--stat-dark": highlight && highlightDarkColor ? highlightDarkColor : "var(--foreground)",
+          } as React.CSSProperties
         }
-        $lightColor={
-          highlight && highlightLightColor ? highlightLightColor : undefined
-        }
+        className={cn(
+          "min-w-0 font-bold tracking-tight text-[var(--stat)] dark:text-[var(--stat-dark)] [overflow-wrap:anywhere]",
+          highlight ? "text-xl max-[400px]:text-lg" : "text-lg max-[400px]:text-base"
+        )}
       >
         {value}
-      </StatItemValue>
-      {subValue && <StatItemSubValue>{subValue}</StatItemSubValue>}
-    </StatItemContainer>
+      </div>
+      {subValue && (
+        <div className="text-xs font-medium text-muted-foreground">{subValue}</div>
+      )}
+    </div>
   );
 }

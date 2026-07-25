@@ -1,7 +1,7 @@
 "use client";
 
 import * as Tooltip from "@radix-ui/react-tooltip";
-import styled from "styled-components";
+import { cn } from "@/lib/utils";
 
 const VERIFIED_TOOLTIP =
   "Verified — earned by adding two or more social links (website included) to your GitHub profile. Status refreshes every 24 hours.";
@@ -22,9 +22,16 @@ export function VerifiedBadge({ size = 14, className }: VerifiedBadgeProps) {
     <Tooltip.Provider delayDuration={150}>
       <Tooltip.Root>
         <Tooltip.Trigger asChild>
-          <Badge
-            className={className}
-            $size={size}
+          {/* #1d9bf0 is deliberate rather than themed: a blue check is a
+              borrowed convention, and it only reads as one at that blue. The
+              ring punches the badge out of whatever sits behind it — an avatar,
+              a table row — so it stays legible on both. */}
+          <span
+            className={cn(
+              "inline-flex flex-none cursor-default items-center justify-center rounded-full bg-[#1d9bf0] ring-2 ring-card",
+              className
+            )}
+            style={{ width: size, height: size }}
             role="img"
             aria-label={VERIFIED_TOOLTIP}
           >
@@ -43,44 +50,24 @@ export function VerifiedBadge({ size = 14, className }: VerifiedBadgeProps) {
                 strokeLinejoin="round"
               />
             </svg>
-          </Badge>
+          </span>
         </Tooltip.Trigger>
         <Tooltip.Portal>
-          <TooltipContent side="top" sideOffset={6} collisionPadding={10}>
+          {/* Inverted in both themes, which is why it carries its own colours
+              instead of the popover tokens: a light tooltip on the light theme
+              would have nothing to separate it from the page. The previous
+              value was #111B2C, blue enough to stand out against the rest of
+              the palette; this is the same darkness, neutral. */}
+          <Tooltip.Content
+            side="top"
+            sideOffset={6}
+            collisionPadding={10}
+            className="z-[1000] max-w-[260px] select-none rounded-lg bg-[#17181B] px-3 py-2 text-center text-xs font-medium leading-relaxed text-[#e5e5e5] shadow-[0_8px_30px_rgba(0,0,0,0.4),0_0_0_1px_rgba(255,255,255,0.06)]"
+          >
             {VERIFIED_TOOLTIP}
-          </TooltipContent>
+          </Tooltip.Content>
         </Tooltip.Portal>
       </Tooltip.Root>
     </Tooltip.Provider>
   );
 }
-
-const Badge = styled.span<{ $size: number }>`
-  display: inline-flex;
-  width: ${({ $size }) => $size}px;
-  height: ${({ $size }) => $size}px;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  background: #1d9bf0;
-  box-shadow: 0 0 0 2px var(--service-surface, var(--background, #fff));
-  cursor: default;
-`;
-
-const TooltipContent = styled(Tooltip.Content)`
-  max-width: 260px;
-  padding: 8px 12px;
-  border-radius: 8px;
-  background-color: #111b2c;
-  color: #e5e5e5;
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 1.45;
-  text-align: center;
-  box-shadow:
-    0 8px 30px rgba(0, 0, 0, 0.4),
-    0 0 0 1px rgba(255, 255, 255, 0.06);
-  z-index: 1000;
-  user-select: none;
-`;

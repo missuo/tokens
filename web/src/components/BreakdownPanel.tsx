@@ -25,7 +25,7 @@ export function BreakdownPanel({ day, onClose, palette }: BreakdownPanelProps) {
         <button
           onClick={onClose}
           aria-label="Close breakdown panel"
-          className="flex h-11 w-11 flex-none items-center justify-center rounded-full text-muted-foreground transition hover:scale-110 hover:bg-[var(--surface-tertiary)]"
+          className="flex h-11 w-11 flex-none items-center justify-center rounded-full text-muted-foreground transition hover:scale-110 hover:bg-accent"
         >
           <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <line x1="18" y1="6" x2="6" y2="18" />
