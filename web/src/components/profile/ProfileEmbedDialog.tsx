@@ -4,7 +4,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { CopyIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import styled from "styled-components";
 import { toast } from "react-toastify";
 import {
   EMBED_TEMPLATES,
@@ -22,6 +21,8 @@ import {
   type EmbedTheme,
   type EmbedView,
 } from "./embedDialogOptions";
+import { tw } from "@/lib/tw";
+import { cn } from "@/lib/utils";
 
 function titleCase(value: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1);
@@ -591,583 +592,236 @@ export function ProfileEmbedDialog({
   );
 }
 
-const Overlay = styled.div`
-  position: fixed;
-  inset: 0;
-  z-index: 1000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 16px;
-  background: rgba(5, 7, 12, 0.78);
-  backdrop-filter: blur(10px);
-  overscroll-behavior: contain;
-
-  @media (max-width: 640px) {
-    align-items: flex-end;
-    padding: 8px 0 0;
-  }
-`;
-
-const Dialog = styled.div`
-  display: grid;
-  width: min(100%, 960px);
-  height: min(84dvh, 760px);
-  max-height: calc(100dvh - 32px);
-  grid-template-rows: auto minmax(0, 1fr);
-  overflow: hidden;
-  border: 1px solid var(--service-border-strong);
-  border-radius: 14px;
-  outline: none;
-  background: var(--service-surface);
-
-  @media (max-width: 840px) {
-    height: min(92dvh, 860px);
-  }
-
-  @media (max-width: 640px) {
-    width: 100%;
-    height: min(96dvh, 860px);
-    max-height: calc(100dvh - 8px);
-    border-bottom: 0;
-    border-radius: 14px 14px 0 0;
-  }
-`;
-
-const DialogHeader = styled.div`
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 13px 16px;
-  border-bottom: 1px solid var(--service-border);
-  background: var(--service-surface);
-
-  @media (max-width: 640px) {
-    padding: 12px 14px;
-  }
-`;
-
-const HeaderCopy = styled.div`
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 2px;
-`;
-
-const DialogTitle = styled.h2`
-  overflow: hidden;
-  margin: 0;
-  color: var(--service-text);
-  font-size: 1.125rem;
-  font-weight: 600;
-  line-height: 1.35;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-`;
-
-const DialogDescription = styled.p`
-  overflow: hidden;
-  margin: 0;
-  color: var(--service-text-muted-foreground);
-  font-size: 0.8125rem;
-  line-height: 1.35;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-
-  @media (max-width: 480px) {
-    display: none;
-  }
-`;
-
-const CloseButton = styled.button`
-  display: inline-flex;
-  width: 34px;
-  height: 34px;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--service-border-strong);
-  border-radius: 8px;
-  background: var(--service-surface-muted);
-  color: var(--service-text-muted-foreground);
-  transition:
-    border-color 150ms ease,
-    background-color 150ms ease,
-    color 150ms ease;
-
-  &:focus-visible {
-    outline: 2px solid var(--service-focus);
-    outline-offset: 2px;
-  }
-
-  @media (hover: hover) {
-    &:hover {
-      background: var(--service-accent-soft);
-      color: var(--service-text);
-    }
-  }
-
-  @media (pointer: coarse) {
-    width: 44px;
-    height: 44px;
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    transition: none;
-  }
-`;
-
-const DialogBody = styled.div`
-  display: grid;
-  min-height: 0;
-  grid-template-columns: minmax(0, 1fr) minmax(320px, 360px);
-  overflow: hidden;
-  scrollbar-color: color-mix(
-      in srgb,
-      var(--service-text-muted-foreground) 52%,
-      transparent
-    )
-    var(--service-canvas);
-  scrollbar-width: thin;
-
-  &::-webkit-scrollbar {
-    width: 9px;
-  }
-
-  &::-webkit-scrollbar-track {
-    background: var(--service-canvas);
-  }
-
-  &::-webkit-scrollbar-thumb {
-    border: 2px solid var(--service-canvas);
-    border-radius: 999px;
-    background: color-mix(in srgb, var(--service-text-muted-foreground) 52%, transparent);
-  }
-
-  @media (max-width: 840px) {
-    grid-template-columns: 1fr;
-    align-content: start;
-    overflow-y: auto;
-    padding-bottom: max(24px, env(safe-area-inset-bottom));
-    overscroll-behavior: contain;
-    scrollbar-gutter: stable;
-    scroll-padding-bottom: max(24px, env(safe-area-inset-bottom));
-  }
-
-  @media (max-width: 640px) {
-    padding-bottom: max(32px, calc(env(safe-area-inset-bottom) + 16px));
-    scroll-padding-bottom: max(32px, calc(env(safe-area-inset-bottom) + 16px));
-  }
-`;
-
-const PreviewPanel = styled.div`
-  display: flex;
-  min-width: 0;
-  min-height: 0;
-  flex-direction: column;
-  overflow: hidden;
-  padding: 16px;
-  border-right: 1px solid var(--service-border);
-  background: var(--service-canvas);
-
-  @media (max-width: 840px) {
-    overflow: visible;
-    border-right: 0;
-    border-bottom: 1px solid var(--service-border);
-  }
-
-  @media (max-width: 640px) {
-    padding: 12px;
-  }
-`;
-
-const PreviewSurface = styled.div`
-  display: flex;
-  min-height: 0;
-  flex: 1 1 auto;
-  flex-direction: column;
-  gap: 8px;
-`;
-
-const PreviewLabel = styled.span`
-  color: var(--service-text);
-  font-size: 0.8125rem;
-  font-weight: 600;
-  line-height: 1.3;
-`;
-
-const PreviewFrame = styled.div<{ $threeD: boolean }>`
-  display: flex;
-  min-height: 0;
-  flex: 1 1 auto;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-  padding: 20px 0;
-
-  @media (max-width: 840px) {
-    height: ${({ $threeD }) => ($threeD ? "320px" : "200px")};
-    flex: 0 0 auto;
-  }
-
-  @media (max-width: 640px) {
-    height: ${({ $threeD }) => ($threeD ? "272px" : "160px")};
-    padding: 8px 0;
-  }
-`;
-
-const PreviewImage = styled.img`
-  width: auto;
-  max-width: 100%;
-  max-height: 100%;
-  height: auto;
-  object-fit: contain;
-`;
-
-const ControlsPanel = styled.div`
-  display: flex;
-  min-width: 0;
-  min-height: 0;
-  flex-direction: column;
-  overflow-y: auto;
-  padding: 14px 16px 16px;
-  background: var(--service-surface);
-  overscroll-behavior: contain;
-  scrollbar-color: color-mix(
-      in srgb,
-      var(--service-text-muted-foreground) 52%,
-      transparent
-    )
-    var(--service-canvas);
-  scrollbar-gutter: stable;
-  scrollbar-width: thin;
-
-  &::-webkit-scrollbar {
-    width: 9px;
-  }
-
-  &::-webkit-scrollbar-track {
-    border-left: 1px solid var(--service-border);
-    background: var(--service-canvas);
-  }
-
-  &::-webkit-scrollbar-thumb {
-    border: 2px solid var(--service-canvas);
-    border-radius: 999px;
-    background: color-mix(in srgb, var(--service-text-muted-foreground) 52%, transparent);
-  }
-
-  @media (max-width: 840px) {
-    overflow: visible;
-    scrollbar-gutter: auto;
-  }
-
-  @media (max-width: 640px) {
-    padding: 12px 14px max(16px, env(safe-area-inset-bottom));
-  }
-`;
-
-const ControlsHeader = styled.div`
-  display: flex;
-  align-items: center;
-  padding-bottom: 9px;
-  border-bottom: 1px solid var(--service-border);
-`;
-
-const ControlsTitle = styled.h3`
-  margin: 0;
-  color: var(--service-text);
-  font-size: 0.875rem;
-  font-weight: 600;
-  line-height: 1.3;
-`;
-
-const OptionGroup = styled.div<{ $stacked?: boolean }>`
-  display: grid;
-  grid-template-columns: ${({ $stacked }) =>
-    $stacked ? "1fr" : "7rem minmax(0, 1fr)"};
-  align-items: ${({ $stacked }) => ($stacked ? "start" : "center")};
-  gap: ${({ $stacked }) => ($stacked ? "7px" : "10px")};
-  padding: 8px 0;
-  border-bottom: 1px solid var(--service-border);
-
-  @media (max-width: 400px) {
-    grid-template-columns: ${({ $stacked }) =>
-      $stacked ? "1fr" : "6.25rem minmax(0, 1fr)"};
-    gap: ${({ $stacked }) => ($stacked ? "7px" : "8px")};
-  }
-`;
-
-const OptionLabel = styled.span`
-  color: var(--service-text-muted-foreground);
-  font-size: 0.8125rem;
-  font-weight: 500;
-  line-height: 1.3;
-`;
-
-const SelectWrap = styled.div`
-  position: relative;
-  min-width: 0;
-`;
-
-const SelectControl = styled.select`
-  width: 100%;
-  min-height: 34px;
-  appearance: none;
-  border: 1px solid var(--service-border-strong);
-  border-radius: 8px;
-  padding: 6px 30px 6px 10px;
-  background: var(--service-surface-muted);
-  color: var(--service-text);
-  font: inherit;
-  font-size: 0.8125rem;
-  line-height: 1.3;
-
-  &:focus-visible {
-    outline: 2px solid var(--service-focus);
-    outline-offset: 2px;
-  }
-
-  @media (pointer: coarse) {
-    min-height: 44px;
-    font-size: 1rem;
-  }
-`;
-
-const SelectIcon = styled.span`
-  position: absolute;
-  top: 50%;
-  right: 12px;
-  width: 7px;
-  height: 7px;
-  border-right: 1.5px solid var(--service-text-muted-foreground);
-  border-bottom: 1.5px solid var(--service-text-muted-foreground);
-  pointer-events: none;
-  transform: translateY(-70%) rotate(45deg);
-`;
-
-const SegmentedControl = styled.div`
-  display: inline-flex;
-  width: fit-content;
-  max-width: 100%;
-  flex-wrap: wrap;
-  gap: 2px;
-  padding: 2px;
-  border: 1px solid var(--service-border);
-  border-radius: 8px;
-  background: var(--service-surface-muted);
-`;
-
-const SegmentButton = styled.button<{ $active: boolean }>`
-  display: inline-flex;
-  min-height: 28px;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid
-    ${({ $active }) =>
-      $active ? "var(--service-border-strong)" : "transparent"};
-  border-radius: 6px;
-  padding: 4px 8px;
-  background: ${({ $active }) =>
-    $active ? "var(--service-accent-soft)" : "transparent"};
-  color: ${({ $active }) =>
-    $active ? "var(--service-text)" : "var(--service-text-muted-foreground)"};
-  font: inherit;
-  font-size: 0.75rem;
-  font-weight: 550;
-  line-height: 1;
-  transition:
-    border-color 150ms ease,
-    background-color 150ms ease,
-    color 150ms ease,
-    transform 120ms ease;
-
-  &:active {
-    transform: translateY(1px);
-  }
-
-  &:focus-visible {
-    outline: 2px solid var(--service-focus);
-    outline-offset: 1px;
-  }
-
-  @media (hover: hover) {
-    &:hover {
-      color: var(--service-text);
-    }
-  }
-
-  @media (pointer: coarse) {
-    min-height: 44px;
-    padding-right: 12px;
-    padding-left: 12px;
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    transition: none;
-  }
-`;
-
-const SwatchRow = styled.div`
-  display: grid;
-  width: 100%;
-  grid-template-columns: repeat(10, 28px);
-  justify-content: space-between;
-  gap: 0;
-
-  @media (pointer: coarse) {
-    width: fit-content;
-    grid-template-columns: repeat(5, 44px);
-    justify-content: start;
-    gap: 8px;
-  }
-
-  @media (max-width: 640px) {
-    width: fit-content;
-    grid-template-columns: repeat(5, 44px);
-    justify-content: start;
-    gap: 8px;
-  }
-`;
-
-const Swatch = styled.button<{ $active: boolean; $color: string }>`
-  width: 28px;
-  height: 28px;
-  border: 2px solid var(--service-surface);
-  border-radius: 7px;
-  background: ${({ $color }) => $color};
-  box-shadow:
-    0 0 0 1px
-      ${({ $active }) =>
-        $active ? "var(--service-text)" : "var(--service-border-strong)"},
-    inset 0 0 0 1px rgba(0, 0, 0, 0.18);
-  cursor: pointer;
-  transition: transform 120ms ease;
-
-  &:active {
-    transform: translateY(1px);
-  }
-
-  &:focus-visible {
-    outline: 2px solid var(--service-focus);
-    outline-offset: 2px;
-  }
-
-  @media (pointer: coarse) {
-    width: 44px;
-    height: 44px;
-  }
-
-  @media (max-width: 640px) {
-    width: 44px;
-    height: 44px;
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    transition: none;
-  }
-`;
-
-const SnippetSection = styled.div`
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-top: 10px;
-  padding: 12px;
-  border: 1px solid var(--service-border-strong);
-  border-radius: 10px;
-  background: var(--service-canvas);
-`;
-
-const SnippetHeader = styled.div`
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 8px;
-`;
-
-const SnippetTitle = styled.h3`
-  margin: 0;
-  color: var(--service-text);
-  font-size: 0.8125rem;
-  font-weight: 600;
-  line-height: 1.3;
-`;
-
-const InlineActions = styled.div`
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-`;
-
-const CodeBlock = styled.pre`
-  max-height: 92px;
-  overflow: auto;
-  margin: 0;
-  padding: 10px;
-  border: 1px solid var(--service-border);
-  border-radius: 8px;
-  background: var(--service-surface-muted);
-  color: var(--service-text);
-  font-family: var(--font-mono), ui-monospace, monospace;
-  font-size: 0.6875rem;
-  line-height: 1.55;
-  white-space: pre-wrap;
-  word-break: break-word;
-
-  @media (max-width: 840px) {
-    max-height: none;
-    overflow: visible;
-  }
-`;
-
-const PrimaryActions = styled.div`
-  display: flex;
-  flex-wrap: wrap;
-  gap: 7px;
-`;
-
-const SecondaryLink = styled.a`
-  display: inline-flex;
-  min-height: 34px;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--service-border-strong);
-  border-radius: 8px;
-  padding: 7px 11px;
-  background: var(--service-surface-muted);
-  color: var(--service-text);
-  font-size: 0.75rem;
-  font-weight: 550;
-  line-height: 1;
-  text-decoration: none;
-  transition:
-    border-color 150ms ease,
-    background-color 150ms ease;
-
-  &:focus-visible {
-    outline: 2px solid var(--service-focus);
-    outline-offset: 2px;
-  }
-
-  @media (hover: hover) {
-    &:hover {
-      background: var(--service-accent-soft);
-    }
-  }
-
-  @media (pointer: coarse) {
-    min-height: 44px;
-    padding-right: 14px;
-    padding-left: 14px;
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    transition: none;
-  }
-`;
+// ============================================================================
+// Dialog chrome
+// ============================================================================
+//
+// The scrollbars are styled twice on purpose: `scrollbar-color`/`-width` for
+// Firefox and the standard, the ::-webkit- pseudo-elements for Safari and
+// Chrome. Neither covers the other.
+
+const Overlay = tw(
+  "div",
+  "fixed inset-0 z-[1000] flex items-center justify-center bg-[rgba(5,7,12,0.78)] p-4 backdrop-blur-[10px] [overscroll-behavior:contain] max-[640px]:items-end max-[640px]:px-0 max-[640px]:pb-0 max-[640px]:pt-2"
+);
+
+// A centred dialog on a desktop, a sheet rising from the bottom edge on a
+// phone — hence the squared bottom corners and dropped bottom border there.
+const Dialog = tw(
+  "div",
+  "grid h-[min(84dvh,760px)] max-h-[calc(100dvh-32px)] w-[min(100%,960px)] grid-rows-[auto_minmax(0,1fr)] overflow-hidden rounded-[14px] border border-muted-foreground/30 bg-card outline-none max-[840px]:h-[min(92dvh,860px)] max-[640px]:h-[min(96dvh,860px)] max-[640px]:max-h-[calc(100dvh-8px)] max-[640px]:w-full max-[640px]:rounded-b-none max-[640px]:border-b-0"
+);
+
+const DialogHeader = tw(
+  "div",
+  "flex items-center justify-between gap-3 border-b bg-card px-4 py-[13px] max-[640px]:px-3.5 max-[640px]:py-3"
+);
+
+const HeaderCopy = tw("div", "flex min-w-0 flex-col gap-0.5");
+
+const DialogTitle = tw(
+  "h2",
+  "m-0 overflow-hidden text-ellipsis whitespace-nowrap text-lg font-semibold leading-snug text-foreground"
+);
+
+const DialogDescription = tw(
+  "p",
+  "m-0 overflow-hidden text-ellipsis whitespace-nowrap text-[0.8125rem] leading-snug text-muted-foreground max-[480px]:hidden"
+);
+
+const CloseButton = tw(
+  "button",
+  "inline-flex size-[34px] flex-none items-center justify-center rounded-lg border border-muted-foreground/30 bg-muted text-muted-foreground transition-colors duration-150 hover:bg-primary/10 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring motion-reduce:transition-none pointer-coarse:size-11"
+);
+
+// Thin scrollbar, thumb inset from the track by a 2px border in the track
+// colour so it reads as floating rather than filling the gutter.
+const SCROLLBAR =
+  "[scrollbar-color:color-mix(in_srgb,var(--muted-foreground)_52%,transparent)_var(--background)] [scrollbar-width:thin] " +
+  "[&::-webkit-scrollbar]:w-[9px] [&::-webkit-scrollbar-track]:bg-background " +
+  "[&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:border-2 [&::-webkit-scrollbar-thumb]:border-background [&::-webkit-scrollbar-thumb]:bg-[color-mix(in_srgb,var(--muted-foreground)_52%,transparent)]";
+
+// Two panes side by side; below 840px they stack and the body itself scrolls,
+// with padding that clears the home indicator.
+const DialogBody = tw(
+  "div",
+  cn(
+    "grid min-h-0 grid-cols-[minmax(0,1fr)_minmax(320px,360px)] overflow-hidden",
+    SCROLLBAR,
+    "max-[840px]:grid-cols-1 max-[840px]:content-start max-[840px]:overflow-y-auto max-[840px]:[overscroll-behavior:contain] max-[840px]:[scrollbar-gutter:stable] max-[840px]:pb-[max(24px,env(safe-area-inset-bottom))] max-[840px]:[scroll-padding-bottom:max(24px,env(safe-area-inset-bottom))]",
+    "max-[640px]:pb-[max(32px,calc(env(safe-area-inset-bottom)+16px))] max-[640px]:[scroll-padding-bottom:max(32px,calc(env(safe-area-inset-bottom)+16px))]"
+  )
+);
+
+const PreviewPanel = tw(
+  "div",
+  "flex min-h-0 min-w-0 flex-col overflow-hidden border-r bg-background p-4 max-[840px]:overflow-visible max-[840px]:border-b max-[840px]:border-r-0 max-[640px]:p-3"
+);
+
+const PreviewSurface = tw("div", "flex min-h-0 flex-[1_1_auto] flex-col gap-2");
+
+const PreviewLabel = tw(
+  "span",
+  "text-[0.8125rem] font-semibold leading-snug text-foreground"
+);
+
+// The 3D card is taller, so the stacked layout reserves more room for it.
+const PreviewFrame = ({
+  $threeD,
+  className,
+  ...props
+}: React.ComponentPropsWithoutRef<"div"> & { $threeD: boolean }) => (
+  <div
+    {...props}
+    className={cn(
+      "flex min-h-0 flex-[1_1_auto] items-center justify-center overflow-hidden py-5",
+      "max-[840px]:flex-none max-[640px]:py-2",
+      $threeD
+        ? "max-[840px]:h-80 max-[640px]:h-[272px]"
+        : "max-[840px]:h-50 max-[640px]:h-40",
+      className
+    )}
+  />
+);
+
+const PreviewImage = tw(
+  "img",
+  "h-auto max-h-full w-auto max-w-full object-contain"
+);
+
+const ControlsPanel = tw(
+  "div",
+  cn(
+    "flex min-h-0 min-w-0 flex-col overflow-y-auto bg-card px-4 pb-4 pt-3.5 [overscroll-behavior:contain] [scrollbar-gutter:stable]",
+    SCROLLBAR,
+    "[&::-webkit-scrollbar-track]:border-l [&::-webkit-scrollbar-track]:border-border",
+    "max-[840px]:overflow-visible max-[840px]:[scrollbar-gutter:auto]",
+    "max-[640px]:px-3.5 max-[640px]:pb-[max(16px,env(safe-area-inset-bottom))] max-[640px]:pt-3"
+  )
+);
+
+const ControlsHeader = tw("div", "flex items-center border-b pb-[9px]");
+
+const ControlsTitle = tw(
+  "h3",
+  "m-0 text-sm font-semibold leading-snug text-foreground"
+);
+
+// Label beside control, or above it when the control needs the full width.
+const OptionGroup = ({
+  $stacked,
+  className,
+  ...props
+}: React.ComponentPropsWithoutRef<"div"> & { $stacked?: boolean }) => (
+  <div
+    {...props}
+    className={cn(
+      "grid border-b border-border py-2",
+      $stacked
+        ? "grid-cols-1 items-start gap-[7px]"
+        : "grid-cols-[7rem_minmax(0,1fr)] items-center gap-2.5 max-[400px]:grid-cols-[6.25rem_minmax(0,1fr)] max-[400px]:gap-2",
+      className
+    )}
+  />
+);
+
+const OptionLabel = tw(
+  "span",
+  "text-[0.8125rem] font-medium leading-snug text-muted-foreground"
+);
+
+const SelectWrap = tw("div", "relative min-w-0");
+
+// 16px on touch: anything smaller makes iOS Safari zoom the page on focus.
+const SelectControl = tw(
+  "select",
+  "min-h-[34px] w-full appearance-none rounded-lg border border-muted-foreground/30 bg-muted py-1.5 pl-2.5 pr-[30px] text-[0.8125rem] leading-snug text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring pointer-coarse:min-h-11 pointer-coarse:text-base"
+);
+
+const SelectIcon = tw(
+  "span",
+  "pointer-events-none absolute right-3 top-1/2 size-[7px] -translate-y-[70%] rotate-45 border-b-[1.5px] border-r-[1.5px] border-muted-foreground"
+);
+
+const SegmentedControl = tw(
+  "div",
+  "inline-flex w-fit max-w-full flex-wrap gap-0.5 rounded-lg border bg-muted p-0.5"
+);
+
+const SegmentButton = ({
+  $active,
+  className,
+  ...props
+}: React.ComponentPropsWithoutRef<"button"> & { $active: boolean }) => (
+  <button
+    {...props}
+    className={cn(
+      "inline-flex min-h-7 items-center justify-center rounded-md border px-2 py-1 text-xs font-[550] leading-none transition-all duration-150 active:translate-y-px focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring motion-reduce:transition-none pointer-coarse:min-h-11 pointer-coarse:px-3",
+      $active
+        ? "border-muted-foreground/30 bg-primary/10 text-foreground"
+        : "border-transparent bg-transparent text-muted-foreground hover:text-foreground",
+      className
+    )}
+  />
+);
+
+// Ten across where there is a pointer; five 44px targets on touch.
+const SwatchRow = tw(
+  "div",
+  "grid w-full grid-cols-[repeat(10,28px)] justify-between gap-0 pointer-coarse:w-fit pointer-coarse:grid-cols-[repeat(5,44px)] pointer-coarse:justify-start pointer-coarse:gap-2 max-[640px]:w-fit max-[640px]:grid-cols-[repeat(5,44px)] max-[640px]:justify-start max-[640px]:gap-2"
+);
+
+const Swatch = ({
+  $active,
+  $color,
+  style,
+  ...props
+}: React.ComponentPropsWithoutRef<"button"> & {
+  $active: boolean;
+  $color: string;
+}) => (
+  <button
+    {...props}
+    style={{ background: $color, ...style }}
+    className={cn(
+      // The ring is the selection state; the inner shadow keeps a pale swatch
+      // from disappearing into the card behind it.
+      "size-7 cursor-pointer rounded-[7px] border-2 border-card transition-transform duration-100 active:translate-y-px focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring motion-reduce:transition-none pointer-coarse:size-11 max-[640px]:size-11",
+      $active
+        ? "shadow-[0_0_0_1px_var(--foreground),inset_0_0_0_1px_rgba(0,0,0,0.18)]"
+        : "shadow-[0_0_0_1px_color-mix(in_srgb,var(--muted-foreground)_30%,transparent),inset_0_0_0_1px_rgba(0,0,0,0.18)]"
+    )}
+  />
+);
+
+const SnippetSection = tw(
+  "div",
+  "mt-2.5 flex flex-col gap-2.5 rounded-[10px] border border-muted-foreground/30 bg-background p-3"
+);
+
+const SnippetHeader = tw(
+  "div",
+  "flex flex-wrap items-center justify-between gap-2"
+);
+
+const SnippetTitle = tw(
+  "h3",
+  "m-0 text-[0.8125rem] font-semibold leading-snug text-foreground"
+);
+
+const InlineActions = tw("div", "flex flex-wrap gap-[5px]");
+
+const CodeBlock = tw(
+  "pre",
+  "m-0 max-h-[92px] overflow-auto whitespace-pre-wrap break-words rounded-lg border bg-muted p-2.5 font-mono text-[0.6875rem] leading-relaxed text-foreground max-[840px]:max-h-none max-[840px]:overflow-visible"
+);
+
+const PrimaryActions = tw("div", "flex flex-wrap gap-[7px]");
+
+const SecondaryLink = tw(
+  "a",
+  "inline-flex min-h-[34px] items-center justify-center rounded-lg border border-muted-foreground/30 bg-muted px-[11px] py-[7px] text-xs font-[550] leading-none text-foreground no-underline transition-colors duration-150 hover:bg-primary/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring motion-reduce:transition-none pointer-coarse:min-h-11 pointer-coarse:px-3.5"
+);
 
 function CloseIcon() {
   return (
