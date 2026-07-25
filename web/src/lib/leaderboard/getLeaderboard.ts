@@ -47,7 +47,8 @@ interface PeriodLeaderboardDbRow {
   verified: boolean | null;
   tokens: number | string | null;
   cost: number | string | null;
-  sourceBreakdown: Record<string, { models: Record<string, unknown> }> | null;
+  /** Absent when the query skipped the column — see fetchPeriodLeaderboardRows. */
+  sourceBreakdown?: Record<string, { models: Record<string, unknown> }> | null;
 }
 
 interface AllTimeLeaderboardDbRow {
@@ -290,10 +291,21 @@ function buildPeriodUserRank(
   };
 }
 
+/**
+ * Every daily row in the period, folded per user by the caller.
+ *
+ * `withBreakdown` decides whether source_breakdown comes along. It is the
+ * heaviest column by an order of magnitude — a month of it is 4.2MB against
+ * 296kB for everything else — and the only thing that reads it is a
+ * `client:`/`model:` search directive. Fetching it for the ordinary case meant
+ * hauling four megabytes of JSON across the wire and parsing it in the Worker
+ * to answer a query that never looked at it.
+ */
 async function fetchPeriodLeaderboardRows(
   period: Exclude<Period, "all">,
   customFrom?: string,
-  customTo?: string
+  customTo?: string,
+  withBreakdown = true
 ): Promise<LeaderboardPeriodRow[]> {
   const dateRange = getPeriodDateRange(period, new Date(), customFrom, customTo);
 
@@ -310,7 +322,9 @@ async function fetchPeriodLeaderboardRows(
       verified: verifiedExpr().as("verified"),
       tokens: dailyBreakdown.tokens,
       cost: dailyBreakdown.cost,
-      sourceBreakdown: dailyBreakdown.sourceBreakdown,
+      ...(withBreakdown
+        ? { sourceBreakdown: dailyBreakdown.sourceBreakdown }
+        : {}),
     })
     .from(dailyBreakdown)
     .innerJoin(submissions, eq(dailyBreakdown.submissionId, submissions.id))
@@ -345,7 +359,14 @@ async function fetchLeaderboardData(
   customTo?: string
 ): Promise<LeaderboardData> {
   if (period !== "all") {
-    const rows = await fetchPeriodLeaderboardRows(period, customFrom, customTo);
+    // Only a client:/model: directive reads the breakdown; a plain listing or
+    // a username search never touches it.
+    const rows = await fetchPeriodLeaderboardRows(
+      period,
+      customFrom,
+      customTo,
+      hasDirectives(parseSearchDirectives(search))
+    );
     return buildPeriodLeaderboardData(rows, page, limit, period, sortBy, search);
   }
 
@@ -566,7 +587,8 @@ async function fetchUserRank(
   customTo?: string
 ): Promise<LeaderboardUser | null> {
   if (period !== "all") {
-    const rows = await fetchPeriodLeaderboardRows(period, customFrom, customTo);
+    // Rank is a position in the full ordering; it never inspects the breakdown.
+    const rows = await fetchPeriodLeaderboardRows(period, customFrom, customTo, false);
     return buildPeriodUserRank(rows, username, sortBy);
   }
 
