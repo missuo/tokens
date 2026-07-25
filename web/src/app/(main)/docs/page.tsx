@@ -53,9 +53,7 @@ const CLIENT_GRID: ReadonlyArray<{ id: string; name: string; logo: string }> = [
     name: SOURCE_DISPLAY_NAMES[client],
     logo: SOURCE_LOGOS[client],
   })),
-  // No Orca mark in .github/assets yet, so it takes the same neutral glyph the
-  // other unbranded entries use.
-  { id: "orca", name: "Orca", logo: "/clients/client-generic.svg" },
+  { id: "orca", name: "Orca", logo: "/clients/client-orca.png" },
 ].sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
 
 const MACOS: readonly DocCommand[] = [
