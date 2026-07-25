@@ -167,7 +167,7 @@ jobs:
             artifact_name: cli-binary-x86_64-apple-darwin
             bin_name: tokens
             build: cargo build --release --manifest-path cli/Cargo.toml -p tokens-cli --target x86_64-apple-darwin
-            strip: strip -x target/x86_64-apple-darwin/release/tokens
+            strip: strip -x cli/target/x86_64-apple-darwin/release/tokens
           # Apple Silicon ships with the optional on-device Foundation Models
           # report summarizer. The macOS 26 runner provides the required SDK
           # and Swift toolchain; older systems still launch because the sidecar
@@ -178,35 +178,35 @@ jobs:
             artifact_name: cli-binary-aarch64-apple-darwin
             bin_name: tokens
             build: cargo build --release --manifest-path cli/Cargo.toml -p tokens-cli --target aarch64-apple-darwin
-            strip: strip -x target/aarch64-apple-darwin/release/tokens
+            strip: strip -x cli/target/aarch64-apple-darwin/release/tokens
           - host: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             package_dir: cli-linux-x64-gnu
             artifact_name: cli-binary-x86_64-unknown-linux-gnu
             bin_name: tokens
             build: cargo zigbuild --release --manifest-path cli/Cargo.toml -p tokens-cli --target x86_64-unknown-linux-gnu
-            strip: strip target/x86_64-unknown-linux-gnu/release/tokens
+            strip: strip cli/target/x86_64-unknown-linux-gnu/release/tokens
           - host: ubuntu-latest
             target: x86_64-unknown-linux-musl
             package_dir: cli-linux-x64-musl
             artifact_name: cli-binary-x86_64-unknown-linux-musl
             bin_name: tokens
             build: cargo zigbuild --release --manifest-path cli/Cargo.toml -p tokens-cli --target x86_64-unknown-linux-musl
-            strip: strip target/x86_64-unknown-linux-musl/release/tokens
+            strip: strip cli/target/x86_64-unknown-linux-musl/release/tokens
           - host: ubuntu-latest
             target: aarch64-unknown-linux-gnu
             package_dir: cli-linux-arm64-gnu
             artifact_name: cli-binary-aarch64-unknown-linux-gnu
             bin_name: tokens
             build: cargo zigbuild --release --manifest-path cli/Cargo.toml -p tokens-cli --target aarch64-unknown-linux-gnu
-            strip: aarch64-linux-gnu-strip target/aarch64-unknown-linux-gnu/release/tokens
+            strip: aarch64-linux-gnu-strip cli/target/aarch64-unknown-linux-gnu/release/tokens
           - host: ubuntu-latest
             target: aarch64-unknown-linux-musl
             package_dir: cli-linux-arm64-musl
             artifact_name: cli-binary-aarch64-unknown-linux-musl
             bin_name: tokens
             build: cargo zigbuild --release --manifest-path cli/Cargo.toml -p tokens-cli --target aarch64-unknown-linux-musl
-            strip: aarch64-linux-gnu-strip target/aarch64-unknown-linux-musl/release/tokens
+            strip: aarch64-linux-gnu-strip cli/target/aarch64-unknown-linux-musl/release/tokens
           - host: windows-latest
             target: x86_64-pc-windows-msvc
             package_dir: cli-win32-x64-msvc

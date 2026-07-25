@@ -7,7 +7,7 @@
     "build": "cp ../install.sh public/install.sh && mkdir -p public/clients && cp ../.github/assets/client-* public/clients/ && next build",
     "start": "next start",
     "lint": "eslint",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "wrangler types --env-interface CloudflareEnv --include-runtime=false cloudflare-env.d.ts && tsc --noEmit",
     "test:migrations": "drizzle-kit migrate && bun scripts/check-migrations.ts",
     "gallery": "bun scripts/gallery/build-gallery.ts",
     "generate:embed-logos": "bun scripts/generate-embed-logos.ts",
