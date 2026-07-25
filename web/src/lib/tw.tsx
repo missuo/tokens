@@ -9,8 +9,9 @@ import { cn } from "@/lib/utils";
  * difference is that the styles are Tailwind classes resolved at build time
  * rather than a runtime stylesheet.
  *
- * Every DOM prop is forwarded, and a `className` passed at the call site is
- * merged after the base, so callers can still override individual utilities.
+ * Every DOM prop is forwarded — including `ref`, which React 19 passes to
+ * function components like any other prop — and a `className` from the call
+ * site is merged after the base, so callers can still override utilities.
  *
  *   const Label = tw("span", "text-xs text-muted-foreground");
  *   <Label className="uppercase">Tokens</Label>
@@ -26,7 +27,7 @@ export function tw<T extends keyof React.JSX.IntrinsicElements>(
   const Component = ({
     className,
     ...props
-  }: React.ComponentPropsWithoutRef<T>) => {
+  }: React.ComponentPropsWithRef<T>) => {
     const Element = Tag as React.ElementType;
     return <Element className={cn(base, className)} {...props} />;
   };

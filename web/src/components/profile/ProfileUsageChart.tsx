@@ -10,7 +10,6 @@ import {
   type KeyboardEvent,
   type PointerEvent,
 } from "react";
-import styled, { css } from "styled-components";
 import { SOURCE_DISPLAY_NAMES } from "@/lib/constants";
 import type { DailyContribution } from "@/lib/types";
 import { formatCurrency, formatDate, formatNumber } from "@/lib/utils";
@@ -37,6 +36,8 @@ import {
   pointToChartPercent,
   type CubicValueBoundary,
 } from "./usageChartGeometry";
+import { tw } from "@/lib/tw";
+import { cn } from "@/lib/utils";
 
 export interface ProfileUsageChartProps {
   contributions: DailyContribution[];
@@ -290,556 +291,316 @@ function getProviderCostRows(
     );
 }
 
-const Section = styled.section`
-  min-width: 0;
-  overflow: visible;
-  color: var(--service-text);
-  background: var(--service-surface);
-  border: 1px solid var(--service-border);
-  border-radius: 12px;
-  container-type: inline-size;
-`;
+// ============================================================================
+// Chart chrome
+// ============================================================================
+//
+// The panel is the container, so everything reflows on the panel's own width
+// (@[34rem]) rather than the viewport's — this chart is embedded at several
+// widths and the viewport tells it nothing useful.
+//
+// Series colours arrive at runtime, so they ride in as a --c custom property.
+// Light mode darkens them (color-mix with #000) because the palette's colours
+// are tuned for a dark canvas and wash out on a light one; dark mode uses them
+// as given. That is a class pair Tailwind can see, unlike an interpolated one.
 
-const Header = styled.div`
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 1rem 1rem 0.875rem;
-  border-bottom: 1px solid var(--service-border);
+const Section = tw(
+  "section",
+  "@container min-w-0 overflow-visible rounded-xl border bg-card text-foreground"
+);
 
-  @container (max-width: 34rem) {
-    align-items: stretch;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-`;
+const Header = tw(
+  "div",
+  "flex items-start justify-between gap-4 border-b px-4 pb-3.5 pt-4 @[34rem]:flex-row @max-[34rem]:flex-col @max-[34rem]:items-stretch @max-[34rem]:gap-3"
+);
 
-const HeadingGroup = styled.div`
-  min-width: 0;
-`;
+const HeadingGroup = tw("div", "min-w-0");
 
-const Heading = styled.h2`
-  margin: 0;
-  font-size: 0.9375rem;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  color: var(--service-text);
-`;
+const Heading = tw(
+  "h2",
+  "m-0 text-[0.9375rem] font-semibold tracking-tight text-foreground"
+);
 
-const Description = styled.p`
-  max-width: 46ch;
-  margin: 0.25rem 0 0;
-  font-size: 0.8125rem;
-  line-height: 1.5;
-  color: var(--service-text-muted-foreground);
-`;
+const Description = tw(
+  "p",
+  "m-0 mt-1 max-w-[46ch] text-[0.8125rem] leading-normal text-muted-foreground"
+);
 
-const Total = styled.div`
-  flex: 0 0 auto;
-  text-align: right;
-  font-variant-numeric: tabular-nums;
+const Total = tw(
+  "div",
+  "flex-none text-right [font-variant-numeric:tabular-nums] @max-[34rem]:flex @max-[34rem]:items-baseline @max-[34rem]:justify-between @max-[34rem]:text-left"
+);
 
-  @container (max-width: 34rem) {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    text-align: left;
-  }
-`;
+const TotalLabel = tw("div", "text-[0.6875rem] text-muted-foreground");
+const TotalValue = tw("div", "mt-0.5 text-base font-semibold text-foreground");
 
-const TotalLabel = styled.div`
-  font-size: 0.6875rem;
-  color: var(--service-text-muted-foreground);
-`;
+const Controls = tw(
+  "div",
+  "flex flex-wrap items-center justify-between gap-2 px-4 py-2.5"
+);
 
-const TotalValue = styled.div`
-  margin-top: 0.125rem;
-  font-size: 1rem;
-  font-weight: 600;
-  color: var(--service-text);
-`;
+const ControlCluster = tw("div", "flex flex-wrap items-center gap-2");
 
-const Controls = styled.div`
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  padding: 0.625rem 1rem;
-`;
+const MetricControl = tw(
+  "div",
+  "inline-flex items-center rounded-lg border bg-muted p-0.5"
+);
 
-const ControlCluster = styled.div`
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-`;
+const MetricButton = ({
+  $active,
+  className,
+  ...props
+}: React.ComponentPropsWithoutRef<"button"> & { $active: boolean }) => (
+  <button
+    {...props}
+    className={cn(
+      "relative min-h-7 cursor-pointer rounded-md border-0 px-2.5 py-1 text-xs font-medium focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring pointer-coarse:min-h-11",
+      $active
+        ? "bg-primary/10 text-primary"
+        : "bg-transparent text-muted-foreground",
+      className
+    )}
+  />
+);
 
-const MetricControl = styled.div`
-  display: inline-flex;
-  align-items: center;
-  padding: 0.125rem;
-  background: var(--service-surface-muted);
-  border: 1px solid var(--service-border);
-  border-radius: 0.5rem;
-`;
+// The ::after is the dropdown chevron — two borders rotated 45deg.
+const SelectControl = tw(
+  "label",
+  "relative inline-flex min-h-8 items-center gap-1.5 rounded-lg border bg-muted pl-2.5 text-xs text-muted-foreground hover:border-muted-foreground/30 focus-within:outline-2 focus-within:outline-offset-1 focus-within:outline-ring pointer-coarse:min-h-11 " +
+    "after:pointer-events-none after:absolute after:right-2.5 after:size-1.5 after:-translate-y-0.5 after:rotate-45 after:border-b after:border-r after:border-muted-foreground after:content-['']"
+);
 
-const MetricButton = styled.button<{ $active: boolean }>`
-  position: relative;
-  min-height: 1.75rem;
-  padding: 0.25rem 0.625rem;
-  color: var(--service-text-muted-foreground);
-  background: transparent;
-  border: 0;
-  border-radius: 0.375rem;
-  font: inherit;
-  font-size: 0.75rem;
-  font-weight: 500;
-  cursor: pointer;
+const SelectCaption = tw("span", "flex-none");
 
-  ${(props) =>
-    props.$active &&
-    css`
-      color: var(--service-accent);
-      background: var(--service-accent-soft);
-    `}
+const NewestFirstControl = tw(
+  "label",
+  "inline-flex min-w-0 cursor-pointer items-center gap-1.5 whitespace-nowrap text-xs text-muted-foreground focus-within:text-foreground pointer-coarse:min-h-11 [&_input]:m-0 [&_input]:size-[0.8125rem] [&_input]:cursor-pointer [&_input]:accent-[var(--ring)]"
+);
 
-  &:focus-visible {
-    outline: 2px solid var(--service-focus);
-    outline-offset: 1px;
-  }
+const CompactSelect = tw(
+  "select",
+  "h-full min-w-0 max-w-44 cursor-pointer appearance-none border-0 bg-transparent py-1 pl-0 pr-7 font-medium text-foreground outline-0"
+);
 
-  @media (pointer: coarse) {
-    min-height: 2.75rem;
-  }
-`;
+const PlotRegion = tw(
+  "div",
+  "min-w-0 px-4 pt-2 @max-[34rem]:px-3"
+);
 
-const SelectControl = styled.label`
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.375rem;
-  min-height: 2rem;
-  padding-left: 0.625rem;
-  color: var(--service-text-muted-foreground);
-  background: var(--service-surface-muted);
-  border: 1px solid var(--service-border);
-  border-radius: 0.5rem;
-  font-size: 0.75rem;
+const InteractivePlot = tw(
+  "div",
+  "relative h-64 min-w-0 cursor-crosshair overflow-visible [touch-action:pan-y] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring @max-[34rem]:h-56"
+);
 
-  &::after {
-    content: "";
-    position: absolute;
-    right: 0.625rem;
-    width: 0.375rem;
-    height: 0.375rem;
-    border-right: 1px solid var(--service-text-muted-foreground);
-    border-bottom: 1px solid var(--service-text-muted-foreground);
-    transform: translateY(-0.125rem) rotate(45deg);
-    pointer-events: none;
-  }
+const ChartSvg = tw(
+  "svg",
+  "absolute inset-0 block h-full w-full min-w-0 overflow-visible"
+);
 
-  &:hover {
-    border-color: var(--service-border-strong);
-  }
+const GridLine = tw(
+  "line",
+  "[stroke:color-mix(in_srgb,var(--foreground)_8%,transparent)] [stroke-width:1] [vector-effect:non-scaling-stroke]"
+);
 
-  &:focus-within {
-    outline: 2px solid var(--service-focus);
-    outline-offset: 1px;
-  }
+const LayerArea = ({
+  $color,
+  style,
+  ...props
+}: React.ComponentPropsWithoutRef<"path"> & { $color: string }) => (
+  <path
+    {...props}
+    style={{ "--c": $color, ...style } as React.CSSProperties}
+    className="fill-[color-mix(in_srgb,var(--c)_55%,#000)] [fill-opacity:0.4] [stroke:none] dark:fill-[var(--c)]"
+  />
+);
 
-  @media (pointer: coarse) {
-    min-height: 2.75rem;
-  }
-`;
+const LayerLine = ({
+  $color,
+  style,
+  ...props
+}: React.ComponentPropsWithoutRef<"path"> & { $color: string }) => (
+  <path
+    {...props}
+    style={{ "--c": $color, ...style } as React.CSSProperties}
+    className="fill-none stroke-[color-mix(in_srgb,var(--c)_55%,#000)] [stroke-linecap:round] [stroke-linejoin:round] [stroke-opacity:1] [stroke-width:1] [vector-effect:non-scaling-stroke] dark:stroke-[var(--c)]"
+  />
+);
 
-const SelectCaption = styled.span`
-  flex: 0 0 auto;
-`;
+const ActiveRule = tw(
+  "line",
+  "stroke-muted-foreground/30 [stroke-width:1] [vector-effect:non-scaling-stroke]"
+);
 
-const NewestFirstControl = styled.label`
-  display: inline-flex;
-  min-width: 0;
-  align-items: center;
-  gap: 0.375rem;
-  color: var(--service-text-muted-foreground);
-  font-size: 0.75rem;
-  white-space: nowrap;
-  cursor: pointer;
-
-  input {
-    width: 0.8125rem;
-    height: 0.8125rem;
-    margin: 0;
-    accent-color: var(--service-focus);
-    cursor: pointer;
-  }
-
-  &:focus-within {
-    color: var(--service-text);
-  }
-
-  @media (pointer: coarse) {
-    min-height: 2.75rem;
-  }
-`;
-
-const CompactSelect = styled.select`
-  min-width: 0;
-  max-width: 11rem;
-  height: 100%;
-  padding: 0.25rem 1.75rem 0.25rem 0;
-  appearance: none;
-  color: var(--service-text);
-  background: transparent;
-  border: 0;
-  outline: 0;
-  font: inherit;
-  font-weight: 500;
-  cursor: pointer;
-`;
-
-const PlotRegion = styled.div`
-  min-width: 0;
-  padding: 0.5rem 1rem 0;
-
-  @container (max-width: 34rem) {
-    padding-right: 0.75rem;
-    padding-left: 0.75rem;
-  }
-`;
-
-const InteractivePlot = styled.div`
-  position: relative;
-  min-width: 0;
-  height: 16rem;
-  overflow: visible;
-  touch-action: pan-y;
-  cursor: crosshair;
-
-  &:focus-visible {
-    outline: 2px solid var(--service-focus);
-    outline-offset: 2px;
-  }
-
-  @container (max-width: 34rem) {
-    height: 14rem;
-  }
-`;
-
-const ChartSvg = styled.svg`
-  position: absolute;
-  inset: 0;
-  display: block;
-  width: 100%;
-  height: 100%;
-  min-width: 0;
-  overflow: visible;
-`;
-
-const GridLine = styled.line`
-  stroke: color-mix(in srgb, var(--service-text) 8%, transparent);
-  stroke-width: 1;
-  vector-effect: non-scaling-stroke;
-`;
-
-const LayerArea = styled.path<{ $color: string }>`
-  fill: color-mix(in srgb, ${(props) => props.$color} 55%, #000);
-  fill-opacity: 0.4;
-  stroke: none;
-
-  :where(.dark, [data-theme="dark"]) & {
-    fill: ${(props) => props.$color};
-  }
-`;
-
-const LayerLine = styled.path<{ $color: string }>`
-  fill: none;
-  stroke: color-mix(in srgb, ${(props) => props.$color} 55%, #000);
-  stroke-width: 1;
-  stroke-opacity: 1;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  vector-effect: non-scaling-stroke;
-
-  :where(.dark, [data-theme="dark"]) & {
-    stroke: ${(props) => props.$color};
-  }
-`;
-
-const ActiveRule = styled.line`
-  stroke: var(--service-border-strong);
-  stroke-width: 1;
-  vector-effect: non-scaling-stroke;
-`;
-
-const ActivePoint = styled.span<{
+const ActivePoint = ({
+  $color,
+  $left,
+  $top,
+  style,
+  ...props
+}: React.ComponentPropsWithoutRef<"span"> & {
   $color: string;
   $left: number;
   $top: number;
-}>`
-  position: absolute;
-  z-index: 2;
-  top: ${(props) => props.$top}%;
-  left: ${(props) => props.$left}%;
-  width: 10px;
-  height: 10px;
-  background: var(--service-surface);
-  border: 2px solid
-    color-mix(in srgb, ${(props) => props.$color} 55%, #000);
-  border-radius: 50%;
-  pointer-events: none;
-  transform: translate(-50%, -50%);
-
-  :where(.dark, [data-theme="dark"]) & {
-    border-color: ${(props) => props.$color};
-  }
-`;
-
-const DateRange = styled.div`
-  position: absolute;
-  right: 0;
-  bottom: 0.25rem;
-  left: 0;
-  display: flex;
-  justify-content: space-between;
-  gap: 1rem;
-  color: var(--service-text-muted-foreground);
-  font-size: 0.6875rem;
-  font-variant-numeric: tabular-nums;
-  pointer-events: none;
-
-  @container (max-width: 34rem) {
-    justify-content: flex-end;
-
-    span:first-child:not(:last-child) {
-      display: none;
+}) => (
+  <span
+    {...props}
+    style={
+      {
+        "--c": $color,
+        top: `${$top}%`,
+        left: `${$left}%`,
+        ...style,
+      } as React.CSSProperties
     }
-  }
-`;
+    className="pointer-events-none absolute z-[2] size-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-[color-mix(in_srgb,var(--c)_55%,#000)] bg-card dark:border-[var(--c)]"
+  />
+);
 
-const EmptyState = styled.div`
-  display: grid;
-  min-height: 16rem;
-  place-items: center;
-  color: var(--service-text-muted-foreground);
-  font-size: 0.8125rem;
+// Below 34rem only the end date is kept — two dates do not fit, and the later
+// one is the one being read.
+const DateRange = tw(
+  "div",
+  "pointer-events-none absolute inset-x-0 bottom-1 flex justify-between gap-4 text-[0.6875rem] text-muted-foreground [font-variant-numeric:tabular-nums] @max-[34rem]:justify-end @max-[34rem]:[&_span:first-child:not(:last-child)]:hidden"
+);
 
-  @container (max-width: 34rem) {
-    min-height: 14rem;
-  }
-`;
+const EmptyState = tw(
+  "div",
+  "grid min-h-64 place-items-center text-[0.8125rem] text-muted-foreground @max-[34rem]:min-h-56"
+);
 
-const Legend = styled.ul`
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 0.375rem 1rem;
-  margin: 0;
-  padding: 0.625rem 1rem 0.875rem;
-  color: var(--service-text-muted-foreground);
-  list-style: none;
-`;
+const Legend = tw(
+  "ul",
+  "m-0 flex list-none flex-wrap items-center gap-x-4 gap-y-1.5 px-4 pb-3.5 pt-2.5 text-muted-foreground"
+);
 
-const LegendItem = styled.li`
-  display: inline-flex;
-  align-items: center;
-  min-width: 0;
-  gap: 0.375rem;
-  font-size: 0.75rem;
-`;
+const LegendItem = tw(
+  "li",
+  "inline-flex min-w-0 items-center gap-1.5 text-xs"
+);
 
-const Swatch = styled.span<{ $color: string }>`
-  flex: 0 0 auto;
-  width: 0.5rem;
-  height: 0.5rem;
-  background: color-mix(in srgb, ${(props) => props.$color} 55%, #000);
-  border-radius: 999px;
+const Swatch = ({
+  $color,
+  style,
+  ...props
+}: React.ComponentPropsWithoutRef<"span"> & { $color: string }) => (
+  <span
+    {...props}
+    style={{ "--c": $color, ...style } as React.CSSProperties}
+    className="size-2 flex-none rounded-full bg-[color-mix(in_srgb,var(--c)_55%,#000)] dark:bg-[var(--c)]"
+  />
+);
 
-  :where(.dark, [data-theme="dark"]) & {
-    background: ${(props) => props.$color};
-  }
-`;
+// Four background layers: two solid-colour wedges pinned to the scroll box
+// (background-attachment: local) and two radial shadows pinned to the viewport
+// of it (scroll). Together they fade in at whichever end still has content —
+// the classic scroll-shadow trick, which has no Tailwind spelling.
+const SCROLL_SHADOW: React.CSSProperties = {
+  background: [
+    "linear-gradient(var(--muted) 30%, transparent) center top",
+    "linear-gradient(transparent, var(--muted) 70%) center bottom",
+    "radial-gradient(farthest-side at 50% 0, rgb(0 0 0 / 0.24), transparent) center top",
+    "radial-gradient(farthest-side at 50% 100%, rgb(0 0 0 / 0.3), transparent) center bottom",
+    "var(--muted)",
+  ].join(", "),
+  backgroundAttachment: "local, local, scroll, scroll, scroll",
+  backgroundRepeat: "no-repeat",
+  backgroundSize: "100% 1rem, 100% 1rem, 100% 0.5rem, 100% 0.5rem, 100% 100%",
+};
 
-const TooltipSurface = styled.div<{ $left: number; $maxHeight: number }>`
-  position: absolute;
-  z-index: 5;
-  top: 0.5rem;
-  left: ${(props) => props.$left}px;
-  box-sizing: border-box;
-  width: min(20rem, calc(100% - 1rem));
-  max-height: ${(props) => props.$maxHeight}px;
-  overflow-x: hidden;
-  overflow-y: auto;
-  padding: 0.625rem;
-  color: var(--service-text);
-  background:
-    linear-gradient(var(--service-surface-muted) 30%, transparent) center top,
-    linear-gradient(transparent, var(--service-surface-muted) 70%) center bottom,
-    radial-gradient(farthest-side at 50% 0, rgb(0 0 0 / 0.24), transparent)
-      center top,
-    radial-gradient(farthest-side at 50% 100%, rgb(0 0 0 / 0.3), transparent)
-      center bottom,
-    var(--service-surface-muted);
-  background-attachment: local, local, scroll, scroll, scroll;
-  background-repeat: no-repeat;
-  background-size:
-    100% 1rem,
-    100% 1rem,
-    100% 0.5rem,
-    100% 0.5rem,
-    100% 100%;
-  border: 1px solid var(--service-border-strong);
-  border-radius: 0.625rem;
-  box-shadow: 0 18px 48px rgb(0 0 0 / 0.34);
-  overscroll-behavior: contain;
-  pointer-events: auto;
-  scrollbar-color: color-mix(in srgb, var(--service-accent) 65%, transparent)
-    transparent;
-  scrollbar-width: thin;
+const TooltipSurface = ({
+  $left,
+  $maxHeight,
+  style,
+  ...props
+}: React.ComponentPropsWithoutRef<"div"> & {
+  $left: number;
+  $maxHeight: number;
+}) => (
+  <div
+    {...props}
+    style={{
+      ...SCROLL_SHADOW,
+      left: `${$left}px`,
+      maxHeight: `${$maxHeight}px`,
+      ...style,
+    }}
+    className={cn(
+      "pointer-events-auto absolute top-2 z-[5] box-border w-[min(20rem,calc(100%-1rem))] overflow-y-auto overflow-x-hidden rounded-[0.625rem] border border-muted-foreground/30 p-2.5 text-foreground shadow-[0_18px_48px_rgb(0_0_0/0.34)] [overscroll-behavior:contain]",
+      "[scrollbar-color:color-mix(in_srgb,var(--primary)_65%,transparent)_transparent] [scrollbar-width:thin] [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-[color-mix(in_srgb,var(--primary)_65%,transparent)] [&::-webkit-scrollbar]:w-1.5",
+      // A hover tooltip is useless on touch and there is no room for it on a
+      // narrow panel; PinnedBreakdown takes over in both cases.
+      "@max-[34rem]:hidden pointer-coarse:hidden"
+    )}
+  />
+);
 
-  &::-webkit-scrollbar {
-    width: 6px;
-  }
+const BreakdownHeader = tw(
+  "div",
+  "mb-1.5 flex items-baseline justify-between gap-4 text-[0.8125rem]"
+);
 
-  &::-webkit-scrollbar-thumb {
-    background: color-mix(in srgb, var(--service-accent) 65%, transparent);
-    border-radius: 999px;
-  }
+const BreakdownDate = tw(
+  "span",
+  "font-semibold text-foreground [font-variant-numeric:tabular-nums]"
+);
 
-  @container (max-width: 34rem) {
-    display: none;
-  }
+const BreakdownMode = tw("span", "text-muted-foreground");
+const BreakdownList = tw("ul", "m-0 grid list-none gap-1 p-0");
 
-  @media (pointer: coarse) {
-    display: none;
-  }
-`;
+const BreakdownRow = tw(
+  "li",
+  "grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-1.5 text-[0.8125rem] leading-[1.125rem] text-muted-foreground"
+);
 
-const BreakdownHeader = styled.div`
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 1rem;
-  margin-bottom: 0.375rem;
-  font-size: 0.8125rem;
-`;
+const BreakdownName = tw(
+  "span",
+  "overflow-hidden text-ellipsis whitespace-nowrap"
+);
 
-const BreakdownDate = styled.span`
-  color: var(--service-text);
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-`;
+const BreakdownValue = tw(
+  "span",
+  "text-foreground [font-variant-numeric:tabular-nums]"
+);
 
-const BreakdownMode = styled.span`
-  color: var(--service-text-muted-foreground);
-`;
+const MoreRow = tw(
+  "div",
+  "mt-1 flex justify-between gap-4 text-[0.8125rem] text-muted-foreground [font-variant-numeric:tabular-nums]"
+);
 
-const BreakdownList = styled.ul`
-  display: grid;
-  gap: 0.25rem;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-`;
+const CostSection = tw(
+  "div",
+  "mt-2 grid gap-1 border-t border-muted-foreground/30 pt-2"
+);
 
-const BreakdownRow = styled.li`
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 0.375rem;
-  color: var(--service-text-muted-foreground);
-  font-size: 0.8125rem;
-  line-height: 1.125rem;
-`;
+const CostHeading = tw("div", "text-[0.6875rem] text-muted-foreground");
 
-const BreakdownName = styled.span`
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-`;
+const BreakdownTotal = ({
+  $sticky,
+  className,
+  ...props
+}: React.ComponentPropsWithoutRef<"div"> & { $sticky: boolean }) => (
+  <div
+    {...props}
+    className={cn(
+      "mt-2 flex justify-between gap-4 border-t border-muted-foreground/30 pt-2 text-[0.8125rem] font-semibold text-foreground [font-variant-numeric:tabular-nums]",
+      // When the list scrolls, the total pins to the bottom of the box and
+      // bleeds to its edges so nothing shows through beneath it.
+      $sticky &&
+        "sticky bottom-[-0.625rem] z-[1] -mx-2.5 -mb-2.5 bg-muted p-2.5 shadow-[0_-8px_16px_rgb(0_0_0/0.18)]",
+      className
+    )}
+  />
+);
 
-const BreakdownValue = styled.span`
-  color: var(--service-text);
-  font-variant-numeric: tabular-nums;
-`;
+const PinnedBreakdown = tw(
+  "div",
+  "hidden border-t px-4 pb-3.5 pt-3 @max-[34rem]:block pointer-coarse:block"
+);
 
-const MoreRow = styled.div`
-  display: flex;
-  justify-content: space-between;
-  gap: 1rem;
-  margin-top: 0.25rem;
-  color: var(--service-text-muted-foreground);
-  font-size: 0.8125rem;
-  font-variant-numeric: tabular-nums;
-`;
-
-const CostSection = styled.div`
-  display: grid;
-  gap: 0.25rem;
-  margin-top: 0.5rem;
-  padding-top: 0.5rem;
-  border-top: 1px solid var(--service-border-strong);
-`;
-
-const CostHeading = styled.div`
-  color: var(--service-text-muted-foreground);
-  font-size: 0.6875rem;
-`;
-
-const BreakdownTotal = styled.div<{ $sticky: boolean }>`
-  display: flex;
-  justify-content: space-between;
-  gap: 1rem;
-  margin-top: 0.5rem;
-  padding-top: 0.5rem;
-  color: var(--service-text);
-  border-top: 1px solid var(--service-border-strong);
-  font-size: 0.8125rem;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-
-  ${(props) =>
-    props.$sticky &&
-    css`
-      position: sticky;
-      bottom: -0.625rem;
-      z-index: 1;
-      margin-right: -0.625rem;
-      margin-bottom: -0.625rem;
-      margin-left: -0.625rem;
-      padding: 0.625rem;
-      background: var(--service-surface-muted);
-      box-shadow: 0 -8px 16px rgb(0 0 0 / 0.18);
-    `}
-`;
-
-const PinnedBreakdown = styled.div`
-  display: none;
-  padding: 0.75rem 1rem 0.875rem;
-  border-top: 1px solid var(--service-border);
-
-  @container (max-width: 34rem) {
-    display: block;
-  }
-
-  @media (pointer: coarse) {
-    display: block;
-  }
-`;
-
-const VisuallyHidden = styled.span`
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
-`;
+const VisuallyHidden = tw(
+  "span",
+  "absolute m-[-1px] h-px w-px overflow-hidden whitespace-nowrap border-0 p-0 [clip:rect(0,0,0,0)]"
+);
 
 interface BreakdownProps {
   date: string;
