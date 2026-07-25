@@ -34,7 +34,7 @@ This applies to all GitHub-content authoring through the CLI — PR bodies, issu
 
 ## Git Identity & Merge Discipline
 
-- Preserve the repository maintainer's configured Git identity. For this repository, commits made on Vincent's behalf use `Vincent Yang <missuo@pm.me>` unless the user explicitly requests another identity.
+- Before any commit, inspect the effective Git identity (`git config user.name` / `user.email`) and remotes. If the identity does not match the contributor or expected automation account for the current branch, stop and ask for confirmation before committing. Do not hard-code a maintainer identity in repository-level instructions.
 - Never replace the configured identity with an upstream author's identity. In particular, do not use `Junho Yeo <i@junho.io>` for commits made in this independently maintained fork.
 - Never commit as worker/agent identities such as `worker1`, `worker2`, `worker3`, or `*@example.invalid`.
 - When merging pull requests through `gh`, use squash merge (`gh pr merge --squash ...`) unless the user explicitly requests another merge strategy.
