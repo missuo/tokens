@@ -213,11 +213,11 @@ HOST_BINARY="${INSTALL_DIR}/node_modules/tokens-${HOST_PACKAGE}/bin/${HOST_BINAR
 [[ -f "${HOST_BINARY}" ]] || fail "Installed host platform binary missing: ${HOST_BINARY}"
 
 echo "Checking installed launcher with Node-only PATH..."
-VERSION_NODE="$(env PATH="${NODE_ONLY_DIR}" "${CLI_BIN}" --no-spinner --version)"
+VERSION_NODE="$(env PATH="${NODE_ONLY_DIR}" "${CLI_BIN}" --version)"
 [[ "${VERSION_NODE}" == tokens* ]] || fail "Unexpected Node-only launcher output: ${VERSION_NODE}"
 
 echo "Checking installed launcher with Bun runtime..."
-VERSION_BUN="$(env PATH="${BUN_ONLY_DIR}" bun "${INSTALL_DIR}/node_modules/.bin/tokens" --no-spinner --version)"
+VERSION_BUN="$(env PATH="${BUN_ONLY_DIR}" bun "${INSTALL_DIR}/node_modules/.bin/tokens" --version)"
 [[ "${VERSION_BUN}" == tokens* ]] || fail "Unexpected Bun launcher output: ${VERSION_BUN}"
 
 echo "Release artifact package smoke tests passed."
