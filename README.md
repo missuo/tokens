@@ -19,6 +19,19 @@ and models, and where you rank against everyone else doing the same thing.
 bunx tokens-cli@latest login
 ```
 
+## iOS app
+
+<a href="https://testflight.apple.com/join/NWmvqqTX">
+  <img src="https://img.shields.io/badge/TestFlight-Join%20the%20beta-000000?style=for-the-badge&logo=apple&logoColor=white" alt="Join the TestFlight beta" height="34" />
+</a>
+
+Your rank and usage on your phone, without opening a browser — share cards
+rendered on device, plus Home screen and Lock screen widgets for the day's
+tokens, your running total and your rank.
+
+There is no sign-in. You enter a GitHub username and the app reads that public
+profile, so enter your own or the widgets will show someone else's usage.
+
 ## Why this repository is public
 
 So you can check what we send.
@@ -41,10 +54,21 @@ We are not asking anyone to run their own copy. This repo exists to be read.
 
 ## Supported clients
 
-Claude Code · Codex CLI · OpenCode · Cursor · Copilot CLI · Gemini CLI ·
-Kimi CLI · Qwen CLI · Amp · Droid · Cline · Roo Code · Kilo · Kilo CLI ·
-Crush · Goose · Mux · Pi · Zed Agent · Kiro · Warp/Oz · Trae · Antigravity ·
-OpenClaw · Codebuff · Hermes · Synthetic
+All 39 are detected automatically — if the client is installed and has
+written sessions, it is counted.
+
+|  |  |  |  |
+|---|---|---|---|
+| <img src=".github/assets/client-amp.png" width="16" height="16" alt="" /> Amp | <img src=".github/assets/client-antigravity.png" width="16" height="16" alt="" /> Antigravity | <img src=".github/assets/client-antigravity.png" width="16" height="16" alt="" /> Antigravity CLI | <img src=".github/assets/client-claude.jpg" width="16" height="16" alt="" /> Claude Code |
+| <img src=".github/assets/client-cline.png" width="16" height="16" alt="" /> Cline | <img src=".github/assets/client-codebuddy.png" width="16" height="16" alt="" /> CodeBuddy | <img src=".github/assets/client-codebuff.png" width="16" height="16" alt="" /> Codebuff | <img src=".github/assets/client-openai.jpg" width="16" height="16" alt="" /> Codex CLI |
+| <img src=".github/assets/client-commandcode.png" width="16" height="16" alt="" /> Command Code | <img src=".github/assets/client-copilot.jpg" width="16" height="16" alt="" /> Copilot | <img src=".github/assets/client-crush.png" width="16" height="16" alt="" /> Crush | <img src=".github/assets/client-cursor.jpg" width="16" height="16" alt="" /> Cursor |
+| <img src=".github/assets/client-devin.jpg" width="16" height="16" alt="" /> Devin CLI | <img src=".github/assets/client-devin.jpg" width="16" height="16" alt="" /> Devin Desktop | <img src=".github/assets/client-droid.png" width="16" height="16" alt="" /> Droid | <img src=".github/assets/client-generic.svg" width="16" height="16" alt="" /> Gajae Code |
+| <img src=".github/assets/client-gemini.png" width="16" height="16" alt="" /> Gemini CLI | <img src=".github/assets/client-goose.png" width="16" height="16" alt="" /> Goose | <img src=".github/assets/client-grok.png" width="16" height="16" alt="" /> Grok Build | <img src=".github/assets/client-hermes.png" width="16" height="16" alt="" /> Hermes Agent |
+| <img src=".github/assets/client-jcode.png" width="16" height="16" alt="" /> Jcode | <img src=".github/assets/client-junie.png" width="16" height="16" alt="" /> Junie | <img src=".github/assets/client-kilocode.png" width="16" height="16" alt="" /> Kilo | <img src=".github/assets/client-kilocode.png" width="16" height="16" alt="" /> Kilo |
+| <img src=".github/assets/client-kimi.png" width="16" height="16" alt="" /> Kimi | <img src=".github/assets/client-kiro.jpg" width="16" height="16" alt="" /> Kiro | <img src=".github/assets/client-micode.jpg" width="16" height="16" alt="" /> MiMo Code | <img src=".github/assets/client-mux.png" width="16" height="16" alt="" /> Mux |
+| <img src=".github/assets/client-openclaw.jpg" width="16" height="16" alt="" /> OpenClaw | <img src=".github/assets/client-opencode.png" width="16" height="16" alt="" /> OpenCode | <img src=".github/assets/client-opencodereview.png" width="16" height="16" alt="" /> OpenCodeReview | <img src=".github/assets/client-pi.png" width="16" height="16" alt="" /> Pi |
+| <img src=".github/assets/client-qwen.png" width="16" height="16" alt="" /> Qwen | <img src=".github/assets/client-roocode.png" width="16" height="16" alt="" /> Roo Code | <img src=".github/assets/client-trae.png" width="16" height="16" alt="" /> Trae | <img src=".github/assets/client-warp.png" width="16" height="16" alt="" /> Warp |
+| <img src=".github/assets/client-workbuddy.png" width="16" height="16" alt="" /> WorkBuddy | <img src=".github/assets/client-zcode.png" width="16" height="16" alt="" /> ZCode | <img src=".github/assets/client-zed.webp" width="16" height="16" alt="" /> Zed Agent |  |
 
 <details>
 <summary>Where each one stores its data</summary>
@@ -157,12 +181,6 @@ you close the terminal.
 bunx tokens-cli@latest login      # or: npx tokens-cli@latest login
 bunx tokens-cli@latest submit
 ```
-
-## iOS app
-
-A TestFlight beta is available — share cards plus Home screen and Lock screen
-widgets for the day's tokens, your running total and your rank. The invite link
-is in the [docs](https://tokens.ci/docs).
 
 ## License
 
