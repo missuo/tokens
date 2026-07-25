@@ -58,13 +58,28 @@ function avatarFor(user: { username: string; avatarUrl: string | null }) {
   return user.avatarUrl || `https://github.com/${user.username}.png`;
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function Stat({
+  label,
+  value,
+  accent,
+}: {
+  label: string;
+  value: string;
+  accent?: boolean;
+}) {
   return (
     <div className="flex flex-col gap-1.5">
       <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
         {label}
       </span>
-      <span className="tabular text-xl leading-none sm:text-2xl">{value}</span>
+      <span
+        className={cn(
+          "tabular text-xl leading-none sm:text-2xl",
+          accent && "text-primary"
+        )}
+      >
+        {value}
+      </span>
     </div>
   );
 }
@@ -141,12 +156,31 @@ function DeveloperRow({
           Always abbreviated here, regardless of the stored preference: the
           control that toggles it lives in the desktop-only header, so on a
           phone an exact 21,534,711,514 is both unreadable at this width and
-          impossible to switch away from. */}
+          impossible to switch away from.
+
+          Colour follows the same rule as the desktop columns: the metric the
+          table is ranked by takes the accent, the other one recedes. Two
+          weights of grey read as one flat block of numbers — which is the
+          state this replaces. */}
       <TableCell className="py-3 pr-4 text-right sm:hidden">
-        <span className="tabular block text-sm">
+        <span
+          className={cn(
+            "tabular block text-sm",
+            sortBy === "tokens"
+              ? "font-medium text-primary"
+              : "text-muted-foreground"
+          )}
+        >
           {formatNumber(user.totalTokens, true)}
         </span>
-        <span className="tabular block text-xs text-muted-foreground">
+        <span
+          className={cn(
+            "tabular block text-xs",
+            sortBy === "cost"
+              ? "font-medium text-primary"
+              : "text-muted-foreground"
+          )}
+        >
           {formatCurrency(user.totalCost, true)}
         </span>
       </TableCell>
@@ -156,7 +190,9 @@ function DeveloperRow({
           <span
             className={cn(
               "tabular text-sm",
-              sortBy === "tokens" ? "text-foreground" : "text-muted-foreground"
+              sortBy === "tokens"
+                ? "font-medium text-primary"
+                : "text-muted-foreground"
             )}
           >
             {formatNumber(user.totalTokens, compact)}
@@ -176,7 +212,9 @@ function DeveloperRow({
         <span
           className={cn(
             "tabular text-sm",
-            sortBy === "cost" ? "text-foreground" : "text-muted-foreground"
+            sortBy === "cost"
+              ? "font-medium text-primary"
+              : "text-muted-foreground"
           )}
         >
           {formatCurrency(user.totalCost, compact)}
@@ -300,9 +338,12 @@ export default function Leaderboard({
         <Stat label="Tokens" value={formatNumber(stats.totalTokens, true)} />
         <Stat label="Cost" value={formatCurrency(stats.totalCost, true)} />
         <Stat label="Developers" value={formatNumber(stats.uniqueUsers, false)} />
+        {/* The only figure here that is about the viewer, so it takes the
+            accent — same signal as the highlighted self row below. */}
         <Stat
           label="Your rank"
           value={initialUserRank ? `#${initialUserRank.rank}` : "—"}
+          accent={initialUserRank != null}
         />
       </section>
 
