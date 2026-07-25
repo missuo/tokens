@@ -79,6 +79,51 @@ Logs: `journalctl --user -u tokens -f` · Service status: `systemctl --user stat
 | `tokens graph` | Export your contribution data as JSON |
 | `tokens --help` | Full command reference |
 
+## Cursor IDE commands
+
+Cursor IDE requires separate authentication via a session token (different from the GitHub social login). Because Cursor usage lives on Cursor's cloud dashboard rather than on disk, `tokens` fetches it from the Cursor API and caches it locally — this covers cloud agent and background task usage, not just the local machine.
+
+```bash
+# Log in to Cursor (requires a session token from the browser)
+# --name is optional, a label to distinguish accounts later
+tokens cursor login --name work
+
+# Check Cursor auth status and session validity
+tokens cursor status
+
+# List saved Cursor accounts
+tokens cursor accounts
+
+# Switch the active account (the one synced to cursor-cache/usage.csv)
+tokens cursor switch work
+
+# Log out of a specific account (history kept, but excluded from totals)
+tokens cursor logout --name work
+
+# Log out and delete that account's cache
+tokens cursor logout --name work --purge-cache
+
+# Log out of all Cursor accounts (history kept, but excluded from totals)
+tokens cursor logout --all
+
+# Log out of all accounts and delete cache
+tokens cursor logout --all --purge-cache
+```
+
+**Credential storage**: Cursor accounts are stored at `~/.config/tokens/cursor-credentials.json`. Usage data is cached at `~/.config/tokens/cursor-cache/` (active account uses `usage.csv`, additional accounts use `usage.<account>.csv`).
+
+By default, tokens **merges usage across all saved Cursor accounts** (all `cursor-cache/usage*.csv`). For compatibility, the active account is also synced to `cursor-cache/usage.csv`.
+
+On logout, cached usage history is moved to `cursor-cache/archive/` (so it's excluded from totals but not lost). Use `--purge-cache` to delete it entirely.
+
+**How to get a Cursor session token:**
+1. Open https://www.cursor.com/settings in your browser
+2. Open developer tools (F12)
+3. **Option A - Network tab**: perform any action on the page, find a request to `cursor.com/api/*`, inspect the `Cookie` header in Request Headers, and copy only the value after `WorkosCursorSessionToken=`
+4. **Option B - Application tab**: go to Application → Cookies → `https://www.cursor.com`, find the `WorkosCursorSessionToken` cookie, and copy its value (the value, not the cookie name)
+
+> ⚠️ **Security warning**: Treat your session token like a password. Never share it publicly or commit it to version control. The token grants full access to your Cursor account.
+
 ## Overview
 
 **Tokens** helps you monitor and analyze your token consumption from:
