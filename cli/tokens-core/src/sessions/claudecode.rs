@@ -505,7 +505,6 @@ pub fn parse_claude_file_with_cache_and_home(
     let mut last_provider_hint: Option<String> = None;
     // Sidechain detection state (resolved lazily on first parseable entry)
     let mut sidechain_agent: Option<String> = None;
-    let mut sidechain_run_id: Option<String> = None;
     let mut sidechain_detected = false;
 
     for line in reader.lines() {
@@ -538,14 +537,6 @@ pub fn parse_claude_file_with_cache_and_home(
                         entry.agent_id.as_deref(),
                         parent_cache,
                     ));
-                    // Each subagent invocation is written to its own transcript
-                    // file, so the file stem uniquely identifies the invocation.
-                    // (session_id is rewritten to the parent above, which is why
-                    // we need a separate per-invocation key.)
-                    sidechain_run_id = path
-                        .file_stem()
-                        .and_then(|stem| stem.to_str())
-                        .map(str::to_string);
                 }
             }
 
@@ -563,7 +554,6 @@ pub fn parse_claude_file_with_cache_and_home(
                         workspace_key: workspace_key.clone(),
                         workspace_label: workspace_label.clone(),
                         sidechain_agent: sidechain_agent.clone(),
-                        sidechain_run_id: sidechain_run_id.clone(),
                         allow_char_estimate: !is_bare_transcript,
                     },
                 );
@@ -716,7 +706,6 @@ pub fn parse_claude_file_with_cache_and_home(
                 );
                 unified.duration_ms = duration_ms;
                 unified.agent = sidechain_agent.clone();
-                unified.agent_run_id = sidechain_run_id.clone();
                 unified.set_workspace(workspace_key.clone(), workspace_label.clone());
                 // Mark the first assistant response after a user message as a turn start
                 if pending_turn_start {
@@ -945,7 +934,6 @@ struct ClaudeToolResultContext<'a> {
     workspace_key: Option<String>,
     workspace_label: Option<String>,
     sidechain_agent: Option<String>,
-    sidechain_run_id: Option<String>,
     /// Whether char-based token estimation may be used as a fallback when no
     /// explicit tool-result token count is present. Bare transcripts (see
     /// `is_bare_transcript`) set this to `false` to avoid double-counting
@@ -1012,7 +1000,6 @@ fn extract_claude_tool_result_message(
     );
     message.message_count = 0;
     message.agent = context.sidechain_agent;
-    message.agent_run_id = context.sidechain_run_id;
     message.set_workspace(context.workspace_key, context.workspace_label);
     Some(message)
 }

@@ -100,114 +100,6 @@ pub fn aggregate_by_session(messages: Vec<UnifiedMessage>) -> Vec<SessionContrib
     contributions
 }
 
-/// Per-agent usage rollup for the opt-in subagent breakdown.
-///
-/// An "agent" message is any message carrying an `agent` attribution (Claude
-/// Agent-tool subagents / sidechains). This is a purely additive view computed
-/// only when explicitly requested — it never participates in the token/cost
-/// totals (`aggregate_by_date`) and never affects dedup. Token totals use the
-/// same all-bucket sum as the daily aggregation so the share is comparable to
-/// the grand total.
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
-pub struct SubagentSummary {
-    pub total_tokens: i64,
-    pub total_messages: i64,
-    /// Distinct parent sessions that contained any subagent activity.
-    pub session_count: i64,
-    /// Distinct subagent invocations, keyed by `agent_run_id` when available
-    /// (falls back to `session_id|agent` for messages parsed before the
-    /// `agent_run_id` field existed).
-    pub invocation_count: i64,
-    /// Per-agent-name breakdown, sorted by tokens descending.
-    pub agents: Vec<SubagentEntry>,
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct SubagentEntry {
-    pub name: String,
-    pub tokens: i64,
-    pub messages: i64,
-    pub sessions: i64,
-    pub invocations: i64,
-}
-
-/// Roll up every message that carries an `agent` attribution, by agent name.
-///
-/// Read-only over `messages`; does not mutate or remove anything, so it cannot
-/// change the grand total.
-pub fn aggregate_subagents(messages: &[UnifiedMessage]) -> SubagentSummary {
-    use std::collections::HashSet;
-
-    struct Acc {
-        tokens: i64,
-        messages: i64,
-        sessions: HashSet<String>,
-        invocations: HashSet<String>,
-    }
-
-    let mut by_agent: HashMap<String, Acc> = HashMap::new();
-    let mut all_sessions: HashSet<String> = HashSet::new();
-    let mut all_invocations: HashSet<String> = HashSet::new();
-    let mut total_tokens: i64 = 0;
-    let mut total_messages: i64 = 0;
-
-    for msg in messages {
-        let Some(agent) = msg.agent.as_ref() else {
-            continue;
-        };
-        let tokens = msg
-            .tokens
-            .input
-            .saturating_add(msg.tokens.output)
-            .saturating_add(msg.tokens.cache_read)
-            .saturating_add(msg.tokens.cache_write)
-            .saturating_add(msg.tokens.reasoning);
-        let messages_count = msg.message_count.max(0) as i64;
-
-        total_tokens = total_tokens.saturating_add(tokens);
-        total_messages = total_messages.saturating_add(messages_count);
-        all_sessions.insert(msg.session_id.clone());
-        // Combine the parent session with the per-invocation key so file-stem
-        // collisions across different parents cannot merge two invocations.
-        let invocation_key = match msg.agent_run_id.as_deref() {
-            Some(run_id) => format!("{}|{}", msg.session_id, run_id),
-            None => format!("{}|{}", msg.session_id, agent),
-        };
-        all_invocations.insert(invocation_key.clone());
-
-        let entry = by_agent.entry(agent.clone()).or_insert_with(|| Acc {
-            tokens: 0,
-            messages: 0,
-            sessions: HashSet::new(),
-            invocations: HashSet::new(),
-        });
-        entry.tokens = entry.tokens.saturating_add(tokens);
-        entry.messages = entry.messages.saturating_add(messages_count);
-        entry.sessions.insert(msg.session_id.clone());
-        entry.invocations.insert(invocation_key);
-    }
-
-    let mut agents: Vec<SubagentEntry> = by_agent
-        .into_iter()
-        .map(|(name, acc)| SubagentEntry {
-            name,
-            tokens: acc.tokens,
-            messages: acc.messages,
-            sessions: acc.sessions.len() as i64,
-            invocations: acc.invocations.len() as i64,
-        })
-        .collect();
-    agents.sort_by(|a, b| b.tokens.cmp(&a.tokens).then_with(|| a.name.cmp(&b.name)));
-
-    SubagentSummary {
-        total_tokens,
-        total_messages,
-        session_count: all_sessions.len() as i64,
-        invocation_count: all_invocations.len() as i64,
-        agents,
-    }
-}
-
 /// Calculate summary statistics
 pub fn calculate_summary(contributions: &[DailyContribution]) -> DataSummary {
     // Daily totals already saturate at i64::MAX (clamped extreme inputs), so
@@ -328,8 +220,6 @@ pub fn generate_graph_result(
         years,
         contributions,
         time_metrics: None,
-        subagents: None,
-        today_work_time: None,
     }
 }
 

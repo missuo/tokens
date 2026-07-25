@@ -76,12 +76,6 @@ pub struct UnifiedMessage {
     #[serde(default = "default_message_count")]
     pub message_count: i32,
     pub agent: Option<String>,
-    /// Identifies a single subagent invocation (the sidechain transcript file
-    /// stem). `Some` only for subagent/sidechain messages; `None` for normal
-    /// main-session messages. Used purely for the opt-in subagent breakdown —
-    /// it never affects token/cost totals or dedup.
-    #[serde(default)]
-    pub agent_run_id: Option<String>,
     pub dedup_key: Option<String>,
     /// Human-readable session title/name when the source client stores one
     /// (e.g. OpenCode's `session.title` column). `None` for clients that
@@ -367,7 +361,6 @@ impl UnifiedMessage {
             duration_ms: None,
             message_count: default_message_count(),
             agent,
-            agent_run_id: None,
             dedup_key,
             session_title: None,
             is_turn_start: false,

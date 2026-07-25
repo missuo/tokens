@@ -2279,8 +2279,6 @@ fn run_submit_command(
                 scanner_settings: settings::load_scanner_settings(),
                 // Submit path: never compute subagents — the submit payload must
                 // be identical with or without this feature.
-                include_subagents: false,
-                include_work_time: false,
                 today_only: false,
             })
             .await

@@ -495,16 +495,6 @@ pub struct GraphResult {
     pub contributions: Vec<DailyContribution>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub time_metrics: Option<sessionize::TimeMetrics>,
-    /// Opt-in subagent breakdown. Populated only when
-    /// [`ReportOptions::include_subagents`] is set; omitted from JSON otherwise,
-    /// so default output (and the submit payload) is unchanged.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub subagents: Option<aggregator::SubagentSummary>,
-    /// Opt-in per-client active work time for today, in milliseconds. Populated
-    /// only when [`ReportOptions::include_work_time`] is set; omitted otherwise.
-    /// Read-only — never alters totals or the default/submit payload.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub today_work_time: Option<std::collections::HashMap<String, i64>>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -519,16 +509,6 @@ pub struct ReportOptions {
     /// Persistent scanner config loaded from `~/.config/tokens/settings.json`.
     /// Defaults to empty when callers don't care about user-configured paths.
     pub scanner_settings: scanner::ScannerSettings,
-    /// When true, compute the additive subagent breakdown and attach it to
-    /// [`GraphResult::subagents`]. Defaults to false so the CLI's default
-    /// output, totals, and submit payload are completely unaffected. Intended
-    /// for the menu bar app, which opts in via `tokens graph --subagents`.
-    pub include_subagents: bool,
-    /// When true, attach today's per-client active work time to
-    /// [`GraphResult::today_work_time`]. Opt-in like `include_subagents`; never
-    /// affects totals or default output. The menu bar opts in via
-    /// `tokens graph --work-time`.
-    pub include_work_time: bool,
     /// When true, only scan transcript files modified today (skips historical
     /// files at the filesystem layer) and keep only today's messages. Powers the
     /// menu bar's fast "today" refresh. Opt-in; default false scans everything.
@@ -2680,38 +2660,16 @@ async fn generate_graph_with_loaded_pricing(
         sessionize::compute_time_metrics(&intervals, sessionize::DEFAULT_IDLE_GAP_MS);
 
     let daily_active_time = sessionize::compute_daily_active_time(&intervals);
-    // Opt-in only: compute the additive subagent breakdown before `filtered` is
-    // moved into the daily aggregation. This is read-only and never alters the
-    // totals; when not requested we do no extra work at all.
-    let subagents = if options.include_subagents {
-        Some(aggregator::aggregate_subagents(&filtered))
-    } else {
-        None
-    };
     let contributions = aggregator::aggregate_by_date(filtered);
 
     let processing_time_ms = start.elapsed().as_millis() as u32;
     let mut result = aggregator::generate_graph_result(contributions, processing_time_ms);
     result.time_metrics = Some(time_metrics);
-    result.subagents = subagents;
 
     for contribution in &mut result.contributions {
         if let Some(&ms) = daily_active_time.get(&contribution.date) {
             contribution.active_time_ms = Some(ms);
         }
-    }
-
-    // Opt-in: per-client active time for today, for the menu bar's work-time
-    // cards. Reuses the intervals already derived above — no extra scan. "Today"
-    // is the local-timezone date, matching the daily heatmap's attribution.
-    if options.include_work_time {
-        let today = crate::bucket_tz::bucket_timezone()
-            .today()
-            .format("%Y-%m-%d")
-            .to_string();
-        result.today_work_time = Some(sessionize::compute_active_time_by_client_for_day(
-            &intervals, &today,
-        ));
     }
 
     Ok(result)
@@ -3789,7 +3747,6 @@ pub fn parsed_to_unified(msg: &ParsedMessage, cost: f64) -> UnifiedMessage {
         duration_ms: msg.duration_ms,
         message_count: msg.message_count,
         agent: msg.agent.clone(),
-        agent_run_id: None,
         dedup_key: None,
         session_title: None,
         is_turn_start: false,
