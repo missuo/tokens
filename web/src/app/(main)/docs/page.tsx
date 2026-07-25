@@ -421,14 +421,12 @@ export default function DocsPage() {
             <div className="rounded-lg border p-4">
               <h3 className="text-sm font-medium">The database</h3>
               <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">
-                Neon (Postgres) in{" "}
-                <code className="font-mono text-[13px]">us-west-2</code>, reached
-                through Cloudflare Hyperdrive, which keeps warm pooled
-                connections beside the database so a page issuing several
-                queries does not pay a fresh handshake for each. The Worker is
-                pinned to the same region: a request crosses the ocean once, and
-                every query after that is a local hop. Schema changes go through
-                Drizzle migrations applied at build time.
+                Neon (Postgres), reached through Cloudflare Hyperdrive, which
+                keeps warm pooled connections beside the database so a page
+                issuing several queries does not pay a fresh handshake for each.
+                The Worker is pinned to the same region: a request crosses the
+                ocean once, and every query after that is a local hop. Schema
+                changes go through Drizzle migrations applied at build time.
               </p>
             </div>
 
