@@ -927,7 +927,7 @@ export function getContributionColor(
   palette: GraphColorPalette,
   level: ContributionCell["intensity"],
 ): string {
-  if (level === 0) return "var(--service-surface-muted)";
+  if (level === 0) return "var(--muted)";
 
   // The shared palettes are light-canvas ramps. Reverse them for dark mode,
   // then lift only colors that need contrast or a clear step from the
@@ -939,7 +939,7 @@ function getLightContributionColor(
   palette: GraphColorPalette,
   level: ContributionCell["intensity"],
 ): string {
-  if (level === 0) return "var(--service-surface-muted)";
+  if (level === 0) return "var(--muted)";
   return [palette.grade1, palette.grade2, palette.grade3, palette.grade4][
     level - 1
   ] ?? palette.grade1;

@@ -4,7 +4,6 @@ import NextTopLoader from "nextjs-toploader";
 import { Providers } from "@/lib/providers";
 import { Navigation } from "@/components/layout/Navigation";
 import { ServiceFooter } from "@/components/layout/ServiceFooter";
-import { StyledComponentsRegistry } from "@/components/layout/StyledComponentsRegistry";
 import { ThemedToastContainer } from "@/components/layout/ThemedToastContainer";
 import "./globals.css";
 import "react-toastify/dist/ReactToastify.css";
@@ -94,20 +93,18 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         />
       </head>
       <body className="flex min-h-dvh flex-col font-sans">
-        <StyledComponentsRegistry>
-          <NextTopLoader color="#0073FF" showSpinner={false} />
-          <Providers>
-            {/* Rendered once here so it persists across route changes (no remount
-                flicker) and switching Leaderboard <-> Profile is a seamless
-                client-side transition. */}
-            <Navigation />
-            {/* Grows to fill the viewport so the footer stays at the bottom on
-                short pages instead of floating up under the content. */}
-            <div className="flex flex-1 flex-col">{children}</div>
-            <ServiceFooter />
-            <ThemedToastContainer />
-          </Providers>
-        </StyledComponentsRegistry>
+        <NextTopLoader color="#0073FF" showSpinner={false} />
+        <Providers>
+          {/* Rendered once here so it persists across route changes (no remount
+              flicker) and switching Leaderboard <-> Profile is a seamless
+              client-side transition. */}
+          <Navigation />
+          {/* Grows to fill the viewport so the footer stays at the bottom on
+              short pages instead of floating up under the content. */}
+          <div className="flex flex-1 flex-col">{children}</div>
+          <ServiceFooter />
+          <ThemedToastContainer />
+        </Providers>
       </body>
     </html>
   );

@@ -2,10 +2,6 @@ import type { NextConfig } from "next";
 import { initOpenNextCloudflareForDev } from "@opennextjs/cloudflare";
 
 const nextConfig: NextConfig = {
-  compiler: {
-    styledComponents: true,
-  },
-
   images: {
     // Workers has no Vercel image optimizer. Every `next/image` source in this
     // app is a local, pre-optimized static asset (svg/webp/png) served straight

@@ -18,7 +18,9 @@ export type ColorPaletteName =
   | "monochrome"
   | "YlGnBu";
 
-const GRAPH_EMPTY = "var(--color-graph-empty)";
+// The empty-day colour is the palette's muted surface — an unused day is a
+// low-contrast cell, not a graded one.
+const GRAPH_EMPTY = "var(--muted)";
 
 export const colorPalettes: Record<ColorPaletteName, GraphColorPalette> = {
   green: {

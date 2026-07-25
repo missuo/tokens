@@ -21,18 +21,9 @@
    track the active theme because the values are the live HeroUI CSS vars. */
 @theme inline {
   --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --color-surface: var(--surface);
-  --color-surface-secondary: var(--surface-secondary);
-  --color-surface-tertiary: var(--surface-tertiary);
-  --color-overlay: var(--overlay);
-  --color-muted: var(--muted);
-  --color-line: var(--border);
-  --color-accent: var(--accent);
-  --color-accent-foreground: var(--accent-foreground);
   --color-danger: var(--danger);
   --color-success: var(--success);
-  --color-warning: var(--warning);
+  --color-foreground: var(--foreground);
   --font-heading: var(--font-sans);
   --font-sans: var(--font-sans);
   --color-sidebar-ring: var(--sidebar-ring);
@@ -70,42 +61,23 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
-/* Tokens' original palette: electric blue, crisp borders, and full light/dark
-   theme support. New service components consume the same semantic colors. */
+/* Semantic colours the palette has no equivalent for.
+   ---------------------------------------------------------------------------
+   These are not neutrals — they carry meaning — and shadcn's --destructive is
+   a visibly softer red (#C84941 against #B42318 in light), so folding them into
+   it would restyle every destructive control. The token-* five are the fixed
+   legend of the usage charts.
+
+   Everything else that lived here — the --surface / --service-* / --color-*
+   vocabulary and its aliases — went with the styled-components views that read
+   it. Those views now read the palette directly. */
 :root,
 .light,
 [data-theme="light"] {
-  --accent: #0073ff;
-  --accent-foreground: #ffffff;
-  --background: #fbfbfc;
-  --foreground: #0b0d14;
-  --surface: #ffffff;
-  --surface-secondary: #f4f5f7;
-  --surface-tertiary: #eceef1;
-  --overlay: #ffffff;
-  --muted: #5b6473;
-  --border: #e6e8ec;
-  --separator: #e6e8ec;
   --danger: #b42318;
   --danger-solid: #b42318;
   --success: #16794a;
-  --warning: #8a5d00;
 
-  --service-canvas: var(--background);
-  --service-surface: var(--surface);
-  --service-surface-muted: var(--surface-secondary);
-  --service-border: var(--border);
-  --service-border-strong: #cfd4dc;
-  --service-text: var(--foreground);
-  --service-text-muted: var(--muted);
-  --service-accent: var(--primary);
-  --service-accent-hover: color-mix(in oklch, var(--primary) 88%, black);
-  --service-accent-soft: color-mix(in oklch, var(--primary) 10%, transparent);
-  --service-accent-foreground: var(--primary-foreground);
-  --service-focus: var(--ring);
-  --rank-gold: #7a5700;
-  --rank-silver: #596579;
-  --rank-bronze: #8a4b20;
   --token-input: #0072b2;
   --token-output: #007a57;
   --token-cache-read: #a83e78;
@@ -115,120 +87,15 @@
 
 .dark,
 [data-theme="dark"] {
-  --accent: #3b82f6;
-  --accent-foreground: #ffffff;
-  --background: #0a0c12;
-  --foreground: #e9ecf3;
-  --surface: #12151e;
-  --surface-secondary: #171b26;
-  --surface-tertiary: #1d2230;
-  --overlay: #12151e;
-  --muted: #8b94a7;
-  --border: #232a39;
-  --separator: #232a39;
   --danger: #ff8c85;
   --danger-solid: #b42318;
   --success: #4ade80;
-  --warning: #f4b740;
 
-  --service-canvas: var(--background);
-  --service-surface: var(--surface);
-  --service-surface-muted: var(--surface-secondary);
-  --service-border: var(--border);
-  --service-border-strong: #35405a;
-  --service-text: var(--foreground);
-  --service-text-muted: var(--muted);
-  --service-accent: var(--primary);
-  --service-accent-hover: color-mix(in oklch, var(--primary) 88%, white);
-  --service-accent-soft: color-mix(in oklch, var(--primary) 12%, transparent);
-  --service-accent-foreground: var(--primary-foreground);
-  --service-focus: var(--ring);
-  --rank-gold: #f4c95d;
-  --rank-silver: #c4ccda;
-  --rank-bronze: #d99a68;
   --token-input: #56b4e9;
   --token-output: #4ade80;
   --token-cache-read: #e58abe;
   --token-cache-write: #f4b740;
   --token-reasoning: #d7dde8;
-}
-
-/* Compatibility layer for legacy visualizer code and the newly added service
-   views. Both now resolve through the original Tokens theme contract. */
-:root {
-  --color-bg-darkest: var(--background);
-  --color-bg-default: var(--background);
-  --color-bg-elevated: var(--surface);
-  --color-bg-button: var(--surface-tertiary);
-  --color-bg-subtle: var(--surface-secondary);
-  --color-bg-active: var(--accent);
-
-  --color-primary: var(--accent);
-  --color-primary-hover: var(--service-accent-hover);
-  --color-primary-active: var(--service-accent-hover);
-  --color-text-primary: var(--foreground);
-  /* Text, not surface: shadcn's --muted is a background (near-white in light,
-     near-black in dark), so aliasing a foreground token to it paints text the
-     same colour as the page under it. */
-  --color-text-muted: var(--muted-foreground);
-  --color-accent-blue: #85caff;
-  --color-accent-link: #169aff;
-  --color-accent-fg: var(--primary);
-
-  --color-graph-empty: var(--surface-secondary);
-  --color-graph-canvas: var(--surface);
-
-  --color-canvas-default: var(--background);
-  --color-canvas-subtle: var(--surface);
-  --color-canvas-inset: var(--background);
-  --color-fg-default: var(--foreground);
-  --color-fg-muted: var(--muted-foreground);
-  --color-fg-subtle: var(--muted-foreground);
-  --color-border-default: var(--border);
-  --color-border-muted: var(--border);
-  --color-border-subtle: var(--border);
-  --color-card-bg: var(--surface);
-  --color-card-border: var(--border);
-  --color-btn-bg: var(--surface-tertiary);
-  --color-btn-border: var(--border);
-  --color-btn-hover-bg: var(--surface-secondary);
-  --color-btn-active-bg: var(--surface-secondary);
-  --color-btn-selected-bg: var(--surface);
-  --color-badge-bg: var(--service-accent-soft);
-  --color-badge-text: var(--accent);
-  --color-success-fg: var(--success);
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --radius: 0.625rem;
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
 }
 
 html {
@@ -432,48 +299,6 @@ button {
   --chart-3: oklch(0.769 0.128 70);
   --chart-4: oklch(0.68 0.14 320);
   --chart-5: oklch(0.72 0.12 145);
-}
-
-/* ---------------------------------------------------------------------------
-   Legacy token bridge.
-   ---------------------------------------------------------------------------
-   The styled-components views still read an older token vocabulary, and the
-   block far above still answers with hardcoded hex. Those hex values drifted
-   from the palette: dark --surface was #12151E, a +12 blue lean against the
-   +3 of the theme's own --background, which is why Settings and the profile
-   read cooler than the rest of the site.
-
-   Restating them here — after the palette, so these win — makes one set of
-   colours authoritative. Nothing below introduces a colour; every line points
-   at a token defined above.
-
-   This block is temporary. It exists so the styled-components views can be
-   converted one at a time without the site looking like two products in the
-   meantime, and it is deleted with the last of them.
-   --------------------------------------------------------------------------- */
-:root,
-.light,
-[data-theme="light"],
-.dark,
-[data-theme="dark"] {
-  --surface: var(--card);
-  --surface-secondary: var(--muted);
-  --surface-tertiary: var(--accent);
-  --overlay: var(--popover);
-  --separator: var(--border);
-
-  --service-canvas: var(--background);
-  --service-surface: var(--card);
-  --service-surface-muted: var(--muted);
-  --service-border: var(--border);
-  --service-text: var(--foreground);
-  --service-text-muted: var(--muted-foreground);
-  /* Referenced 64 times across the profile views and never defined — a global
-     rename of --muted to --muted-foreground caught the tail of this name too.
-     An unresolvable var() makes the whole declaration invalid at computed-value
-     time, so every one of those muted labels was inheriting body colour instead
-     of receding. Defined here so the fix lands before the rewrite does. */
-  --service-text-muted-foreground: var(--muted-foreground);
 }
 
 /* Figures are compared column-to-column, so every numeral in the product is

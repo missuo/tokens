@@ -6,7 +6,7 @@ export function Panel({
   as: Tag = "div",
   ...props
 }: React.HTMLAttributes<HTMLElement> & { as?: React.ElementType }) {
-  return <Tag className={`rounded-xl border border-line bg-surface ${className}`} {...props} />;
+  return <Tag className={`rounded-xl border bg-card ${className}`} {...props} />;
 }
 
 interface StatTileProps {
@@ -21,8 +21,8 @@ interface StatTileProps {
 /** Compact metric tile: small uppercase label + large tabular-mono value. */
 export function StatTile({ label, value, sub, accent, title, icon }: StatTileProps) {
   return (
-    <div className="flex flex-col rounded-xl border border-line bg-surface px-4 py-3.5">
-      <div className="flex items-center gap-1.5 text-muted">
+    <div className="flex flex-col rounded-xl border bg-card px-4 py-3.5">
+      <div className="flex items-center gap-1.5 text-muted-foreground">
         {icon}
         <p className="text-[11px] font-semibold tracking-wider uppercase">{label}</p>
       </div>
@@ -34,7 +34,7 @@ export function StatTile({ label, value, sub, accent, title, icon }: StatTilePro
       >
         {value}
       </p>
-      {sub != null && <p className="mt-0.5 text-xs text-muted">{sub}</p>}
+      {sub != null && <p className="mt-0.5 text-xs text-muted-foreground">{sub}</p>}
     </div>
   );
 }
@@ -71,7 +71,7 @@ export function PageHeader({ title, subtitle, actions, className = "" }: PageHea
     <div className={`flex flex-wrap items-start justify-between gap-4 ${className}`}>
       <div className="min-w-0">
         <h1 className="text-2xl font-bold tracking-tight text-foreground sm:text-[1.75rem]">{title}</h1>
-        {subtitle != null && <p className="mt-1 text-sm text-muted">{subtitle}</p>}
+        {subtitle != null && <p className="mt-1 text-sm text-muted-foreground">{subtitle}</p>}
       </div>
       {actions != null && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
     </div>
