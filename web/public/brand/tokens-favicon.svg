@@ -1,15 +1,17 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Tokens">
   <title>Tokens</title>
   <!--
-    A T built from a measuring column: the crossbar is the baseline, and the
-    stem is four rungs that grow shorter as they rise, the way a tally reads
-    when you stack it. Says the brand letter and what the product does in one
-    shape, and stays legible once the rungs collapse at small sizes.
+    The blue tile: the same T-as-measuring-column mark, white on the brand
+    field, matching tokens-app-icon-*.png and the PNG favicons.
 
-    Drawn with currentColor on a transparent field so one file serves the
-    header, the favicon, and any surface either theme puts behind it.
+    This file is the SVG favicon, and browsers that support one prefer it over
+    every PNG below it in the list, so it has to carry the colour itself. The
+    monochrome currentColor drawing (tokens-mark.svg) renders black on a
+    transparent field when a browser loads it standalone — which is why the tab
+    icon did not match the PNG fallbacks it sat above.
   -->
-  <g stroke="currentColor" stroke-width="5" stroke-linecap="round" fill="none">
+  <rect width="64" height="64" rx="14" fill="#2F6FDB" />
+  <g stroke="#FFFFFF" stroke-width="5" stroke-linecap="round" fill="none">
     <path d="M14 15h36" />
     <path d="M32 15v34" />
     <path d="M22 27h20" opacity="0.75" />
