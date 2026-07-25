@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { CONTAINER } from "@/components/layout/Container";
 import { cn } from "@/lib/utils";
 
@@ -24,8 +25,19 @@ export function ServiceFooter() {
           "sm:flex-row sm:justify-between sm:text-left"
         )}
       >
+        {/* The policy links live here and nowhere else. They have to be
+            reachable from every page, but they are not something anyone came
+            for, so they sit at the same weight as the rest of the footer. */}
         <span className="text-xs text-muted-foreground">
           Tokens · © {YEAR} ·{" "}
+          <Link href="/privacy" className="transition-colors hover:text-foreground">
+            Privacy
+          </Link>{" "}
+          ·{" "}
+          <Link href="/terms" className="transition-colors hover:text-foreground">
+            Terms
+          </Link>{" "}
+          ·{" "}
           <a
             href="https://github.com/junhoyeo/tokscale"
             target="_blank"

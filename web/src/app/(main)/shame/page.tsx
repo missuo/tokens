@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { BannedList, type BannedUser } from "@/components/shame/BannedList";
 import { CONTAINER } from "@/components/layout/Container";
 import { PageHeader } from "@/components/layout/PageHeader";
+import { CONTACT_EMAIL } from "@/components/legal/LegalPage";
 import { cn } from "@/lib/utils";
 
 export const metadata: Metadata = {
@@ -103,9 +104,15 @@ export default async function HallOfShamePage({ searchParams }: PageProps) {
         <CardContent>
           <p className="text-sm leading-relaxed text-muted-foreground">
             Reports from the community are welcome. If a profile&apos;s numbers
-            look fabricated, let us know — every report is checked against the
-            submitted raw data. Dedicated reporting channels will be announced
-            here soon.
+            look fabricated, email{" "}
+            <a
+              href={`mailto:${CONTACT_EMAIL}`}
+              className="underline underline-offset-2 transition-colors hover:text-foreground"
+            >
+              {CONTACT_EMAIL}
+            </a>{" "}
+            — every report is checked against the submitted raw data before
+            anyone is banned.
           </p>
         </CardContent>
       </Card>
