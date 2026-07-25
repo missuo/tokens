@@ -76,6 +76,10 @@ jobs:
           version: 0.13.0
       - uses: taiki-e/install-action@v2
         if: matrix.zig
+        # Without a token this resolves the release through the anonymous API
+        # and can hit the rate limit on a busy runner.
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         with:
           tool: cargo-zigbuild
 
@@ -83,15 +87,17 @@ jobs:
         shell: bash
         run: bash scripts/set-version.sh "${{ inputs.version }}"
 
+      # `zigbuild` REPLACES `build`, it does not prefix it: `cargo zigbuild
+      # build` fails with "unexpected argument 'build' found". Spell both
+      # commands out rather than composing one from a variable.
       - name: Build
         shell: bash
         run: |
           if [ "${{ matrix.zig }}" = "true" ]; then
-            CARGO="cargo zigbuild"
+            cargo zigbuild --release --manifest-path cli/Cargo.toml -p tokens-cli --target ${{ matrix.target }}
           else
-            CARGO="cargo"
+            cargo build --release --manifest-path cli/Cargo.toml -p tokens-cli --target ${{ matrix.target }}
           fi
-          $CARGO build --release --manifest-path cli/Cargo.toml -p tokens-cli --target ${{ matrix.target }}
 
       - name: Strip
         if: runner.os != 'Windows'
