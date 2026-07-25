@@ -54,7 +54,7 @@ We are not asking anyone to run their own copy. This repo exists to be read.
 
 ## Supported clients
 
-All 39 are detected automatically — if the client is installed and has
+All 40 are detected automatically — if it is installed and has
 written sessions, it is counted.
 
 |  |  |  |  |
@@ -66,9 +66,9 @@ written sessions, it is counted.
 | <img src=".github/assets/client-gemini.png" width="16" height="16" alt="" /> Gemini CLI | <img src=".github/assets/client-goose.png" width="16" height="16" alt="" /> Goose | <img src=".github/assets/client-grok.png" width="16" height="16" alt="" /> Grok Build | <img src=".github/assets/client-hermes.png" width="16" height="16" alt="" /> Hermes Agent |
 | <img src=".github/assets/client-jcode.png" width="16" height="16" alt="" /> Jcode | <img src=".github/assets/client-junie.png" width="16" height="16" alt="" /> Junie | <img src=".github/assets/client-kilocode.png" width="16" height="16" alt="" /> Kilo | <img src=".github/assets/client-kilocode.png" width="16" height="16" alt="" /> Kilo |
 | <img src=".github/assets/client-kimi.png" width="16" height="16" alt="" /> Kimi | <img src=".github/assets/client-kiro.jpg" width="16" height="16" alt="" /> Kiro | <img src=".github/assets/client-micode.jpg" width="16" height="16" alt="" /> MiMo Code | <img src=".github/assets/client-mux.png" width="16" height="16" alt="" /> Mux |
-| <img src=".github/assets/client-openclaw.jpg" width="16" height="16" alt="" /> OpenClaw | <img src=".github/assets/client-opencode.png" width="16" height="16" alt="" /> OpenCode | <img src=".github/assets/client-opencodereview.png" width="16" height="16" alt="" /> OpenCodeReview | <img src=".github/assets/client-pi.png" width="16" height="16" alt="" /> Pi |
-| <img src=".github/assets/client-qwen.png" width="16" height="16" alt="" /> Qwen | <img src=".github/assets/client-roocode.png" width="16" height="16" alt="" /> Roo Code | <img src=".github/assets/client-trae.png" width="16" height="16" alt="" /> Trae | <img src=".github/assets/client-warp.png" width="16" height="16" alt="" /> Warp |
-| <img src=".github/assets/client-workbuddy.png" width="16" height="16" alt="" /> WorkBuddy | <img src=".github/assets/client-zcode.png" width="16" height="16" alt="" /> ZCode | <img src=".github/assets/client-zed.webp" width="16" height="16" alt="" /> Zed Agent |  |
+| <img src=".github/assets/client-openclaw.jpg" width="16" height="16" alt="" /> OpenClaw | <img src=".github/assets/client-opencode.png" width="16" height="16" alt="" /> OpenCode | <img src=".github/assets/client-opencodereview.png" width="16" height="16" alt="" /> OpenCodeReview | <img src=".github/assets/client-generic.svg" width="16" height="16" alt="" /> Orca |
+| <img src=".github/assets/client-pi.png" width="16" height="16" alt="" /> Pi | <img src=".github/assets/client-qwen.png" width="16" height="16" alt="" /> Qwen | <img src=".github/assets/client-roocode.png" width="16" height="16" alt="" /> Roo Code | <img src=".github/assets/client-trae.png" width="16" height="16" alt="" /> Trae |
+| <img src=".github/assets/client-warp.png" width="16" height="16" alt="" /> Warp | <img src=".github/assets/client-workbuddy.png" width="16" height="16" alt="" /> WorkBuddy | <img src=".github/assets/client-zcode.png" width="16" height="16" alt="" /> ZCode | <img src=".github/assets/client-zed.webp" width="16" height="16" alt="" /> Zed Agent |
 
 <details>
 <summary>Where each one stores its data</summary>
@@ -108,9 +108,6 @@ written sessions, it is counted.
 Clients that expose usage only through an account API need a sync step first —
 `tokens cursor sync`, `tokens antigravity sync`, `tokens trae sync`,
 `tokens warp sync` — after which they submit like everything else.
-
-Codex run under Orca keeps its own isolated runtime home; the CLI finds it on
-macOS automatically and counts it under Codex. Nothing to enable.
 
 Pricing comes from [LiteLLM's pricing data](https://github.com/BerriAI/litellm),
 including tiered rates and cache discounts.
