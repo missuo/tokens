@@ -184,13 +184,17 @@ if (targetDir) {
   );
 }
 
+// Cargo output lives under cli/target/, because the Rust workspace manifest is
+// cli/Cargo.toml rather than the repo root. These paths only matter for
+// monorepo development — an npm install resolves the sibling platform package
+// above and never reaches here.
 const rustTargetTriple = resolveRustTargetTriple();
 if (rustTargetTriple) {
-  searchPaths.push(join(workspaceRoot, "target", rustTargetTriple, "release", binaryName));
+  searchPaths.push(join(workspaceRoot, "cli", "target", rustTargetTriple, "release", binaryName));
 }
 
 searchPaths.push(
-  join(workspaceRoot, "target", "release", binaryName),
+  join(workspaceRoot, "cli", "target", "release", binaryName),
   join(cliDir, "bin", binaryName),
 );
 
