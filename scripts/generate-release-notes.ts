@@ -59,9 +59,12 @@ function runJson<T>(command: string, args: string[], allowFailure = false): T | 
   }
 }
 
-function getPreviousTag(): string | null {
+function getPreviousTag(version: string): string | null {
   const tag = run("git", ["describe", "--tags", "--abbrev=0", "HEAD^"], true);
-  return tag || null;
+  if (!tag) return null;
+  // The tag for the release being cut is not a previous release. It can land on
+  // HEAD^ when the version-bump commit is tagged before notes are generated.
+  return tag === `v${version}` || tag === version ? null : tag;
 }
 
 function getTagDate(tag: string): string {
@@ -164,9 +167,26 @@ function isFirstContributionAfter(login: string, thresholdDate: string): Contrib
 }
 
 function generateReleaseNotes(version: string): string {
-  const prevTag = getPreviousTag();
+  const prevTag = getPreviousTag(version);
   if (!prevTag) {
-    throw new Error("No previous tag found. Aborting release-note generation.");
+    // No ancestor carries a tag. That is the normal state for the first release
+    // after a history rewrite: the tags from before it still exist, but they
+    // point into a commit graph this branch no longer descends from, so there
+    // is no range to diff. Ship notes without a changelog rather than failing a
+    // release whose packages are already published.
+    return [
+      `## ${version}`,
+      "",
+      "First release from the rebuilt history. Earlier releases and their notes",
+      "remain on their own tags.",
+      "",
+      "Install:",
+      "",
+      "```sh",
+      "bunx tokens-cli@latest login",
+      "```",
+      "",
+    ].join("\n");
   }
 
   const prevTagDate = getTagDate(prevTag);
