@@ -177,7 +177,7 @@ jobs:
             package_dir: cli-darwin-arm64
             artifact_name: cli-binary-aarch64-apple-darwin
             bin_name: tokens
-            build: cargo build --release --manifest-path cli/Cargo.toml -p tokens-cli --target aarch64-apple-darwin --features apple-fm
+            build: cargo build --release --manifest-path cli/Cargo.toml -p tokens-cli --target aarch64-apple-darwin
             strip: strip -x target/aarch64-apple-darwin/release/tokens
           - host: ubuntu-latest
             target: x86_64-unknown-linux-gnu
@@ -289,10 +289,6 @@ jobs:
         run: |
           mkdir -p dist
           cp "cli/target/${{ matrix.settings.target }}/release/${{ matrix.settings.bin_name }}" dist/
-          if [ -f "cli/target/${{ matrix.settings.target }}/release/libFoundationModels.dylib" ]; then
-            cp "cli/target/${{ matrix.settings.target }}/release/libFoundationModels.dylib" dist/
-            echo "staged sidecar libFoundationModels.dylib"
-          fi
           ls -la dist
 
       - name: Upload CLI binary artifact
@@ -460,10 +456,6 @@ jobs:
           if [ "${{ matrix.settings.binary_name }}" = "tokens" ]; then
             chmod +x "packages/${{ matrix.settings.package_dir }}/bin/tokens"
           fi
-          if [ -f "artifacts/${{ matrix.settings.package_dir }}/libFoundationModels.dylib" ]; then
-            cp "artifacts/${{ matrix.settings.package_dir }}/libFoundationModels.dylib" "packages/${{ matrix.settings.package_dir }}/bin/libFoundationModels.dylib"
-            echo "shipped sidecar libFoundationModels.dylib"
-          fi
           ls -la "packages/${{ matrix.settings.package_dir }}/bin"
 
       - name: Publish platform package
@@ -618,9 +610,6 @@ jobs:
           # changes across this migration.
           chmod +x dist/tokens
           FILES=(tokens)
-          if [ -f dist/libFoundationModels.dylib ]; then
-            FILES+=(libFoundationModels.dylib)
-          fi
           tar czf "${ARCHIVE}" -C dist "${FILES[@]}"
           sha256sum "${ARCHIVE}" > "${CHECKSUM}"
 
