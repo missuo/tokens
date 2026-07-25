@@ -1,6 +1,6 @@
 {
   "name": "tokens-cli",
-  "version": "27.0.0",
+  "version": "27.0.1",
   "description": "A high-performance CLI tool and visualization dashboard for tracking AI coding assistant token usage and costs across multiple platforms.",
   "license": "MIT",
   "type": "module",
@@ -29,14 +29,14 @@
   },
   "dependencies": {},
   "optionalDependencies": {
-    "tokens-cli-darwin-arm64": "27.0.0",
-    "tokens-cli-darwin-x64": "27.0.0",
-    "tokens-cli-linux-x64-gnu": "27.0.0",
-    "tokens-cli-linux-x64-musl": "27.0.0",
-    "tokens-cli-linux-arm64-gnu": "27.0.0",
-    "tokens-cli-linux-arm64-musl": "27.0.0",
-    "tokens-cli-win32-x64-msvc": "27.0.0",
-    "tokens-cli-win32-arm64-msvc": "27.0.0"
+    "tokens-cli-darwin-arm64": "27.0.1",
+    "tokens-cli-darwin-x64": "27.0.1",
+    "tokens-cli-linux-x64-gnu": "27.0.1",
+    "tokens-cli-linux-x64-musl": "27.0.1",
+    "tokens-cli-linux-arm64-gnu": "27.0.1",
+    "tokens-cli-linux-arm64-musl": "27.0.1",
+    "tokens-cli-win32-x64-msvc": "27.0.1",
+    "tokens-cli-win32-arm64-msvc": "27.0.1"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
