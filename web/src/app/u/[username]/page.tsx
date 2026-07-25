@@ -74,7 +74,14 @@ export async function generateMetadata({ params }: { params: Promise<{ username:
   const stats = data && !isBannedProfile(data) ? data.stats : null;
   const rank = data && !isBannedProfile(data) ? data.user?.rank : null;
 
-  const og = new URLSearchParams({ title: username, handle: username });
+  // The card draws `title` large with `@handle` beneath it. Passing the
+  // username as both printed the same word twice and never showed the person's
+  // name; fall back to the username only when there is no display name.
+  const displayName = data?.user?.displayName?.trim();
+  const og = new URLSearchParams({
+    title: displayName || username,
+    handle: username,
+  });
   if (data?.user?.avatarUrl) og.set("avatar", data.user.avatarUrl);
   if (rank != null) og.set("rank", String(rank));
   if (stats?.totalTokens) og.set("tokens", String(stats.totalTokens));
