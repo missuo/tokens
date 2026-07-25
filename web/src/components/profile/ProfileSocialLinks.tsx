@@ -1,7 +1,7 @@
 "use client";
 
-import styled from "styled-components";
 import type { ProfileSocialLink, ProfileSocialProvider } from "./types";
+import { tw } from "@/lib/tw";
 
 export interface ProfileSocialLinksProps {
   links: ProfileSocialLink[];
@@ -101,52 +101,11 @@ export function ProfileSocialLinks({ links, className }: ProfileSocialLinksProps
   );
 }
 
-const LinksRow = styled.ul`
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.375rem;
-  margin: 0.5rem 0 0;
-  padding: 0;
-  list-style: none;
-`;
+const LinksRow = tw("ul", "m-0 mt-2 flex list-none flex-wrap gap-1.5 p-0");
 
-const IconLink = styled.a`
-  position: relative;
-  display: inline-flex;
-  width: 28px;
-  height: 28px;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--service-border);
-  border-radius: 8px;
-  background: var(--service-surface-muted);
-  color: var(--service-text-muted-foreground);
-  transition:
-    border-color 140ms ease,
-    background-color 140ms ease,
-    color 140ms ease;
-
-  &:focus-visible {
-    outline: 2px solid var(--service-focus);
-    outline-offset: 2px;
-  }
-
-  @media (hover: hover) {
-    &:hover {
-      border-color: var(--service-border-strong);
-      color: var(--service-text);
-    }
-  }
-
-  @media (pointer: coarse) {
-    &::after {
-      position: absolute;
-      inset: -8px;
-      content: "";
-    }
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    transition: none;
-  }
-`;
+// On coarse pointers the ::after is an invisible 8px halo: it grows the tap
+// target past the 28px box without moving anything around it.
+const IconLink = tw(
+  "a",
+  "relative inline-flex size-7 items-center justify-center rounded-lg border bg-muted text-muted-foreground transition-colors duration-150 hover:border-muted-foreground/30 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring motion-reduce:transition-none pointer-coarse:after:absolute pointer-coarse:after:-inset-2 pointer-coarse:after:content-['']"
+);

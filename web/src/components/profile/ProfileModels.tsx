@@ -1,6 +1,5 @@
 "use client";
 
-import styled from "styled-components";
 import { formatCurrency, formatNumber } from "@/lib/utils";
 import {
   ListBody,
@@ -14,6 +13,8 @@ import {
   ListTable,
   NumericValue,
 } from "./listStyles";
+import { tw } from "@/lib/tw";
+import { cn } from "@/lib/utils";
 import { ModelIcon } from "./ModelIcon";
 import type { ModelUsage } from "./types";
 
@@ -23,51 +24,31 @@ export interface ProfileModelsProps {
   className?: string;
 }
 
-const ModelIdentity = styled.span`
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 0.5rem;
-`;
+const ModelIdentity = tw("span", "flex min-w-0 items-center gap-2");
 
-const ModelName = styled.span`
-  overflow: hidden;
-  color: var(--service-text);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+const ModelName = tw(
+  "span",
+  "overflow-hidden text-ellipsis whitespace-nowrap text-foreground max-[639px]:whitespace-normal max-[639px]:[overflow-wrap:anywhere]"
+);
 
-  @media (max-width: 639px) {
-    overflow-wrap: anywhere;
-    white-space: normal;
-  }
-`;
+// ListCard already carries the border and colours; these only add the bits
+// that differed from it.
+const ModelsFallback = ({
+  className,
+  ...props
+}: React.ComponentPropsWithoutRef<"div">) => (
+  <ListCard {...props} className={cn("p-3", className)} />
+);
 
-const ModelsFallback = styled(ListCard)`
-  padding: 0.75rem;
-`;
+const ModelsFallbackList = tw(
+  "ul",
+  "m-0 flex list-none flex-wrap gap-1.5 p-0"
+);
 
-const ModelsFallbackList = styled.ul`
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.375rem;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-`;
-
-const ModelTag = styled.li`
-  display: inline-flex;
-  min-width: 0;
-  align-items: center;
-  gap: 0.375rem;
-  border: 1px solid var(--service-border);
-  border-radius: 8px;
-  padding: 0.35rem 0.5rem;
-  background: var(--service-surface-muted);
-  color: var(--service-text);
-  font-size: 0.75rem;
-  line-height: 1.2;
-`;
+const ModelTag = tw(
+  "li",
+  "inline-flex min-w-0 items-center gap-1.5 rounded-lg border bg-muted px-2 py-1.5 text-xs leading-tight text-foreground"
+);
 
 export function ProfileModels({
   models,

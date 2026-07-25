@@ -2,7 +2,7 @@
 
 import { useRef } from "react";
 import type { KeyboardEvent } from "react";
-import styled from "styled-components";
+import { cn } from "@/lib/utils";
 
 export type ProfileTab = "activity" | "models";
 
@@ -16,66 +16,6 @@ const tabs: ReadonlyArray<{ id: ProfileTab; label: string }> = [
   { id: "activity", label: "Usage" },
   { id: "models", label: "Models" },
 ];
-
-const TabList = styled.div`
-  display: grid;
-  width: 100%;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.25rem;
-  border: 1px solid var(--service-border);
-  border-radius: 8px;
-  padding: 0.25rem;
-  background: var(--service-surface);
-`;
-
-const TabButton = styled.button<{ $active: boolean }>`
-  display: inline-flex;
-  min-width: 0;
-  min-height: 32px;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-  border: 1px solid
-    ${(props) =>
-      props.$active ? "var(--service-border-strong)" : "transparent"};
-  border-radius: 8px;
-  padding: 0.35rem 0.5rem;
-  background: ${(props) =>
-    props.$active ? "var(--service-accent-soft)" : "transparent"};
-  color: ${(props) =>
-    props.$active ? "var(--service-text)" : "var(--service-text-muted-foreground)"};
-  font: inherit;
-  font-size: 0.8125rem;
-  font-weight: ${(props) => (props.$active ? 600 : 500)};
-  line-height: 1;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  cursor: pointer;
-  transition:
-    border-color 140ms ease,
-    background-color 140ms ease,
-    color 140ms ease;
-
-  &:focus-visible {
-    outline: 2px solid var(--service-focus);
-    outline-offset: 1px;
-  }
-
-  @media (hover: hover) {
-    &:hover {
-      background: var(--service-surface-muted);
-      color: var(--service-text);
-    }
-  }
-
-  @media (pointer: coarse) {
-    min-height: 44px;
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    transition: none;
-  }
-`;
 
 export function ProfileTabBar({
   activeTab,
@@ -119,8 +59,11 @@ export function ProfileTabBar({
   };
 
   return (
-    <TabList
-      className={className}
+    <div
+      className={cn(
+        "grid w-full grid-cols-2 gap-1 rounded-lg border bg-card p-1",
+        className
+      )}
       role="tablist"
       aria-label="Profile sections"
       aria-orientation="horizontal"
@@ -129,7 +72,7 @@ export function ProfileTabBar({
         const isActive = tab.id === activeTab;
 
         return (
-          <TabButton
+          <button
             key={tab.id}
             ref={(node) => {
               tabRefs.current[index] = node;
@@ -140,14 +83,25 @@ export function ProfileTabBar({
             aria-selected={isActive}
             aria-controls={isActive ? `tabpanel-${tab.id}` : undefined}
             tabIndex={isActive ? 0 : -1}
-            $active={isActive}
             onClick={() => onTabChange(tab.id)}
             onKeyDown={(event) => handleKeyDown(event, index)}
+            className={cn(
+              // 44px on touch, 32px where there is a pointer — the same rule
+              // the stylesheet had, expressed as a variant.
+              "inline-flex min-h-8 min-w-0 items-center justify-center overflow-hidden text-ellipsis whitespace-nowrap rounded-lg border px-2 py-1.5 text-[0.8125rem] leading-none transition-colors duration-150 pointer-coarse:min-h-11 motion-reduce:transition-none",
+              "focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring",
+              isActive
+                ? // Was --service-border-strong, a blue #35405A in dark. The
+                  // border only has to read as stronger than the card edge, so
+                  // it is derived from the palette instead.
+                  "border-muted-foreground/30 bg-primary/10 font-semibold text-foreground"
+                : "border-transparent font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+            )}
           >
             {tab.label}
-          </TabButton>
+          </button>
         );
       })}
-    </TabList>
+    </div>
   );
 }

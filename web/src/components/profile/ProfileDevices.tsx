@@ -1,6 +1,5 @@
 "use client";
 
-import styled from "styled-components";
 import { formatRelativeTime } from "@/lib/format";
 import { formatCurrency, formatNumber } from "@/lib/utils";
 import {
@@ -15,6 +14,8 @@ import {
   ListTable,
   NumericValue,
 } from "./listStyles";
+import { tw } from "@/lib/tw";
+import { cn } from "@/lib/utils";
 
 /** Public device usage shape returned by the profile devices route. */
 export interface ProfileDevice {
@@ -38,52 +39,32 @@ export interface ProfileDevicesProps {
   className?: string;
 }
 
-const DevicesSection = styled.section`
-  overflow: hidden;
-  border: 1px solid var(--service-border);
-  border-radius: 12px;
-  background: var(--service-surface);
-  color: var(--service-text);
-`;
+const DevicesSection = tw(
+  "section",
+  "overflow-hidden rounded-xl border bg-card text-foreground"
+);
 
-const SectionHeading = styled.h2`
-  margin: 0;
-  padding: 0.875rem 1rem;
-  border-bottom: 1px solid var(--service-border);
-  color: var(--service-text);
-  font-size: 0.9375rem;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  line-height: 1.2;
-`;
+const SectionHeading = tw(
+  "h2",
+  "m-0 border-b px-4 py-3.5 text-[0.9375rem] font-semibold leading-tight tracking-tight text-foreground"
+);
 
-const DevicesList = styled(ListCard)`
-  border-top: 0;
-  border-bottom: 0;
-`;
+const DevicesList = ({
+  className,
+  ...props
+}: React.ComponentPropsWithoutRef<"div">) => (
+  <ListCard {...props} className={cn("border-y-0", className)} />
+);
 
-const DeviceName = styled.span`
-  display: block;
-  overflow: hidden;
-  color: var(--service-text);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+const DeviceName = tw(
+  "span",
+  "block overflow-hidden text-ellipsis whitespace-nowrap text-foreground max-[639px]:whitespace-normal max-[639px]:[overflow-wrap:anywhere]"
+);
 
-  @media (max-width: 639px) {
-    overflow-wrap: anywhere;
-    white-space: normal;
-  }
-`;
-
-const LastSubmitted = styled.span`
-  display: block;
-  margin-top: 0.2rem;
-  color: var(--service-text-muted-foreground);
-  font-size: 0.75rem;
-  font-weight: 400;
-  line-height: 1.25;
-`;
-
+const LastSubmitted = tw(
+  "span",
+  "mt-1 block text-xs font-normal leading-tight text-muted-foreground"
+);
 /** Compact per-device usage for public profiles. */
 export function ProfileDevices({ devices, className }: ProfileDevicesProps) {
   if (devices.length === 0) return null;
