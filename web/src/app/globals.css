@@ -1,0 +1,443 @@
+@import "tailwindcss";
+@import "@heroui/styles";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+/* Make Tailwind's `dark:` variant follow the `.dark` class that next-themes
+   toggles on <html>, matching how HeroUI themes via .dark / [data-theme="dark"]. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* App fonts. `--font-figtree` / `--font-jetbrains` are injected by next/font in
+   layout.tsx. Exposing them through @theme makes `font-sans` / `font-mono`
+   utilities work and keeps a `--font-mono` root var for any code using it. */
+@theme {
+  --font-sans: var(--font-sans), system-ui, -apple-system, sans-serif;
+  --font-mono: var(--font-mono), ui-monospace, SFMono-Regular, "SF Mono",
+    Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+/* Expose HeroUI's semantic tokens as Tailwind color utilities so app code can
+   use `bg-surface`, `text-muted`, `border-line`, `bg-accent`, etc. — and they
+   track the active theme because the values are the live HeroUI CSS vars. */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-surface-secondary: var(--surface-secondary);
+  --color-surface-tertiary: var(--surface-tertiary);
+  --color-overlay: var(--overlay);
+  --color-muted: var(--muted);
+  --color-line: var(--border);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-danger: var(--danger);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --font-heading: var(--font-sans);
+  --font-sans: var(--font-sans);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+/* Tokens' original palette: electric blue, crisp borders, and full light/dark
+   theme support. New service components consume the same semantic colors. */
+:root,
+.light,
+[data-theme="light"] {
+  --accent: #0073ff;
+  --accent-foreground: #ffffff;
+  --background: #fbfbfc;
+  --foreground: #0b0d14;
+  --surface: #ffffff;
+  --surface-secondary: #f4f5f7;
+  --surface-tertiary: #eceef1;
+  --overlay: #ffffff;
+  --muted: #5b6473;
+  --border: #e6e8ec;
+  --separator: #e6e8ec;
+  --danger: #b42318;
+  --danger-solid: #b42318;
+  --success: #16794a;
+  --warning: #8a5d00;
+
+  --service-canvas: var(--background);
+  --service-surface: var(--surface);
+  --service-surface-muted: var(--surface-secondary);
+  --service-border: var(--border);
+  --service-border-strong: #cfd4dc;
+  --service-text: var(--foreground);
+  --service-text-muted: var(--muted);
+  --service-accent: var(--primary);
+  --service-accent-hover: color-mix(in oklch, var(--primary) 88%, black);
+  --service-accent-soft: color-mix(in oklch, var(--primary) 10%, transparent);
+  --service-accent-foreground: var(--primary-foreground);
+  --service-focus: var(--ring);
+  --rank-gold: #7a5700;
+  --rank-silver: #596579;
+  --rank-bronze: #8a4b20;
+  --token-input: #0072b2;
+  --token-output: #007a57;
+  --token-cache-read: #a83e78;
+  --token-cache-write: #946200;
+  --token-reasoning: #596579;
+}
+
+.dark,
+[data-theme="dark"] {
+  --accent: #3b82f6;
+  --accent-foreground: #ffffff;
+  --background: #0a0c12;
+  --foreground: #e9ecf3;
+  --surface: #12151e;
+  --surface-secondary: #171b26;
+  --surface-tertiary: #1d2230;
+  --overlay: #12151e;
+  --muted: #8b94a7;
+  --border: #232a39;
+  --separator: #232a39;
+  --danger: #ff8c85;
+  --danger-solid: #b42318;
+  --success: #4ade80;
+  --warning: #f4b740;
+
+  --service-canvas: var(--background);
+  --service-surface: var(--surface);
+  --service-surface-muted: var(--surface-secondary);
+  --service-border: var(--border);
+  --service-border-strong: #35405a;
+  --service-text: var(--foreground);
+  --service-text-muted: var(--muted);
+  --service-accent: var(--primary);
+  --service-accent-hover: color-mix(in oklch, var(--primary) 88%, white);
+  --service-accent-soft: color-mix(in oklch, var(--primary) 12%, transparent);
+  --service-accent-foreground: var(--primary-foreground);
+  --service-focus: var(--ring);
+  --rank-gold: #f4c95d;
+  --rank-silver: #c4ccda;
+  --rank-bronze: #d99a68;
+  --token-input: #56b4e9;
+  --token-output: #4ade80;
+  --token-cache-read: #e58abe;
+  --token-cache-write: #f4b740;
+  --token-reasoning: #d7dde8;
+}
+
+/* Compatibility layer for legacy visualizer code and the newly added service
+   views. Both now resolve through the original Tokens theme contract. */
+:root {
+  --color-bg-darkest: var(--background);
+  --color-bg-default: var(--background);
+  --color-bg-elevated: var(--surface);
+  --color-bg-button: var(--surface-tertiary);
+  --color-bg-subtle: var(--surface-secondary);
+  --color-bg-active: var(--accent);
+
+  --color-primary: var(--accent);
+  --color-primary-hover: var(--service-accent-hover);
+  --color-primary-active: var(--service-accent-hover);
+  --color-text-primary: var(--foreground);
+  /* Text, not surface: shadcn's --muted is a background (near-white in light,
+     near-black in dark), so aliasing a foreground token to it paints text the
+     same colour as the page under it. */
+  --color-text-muted: var(--muted-foreground);
+  --color-accent-blue: #85caff;
+  --color-accent-link: #169aff;
+  --color-accent-fg: var(--primary);
+
+  --color-graph-empty: var(--surface-secondary);
+  --color-graph-canvas: var(--surface);
+
+  --color-canvas-default: var(--background);
+  --color-canvas-subtle: var(--surface);
+  --color-canvas-inset: var(--background);
+  --color-fg-default: var(--foreground);
+  --color-fg-muted: var(--muted-foreground);
+  --color-fg-subtle: var(--muted-foreground);
+  --color-border-default: var(--border);
+  --color-border-muted: var(--border);
+  --color-border-subtle: var(--border);
+  --color-card-bg: var(--surface);
+  --color-card-border: var(--border);
+  --color-btn-bg: var(--surface-tertiary);
+  --color-btn-border: var(--border);
+  --color-btn-hover-bg: var(--surface-secondary);
+  --color-btn-active-bg: var(--surface-secondary);
+  --color-btn-selected-bg: var(--surface);
+  --color-badge-bg: var(--service-accent-soft);
+  --color-badge-text: var(--accent);
+  --color-success-fg: var(--success);
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
+  --chart-1: oklch(0.87 0 0);
+  --chart-2: oklch(0.556 0 0);
+  --chart-3: oklch(0.439 0 0);
+  --chart-4: oklch(0.371 0 0);
+  --chart-5: oklch(0.269 0 0);
+  --radius: 0.625rem;
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.708 0 0);
+}
+
+html {
+  scrollbar-gutter: stable;
+}
+
+body {
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+code,
+pre,
+.font-mono {
+  font-family:
+    var(--font-mono), ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    "Liberation Mono", monospace;
+}
+
+button {
+  cursor: pointer;
+}
+
+/* Tabular figures for any numeric value — keeps stat columns aligned. */
+.tnum {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+/* Page width helper. Centered column shared by every route. */
+.main-container,
+.service-main {
+  flex: 1;
+  width: 100%;
+  max-width: 1200px;
+  margin-inline: auto;
+  padding-inline: 24px;
+  padding-top: 32px;
+  padding-bottom: 64px;
+}
+
+.service-page-shell {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  background: var(--background);
+  color: var(--foreground);
+}
+
+@media (max-width: 640px) {
+  .main-container,
+  .service-main {
+    padding-inline: 16px;
+    padding-top: 20px;
+    padding-bottom: 48px;
+  }
+}
+
+@media (max-width: 400px) {
+  .main-container,
+  .service-main {
+    padding-inline: 12px;
+  }
+}
+
+/* Thin, theme-aware scrollbars on overflow regions (e.g. mobile tab strips). */
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.dark {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.922 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.556 0 0);
+  --chart-1: oklch(0.87 0 0);
+  --chart-2: oklch(0.556 0 0);
+  --chart-3: oklch(0.439 0 0);
+  --chart-4: oklch(0.371 0 0);
+  --chart-5: oklch(0.269 0 0);
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.556 0 0);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    @apply font-sans;
+  }
+}
+/* ==========================================================================
+   Tokens palette
+   ==========================================================================
+
+   Calm, slightly warm neutrals with a single blue accent, in the spirit of
+   the tooling sites this audience already lives in. Both themes are tuned
+   independently rather than inverted: the light theme sits on warm paper so
+   large white tables do not glare, and the dark theme uses a lifted
+   near-charcoal rather than pure black so hairline borders stay visible.
+
+   Declared last so these values win over the defaults written above.
+   ========================================================================== */
+
+:root {
+  --radius: 0.5rem;
+
+  --background: oklch(0.9911 0.0015 90);
+  --foreground: oklch(0.2178 0.0057 264);
+
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.2178 0.0057 264);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.2178 0.0057 264);
+
+  --primary: oklch(0.5461 0.1445 250);
+  --primary-foreground: oklch(0.9911 0.0015 90);
+
+  --secondary: oklch(0.9702 0.0034 90);
+  --secondary-foreground: oklch(0.2178 0.0057 264);
+
+  --muted: oklch(0.9702 0.0034 90);
+  --muted-foreground: oklch(0.5486 0.0122 264);
+
+  --accent: oklch(0.9603 0.0069 250);
+  --accent-foreground: oklch(0.2178 0.0057 264);
+
+  --destructive: oklch(0.5771 0.1638 27);
+  --destructive-foreground: oklch(0.9911 0.0015 90);
+
+  --border: oklch(0.9276 0.0058 264);
+  --input: oklch(0.9276 0.0058 264);
+  --ring: oklch(0.5461 0.1445 250);
+
+  --chart-1: oklch(0.5461 0.1445 250);
+  --chart-2: oklch(0.6 0.118 184);
+  --chart-3: oklch(0.646 0.135 70);
+  --chart-4: oklch(0.55 0.15 320);
+  --chart-5: oklch(0.62 0.13 145);
+}
+
+.dark {
+  --background: oklch(0.1822 0.0043 264);
+  --foreground: oklch(0.9288 0.0067 264);
+
+  --card: oklch(0.2134 0.0049 264);
+  --card-foreground: oklch(0.9288 0.0067 264);
+  --popover: oklch(0.2134 0.0049 264);
+  --popover-foreground: oklch(0.9288 0.0067 264);
+
+  --primary: oklch(0.6845 0.1298 245);
+  --primary-foreground: oklch(0.1822 0.0043 264);
+
+  --secondary: oklch(0.2591 0.0057 264);
+  --secondary-foreground: oklch(0.9288 0.0067 264);
+
+  --muted: oklch(0.2591 0.0057 264);
+  --muted-foreground: oklch(0.6534 0.0111 264);
+
+  --accent: oklch(0.2789 0.0063 264);
+  --accent-foreground: oklch(0.9288 0.0067 264);
+
+  --destructive: oklch(0.6605 0.1512 24);
+  --destructive-foreground: oklch(0.1822 0.0043 264);
+
+  --border: oklch(0.2789 0.0063 264);
+  --input: oklch(0.2789 0.0063 264);
+  --ring: oklch(0.6845 0.1298 245);
+
+  --chart-1: oklch(0.6845 0.1298 245);
+  --chart-2: oklch(0.696 0.117 184);
+  --chart-3: oklch(0.769 0.128 70);
+  --chart-4: oklch(0.68 0.14 320);
+  --chart-5: oklch(0.72 0.12 145);
+}
+
+/* Figures are compared column-to-column, so every numeral in the product is
+   set in the mono face with tabular figures. */
+.tabular {
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}

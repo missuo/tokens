@@ -1,0 +1,82 @@
+[workspace]
+resolver = "2"
+members = [
+    "tokens-core",
+    "tokens-cli",
+]
+
+[workspace.package]
+version = "3.1.0"
+edition = "2021"
+authors = ["Junho Yeo <hello@junho.io>"]
+license = "MIT"
+repository = "https://github.com/missuo/tokens"
+
+[workspace.dependencies]
+# Internal crates
+tokens-core = { path = "tokens-core" }
+
+# Parallelism
+rayon = "1.10"
+
+# JSON parsing (with SIMD acceleration)
+simd-json = "0.14"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+bincode = "1.3"
+
+# File system traversal
+walkdir = "2"
+
+# Date/time handling
+chrono = { version = "0.4", features = ["serde"] }
+# Pinned IANA timezones for stable date bucketing (travel-proof submit)
+chrono-tz = "0.10"
+# System IANA timezone detection (bootstraps the pinned bucketing timezone)
+iana-time-zone = "0.1"
+
+# Error handling
+thiserror = "2"
+anyhow = "1.0"
+libc = "0.2"
+
+# HTTP client (async)
+reqwest = { version = "0.12", features = ["json", "native-tls-vendored"], default-features = false }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "fs"] }
+
+# For disk caching (XDG paths)
+dirs = "5"
+
+# SQLite database support (bundled for cross-compilation)
+rusqlite = { version = "0.32", features = ["bundled"] }
+zstd = "0.13"
+
+# Lazy static initialization
+once_cell = "1"
+
+# CLI framework
+clap = { version = "4.5", features = ["derive", "cargo"] }
+
+# Terminal colors
+colored = "2"
+
+# Tracing/logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+sha2 = "0.10"
+fs2 = "0.4"
+
+# Trae iCubeAuthInfo decryption: AES-128-CBC + base64
+aes = "0.8"
+cbc = { version = "0.1", features = ["std"] }
+base64 = "0.22"
+
+[profile.release]
+# Thin LTO + parallel codegen units keep release builds fast in CI while
+# preserving nearly all of fat-LTO's runtime/size wins. tokens is a
+# file-scanning, network-bound CLI, so the marginal optimization given up here
+# is not measurable in practice — the compile-time savings are.
+lto = "thin"
+opt-level = 3
+codegen-units = 16
+strip = true

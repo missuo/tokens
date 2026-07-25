@@ -1,0 +1,149 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "main": "worker.ts",
+
+  // THIS IS PRODUCTION. The name is historical: this Worker was built as the
+  // staging stack, but at cutover tokens.ci was bound to it as a custom domain
+  // and the Neon database behind it was loaded from the production dump. Every
+  // deploy of this top-level config goes straight to live traffic.
+  //
+  // The `env.production` block below is now unused — it describes a second
+  // Worker named `tokens` that was never created. Keep or delete it, but do not
+  // read it as "the real one".
+  "name": "tokens-staging",
+
+  "compatibility_date": "2026-07-24",
+  // nodejs_compat: the Postgres driver, node:crypto (session/token hashing) and
+  // the Next.js server runtime all need Node built-ins.
+  // global_fetch_strictly_public: required by OpenNext so server-side fetches to
+  // our own routes go through the public internet rather than looping in-process.
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+
+  // Pin the Worker to the region Neon runs in rather than letting it serve from
+  // the edge nearest the reader. A page here issues several sequential queries —
+  // leaderboard rows, the session, the viewer's own rank — and measured against
+  // the edge those round trips dominated: wall time p50 218ms against 8ms of
+  // CPU, so 96% of a request was spent waiting on the database.
+  //
+  // `targeted` rather than `smart`: smart mode needs sustained multi-region
+  // traffic before it decides anything, and we already know the answer.
+  //
+  // This has to live in config, not the dashboard — wrangler treats this file
+  // as the source of truth and a deploy overwrites whatever the UI set.
+  "placement": { "mode": "targeted", "region": "aws:us-west-2" },
+
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+
+  // The self-reference lets the ISR queue re-invoke this Worker to regenerate
+  // pages in the background. The service name must equal the worker name.
+  "services": [
+    {
+      "binding": "WORKER_SELF_REFERENCE",
+      "service": "tokens-staging"
+    }
+  ],
+
+  // Incremental (ISR / `unstable_cache`) payloads. Create with:
+  //   wrangler r2 bucket create tokens-staging-cache
+  "r2_buckets": [
+    {
+      "binding": "NEXT_INC_CACHE_R2_BUCKET",
+      "bucket_name": "tokens-staging-cache"
+    }
+  ],
+
+  // Durable Objects backing the cache:
+  //   DOQueueHandler      - dedupes time-based ISR revalidations
+  //   DOShardedTagCache   - tracks `revalidateTag` invalidations (sharded because
+  //                         every submit invalidates leaderboard + user tags)
+  //   BucketCachePurge    - batches CDN purges for invalidated tags
+  "durable_objects": {
+    "bindings": [
+      { "name": "NEXT_CACHE_DO_QUEUE", "class_name": "DOQueueHandler" },
+      { "name": "NEXT_TAG_CACHE_DO_SHARDED", "class_name": "DOShardedTagCache" },
+      { "name": "NEXT_CACHE_DO_PURGE", "class_name": "BucketCachePurge" }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "DOQueueHandler",
+        "DOShardedTagCache",
+        "BucketCachePurge"
+      ]
+    }
+  ],
+
+  // Pooled Postgres. Hyperdrive keeps warm pooled connections next to the
+  // database, so a page issuing several queries pays one WAN round trip instead
+  // of one per query. Create against the STAGING Neon database with:
+  //   wrangler hyperdrive create tokens-staging-db --connection-string="<neon pooled url>"
+  "hyperdrive": [
+    {
+      "binding": "HYPERDRIVE",
+      "id": "35e35c2c7c3b4e5bb9cb590f2db79168",
+      // Used by `wrangler dev` so local development talks to a local database.
+      "localConnectionString": "postgresql://tokens:tokens@localhost:5432/tokens"
+    }
+  ],
+
+  // Daily verified-badge refresh, replacing the GitHub Actions + SSH trigger.
+  // Runs in-process, so it needs no public endpoint, no CRON_SECRET round trip
+  // and no WAF exception for GitHub runner IPs.
+  "triggers": {
+    "crons": ["20 3 * * *"]
+  },
+
+  "observability": {
+    "enabled": true
+  },
+
+  // Production. Unused until cutover; kept here so the promotion is a flag
+  // (`wrangler deploy --env production`) rather than an edit of shared config.
+  "env": {
+    "production": {
+      "name": "tokens",
+      // Not inherited from the top level: env blocks override rather than merge.
+      "placement": { "mode": "targeted", "region": "aws:us-west-2" },
+      "assets": {
+        "directory": ".open-next/assets",
+        "binding": "ASSETS"
+      },
+      "services": [
+        {
+          "binding": "WORKER_SELF_REFERENCE",
+          "service": "tokens"
+        }
+      ],
+      "r2_buckets": [
+        {
+          "binding": "NEXT_INC_CACHE_R2_BUCKET",
+          "bucket_name": "tokens-prod-cache"
+        }
+      ],
+      "durable_objects": {
+        "bindings": [
+          { "name": "NEXT_CACHE_DO_QUEUE", "class_name": "DOQueueHandler" },
+          { "name": "NEXT_TAG_CACHE_DO_SHARDED", "class_name": "DOShardedTagCache" },
+          { "name": "NEXT_CACHE_DO_PURGE", "class_name": "BucketCachePurge" }
+        ]
+      },
+      "hyperdrive": [
+        {
+          "binding": "HYPERDRIVE",
+          "id": "<set-at-cutover>"
+        }
+      ],
+      "triggers": {
+        "crons": ["20 3 * * *"]
+      },
+      "observability": {
+        "enabled": true
+      }
+    }
+  }
+}

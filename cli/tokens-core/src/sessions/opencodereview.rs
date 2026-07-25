@@ -1,0 +1,163 @@
+//! OpenCodeReview session parser
+//!
+//! OpenCodeReview stores sessions as JSONL files under
+//! `~/.opencodereview/sessions/<encoded-repo-path>/<session-id>.jsonl`.
+
+use super::utils::{back_anchor_timestamp, file_modified_timestamp_ms, parse_timestamp_value};
+use super::UnifiedMessage;
+use crate::{pricing, provider_identity, TokenBreakdown};
+use serde_json::Value;
+use std::collections::HashSet;
+use std::io::{BufRead, BufReader};
+use std::path::Path;
+
+pub fn parse_opencodereview_file(path: &Path) -> Vec<UnifiedMessage> {
+    let file = match std::fs::File::open(path) {
+        Ok(f) => f,
+        Err(_) => return Vec::new(),
+    };
+
+    let session_id = session_id_from_path(path);
+    let fallback_timestamp = file_modified_timestamp_ms(path);
+
+    let mut workspace: Option<String> = None;
+    let mut messages = Vec::new();
+    let mut seen = HashSet::new();
+
+    for line in BufReader::new(file).lines() {
+        let Ok(line) = line else { continue };
+
+        if !line.contains("llm_response") && !line.contains("session_start") {
+            continue;
+        }
+
+        let Ok(value) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+
+        let record_type = value.get("type").and_then(Value::as_str).unwrap_or("");
+
+        if record_type == "session_start" {
+            if workspace.is_none() {
+                workspace = value.get("cwd").and_then(Value::as_str).map(str::to_string);
+            }
+            continue;
+        }
+
+        if record_type != "llm_response" {
+            continue;
+        }
+
+        let usage = match value.get("usage") {
+            Some(u) => u,
+            None => continue,
+        };
+
+        let tokens = tokens_from_usage(usage);
+        if tokens.total() == 0 {
+            continue;
+        }
+
+        // `explicit_timestamp` is this record's own recorded `timestamp`
+        // field, as opposed to `fallback_timestamp` (a file-mtime fallback
+        // used when it's absent or unparseable).
+        let explicit_timestamp = value.get("timestamp").and_then(parse_timestamp_value);
+        let recorded_timestamp = explicit_timestamp.unwrap_or(fallback_timestamp);
+
+        let model_raw = value
+            .get("model")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        let model_id = pricing::aliases::resolve_alias(model_raw)
+            .unwrap_or(model_raw)
+            .to_string();
+
+        let provider_id = provider_identity::inferred_provider_from_model(&model_id)
+            .map(str::to_string)
+            .unwrap_or_else(|| "opencodereview".to_string());
+
+        let duration_ms = value
+            .get("duration_ms")
+            .and_then(Value::as_i64)
+            .filter(|d| *d > 0);
+
+        // The `llm_response` record's `timestamp` is written when the
+        // response is logged, i.e. the call's *end*, not its start.
+        // `duration_ms` is that call's elapsed time, so sessionize()'s
+        // `[timestamp, timestamp + duration_ms]` span would otherwise
+        // project forward past the actual completion into phantom idle time.
+        // Back-calculate the start anchor the same way #890 did for
+        // Copilot's `endTime`-only records.
+        //
+        // Only do this when `explicit_timestamp` is a real recorded end
+        // timestamp: when it's absent, `recorded_timestamp` is
+        // `fallback_timestamp` (the file's mtime), not this record's own end
+        // time, and subtracting `duration_ms` from it would shift the
+        // message into the wrong day rather than anchor it correctly.
+        let timestamp = match (explicit_timestamp, duration_ms) {
+            (Some(end), Some(duration)) => back_anchor_timestamp(end, duration),
+            _ => recorded_timestamp,
+        };
+
+        let dedup_key = format!(
+            "opencodereview:{session_id}:{recorded_timestamp}:{model_id}:{}:{}:{}:{}",
+            tokens.input, tokens.output, tokens.cache_read, tokens.cache_write,
+        );
+        if !seen.insert(dedup_key.clone()) {
+            continue;
+        }
+
+        let mut msg = UnifiedMessage::new(
+            "opencodereview",
+            model_id,
+            provider_id,
+            &session_id,
+            timestamp,
+            tokens,
+            0.0,
+        );
+        msg.dedup_key = Some(dedup_key);
+        msg.duration_ms = duration_ms;
+
+        if let Some(ws) = &workspace {
+            if let Some(key) = super::normalize_workspace_key(ws) {
+                msg.workspace_label = super::workspace_label_from_key(&key);
+                msg.workspace_key = Some(key);
+            }
+        }
+
+        messages.push(msg);
+    }
+
+    messages
+}
+
+fn session_id_from_path(path: &Path) -> String {
+    path.file_stem()
+        .and_then(|s| s.to_str())
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or("unknown")
+        .to_string()
+}
+
+fn tokens_from_usage(usage: &Value) -> TokenBreakdown {
+    TokenBreakdown {
+        input: number_field(usage, "prompt_tokens"),
+        output: number_field(usage, "completion_tokens"),
+        cache_read: number_field(usage, "cache_read_tokens"),
+        cache_write: number_field(usage, "cache_write_tokens"),
+        reasoning: 0,
+    }
+}
+
+fn number_field(value: &Value, field: &str) -> i64 {
+    value
+        .get(field)
+        .and_then(|v| {
+            v.as_i64()
+                .or_else(|| v.as_u64().map(|u| i64::try_from(u).unwrap_or(i64::MAX)))
+        })
+        .unwrap_or(0)
+        .max(0)
+}
+

@@ -1,0 +1,457 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
+import { useRouter } from "nextjs-toploader/app";
+import { usePathname, useSearchParams } from "next/navigation";
+import { SearchIcon } from "lucide-react";
+import { useSettings } from "@/lib/useSettings";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
+import { VerifiedBadge } from "@/components/ui/VerifiedBadge";
+import { cn } from "@/lib/utils";
+import { CONTAINER } from "@/components/layout/Container";
+import { PageHeader } from "@/components/layout/PageHeader";
+import { formatCurrency, formatNumber } from "@/lib/format";
+import type {
+  LeaderboardSortBy,
+  LeaderboardTokenFormat,
+} from "@/lib/leaderboard/constants";
+import type { LeaderboardData, LeaderboardUser, Period } from "@/lib/leaderboard/types";
+
+interface SessionUser {
+  id: string;
+  username: string;
+  displayName: string | null;
+  avatarUrl: string | null;
+}
+
+interface LeaderboardProps {
+  initialData: LeaderboardData;
+  currentUser: SessionUser | null;
+  initialSortBy: LeaderboardSortBy;
+  initialUserRank: LeaderboardUser | null;
+}
+
+// All time leads because it is the standing everyone compares against; Today
+// stays the landing selection, which the server resolves.
+const PERIODS: ReadonlyArray<{ value: Period; label: string }> = [
+  { value: "all", label: "All time" },
+  { value: "today", label: "Today" },
+  { value: "week", label: "Week" },
+  { value: "month", label: "Month" },
+  { value: "last-month", label: "Last month" },
+];
+
+function avatarFor(user: { username: string; avatarUrl: string | null }) {
+  return user.avatarUrl || `https://github.com/${user.username}.png`;
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+        {label}
+      </span>
+      <span className="tabular text-xl leading-none sm:text-2xl">{value}</span>
+    </div>
+  );
+}
+
+function DeveloperRow({
+  user,
+  isSelf,
+  max,
+  sortBy,
+  tokenFormat,
+}: {
+  user: LeaderboardUser;
+  isSelf: boolean;
+  max: number;
+  sortBy: LeaderboardSortBy;
+  tokenFormat: LeaderboardTokenFormat;
+}) {
+  const compact = tokenFormat === "compact";
+  const primary = sortBy === "cost" ? user.totalCost : user.totalTokens;
+  const share = max > 0 ? Math.max(primary / max, 0.006) : 0;
+
+  return (
+    <TableRow
+      className={cn(
+        "group relative",
+        isSelf && "bg-primary/[0.06] hover:bg-primary/[0.09]"
+      )}
+    >
+      <TableCell className="w-10 py-3 pl-4 sm:w-12 sm:py-2 sm:pl-6">
+        <span
+          className={cn(
+            "tabular text-sm",
+            user.rank === 1 && "font-semibold text-primary",
+            user.rank > 1 && user.rank <= 3 && "font-semibold text-foreground",
+            user.rank > 3 && "text-muted-foreground"
+          )}
+        >
+          {user.rank}
+        </span>
+      </TableCell>
+
+      <TableCell className="min-w-0 py-3 sm:py-2">
+        {/* No viewport prefetch. App Router prefetches every link that scrolls
+            into view, and a page of 50 rows therefore renders 50 profiles
+            server-side — each one several database round trips — to serve a
+            visitor who will open at most one. Hover still prefetches, which is
+            where the intent actually is. */}
+        <Link
+          href={`/u/${user.username}`}
+          prefetch={false}
+          className="flex min-w-0 items-center gap-3"
+        >
+          <Avatar className="size-7 shrink-0">
+            <AvatarImage src={avatarFor(user)} alt="" loading="lazy" />
+            <AvatarFallback className="text-[10px]">
+              {user.username.slice(0, 2).toUpperCase()}
+            </AvatarFallback>
+          </Avatar>
+          <span className="flex min-w-0 flex-col leading-tight">
+            <span className="flex items-center gap-1.5">
+              <span className="truncate text-sm font-medium group-hover:underline">
+                {user.displayName || user.username}
+              </span>
+              {user.verified && <VerifiedBadge size={13} />}
+            </span>
+            <span className="truncate text-xs text-muted-foreground">
+              @{user.username}
+            </span>
+          </span>
+        </Link>
+      </TableCell>
+
+      {/* Phones get one stacked cell; the split columns need the width.
+          Always abbreviated here, regardless of the stored preference: the
+          control that toggles it lives in the desktop-only header, so on a
+          phone an exact 21,534,711,514 is both unreadable at this width and
+          impossible to switch away from. */}
+      <TableCell className="py-3 pr-4 text-right sm:hidden">
+        <span className="tabular block text-sm">
+          {formatNumber(user.totalTokens, true)}
+        </span>
+        <span className="tabular block text-xs text-muted-foreground">
+          {formatCurrency(user.totalCost, true)}
+        </span>
+      </TableCell>
+
+      <TableCell className="hidden w-44 sm:table-cell">
+        <div className="flex flex-col items-end gap-1.5">
+          <span
+            className={cn(
+              "tabular text-sm",
+              sortBy === "tokens" ? "text-foreground" : "text-muted-foreground"
+            )}
+          >
+            {formatNumber(user.totalTokens, compact)}
+          </span>
+          {/* Share of the top row on this page — a shape you can scan without
+              reading every number. */}
+          <div className="h-0.5 w-full max-w-32 overflow-hidden rounded-full bg-border">
+            <div
+              className="h-full rounded-full bg-primary/50"
+              style={{ width: `${share * 100}%` }}
+            />
+          </div>
+        </div>
+      </TableCell>
+
+      <TableCell className="hidden w-32 pr-6 text-right sm:table-cell">
+        <span
+          className={cn(
+            "tabular text-sm",
+            sortBy === "cost" ? "text-foreground" : "text-muted-foreground"
+          )}
+        >
+          {formatCurrency(user.totalCost, true)}
+        </span>
+      </TableCell>
+    </TableRow>
+  );
+}
+
+export default function Leaderboard({
+  initialData,
+  currentUser,
+  initialSortBy,
+  initialUserRank,
+}: LeaderboardProps) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
+  const [sortBy, setSortBy] = useState<LeaderboardSortBy>(initialSortBy);
+  const [search, setSearch] = useState(searchParams.get("search") ?? "");
+  const [pendingPeriod, setPendingPeriod] = useState<Period | null>(null);
+
+  // The server resolves the period, so it is read from props rather than
+  // mirrored into state. `pendingPeriod` only holds the optimistic selection
+  // between the click and the new data arriving, and is cleared during render
+  // once they agree — no effect, so no cascading render.
+  const period = pendingPeriod ?? initialData.period;
+  const pending = pendingPeriod != null && pendingPeriod !== initialData.period;
+  if (pendingPeriod != null && pendingPeriod === initialData.period) {
+    setPendingPeriod(null);
+  }
+  const searchRef = useRef<HTMLInputElement>(null);
+  const { leaderboardTokenFormat: tokenFormat, setLeaderboardTokenFormat } =
+    useSettings();
+
+  const pushQuery = useCallback(
+    (next: Record<string, string | null>) => {
+      const params = new URLSearchParams(searchParams.toString());
+      for (const [key, value] of Object.entries(next)) {
+        if (value === null || value === "") params.delete(key);
+        else params.set(key, value);
+      }
+      const qs = params.toString();
+      router.push(qs ? `${pathname}?${qs}` : pathname);
+    },
+    [pathname, router, searchParams]
+  );
+
+  // "/" focuses search — the shortcut this audience reaches for by reflex.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "/" || event.metaKey || event.ctrlKey) return;
+      const tag = (event.target as HTMLElement)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA") return;
+      event.preventDefault();
+      searchRef.current?.focus();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  const max = useMemo(() => {
+    if (initialData.users.length === 0) return 0;
+    return Math.max(
+      ...initialData.users.map((u) =>
+        sortBy === "cost" ? u.totalCost : u.totalTokens
+      )
+    );
+  }, [initialData.users, sortBy]);
+
+  const { pagination, stats, users } = initialData;
+  const selfOnPage =
+    currentUser != null && users.some((u) => u.userId === currentUser.id);
+
+  return (
+    <div className={cn(CONTAINER, "pb-24 pt-10 sm:pt-14")}>
+      <PageHeader
+        title="Leaderboard"
+        description="AI coding token usage, reported by the Tokens CLI."
+      />
+
+      <section
+        className="grid grid-cols-2 gap-6 sm:grid-cols-4"
+        aria-label="Totals"
+      >
+        <Stat label="Tokens" value={formatNumber(stats.totalTokens, true)} />
+        <Stat label="Cost" value={formatCurrency(stats.totalCost, true)} />
+        <Stat label="Developers" value={formatNumber(stats.uniqueUsers, false)} />
+        <Stat
+          label="Your rank"
+          value={initialUserRank ? `#${initialUserRank.rank}` : "—"}
+        />
+      </section>
+
+      {/* Controls stack on phones and sit on one line from sm up. Touch
+          targets stay at 40px on mobile; the desktop row tightens to 32px
+          where the pointer is precise. */}
+      <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-2">
+        {/* The five periods do not fit on a narrow screen, so the row scrolls
+            horizontally rather than wrapping into a ragged block. */}
+        <div className="-mx-4 overflow-x-auto px-4 pb-1 sm:mx-0 sm:overflow-visible sm:px-0 sm:pb-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          {/* Base UI's ToggleGroup is array-valued even in single-select mode. */}
+          <ToggleGroup
+            value={[period]}
+            onValueChange={(value) => {
+              const next = value[0] as Period | undefined;
+              if (!next) return;
+              setPendingPeriod(next);
+              pushQuery({ period: next, page: null });
+            }}
+            variant="outline"
+            aria-label="Period"
+            className="[&>*]:h-10 [&>*]:px-3.5 sm:[&>*]:h-8 sm:[&>*]:px-3"
+          >
+            {PERIODS.map((p) => (
+              <ToggleGroupItem key={p.value} value={p.value}>
+                {p.label}
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <ToggleGroup
+            value={[sortBy]}
+            onValueChange={(value) => {
+              const next = value[0] as LeaderboardSortBy | undefined;
+              if (!next) return;
+              setSortBy(next);
+              pushQuery({ sortBy: next, page: null });
+            }}
+            variant="outline"
+            aria-label="Sort by"
+            className="[&>*]:h-10 [&>*]:px-3.5 sm:[&>*]:h-8 sm:[&>*]:px-3"
+          >
+            <ToggleGroupItem value="tokens">Tokens</ToggleGroupItem>
+            <ToggleGroupItem value="cost">Cost</ToggleGroupItem>
+          </ToggleGroup>
+
+          <form
+            className="relative flex-1 sm:ml-auto sm:flex-none"
+            onSubmit={(event) => {
+              event.preventDefault();
+              pushQuery({ search: search.trim() || null, page: null });
+            }}
+          >
+            <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              ref={searchRef}
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Search…"
+              aria-label="Search developers"
+              className="h-10 w-full pl-8 text-sm sm:h-8 sm:w-56"
+            />
+          </form>
+        </div>
+      </div>
+
+      <div
+        className={cn(
+          "mt-4 overflow-hidden rounded-lg border transition-opacity",
+          pending && "opacity-50"
+        )}
+        aria-busy={pending}
+      >
+        <Table>
+          <TableHeader>
+            <TableRow className="hover:bg-transparent">
+              <TableHead className="w-12 pl-4 sm:pl-6">#</TableHead>
+              <TableHead>Developer</TableHead>
+              <TableHead className="pr-4 text-right sm:hidden">Usage</TableHead>
+              {/* Clicking the header swaps abbreviated figures (1.2B) for
+                  exact ones, a toggle contributed upstream by Fai Chou that
+                  people rely on when comparing close totals. */}
+              <TableHead className="hidden w-44 p-0 text-right sm:table-cell">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setLeaderboardTokenFormat(
+                      tokenFormat === "compact" ? "full" : "compact"
+                    )
+                  }
+                  aria-label={
+                    tokenFormat === "compact"
+                      ? "Show exact token counts"
+                      : "Show abbreviated token counts"
+                  }
+                  title={
+                    tokenFormat === "compact"
+                      ? "Show exact numbers"
+                      : "Abbreviate numbers"
+                  }
+                  className="h-full w-full px-2 py-2 text-right transition-colors hover:text-foreground"
+                >
+                  Tokens
+                </button>
+              </TableHead>
+              <TableHead className="hidden w-32 pr-6 text-right sm:table-cell">
+                Cost
+              </TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {users.map((user) => (
+              <DeveloperRow
+                key={user.userId}
+                user={user}
+                isSelf={currentUser?.id === user.userId}
+                max={max}
+                sortBy={sortBy}
+                tokenFormat={tokenFormat}
+              />
+            ))}
+          </TableBody>
+        </Table>
+
+        {users.length === 0 && (
+          <Empty className="border-0">
+            <EmptyHeader>
+              <EmptyTitle>Nothing recorded</EmptyTitle>
+              <EmptyDescription>
+                No usage was submitted for this period.
+              </EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        )}
+      </div>
+
+      {/* Own standing, pinned when it falls outside the current page. */}
+      {initialUserRank && !selfOnPage && (
+        <div className="mt-4">
+          <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+            Your position
+          </span>
+          <div className="mt-1.5 overflow-hidden rounded-lg border">
+            <Table>
+              <TableBody>
+                <DeveloperRow
+                  user={initialUserRank}
+                  isSelf
+                  max={max || initialUserRank.totalTokens}
+                  sortBy={sortBy}
+                  tokenFormat={tokenFormat}
+                />
+              </TableBody>
+            </Table>
+          </div>
+        </div>
+      )}
+
+      {pagination.totalPages > 1 && (
+        <nav className="mt-6 flex items-center justify-between" aria-label="Pagination">
+          <Button
+            variant="outline"
+            disabled={!pagination.hasPrev}
+            className="h-10 sm:h-8"
+            onClick={() => pushQuery({ page: String(pagination.page - 1) })}
+          >
+            Previous
+          </Button>
+          <span className="tabular text-xs text-muted-foreground">
+            {pagination.page} of {pagination.totalPages}
+          </span>
+          <Button
+            variant="outline"
+            disabled={!pagination.hasNext}
+            className="h-10 sm:h-8"
+            onClick={() => pushQuery({ page: String(pagination.page + 1) })}
+          >
+            Next
+          </Button>
+        </nav>
+      )}
+    </div>
+  );
+}

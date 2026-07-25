@@ -1,0 +1,26 @@
+{
+  "name": "tokens-cli-darwin-arm64",
+  "version": "3.1.0",
+  "description": "tokens CLI binary for darwin arm64",
+  "license": "MIT",
+  "type": "module",
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "main": "bin/tokens",
+  "files": [
+    "bin"
+  ],
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/",
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/missuo/tokens.git",
+    "directory": "packages/cli-darwin-arm64"
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "name": "tokens-cli-linux-arm64-gnu",
+  "version": "3.1.0",
+  "description": "tokens CLI binary for linux arm64 gnu",
+  "license": "MIT",
+  "type": "module",
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "libc": [
+    "glibc"
+  ],
+  "main": "bin/tokens",
+  "files": [
+    "bin"
+  ],
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/",
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/missuo/tokens.git",
+    "directory": "packages/cli-linux-arm64-gnu"
+  }
+}

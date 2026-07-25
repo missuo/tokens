@@ -1,0 +1,10 @@
+{
+  "agents": [],
+  "daily": [],
+  "models": [],
+  "monthly": [],
+  "totals": {
+    "cost": 0.0,
+    "tokens": 0
+  }
+}

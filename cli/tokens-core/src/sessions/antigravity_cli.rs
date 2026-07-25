@@ -1,0 +1,377 @@
+//! Antigravity CLI session parser
+//!
+//! The Antigravity CLI (the terminal agent, distinct from the Antigravity IDE)
+//! stores each conversation as a SQLite database under
+//! `~/.gemini/antigravity-cli/conversations/<uuid>.db`. Unlike the IDE-backed
+//! [`super::antigravity`] source — which depends on a *running* language server
+//! reachable over RPC and caches JSONL under the config dir — the CLI usage is
+//! already on disk and can be read directly. No RPC, no `antigravity sync`.
+//!
+//! Each `gen_metadata` row is one generation encoded as the same
+//! `GeneratorMetadata` protobuf the IDE returns over
+//! `GetCascadeTrajectoryGeneratorMetadata`. The repository has no `.proto` /
+//! prost decoder (the IDE path receives JSON because the language server does
+//! the proto→JSON conversion), so this module ships a tiny wire-format reader
+//! and pulls only the few fields it needs. The field numbers below were
+//! reverse-engineered from real databases and cross-checked across 6 sessions
+//! / 140 turns (`#9 + #10 == #3`, i.e. output + thinking == total output;
+//! `#5`/cacheRead only appears once a cached prefix exists and grows with the
+//! conversation):
+//!
+//! - `gen_metadata.#1`            → chatModel message
+//!   - `#19` (string)            → responseModel (e.g. `gemini-3-flash-a`)
+//!   - `#9.#4` = `{#1: seconds, #2: nanos}` → per-generation wall-clock time
+//!   - `#4`                      → usage message
+//!     - `#1` (varint, const)    → fixed system-prompt tokens (≈1132)
+//!     - `#2` (varint)           → newly-processed (non-cached) input tokens
+//!     - `#5` (varint)           → cacheRead tokens
+//!     - `#9` (varint)           → output (text) tokens
+//!     - `#10` (varint)          → thinking / reasoning tokens
+//!     - `#11` (string)          → responseId (dedup key)
+//! - `trajectory_metadata_blob.#2` = `{#1: seconds, #2: nanos}` → created-at
+//! - `trajectory_metadata_blob.#1.#1` (string)                  → workspace URI
+
+use super::utils::open_readonly_sqlite;
+use super::{normalize_workspace_key, workspace_label_from_key, UnifiedMessage};
+use crate::{pricing, provider_identity, TokenBreakdown};
+use rusqlite::Connection;
+use std::collections::HashSet;
+use std::path::Path;
+
+pub fn parse_antigravity_cli_file(path: &Path) -> Vec<UnifiedMessage> {
+    let Some(conn) = open_readonly_sqlite(path) else {
+        return Vec::new();
+    };
+
+    let session_id = path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("unknown")
+        .to_string();
+
+    let (timestamp, workspace_key, workspace_label) = read_trajectory_meta(&conn, path);
+
+    let mut stmt = match conn.prepare("SELECT data FROM gen_metadata ORDER BY idx") {
+        Ok(stmt) => stmt,
+        // Not an Antigravity CLI database (table missing) — nothing to count.
+        Err(_) => return Vec::new(),
+    };
+    let rows = match stmt.query_map([], |row| row.get::<_, Vec<u8>>(0)) {
+        Ok(rows) => rows,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut messages = Vec::new();
+    let mut seen_response_ids: HashSet<String> = HashSet::new();
+    for blob in rows.flatten() {
+        // `timestamp` is the session-created fallback; each row prefers its own
+        // per-generation wall-clock stamp (see `parse_gen_metadata`).
+        if let Some(mut message) =
+            parse_gen_metadata(&blob, &session_id, timestamp, &mut seen_response_ids)
+        {
+            if workspace_key.is_some() {
+                message.set_workspace(workspace_key.clone(), workspace_label.clone());
+            }
+            messages.push(message);
+        }
+    }
+
+    messages
+}
+
+fn parse_gen_metadata(
+    blob: &[u8],
+    session_id: &str,
+    session_timestamp: i64,
+    seen_response_ids: &mut HashSet<String>,
+) -> Option<UnifiedMessage> {
+    let chat_model = message_field(blob, 1)?;
+    let usage = message_field(chat_model, 4)?;
+
+    // Per-generation wall-clock time: `chatModel.#9.#4` is an absolute
+    // `{#1: seconds, #2: nanos}` Timestamp for this turn (same shape as the
+    // session-created stamp), so each turn is dated when it actually happened
+    // rather than at conversation start. Fall back to the session-created
+    // `session_timestamp` when the field is absent or zero (older databases or
+    // malformed rows).
+    let timestamp = message_field(chat_model, 9)
+        .and_then(|gen| message_field(gen, 4))
+        .and_then(proto_timestamp_ms)
+        .filter(|&ms| ms > 0)
+        .unwrap_or(session_timestamp);
+
+    // input = fixed system prompt (#1) + newly-processed input (#2). The
+    // constant #1 is, to the best of our reverse-engineering, the agent's fixed
+    // system prompt and counts as billable input; if an official schema later
+    // contradicts this, only the input total needs revisiting.
+    // Clamp untrusted u64 varints into i64 (a corrupt/malicious blob could
+    // encode a value > i64::MAX, which `as i64` would wrap to a negative count)
+    // and combine with saturating_add so totals never overflow.
+    let to_i64 = |v: u64| i64::try_from(v).unwrap_or(i64::MAX);
+    let input = to_i64(varint_field(usage, 1).unwrap_or(0))
+        .saturating_add(to_i64(varint_field(usage, 2).unwrap_or(0)));
+    let cache_read = to_i64(varint_field(usage, 5).unwrap_or(0));
+    let output = to_i64(varint_field(usage, 9).unwrap_or(0));
+    let reasoning = to_i64(varint_field(usage, 10).unwrap_or(0));
+    if input == 0 && output == 0 && cache_read == 0 && reasoning == 0 {
+        return None;
+    }
+
+    let dedup_key = string_field(usage, 11)
+        .filter(|text| !text.trim().is_empty())
+        .map(|text| text.to_string());
+    if let Some(key) = &dedup_key {
+        if !seen_response_ids.insert(key.clone()) {
+            return None;
+        }
+    }
+
+    let model_raw = string_field(chat_model, 19)
+        .filter(|text| !text.trim().is_empty())
+        .unwrap_or("unknown");
+    let model_id = pricing::aliases::resolve_alias(model_raw)
+        .unwrap_or(model_raw)
+        .to_string();
+    let provider_id = provider_identity::inferred_provider_from_model(&model_id)
+        .unwrap_or("antigravity")
+        .to_string();
+
+    Some(UnifiedMessage::new_with_dedup(
+        "antigravity-cli",
+        model_id,
+        provider_id,
+        session_id,
+        timestamp,
+        TokenBreakdown {
+            input,
+            output,
+            cache_read,
+            cache_write: 0,
+            reasoning,
+        },
+        0.0,
+        dedup_key,
+    ))
+}
+
+/// Read the session-level created-at timestamp and workspace from the single
+/// `trajectory_metadata_blob` row. This timestamp dates the conversation as a
+/// whole and is the per-row fallback for any `gen_metadata` row missing its own
+/// `#9.#4` wall-clock stamp. Falls back to the file mtime when the blob is
+/// absent or undecodable.
+fn read_trajectory_meta(conn: &Connection, path: &Path) -> (i64, Option<String>, Option<String>) {
+    let blob: Option<Vec<u8>> = conn
+        .query_row(
+            "SELECT data FROM trajectory_metadata_blob LIMIT 1",
+            [],
+            |row| row.get::<_, Vec<u8>>(0),
+        )
+        .ok();
+
+    let mut timestamp = None;
+    let mut workspace_key = None;
+    let mut workspace_label = None;
+
+    if let Some(blob) = &blob {
+        timestamp = session_created_ms(blob).filter(|&ms| ms > 0);
+
+        if let Some(uri) = message_field(blob, 1).and_then(|folder| string_field(folder, 1)) {
+            if let Some(path_str) = file_uri_to_path(uri) {
+                workspace_key = normalize_workspace_key(&path_str);
+                workspace_label = workspace_key.as_deref().and_then(workspace_label_from_key);
+            }
+        }
+    }
+
+    let timestamp = timestamp.unwrap_or_else(|| file_modified_ms(path));
+    (timestamp, workspace_key, workspace_label)
+}
+
+fn session_created_ms(blob: &[u8]) -> Option<i64> {
+    proto_timestamp_ms(message_field(blob, 2)?)
+}
+
+/// Decode a protobuf `{#1: seconds, #2: nanos}` Timestamp message to epoch ms.
+/// Shared by the session-created stamp and the per-generation `#9.#4` stamp.
+///
+/// `seconds` is an unbounded wire varint, so a malformed blob can carry a value
+/// whose `* 1000` overflows `i64` and panics in debug builds. Use checked
+/// arithmetic and return `None` on overflow to keep the module's
+/// "malformed data degrades to `None`, never panics" contract.
+///
+/// `nanos` is range-validated against the protobuf Timestamp spec (must be
+/// `0..=999_999_999`); an out-of-range or negative `nanos` marks the whole
+/// stamp as malformed (`None`) so the caller's `ms > 0` filter and
+/// session-timestamp fallback take over instead of producing a skewed time.
+fn proto_timestamp_ms(ts: &[u8]) -> Option<i64> {
+    let seconds = varint_field(ts, 1)? as i64;
+    let nanos = i64::try_from(varint_field(ts, 2).unwrap_or(0)).ok()?;
+    if !(0..=999_999_999).contains(&nanos) {
+        return None;
+    }
+    seconds.checked_mul(1000)?.checked_add(nanos / 1_000_000)
+}
+
+fn file_modified_ms(path: &Path) -> i64 {
+    std::fs::metadata(path)
+        .and_then(|metadata| metadata.modified())
+        .ok()
+        .map(|time| chrono::DateTime::<chrono::Utc>::from(time).timestamp_millis())
+        .unwrap_or(0)
+}
+
+/// Convert a `file://` URI to a filesystem path, percent-decoding UTF-8 escapes
+/// (workspace paths on cloud drives can be percent-encoded CJK). After the
+/// scheme the remainder is `authority + path`; the three shapes RFC 8089 (and
+/// Antigravity) produce are handled:
+/// - `file:///C:/x`        → `C:/x`            (empty authority, Windows drive: drop the leading slash)
+/// - `file:///home/x`      → `/home/x`         (empty authority, POSIX absolute: keep as-is)
+/// - `file://host/share/x` → `//host/share/x`  (non-empty authority → UNC: restore the leading `//`)
+fn file_uri_to_path(uri: &str) -> Option<String> {
+    let decoded = percent_decode(uri.strip_prefix("file://")?);
+    let bytes = decoded.as_bytes();
+    let path = if bytes.first() == Some(&b'/') {
+        // Empty authority. Drop the slash before a Windows drive letter
+        // (`/C:/...`); keep POSIX absolute paths untouched.
+        if bytes.len() >= 3 && bytes[2] == b':' {
+            decoded[1..].to_string()
+        } else {
+            decoded
+        }
+    } else {
+        // Non-empty authority (`host/share/...`) is a UNC path; restore the
+        // leading `//` so `normalize_workspace_key` preserves the UNC prefix
+        // instead of collapsing it into the path body.
+        format!("//{decoded}")
+    };
+    Some(path)
+}
+
+fn percent_decode(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let (Some(hi), Some(lo)) = (hex_value(bytes[i + 1]), hex_value(bytes[i + 2])) {
+                out.push((hi << 4) | lo);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Minimal protobuf wire-format reader (no prost / schema dependency).
+// ---------------------------------------------------------------------------
+
+enum Wire<'a> {
+    Varint(u64),
+    Len(&'a [u8]),
+    Fixed64,
+    Fixed32,
+}
+
+struct ProtoReader<'a> {
+    buf: &'a [u8],
+    pos: usize,
+}
+
+impl<'a> ProtoReader<'a> {
+    fn new(buf: &'a [u8]) -> Self {
+        Self { buf, pos: 0 }
+    }
+
+    fn read_varint(&mut self) -> Option<u64> {
+        let mut result: u64 = 0;
+        let mut shift = 0u32;
+        loop {
+            let byte = *self.buf.get(self.pos)?;
+            self.pos += 1;
+            result |= u64::from(byte & 0x7f) << shift;
+            if byte & 0x80 == 0 {
+                return Some(result);
+            }
+            shift += 7;
+            if shift >= 64 {
+                return None;
+            }
+        }
+    }
+
+    /// Yield the next `(field_number, value)` pair, or `None` at end-of-buffer
+    /// or on a malformed/unsupported wire type. Group wire types (3/4) are
+    /// deprecated and never appear here; we stop rather than risk desync.
+    fn next_field(&mut self) -> Option<(u64, Wire<'a>)> {
+        if self.pos >= self.buf.len() {
+            return None;
+        }
+        let tag = self.read_varint()?;
+        let field = tag >> 3;
+        let wire = match tag & 0x7 {
+            0 => Wire::Varint(self.read_varint()?),
+            1 => {
+                self.pos = self.pos.checked_add(8).filter(|&p| p <= self.buf.len())?;
+                Wire::Fixed64
+            }
+            2 => {
+                let len = self.read_varint()? as usize;
+                let end = self.pos.checked_add(len).filter(|&p| p <= self.buf.len())?;
+                let bytes = &self.buf[self.pos..end];
+                self.pos = end;
+                Wire::Len(bytes)
+            }
+            5 => {
+                self.pos = self.pos.checked_add(4).filter(|&p| p <= self.buf.len())?;
+                Wire::Fixed32
+            }
+            _ => return None,
+        };
+        Some((field, wire))
+    }
+}
+
+/// First length-delimited (sub-message / string / bytes) value for `field`.
+fn message_field(buf: &[u8], field: u64) -> Option<&[u8]> {
+    let mut reader = ProtoReader::new(buf);
+    while let Some((found, wire)) = reader.next_field() {
+        if found == field {
+            if let Wire::Len(bytes) = wire {
+                return Some(bytes);
+            }
+        }
+    }
+    None
+}
+
+/// First varint value for `field`.
+fn varint_field(buf: &[u8], field: u64) -> Option<u64> {
+    let mut reader = ProtoReader::new(buf);
+    while let Some((found, wire)) = reader.next_field() {
+        if found == field {
+            if let Wire::Varint(value) = wire {
+                return Some(value);
+            }
+        }
+    }
+    None
+}
+
+/// First UTF-8 string value for `field`.
+fn string_field(buf: &[u8], field: u64) -> Option<&str> {
+    message_field(buf, field).and_then(|bytes| std::str::from_utf8(bytes).ok())
+}
+

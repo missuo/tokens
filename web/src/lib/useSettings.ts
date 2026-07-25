@@ -1,0 +1,170 @@
+"use client";
+
+import { useCallback, useEffect, useSyncExternalStore } from "react";
+import type { ColorPaletteName } from "./themes";
+import { DEFAULT_PALETTE } from "./themes";
+import {
+  type LeaderboardTokenFormat,
+  type LeaderboardSortBy,
+  DEFAULT_LEADERBOARD_TOKEN_FORMAT,
+  SORT_BY_COOKIE_NAME,
+  isValidSortBy,
+  resolveLeaderboardTokenFormat,
+} from "./leaderboard/constants";
+
+export type { LeaderboardSortBy, LeaderboardTokenFormat };
+
+export interface Settings {
+  paletteName: ColorPaletteName;
+  leaderboardSortBy: LeaderboardSortBy;
+  leaderboardTokenFormat: LeaderboardTokenFormat;
+}
+
+const DEFAULT_SETTINGS: Settings = {
+  paletteName: DEFAULT_PALETTE,
+  leaderboardSortBy: "tokens",
+  leaderboardTokenFormat: DEFAULT_LEADERBOARD_TOKEN_FORMAT,
+};
+
+const STORAGE_KEY = "tokens-settings";
+const SETTINGS_EVENT = "tokens-settings-changed";
+/** Pre-rename key. Read once so existing visitors keep their preferences. */
+const LEGACY_STORAGE_KEY = "tokscale-settings";
+
+let cachedRawSettings: string | null = null;
+let cachedSettings: Settings = DEFAULT_SETTINGS;
+
+function setSortByCookie(sortBy: LeaderboardSortBy): void {
+  if (typeof document === "undefined") return;
+  document.cookie = `${SORT_BY_COOKIE_NAME}=${sortBy}; path=/; max-age=${60 * 60 * 24 * 365}; SameSite=Lax`;
+}
+
+function getStoredSettings(): Settings {
+  if (typeof window === "undefined") return DEFAULT_SETTINGS;
+
+  try {
+    let stored = localStorage.getItem(STORAGE_KEY);
+
+    // One-time carry-over from the pre-rename key, so the rename does not
+    // silently reset everyone's palette and leaderboard preferences.
+    if (!stored) {
+      const legacy = localStorage.getItem(LEGACY_STORAGE_KEY);
+      if (legacy) {
+        localStorage.setItem(STORAGE_KEY, legacy);
+        localStorage.removeItem(LEGACY_STORAGE_KEY);
+        stored = legacy;
+      }
+    }
+
+    if (!stored) {
+      cachedRawSettings = null;
+      cachedSettings = DEFAULT_SETTINGS;
+      return DEFAULT_SETTINGS;
+    }
+
+    if (stored === cachedRawSettings) {
+      return cachedSettings;
+    }
+
+    const parsed = JSON.parse(stored);
+    cachedRawSettings = stored;
+    cachedSettings = {
+      paletteName: parsed.paletteName || DEFAULT_SETTINGS.paletteName,
+      leaderboardSortBy: isValidSortBy(parsed.leaderboardSortBy)
+        ? parsed.leaderboardSortBy
+        : DEFAULT_SETTINGS.leaderboardSortBy,
+      leaderboardTokenFormat: resolveLeaderboardTokenFormat(
+        parsed.leaderboardTokenFormat,
+      ),
+    };
+    return cachedSettings;
+  } catch {
+    // Invalid JSON or localStorage error
+    cachedRawSettings = null;
+    cachedSettings = DEFAULT_SETTINGS;
+  }
+
+  return DEFAULT_SETTINGS;
+}
+
+function saveSettings(settings: Settings): void {
+  if (typeof window === "undefined") return;
+  try {
+    const serialized = JSON.stringify(settings);
+    cachedRawSettings = serialized;
+    cachedSettings = settings;
+    localStorage.setItem(STORAGE_KEY, serialized);
+    window.dispatchEvent(new Event(SETTINGS_EVENT));
+  } catch {
+    // localStorage might be full or disabled
+  }
+}
+
+function subscribeToSettings(onStoreChange: () => void): () => void {
+  if (typeof window === "undefined") {
+    return () => {};
+  }
+
+  const handleStorage = (event: StorageEvent) => {
+    if (!event.key || event.key === STORAGE_KEY) {
+      onStoreChange();
+    }
+  };
+
+  window.addEventListener("storage", handleStorage);
+  window.addEventListener(SETTINGS_EVENT, onStoreChange);
+  return () => {
+    window.removeEventListener("storage", handleStorage);
+    window.removeEventListener(SETTINGS_EVENT, onStoreChange);
+  };
+}
+
+function subscribeToMounted(): () => void {
+  return () => {};
+}
+
+export function useSettings() {
+  const settings = useSyncExternalStore(
+    subscribeToSettings,
+    getStoredSettings,
+    () => DEFAULT_SETTINGS,
+  );
+  const mounted = useSyncExternalStore(
+    subscribeToMounted,
+    () => true,
+    () => false,
+  );
+
+  useEffect(() => {
+    // Theme (light/dark) is owned entirely by next-themes via the ThemeProvider,
+    // which follows the system preference by default. Only the sort also needs
+    // a cookie because the server reads it; other preferences stay client-only.
+    setSortByCookie(settings.leaderboardSortBy);
+  }, [settings.leaderboardSortBy]);
+
+  const setPalette = useCallback((paletteName: ColorPaletteName) => {
+    saveSettings({ ...getStoredSettings(), paletteName });
+  }, []);
+
+  const setLeaderboardSort = useCallback((sortBy: LeaderboardSortBy) => {
+    setSortByCookie(sortBy);
+    saveSettings({ ...getStoredSettings(), leaderboardSortBy: sortBy });
+  }, []);
+
+  const setLeaderboardTokenFormat = useCallback(
+    (tokenFormat: LeaderboardTokenFormat) => {
+      saveSettings({ ...getStoredSettings(), leaderboardTokenFormat: tokenFormat });
+    },
+    [],
+  );
+
+  return {
+    paletteName: settings.paletteName,
+    setPalette,
+    leaderboardSortBy: settings.leaderboardSortBy,
+    setLeaderboardSort,
+    leaderboardTokenFormat: settings.leaderboardTokenFormat,
+    setLeaderboardTokenFormat,
+    mounted,
+  };
+}

@@ -1,0 +1,470 @@
+//! Session interval derivation and time-based metrics.
+
+use crate::sessions::UnifiedMessage;
+use crate::TokenBreakdown;
+use std::collections::HashMap;
+
+/// Default idle gap threshold: 3 minutes (ms).
+pub const DEFAULT_IDLE_GAP_MS: i64 = 3 * 60 * 1000;
+
+/// A derived session interval representing one continuous usage session.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SessionInterval {
+    pub client: String,
+    pub session_id: String,
+    /// First message timestamp (Unix ms)
+    pub start_ts: i64,
+    /// Last message timestamp (Unix ms)
+    pub end_ts: i64,
+    /// Wall-clock duration: end_ts - start_ts
+    pub wall_duration_ms: i64,
+    /// Active duration excluding idle gaps beyond the threshold
+    pub active_duration_ms: i64,
+    pub message_count: i32,
+    pub tokens: TokenBreakdown,
+    pub cost: f64,
+}
+
+/// Time-based usage metrics computed from session intervals.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct TimeMetrics {
+    /// Total active usage time across all sessions (ms)
+    pub total_active_time_ms: i64,
+    /// Total wall-clock usage time across all sessions (ms)
+    pub total_wall_time_ms: i64,
+    /// Longest single session active duration (ms)
+    pub longest_continuous_ms: i64,
+    /// Peak number of sessions overlapping at the same time
+    pub max_concurrent_sessions: u32,
+    /// Total number of derived session intervals
+    pub session_count: u32,
+}
+
+#[derive(Debug)]
+struct SessionMessageSpan<'a> {
+    msg: &'a UnifiedMessage,
+    start_ts: i64,
+    end_ts: i64,
+}
+
+#[derive(Debug)]
+struct SessionBlock {
+    start_ts: i64,
+    end_ts: i64,
+    tokens: TokenBreakdown,
+    cost: f64,
+    message_count: i32,
+}
+
+impl SessionBlock {
+    fn new(span: &SessionMessageSpan<'_>) -> Self {
+        let mut block = Self {
+            start_ts: span.start_ts,
+            end_ts: span.end_ts,
+            tokens: TokenBreakdown::default(),
+            cost: 0.0,
+            message_count: 0,
+        };
+        block.add(span);
+        block
+    }
+
+    fn add(&mut self, span: &SessionMessageSpan<'_>) {
+        self.end_ts = self.end_ts.max(span.end_ts);
+        // saturating_add so clamped (i64::MAX) buckets from a corrupt source
+        // can't overflow the fold.
+        self.tokens.input = self.tokens.input.saturating_add(span.msg.tokens.input);
+        self.tokens.output = self.tokens.output.saturating_add(span.msg.tokens.output);
+        self.tokens.cache_read = self
+            .tokens
+            .cache_read
+            .saturating_add(span.msg.tokens.cache_read);
+        self.tokens.cache_write = self
+            .tokens
+            .cache_write
+            .saturating_add(span.msg.tokens.cache_write);
+        self.tokens.reasoning = self
+            .tokens
+            .reasoning
+            .saturating_add(span.msg.tokens.reasoning);
+        self.cost += span.msg.cost;
+        self.message_count += span.msg.message_count.max(1);
+    }
+}
+
+/// Derive session intervals from unified messages.
+///
+/// Groups messages by `(client, session_id)`, sorts each group by timestamp,
+/// and computes per-session start/end/duration/active-time.
+///
+/// `idle_gap_ms` controls how much silence between messages is still counted
+/// as "active". Time gaps exceeding this threshold are excluded from
+/// `active_duration_ms` by splitting a source session into separate active
+/// intervals.
+pub fn sessionize(messages: &[UnifiedMessage], idle_gap_ms: i64) -> Vec<SessionInterval> {
+    if messages.is_empty() {
+        return Vec::new();
+    }
+
+    // Group by (client, session_id)
+    let mut groups: HashMap<(&str, &str), Vec<&UnifiedMessage>> = HashMap::new();
+    for msg in messages {
+        if msg.timestamp <= 0 {
+            continue;
+        }
+        groups
+            .entry((&msg.client, &msg.session_id))
+            .or_default()
+            .push(msg);
+    }
+
+    let mut intervals: Vec<SessionInterval> = Vec::with_capacity(groups.len());
+
+    for ((client, session_id), mut msgs) in groups {
+        msgs.sort_unstable_by_key(|m| m.timestamp);
+
+        let spans: Vec<SessionMessageSpan<'_>> = msgs
+            .into_iter()
+            .map(|msg| {
+                let duration_ms = msg
+                    .duration_ms
+                    .filter(|duration| *duration > 0)
+                    .unwrap_or(0);
+                SessionMessageSpan {
+                    msg,
+                    start_ts: msg.timestamp,
+                    end_ts: msg.timestamp.saturating_add(duration_ms),
+                }
+            })
+            .collect();
+
+        let mut blocks: Vec<SessionBlock> = Vec::new();
+        for span in spans {
+            match blocks.last_mut() {
+                Some(block) if span.start_ts <= block.end_ts.saturating_add(idle_gap_ms) => {
+                    block.add(&span);
+                }
+                _ => blocks.push(SessionBlock::new(&span)),
+            }
+        }
+
+        for block in blocks {
+            let wall_duration_ms = block.end_ts.saturating_sub(block.start_ts);
+
+            intervals.push(SessionInterval {
+                client: client.to_string(),
+                session_id: session_id.to_string(),
+                start_ts: block.start_ts,
+                end_ts: block.end_ts,
+                wall_duration_ms,
+                active_duration_ms: wall_duration_ms,
+                message_count: block.message_count,
+                tokens: block.tokens,
+                cost: block.cost,
+            });
+        }
+    }
+
+    // Sort by start time for downstream consumers
+    intervals.sort_unstable_by_key(|s| s.start_ts);
+    intervals
+}
+
+/// Compute time-based metrics from session intervals.
+///
+/// - `total_active_time_ms`: sum of all `active_duration_ms`
+/// - `total_wall_time_ms`: sum of all `wall_duration_ms`
+/// - `longest_continuous_ms`: longest merged activity window across ALL sessions
+///   (using the idle gap threshold to merge overlapping/adjacent activity)
+/// - `max_concurrent_sessions`: peak overlap of session wall-clock intervals
+pub fn compute_time_metrics(intervals: &[SessionInterval], _idle_gap_ms: i64) -> TimeMetrics {
+    if intervals.is_empty() {
+        return TimeMetrics {
+            total_active_time_ms: 0,
+            total_wall_time_ms: 0,
+            longest_continuous_ms: 0,
+            max_concurrent_sessions: 0,
+            session_count: 0,
+        };
+    }
+
+    let total_active_time_ms: i64 = intervals.iter().map(|s| s.active_duration_ms).sum();
+    let total_wall_time_ms: i64 = intervals.iter().map(|s| s.wall_duration_ms).sum();
+    let session_count = intervals.len() as u32;
+
+    // --- Longest continuous usage ---
+    // Collect all session [start, end] as activity windows, merge overlapping
+    // ones (with idle_gap_ms tolerance), find the longest merged span.
+    // Use active_duration_ms instead of wall-clock span to exclude idle gaps
+    // within sessions from inflating the metric.
+    let longest_continuous_ms = {
+        let mut windows: Vec<(i64, i64)> = intervals
+            .iter()
+            .filter(|s| s.start_ts > 0 && s.active_duration_ms > 0)
+            .map(|s| (s.start_ts, s.start_ts + s.active_duration_ms))
+            .collect();
+        windows.sort_unstable_by_key(|w| w.0);
+
+        let mut longest: i64 = 0;
+        if let Some(&first) = windows.first() {
+            let mut merged_start = first.0;
+            let mut merged_end = first.1;
+
+            for &(start, end) in &windows[1..] {
+                if start <= merged_end + _idle_gap_ms {
+                    // Overlapping or within idle gap tolerance — extend
+                    merged_end = merged_end.max(end);
+                } else {
+                    // Gap too large — finalize previous window
+                    longest = longest.max(merged_end - merged_start);
+                    merged_start = start;
+                    merged_end = end;
+                }
+            }
+            longest = longest.max(merged_end - merged_start);
+        }
+        longest
+    };
+
+    // --- Max concurrent sessions ---
+    let max_concurrent_sessions = compute_max_concurrent(intervals);
+
+    TimeMetrics {
+        total_active_time_ms,
+        total_wall_time_ms,
+        longest_continuous_ms,
+        max_concurrent_sessions,
+        session_count,
+    }
+}
+
+/// Sweep-line algorithm to find peak concurrent sessions.
+fn compute_max_concurrent(intervals: &[SessionInterval]) -> u32 {
+    if intervals.is_empty() {
+        return 0;
+    }
+
+    let mut events: Vec<(i64, i32)> = Vec::with_capacity(intervals.len() * 2);
+    for s in intervals {
+        if s.start_ts <= 0 {
+            continue;
+        }
+        events.push((s.start_ts, 1));
+        // For zero-duration sessions (start == end), push end as start+1
+        // so the +1 event is processed before the -1 event at the same logical point
+        let end = if s.end_ts <= s.start_ts {
+            s.start_ts + 1
+        } else {
+            s.end_ts
+        };
+        events.push((end, -1));
+    }
+
+    // Sort by time; ties broken by start (+1) before end (-1) so concurrent
+    // sessions at the same timestamp are counted together
+    events.sort_unstable_by(|a, b| a.0.cmp(&b.0).then(b.1.cmp(&a.1)));
+
+    let mut max_concurrent: u32 = 0;
+    let mut current: i32 = 0;
+
+    for (_, delta) in events {
+        current += delta;
+        if current > max_concurrent as i32 {
+            max_concurrent = current as u32;
+        }
+    }
+
+    max_concurrent
+}
+
+/// Compute per-day active time (ms) from session intervals.
+///
+/// For each interval, distributes its `active_duration_ms` proportionally
+/// across local-time days for the active timezone. Single-day sessions get their full active
+/// time assigned to that day.
+pub fn compute_daily_active_time(
+    intervals: &[SessionInterval],
+) -> std::collections::HashMap<String, i64> {
+    match crate::bucket_tz::bucket_timezone() {
+        crate::bucket_tz::BucketTimezone::Local => {
+            compute_daily_active_time_with_timezone(intervals, &chrono::Local)
+        }
+        crate::bucket_tz::BucketTimezone::Named(tz) => {
+            compute_daily_active_time_with_timezone(intervals, &tz)
+        }
+    }
+}
+
+fn compute_daily_active_time_with_timezone<Tz>(
+    intervals: &[SessionInterval],
+    timezone: &Tz,
+) -> std::collections::HashMap<String, i64>
+where
+    Tz: chrono::TimeZone,
+{
+    use std::collections::HashMap;
+
+    let mut daily: HashMap<String, i64> = HashMap::new();
+
+    for interval in intervals {
+        if interval.active_duration_ms <= 0 {
+            continue;
+        }
+
+        let start_date = match local_date(interval.start_ts, timezone) {
+            Some(date) => date,
+            None => continue,
+        };
+        let end_date = match local_date(interval.end_ts, timezone) {
+            Some(date) => date,
+            None => continue,
+        };
+
+        let wall = interval.wall_duration_ms.max(1);
+        let mut day = start_date;
+
+        loop {
+            let day_key = day.format("%Y-%m-%d").to_string();
+            let Some(day_start) = local_day_start(day, timezone) else {
+                // DST gap: skip the rest of this interval when local midnight
+                // is not representable for the active timezone.
+                break;
+            };
+
+            let Some(next_day) = day.succ_opt() else {
+                break;
+            };
+            let Some(next_day_start) = local_day_start(next_day, timezone) else {
+                // DST gap: skip the rest of this interval when the next local
+                // midnight is not representable for the active timezone.
+                break;
+            };
+
+            let overlap_start = interval.start_ts.max(day_start);
+            let overlap_end = interval.end_ts.min(next_day_start);
+            let overlap = (overlap_end - overlap_start).max(0);
+            let proportion = overlap as f64 / wall as f64;
+            let active_for_day = (interval.active_duration_ms as f64 * proportion) as i64;
+
+            if active_for_day > 0 {
+                *daily.entry(day_key).or_default() += active_for_day;
+            }
+
+            if day == end_date {
+                break;
+            }
+
+            if let Some(next) = day.succ_opt() {
+                day = next;
+            } else {
+                break;
+            }
+        }
+    }
+
+    daily
+}
+
+/// Active time for a single local day, bucketed by client (milliseconds).
+///
+/// Same local-day attribution as [`compute_daily_active_time`]: an interval
+/// straddling midnight contributes only the portion falling inside `day`. Each
+/// client is summed independently, so two AIs used in parallel both count their
+/// own focused time. Powers the menu bar's per-AI work-time cards.
+pub fn compute_active_time_by_client_for_day(
+    intervals: &[SessionInterval],
+    day: &str,
+) -> HashMap<String, i64> {
+    match crate::bucket_tz::bucket_timezone() {
+        crate::bucket_tz::BucketTimezone::Local => {
+            compute_active_time_by_client_for_day_with_timezone(intervals, day, &chrono::Local)
+        }
+        crate::bucket_tz::BucketTimezone::Named(tz) => {
+            compute_active_time_by_client_for_day_with_timezone(intervals, day, &tz)
+        }
+    }
+}
+
+fn compute_active_time_by_client_for_day_with_timezone<Tz>(
+    intervals: &[SessionInterval],
+    day: &str,
+    timezone: &Tz,
+) -> HashMap<String, i64>
+where
+    Tz: chrono::TimeZone,
+{
+    let Ok(date) = chrono::NaiveDate::parse_from_str(day, "%Y-%m-%d") else {
+        return HashMap::new();
+    };
+    let Some(day_start) = local_day_start(date, timezone) else {
+        return HashMap::new();
+    };
+    let Some(next_day_start) = date
+        .succ_opt()
+        .and_then(|next| local_day_start(next, timezone))
+    else {
+        return HashMap::new();
+    };
+
+    // Collect each client's active spans that land inside the day. A client often
+    // runs several sessions at once (a main session plus its subagents), so summing
+    // per-session durations would double-count overlapping wall-clock time and can
+    // exceed 24h. Instead union each client's spans and measure the covered time.
+    let mut spans_by_client: HashMap<String, Vec<(i64, i64)>> = HashMap::new();
+    for interval in intervals {
+        if interval.active_duration_ms <= 0 {
+            continue;
+        }
+        let start = interval.start_ts.max(day_start);
+        let end = interval.end_ts.min(next_day_start);
+        if end <= start {
+            continue;
+        }
+        spans_by_client
+            .entry(interval.client.clone())
+            .or_default()
+            .push((start, end));
+    }
+
+    spans_by_client
+        .into_iter()
+        .map(|(client, mut spans)| {
+            spans.sort_unstable_by_key(|&(start, _)| start);
+            let mut covered = 0i64;
+            let (mut cur_start, mut cur_end) = spans[0];
+            for &(start, end) in spans.iter().skip(1) {
+                if start <= cur_end {
+                    cur_end = cur_end.max(end);
+                } else {
+                    covered += cur_end - cur_start;
+                    (cur_start, cur_end) = (start, end);
+                }
+            }
+            covered += cur_end - cur_start;
+            (client, covered)
+        })
+        .collect()
+}
+
+fn local_date<Tz>(timestamp_ms: i64, timezone: &Tz) -> Option<chrono::NaiveDate>
+where
+    Tz: chrono::TimeZone,
+{
+    timezone
+        .timestamp_millis_opt(timestamp_ms)
+        .single()
+        .map(|datetime| datetime.date_naive())
+}
+
+fn local_day_start<Tz>(date: chrono::NaiveDate, timezone: &Tz) -> Option<i64>
+where
+    Tz: chrono::TimeZone,
+{
+    let midnight = date.and_time(chrono::NaiveTime::MIN);
+    match timezone.from_local_datetime(&midnight) {
+        chrono::LocalResult::Single(datetime) => Some(datetime.timestamp_millis()),
+        chrono::LocalResult::Ambiguous(earliest, _) => Some(earliest.timestamp_millis()),
+        chrono::LocalResult::None => None,
+    }
+}
+
