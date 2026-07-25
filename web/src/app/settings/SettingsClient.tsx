@@ -2,10 +2,9 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "nextjs-toploader/app";
-import styled from "styled-components";
 import { KeyIcon } from "@/components/ui/Icons";
 import { deviceDisplayLabel } from "@/lib/devices/shared";
-import { formatNumber, formatCurrency } from "@/lib/utils";
+import { cn, formatNumber, formatCurrency } from "@/lib/utils";
 import { formatRelativeTime } from "@/lib/format";
 
 interface User {
@@ -59,444 +58,228 @@ function validateDeviceName(name: string): string | null {
 }
 
 // ============================================================================
-// Shared styled components
+// Shared UI primitives
 // ============================================================================
+//
+// These were styled-components. `tw` keeps the same ergonomics — a named
+// element with baked-in classes that still forwards every DOM prop — so the
+// markup below is unchanged.
+//
+// Colours come from the shared palette, with two deliberate exceptions:
+// --danger and --success are semantic colours carrying meaning, not neutrals
+// that drifted, and shadcn's --destructive is a visibly softer red (#C84941
+// against #B42318 in light), so folding them into it would restyle every
+// destructive control on the page.
 
-const PageWrapper = styled.div`
-  min-height: calc(100dvh - 56px);
-  display: flex;
-  flex-direction: column;
-  background: var(--background);
-  color: var(--foreground);
-`;
+function tw<T extends keyof React.JSX.IntrinsicElements>(Tag: T, base: string) {
+  const Component = ({
+    className,
+    ...props
+  }: React.ComponentPropsWithoutRef<T>) => {
+    const Element = Tag as React.ElementType;
+    return <Element className={cn(base, className)} {...props} />;
+  };
+  Component.displayName = `tw(${String(Tag)})`;
+  return Component;
+}
+
+const PageWrapper = tw(
+  "div",
+  "flex min-h-[calc(100dvh-56px)] flex-col bg-background text-foreground"
+);
 
 // Matches `CONTAINER` in components/layout/Container.tsx — every other route
 // lays out at 1200px with the same gutters, and a narrower Settings page reads
 // as a different site.
-const MainContent = styled.main`
-  flex: 1;
-  width: 100%;
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 40px 16px 96px;
+const MainContent = tw(
+  "main",
+  "mx-auto w-full max-w-[1200px] flex-1 px-4 pb-24 pt-10 sm:px-6 sm:pt-14"
+);
 
-  @media (min-width: 640px) {
-    padding: 56px 24px 96px;
-  }
-`;
-
-const LoadingMain = styled.main`
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-`;
+const LoadingMain = tw("main", "flex flex-1 items-center justify-center");
 
 // Mirrors PageHeader: 2xl/3xl semibold, not a one-off 1.75rem bold.
-const Title = styled.h1`
-  margin: 0;
-  color: var(--foreground);
-  font-size: 1.5rem;
-  font-weight: 600;
-  letter-spacing: -0.025em;
-
-  @media (min-width: 640px) {
-    font-size: 1.875rem;
-  }
-`;
+const Title = tw(
+  "h1",
+  "text-2xl font-semibold tracking-tight text-foreground sm:text-3xl"
+);
 
 // PageHeader's description: muted *foreground*, relaxed leading, and the same
 // separator gap the other routes put between the header and the first section.
-const Subtitle = styled.p`
-  margin: 6px 0 28px;
-  color: var(--muted-foreground);
-  font-size: 0.875rem;
-  line-height: 1.625;
-  max-width: 72ch;
-`;
+const Subtitle = tw(
+  "p",
+  "mb-7 mt-1.5 max-w-[72ch] text-sm leading-relaxed text-muted-foreground"
+);
 
-const Section = styled.section`
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--surface);
-  padding: 24px;
-  margin-bottom: 24px;
-`;
+const Section = tw("section", "mb-6 rounded-xl border bg-card p-6");
+const SectionTitle = tw("h2", "mb-4 text-lg font-semibold");
+const ProfileWrapper = tw("div", "flex items-center gap-4");
+const ProfileText = tw("p", "font-medium");
+const SmallText = tw("p", "text-sm");
+const CodeText = tw("code", "rounded px-1 py-0.5 text-xs");
+const Description = tw("p", "mb-4 text-sm");
+const FieldLabel = tw("label", "mb-2 block text-[13px] font-semibold");
 
-const SectionTitle = styled.h2`
-  font-size: 18px;
-  font-weight: 600;
-  margin-bottom: 16px;
-`;
+const ActionRow = tw(
+  "div",
+  "mb-4 grid grid-cols-[1fr_auto] gap-3 max-[560px]:grid-cols-1"
+);
 
-const ProfileWrapper = styled.div`
-  display: flex;
-  align-items: center;
-  gap: 16px;
-`;
+const TextInput = tw(
+  "input",
+  "h-10 rounded-md border bg-background px-3 text-sm text-foreground"
+);
 
-const ProfileText = styled.p`
-  font-weight: 500;
-`;
+const PrimaryButton = tw(
+  "button",
+  "h-10 cursor-pointer rounded-md border border-primary bg-primary px-3.5 text-sm font-semibold text-primary-foreground transition-opacity duration-150 disabled:cursor-not-allowed disabled:opacity-60"
+);
 
-const SmallText = styled.p`
-  font-size: 14px;
-`;
+const TokenReveal = tw(
+  "div",
+  "mb-4 rounded-md border border-[var(--success)] bg-[color-mix(in_srgb,var(--success)_8%,transparent)] p-3"
+);
 
-const CodeText = styled.code`
-  padding: 2px 4px;
-  border-radius: 4px;
-  font-size: 12px;
-`;
+const TokenCodeRow = tw(
+  "div",
+  "mt-2 grid grid-cols-[minmax(0,1fr)_auto] gap-2 max-[560px]:grid-cols-1"
+);
 
-const Description = styled.p`
-  font-size: 14px;
-  margin-bottom: 16px;
-`;
+const TokenCode = tw(
+  "code",
+  "block overflow-x-auto whitespace-nowrap rounded-md bg-background px-3 py-2.5 text-[13px]"
+);
 
-const FieldLabel = styled.label`
-  display: block;
-  font-size: 13px;
-  font-weight: 600;
-  margin-bottom: 8px;
-`;
+const SecondaryButton = tw(
+  "button",
+  "h-[38px] cursor-pointer rounded-md border bg-background px-3 text-[13px] font-semibold text-foreground"
+);
 
-const ActionRow = styled.div`
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 12px;
-  margin-bottom: 16px;
+const ErrorText = tw("p", "-mt-1 mb-4 text-[13px] text-[var(--danger)]");
+const EmptyState = tw("div", "py-8 text-center");
+const EmptyIcon = tw("div", "mx-auto mb-3 opacity-50");
+const EmptyText = tw("p", "mt-2 text-sm");
+const TokenList = tw("div", "flex flex-col gap-3");
 
-  @media (max-width: 560px) {
-    grid-template-columns: 1fr;
-  }
-`;
+const TokenItem = tw(
+  "div",
+  "flex items-center justify-between rounded-xl border bg-muted p-4"
+);
 
-const TextInput = styled.input`
-  height: 40px;
-  padding: 0 12px;
-  border-radius: 6px;
-  border: 1px solid var(--color-border-default);
-  background: var(--color-bg-default);
-  color: var(--color-fg-default);
-  font-size: 14px;
-`;
+const TokenInfo = tw("div", "flex items-center gap-3");
+const IconWrapper = tw("div", "text-muted-foreground");
 
-const PrimaryButton = styled.button`
-  height: 40px;
-  padding: 0 14px;
-  border-radius: 6px;
-  border: 1px solid var(--color-accent-fg);
-  background: var(--service-accent);
-  color: var(--service-accent-foreground);
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: opacity 150ms;
+const DeviceEditRow = tw(
+  "div",
+  "grid w-full grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2 max-[560px]:grid-cols-1"
+);
 
-  &:disabled {
-    cursor: not-allowed;
-    opacity: 0.6;
-  }
-`;
+const DangerButton = tw(
+  "button",
+  "cursor-pointer rounded-md border border-[var(--danger)] bg-transparent px-3 py-1 text-xs font-medium text-[var(--danger)] transition-all duration-150 hover:bg-[var(--danger-solid)] hover:text-white"
+);
 
-const TokenReveal = styled.div`
-  padding: 12px;
-  border-radius: 6px;
-  border: 1px solid var(--color-success-fg);
-  background: color-mix(in srgb, var(--success) 8%, transparent);
-  margin-bottom: 16px;
-`;
+const InfoBanner = tw(
+  "div",
+  "rounded-md border bg-muted px-4 py-3 text-sm text-muted-foreground"
+);
 
-const TokenCodeRow = styled.div`
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
-  margin-top: 8px;
+const AvatarImg = tw(
+  "img",
+  "flex-shrink-0 rounded-md object-cover ring-1 ring-border"
+);
 
-  @media (max-width: 560px) {
-    grid-template-columns: 1fr;
-  }
-`;
-
-const TokenCode = styled.code`
-  display: block;
-  overflow-x: auto;
-  white-space: nowrap;
-  padding: 10px 12px;
-  border-radius: 6px;
-  background: var(--color-bg-default);
-  font-size: 13px;
-`;
-
-const SecondaryButton = styled.button`
-  height: 38px;
-  padding: 0 12px;
-  border-radius: 6px;
-  border: 1px solid var(--color-border-default);
-  background: var(--color-bg-default);
-  color: var(--color-fg-default);
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-`;
-
-const ErrorText = styled.p`
-  color: var(--danger);
-  font-size: 13px;
-  margin: -4px 0 16px;
-`;
-
-const EmptyState = styled.div`
-  padding: 32px 0;
-  text-align: center;
-`;
-
-const EmptyIcon = styled.div`
-  margin: 0 auto 12px;
-  opacity: 0.5;
-`;
-
-const EmptyText = styled.p`
-  font-size: 14px;
-  margin-top: 8px;
-`;
-
-const TokenList = styled.div`
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-`;
-
-const TokenItem = styled.div`
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 16px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--surface-secondary);
-`;
-
-const TokenInfo = styled.div`
-  display: flex;
-  align-items: center;
-  gap: 12px;
-`;
-
-const IconWrapper = styled.div`
-  color: var(--color-fg-muted);
-`;
-
-const DeviceEditRow = styled.div`
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  gap: 8px;
-  align-items: center;
-  width: 100%;
-
-  @media (max-width: 560px) {
-    grid-template-columns: 1fr;
-  }
-`;
-
-
-const DangerButton = styled.button`
-  padding: 4px 12px;
-  font-size: 12px;
-  font-weight: 500;
-  border-radius: 6px;
-  border: 1px solid var(--danger);
-  background: transparent;
-  color: var(--danger);
-  cursor: pointer;
-  transition: all 150ms;
-  &:hover { background: var(--danger-solid); color: #fff; }
-`;
-
-const InfoBanner = styled.div`
-  padding: 12px 16px;
-  border-radius: 6px;
-  border: 1px solid var(--color-border-default);
-  background: var(--color-bg-subtle);
-  color: var(--color-fg-muted);
-  font-size: 14px;
-`;
-
-const AvatarImg = styled.img`
-  border-radius: 6px;
-  object-fit: cover;
-  flex-shrink: 0;
-  box-shadow: 0 0 0 1px var(--border);
-`;
-
-const TokenName = styled.p`
-  font-weight: 500;
-`;
+const TokenName = tw("p", "font-medium");
 
 // ============================================================================
-// Danger Zone styled components
+// Danger Zone
 // ============================================================================
 
-const DangerSection = styled(Section)`
-  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
-`;
+const DangerSection = tw(
+  "section",
+  "mb-6 rounded-xl border border-[color-mix(in_srgb,var(--danger)_40%,transparent)] bg-card p-6"
+);
 
-const DangerSectionTitle = styled(SectionTitle)`
-  color: var(--danger);
-`;
+const DangerSectionTitle = tw(
+  "h2",
+  "mb-4 text-lg font-semibold text-[var(--danger)]"
+);
 
-const DangerActionRow = styled.div`
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 16px 0;
+const DangerActionRow = tw(
+  "div",
+  "flex items-center justify-between gap-4 py-4 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-border"
+);
 
-  &:not(:last-child) {
-    border-bottom: 1px solid var(--color-border-default);
-  }
-`;
+const DangerActionInfo = tw("div", "min-w-0 flex-1");
+const DangerActionTitle = tw("p", "mb-1 text-sm font-medium text-foreground");
+const DangerActionDescription = tw("p", "text-[13px] text-muted-foreground");
 
-const DangerActionInfo = styled.div`
-  flex: 1;
-  min-width: 0;
-`;
-
-const DangerActionTitle = styled.p`
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--color-fg-default);
-  margin-bottom: 4px;
-`;
-
-const DangerActionDescription = styled.p`
-  font-size: 13px;
-  color: var(--color-fg-muted);
-`;
-
-const DangerActionButton = styled(DangerButton)`
-  flex-shrink: 0;
-  padding: 6px 16px;
-  font-size: 13px;
-`;
+const DangerActionButton = tw(
+  "button",
+  "flex-shrink-0 cursor-pointer rounded-md border border-[var(--danger)] bg-transparent px-4 py-1.5 text-[13px] font-medium text-[var(--danger)] transition-all duration-150 hover:bg-[var(--danger-solid)] hover:text-white"
+);
 
 // ============================================================================
-// Confirmation modal styled components
+// Confirmation modal
 // ============================================================================
 
-const ModalOverlay = styled.div`
-  position: fixed;
-  inset: 0;
-  z-index: 1000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(0, 0, 0, 0.6);
-  backdrop-filter: blur(4px);
-`;
+const ModalOverlay = tw(
+  "div",
+  "fixed inset-0 z-[1000] flex items-center justify-center bg-black/60 backdrop-blur-[4px]"
+);
 
-const ModalCard = styled.div`
-  background: var(--color-bg-default);
-  border: 1px solid var(--color-border-default);
-  border-radius: 16px;
-  padding: 24px;
-  max-width: 480px;
-  width: calc(100% - 32px);
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.35);
-`;
+const ModalCard = tw(
+  "div",
+  "w-[calc(100%-32px)] max-w-[480px] rounded-2xl border bg-background p-6 shadow-[0_16px_48px_rgba(0,0,0,0.35)]"
+);
 
-const ModalTitle = styled.h3`
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--danger);
-  margin-bottom: 12px;
-`;
+const ModalTitle = tw("h3", "mb-3 text-base font-semibold text-[var(--danger)]");
+const ModalBody = tw("p", "mb-5 text-sm leading-normal text-muted-foreground");
 
-const ModalBody = styled.p`
-  font-size: 14px;
-  color: var(--color-fg-muted);
-  line-height: 1.5;
-  margin-bottom: 20px;
-`;
+const ModalBulletList = tw(
+  "ul",
+  "mb-5 list-disc pl-5 text-sm leading-relaxed text-muted-foreground"
+);
 
-const ModalBulletList = styled.ul`
-  list-style: disc;
-  padding-left: 20px;
-  margin-bottom: 20px;
-  color: var(--color-fg-muted);
-  font-size: 14px;
-  line-height: 1.6;
-`;
+const ModalInput = tw(
+  "input",
+  "mb-4 box-border w-full rounded-md border bg-muted px-3 py-2 text-sm text-foreground outline-none focus:border-[var(--danger)] focus:shadow-[0_0_0_2px_color-mix(in_srgb,var(--danger)_20%,transparent)]"
+);
 
-const ModalInput = styled.input`
-  width: 100%;
-  padding: 8px 12px;
-  border-radius: 6px;
-  border: 1px solid var(--color-border-default);
-  background: var(--color-bg-subtle);
-  color: var(--color-fg-default);
-  font-size: 14px;
-  margin-bottom: 16px;
-  outline: none;
-  box-sizing: border-box;
-  &:focus {
-    border-color: var(--danger);
-    box-shadow: 0 0 0 2px
-      color-mix(in srgb, var(--danger) 20%, transparent);
-  }
-`;
+const ModalActions = tw("div", "flex justify-end gap-2");
 
-const ModalActions = styled.div`
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-`;
+const CancelButton = tw(
+  "button",
+  "cursor-pointer rounded-md border bg-transparent px-4 py-1.5 text-[13px] font-medium text-foreground transition-all duration-150 hover:bg-muted"
+);
 
-const CancelButton = styled.button`
-  padding: 6px 16px;
-  font-size: 13px;
-  font-weight: 500;
-  border-radius: 6px;
-  border: 1px solid var(--color-border-default);
-  background: transparent;
-  color: var(--color-fg-default);
-  cursor: pointer;
-  transition: all 150ms;
-  &:hover {
-    background: var(--color-bg-subtle);
-  }
-`;
+const ConfirmDangerButton = ({
+  $disabled,
+  className,
+  ...props
+}: React.ComponentPropsWithoutRef<"button"> & { $disabled?: boolean }) => (
+  <button
+    {...props}
+    className={cn(
+      "rounded-md border border-[var(--danger)] px-4 py-1.5 text-[13px] font-medium transition-all duration-150",
+      $disabled
+        ? "cursor-not-allowed bg-transparent text-[var(--danger)] opacity-50"
+        : "cursor-pointer bg-[var(--danger-solid)] text-white hover:bg-[#8f1d14]",
+      className
+    )}
+  />
+);
 
-const ConfirmDangerButton = styled.button<{ $disabled?: boolean }>`
-  padding: 6px 16px;
-  font-size: 13px;
-  font-weight: 500;
-  border-radius: 6px;
-  border: 1px solid var(--danger);
-  background: ${({ $disabled }) => ($disabled ? "transparent" : "var(--danger-solid)")};
-  color: ${({ $disabled }) => ($disabled ? "var(--danger)" : "#fff")};
-  cursor: ${({ $disabled }) => ($disabled ? "not-allowed" : "pointer")};
-  opacity: ${({ $disabled }) => ($disabled ? 0.5 : 1)};
-  transition: all 150ms;
-  &:hover {
-    background: ${({ $disabled }) => ($disabled ? "transparent" : "#8f1d14")};
-  }
-`;
+const StepIndicator = tw("div", "mb-4 flex gap-1.5");
 
-const StepIndicator = styled.div`
-  display: flex;
-  gap: 6px;
-  margin-bottom: 16px;
-`;
-
-const StepDot = styled.div<{ $active: boolean }>`
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: ${({ $active }) => ($active ? "var(--danger)" : "var(--color-border-default)")};
-  transition: background 150ms;
-`;
+const StepDot = ({ $active }: { $active: boolean }) => (
+  <div
+    className={cn(
+      "size-1.5 rounded-full transition-colors duration-150",
+      $active ? "bg-[var(--danger)]" : "bg-border"
+    )}
+  />
+);
 
 // ============================================================================
 // Confirmation modal component
@@ -908,9 +691,9 @@ export default function SettingsClient() {
 
   if (isLoading) {
     return (
-      <PageWrapper style={{ backgroundColor: "var(--color-bg-default)" }}>
+      <PageWrapper style={{ backgroundColor: "var(--background)" }}>
         <LoadingMain>
-          <div style={{ color: "var(--color-fg-muted)" }}>Loading...</div>
+          <div style={{ color: "var(--muted-foreground)" }}>Loading...</div>
         </LoadingMain>
       </PageWrapper>
     );
@@ -921,15 +704,15 @@ export default function SettingsClient() {
   }
 
   return (
-    <PageWrapper style={{ backgroundColor: "var(--color-bg-default)" }}>
+    <PageWrapper style={{ backgroundColor: "var(--background)" }}>
       <MainContent>
-        <Title style={{ color: "var(--color-fg-default)" }}>
+        <Title style={{ color: "var(--foreground)" }}>
           Settings
         </Title>
         <Subtitle>Manage your profile, API tokens, devices, and submitted data.</Subtitle>
 
         <Section>
-          <SectionTitle style={{ color: "var(--color-fg-default)" }}>
+          <SectionTitle style={{ color: "var(--foreground)" }}>
             Profile
           </SectionTitle>
           <ProfileWrapper>
@@ -940,14 +723,14 @@ export default function SettingsClient() {
               height={64}
             />
             <div>
-              <ProfileText style={{ color: "var(--color-fg-default)" }}>
+              <ProfileText style={{ color: "var(--foreground)" }}>
                 {user.displayName || user.username}
               </ProfileText>
-              <SmallText style={{ color: "var(--color-fg-muted)" }}>
+              <SmallText style={{ color: "var(--muted-foreground)" }}>
                 @{user.username}
               </SmallText>
               {user.email && (
-                <SmallText style={{ color: "var(--color-fg-muted)" }}>
+                <SmallText style={{ color: "var(--muted-foreground)" }}>
                   {user.email}
                 </SmallText>
               )}
@@ -959,13 +742,13 @@ export default function SettingsClient() {
         </Section>
 
         <Section>
-          <SectionTitle style={{ color: "var(--color-fg-default)" }}>
+          <SectionTitle style={{ color: "var(--foreground)" }}>
             API Tokens
           </SectionTitle>
-          <Description style={{ color: "var(--color-fg-muted)" }}>
+          <Description style={{ color: "var(--muted-foreground)" }}>
             Create a token for CI or use one generated by{" "}
             <CodeText
-              style={{ backgroundColor: "var(--color-bg-subtle)" }}
+              style={{ backgroundColor: "var(--muted)" }}
             >
               tokens login
             </CodeText>{" "}
@@ -974,7 +757,7 @@ export default function SettingsClient() {
 
           <FieldLabel
             htmlFor="token-name"
-            style={{ color: "var(--color-fg-default)" }}
+            style={{ color: "var(--foreground)" }}
           >
             Token name
           </FieldLabel>
@@ -998,11 +781,11 @@ export default function SettingsClient() {
 
           {createdToken && (
             <TokenReveal>
-              <SmallText style={{ color: "var(--color-fg-default)", fontWeight: 600 }}>
+              <SmallText style={{ color: "var(--foreground)", fontWeight: 600 }}>
                 Copy this token now. It will not be shown again.
               </SmallText>
               <TokenCodeRow>
-                <TokenCode style={{ color: "var(--color-fg-default)" }}>
+                <TokenCode style={{ color: "var(--foreground)" }}>
                   {createdToken.token}
                 </TokenCode>
                 <SecondaryButton type="button" onClick={handleCopyCreatedToken}>
@@ -1013,7 +796,7 @@ export default function SettingsClient() {
           )}
 
           {tokens.length === 0 ? (
-            <EmptyState style={{ color: "var(--color-fg-muted)" }}>
+            <EmptyState style={{ color: "var(--muted-foreground)" }}>
               <EmptyIcon>
                 <KeyIcon size={32} />
               </EmptyIcon>
@@ -1021,7 +804,7 @@ export default function SettingsClient() {
               <EmptyText>
                 Create one here or run{" "}
                 <CodeText
-                  style={{ backgroundColor: "var(--color-bg-subtle)" }}
+                  style={{ backgroundColor: "var(--muted)" }}
                 >
                   tokens login
                 </CodeText>{" "}
@@ -1037,10 +820,10 @@ export default function SettingsClient() {
                       <KeyIcon size={20} />
                     </IconWrapper>
                     <div>
-                      <TokenName style={{ color: "var(--color-fg-default)" }}>
+                      <TokenName style={{ color: "var(--foreground)" }}>
                         {token.name}
                       </TokenName>
-                      <SmallText style={{ color: "var(--color-fg-muted)" }}>
+                      <SmallText style={{ color: "var(--muted-foreground)" }}>
                         Created {new Date(token.createdAt).toLocaleDateString()}
                         {token.lastUsedAt && (
                           <> - Last used {new Date(token.lastUsedAt).toLocaleDateString()}</>
@@ -1060,10 +843,10 @@ export default function SettingsClient() {
         </Section>
 
         <Section>
-          <SectionTitle style={{ color: "var(--color-fg-default)" }}>
+          <SectionTitle style={{ color: "var(--foreground)" }}>
             Devices
           </SectionTitle>
-          <Description style={{ color: "var(--color-fg-muted)" }}>
+          <Description style={{ color: "var(--muted-foreground)" }}>
             Machines that have submitted usage data. Rename a device to tell
             your machines apart — the name is shown on your public profile.
           </Description>
@@ -1071,12 +854,12 @@ export default function SettingsClient() {
           {deviceError && <ErrorText>{deviceError}</ErrorText>}
 
           {devices.length === 0 ? (
-            <EmptyState style={{ color: "var(--color-fg-muted)" }}>
+            <EmptyState style={{ color: "var(--muted-foreground)" }}>
               <p>No devices yet.</p>
               <EmptyText>
                 Run{" "}
                 <CodeText
-                  style={{ backgroundColor: "var(--color-bg-subtle)" }}
+                  style={{ backgroundColor: "var(--muted)" }}
                 >
                   bunx tokens-cli submit
                 </CodeText>{" "}
@@ -1127,10 +910,10 @@ export default function SettingsClient() {
                     <>
                       <TokenInfo>
                         <div>
-                          <TokenName style={{ color: "var(--color-fg-default)" }}>
+                          <TokenName style={{ color: "var(--foreground)" }}>
                             {device.displayName}
                           </TokenName>
-                          <SmallText style={{ color: "var(--color-fg-muted)" }}>
+                          <SmallText style={{ color: "var(--muted-foreground)" }}>
                             {formatNumber(device.totalTokens)} tokens
                             {" · "}
                             {formatCurrency(device.totalCost)}
