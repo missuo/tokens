@@ -1,617 +1,232 @@
 name: Publish
-run-name: "${{ format('release {0}', inputs.version || inputs.bump) }}"
+
+run-name: "release ${{ inputs.version }}"
+
+# Build the CLI for every platform, then publish it to npm and to a GitHub
+# Release. That is the whole pipeline.
+#
+# The previous version of this file had seven jobs and eight helper scripts,
+# most of them gates checking the release *process* rather than the artifact.
+# Across five attempts at 27.0.0 all eight targets compiled every single time,
+# and four of the five failures were gates rejecting the pipeline's own shape:
+# a meta-check asserting a job existed, a smoke test demanding a sidecar from a
+# deleted feature, the same smoke test passing a deleted flag, and a provenance
+# check refusing a tag that pointed one commit behind HEAD. None of them ever
+# caught a broken binary.
+#
+# Version coherence is not checked here because it cannot drift: set-version.sh
+# writes the Cargo workspace, the launcher and all eight platform packages from
+# one argument in one pass.
 
 on:
   workflow_dispatch:
     inputs:
-      bump:
-        description: "Version bump type"
-        required: true
-        type: choice
-        default: "patch (x.x.X)"
-        options:
-          - "patch (x.x.X)"
-          - "minor (x.X.0)"
-          - "major (X.0.0)"
       version:
-        description: "Override version (e.g., 2.0.0-beta.1). Takes precedence over bump."
-        required: false
+        description: "Version to release, without the leading v (e.g. 27.1.0)"
+        required: true
         type: string
-      recovery:
-        description: "Retry publishing an already committed release version. Requires version."
-        required: false
-        type: boolean
-        default: false
 
 permissions:
   contents: write
-  pull-requests: read
 
 env:
-  MACOSX_DEPLOYMENT_TARGET: "10.13"
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
+  MACOSX_DEPLOYMENT_TARGET: "10.13"
 
 jobs:
-  bump-versions:
-    name: Bump versions
-    runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.bump.outputs.version }}
-      base_version: ${{ steps.bump.outputs.base_version }}
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Check release workflow safety
-        run: python3 scripts/check-release-workflow-safety.py
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Calculate version
-        id: bump
-        env:
-          RELEASE_BUMP: ${{ inputs.bump }}
-          RELEASE_VERSION: ${{ inputs.version }}
-          RELEASE_RECOVERY: ${{ inputs.recovery }}
-        run: |
-          CURRENT_VERSION=$(jq -r '.version' packages/cli/package.json)
-          echo "📦 Current version: $CURRENT_VERSION"
-
-          VERSION_FILE="$(mktemp)"
-          RELEASE_VERSION_FILE="$VERSION_FILE" bash scripts/calculate-release-version.sh
-          NEW_VERSION="$(cat "$VERSION_FILE")"
-          rm -f "$VERSION_FILE"
-
-          if [ -n "$RELEASE_VERSION" ]; then
-            echo "📌 Using override version: $NEW_VERSION"
-          else
-            echo "🎯 Bump type: $RELEASE_BUMP"
-          fi
-          echo "🚀 New version: $NEW_VERSION"
-
-          jq --arg v "$NEW_VERSION" '.version = $v
-            | .optionalDependencies = ((.optionalDependencies // {}) | with_entries(.value = $v))' packages/cli/package.json > tmp.json && mv tmp.json packages/cli/package.json
-          echo "✅ Updated packages/cli/package.json"
-
-          for pkg in \
-            cli-darwin-arm64 \
-            cli-darwin-x64 \
-            cli-linux-x64-gnu \
-            cli-linux-x64-musl \
-            cli-linux-arm64-gnu \
-            cli-linux-arm64-musl \
-            cli-win32-x64-msvc \
-            cli-win32-arm64-msvc; do
-            jq --arg v "$NEW_VERSION" '.version = $v' "packages/$pkg/package.json" > tmp.json && mv tmp.json "packages/$pkg/package.json"
-            echo "✅ Updated packages/$pkg/package.json"
-          done
-
-          python3 - <<'PY' "$NEW_VERSION"
-          import pathlib
-          import re
-          import sys
-
-          new_version = sys.argv[1]
-          path = pathlib.Path("cli/Cargo.toml")
-          content = path.read_text()
-          updated, count = re.subn(
-              r'(\[workspace\.package\](?:(?!^\[).|\n)*?^version = ")([^"]+)(")',
-              rf"\g<1>{new_version}\g<3>",
-              content,
-              count=1,
-              flags=re.MULTILINE,
-          )
-          if count != 1:
-              raise SystemExit("Failed to update [workspace.package] version in Cargo.toml")
-          path.write_text(updated)
-          PY
-          echo "✅ Updated Cargo.toml workspace version"
-
-          # Not --offline: a fresh runner has no crates.io index cached, and
-          # --workspace only re-pins the workspace members' own versions, so
-          # letting cargo read the index here does not touch other deps.
-          cargo update --manifest-path cli/Cargo.toml --workspace
-          echo "✅ Updated Cargo.lock workspace package versions"
-
-          echo ""
-          echo "📋 Verification:"
-          echo "  Rust workspace:  $(python3 - <<'PY'
-          import pathlib, re
-          content = pathlib.Path('cli/Cargo.toml').read_text()
-          match = re.search(r'\[workspace\.package\](?:(?!^\[).|\n)*?^version = "([^"]+)"', content, re.MULTILINE)
-          print(match.group(1) if match else 'missing')
-          PY
-          )"
-          echo "  tokens-cli:   $(jq -r '.version' packages/cli/package.json)"
-          echo "  cli -> darwin arm64: $(jq -r '.optionalDependencies["tokens-cli-darwin-arm64"]' packages/cli/package.json)"
-          echo "  Platform packages:"
-          for pkg in cli-darwin-arm64 cli-darwin-x64 cli-linux-x64-gnu cli-linux-x64-musl cli-linux-arm64-gnu cli-linux-arm64-musl cli-win32-x64-msvc cli-win32-arm64-msvc; do
-            echo "    $pkg: $(jq -r '.version' "packages/$pkg/package.json")"
-          done
-
-          bash scripts/check-version-coherence.sh --expect-version "$NEW_VERSION"
-
-          echo "version=$NEW_VERSION" >> $GITHUB_OUTPUT
-          echo "📝 Version bump prepared (will commit after successful publish)"
-
-      - name: Upload bumped manifest files
-        uses: actions/upload-artifact@v7
-        with:
-          name: bumped-manifests
-          path: |
-            cli/Cargo.toml
-            cli/Cargo.lock
-            packages/cli/package.json
-            packages/cli-darwin-arm64/package.json
-            packages/cli-darwin-x64/package.json
-            packages/cli-linux-x64-gnu/package.json
-            packages/cli-linux-x64-musl/package.json
-            packages/cli-linux-arm64-gnu/package.json
-            packages/cli-linux-arm64-musl/package.json
-            packages/cli-win32-x64-msvc/package.json
-            packages/cli-win32-arm64-msvc/package.json
-          retention-days: 1
-
-  build-cli-binary:
-    name: Build CLI binary - ${{ matrix.settings.target }}
-    needs: bump-versions
-    runs-on: ${{ matrix.settings.host }}
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
     strategy:
-      fail-fast: false
+      # One broken target means a release that cannot be published, so stop the
+      # rest instead of burning 40 runner-minutes to arrive at the same answer.
+      fail-fast: true
       matrix:
-        settings:
-          - host: macos-latest
-            target: x86_64-apple-darwin
-            package_dir: cli-darwin-x64
-            artifact_name: cli-binary-x86_64-apple-darwin
-            bin_name: tokens
-            build: cargo build --release --manifest-path cli/Cargo.toml -p tokens-cli --target x86_64-apple-darwin
-            strip: strip -x cli/target/x86_64-apple-darwin/release/tokens
-          # Apple Silicon ships with the optional on-device Foundation Models
-          # report summarizer. The macOS 26 runner provides the required SDK
-          # and Swift toolchain; older systems still launch because the sidecar
-          # dylib is loaded lazily only when the feature is used.
-          - host: macos-26
-            target: aarch64-apple-darwin
-            package_dir: cli-darwin-arm64
-            artifact_name: cli-binary-aarch64-apple-darwin
-            bin_name: tokens
-            build: cargo build --release --manifest-path cli/Cargo.toml -p tokens-cli --target aarch64-apple-darwin
-            strip: strip -x cli/target/aarch64-apple-darwin/release/tokens
-          - host: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            package_dir: cli-linux-x64-gnu
-            artifact_name: cli-binary-x86_64-unknown-linux-gnu
-            bin_name: tokens
-            build: cargo zigbuild --release --manifest-path cli/Cargo.toml -p tokens-cli --target x86_64-unknown-linux-gnu
-            strip: strip cli/target/x86_64-unknown-linux-gnu/release/tokens
-          - host: ubuntu-latest
-            target: x86_64-unknown-linux-musl
-            package_dir: cli-linux-x64-musl
-            artifact_name: cli-binary-x86_64-unknown-linux-musl
-            bin_name: tokens
-            build: cargo zigbuild --release --manifest-path cli/Cargo.toml -p tokens-cli --target x86_64-unknown-linux-musl
-            strip: strip cli/target/x86_64-unknown-linux-musl/release/tokens
-          - host: ubuntu-latest
-            target: aarch64-unknown-linux-gnu
-            package_dir: cli-linux-arm64-gnu
-            artifact_name: cli-binary-aarch64-unknown-linux-gnu
-            bin_name: tokens
-            build: cargo zigbuild --release --manifest-path cli/Cargo.toml -p tokens-cli --target aarch64-unknown-linux-gnu
-            strip: aarch64-linux-gnu-strip cli/target/aarch64-unknown-linux-gnu/release/tokens
-          - host: ubuntu-latest
-            target: aarch64-unknown-linux-musl
-            package_dir: cli-linux-arm64-musl
-            artifact_name: cli-binary-aarch64-unknown-linux-musl
-            bin_name: tokens
-            build: cargo zigbuild --release --manifest-path cli/Cargo.toml -p tokens-cli --target aarch64-unknown-linux-musl
-            strip: aarch64-linux-gnu-strip cli/target/aarch64-unknown-linux-musl/release/tokens
-          - host: windows-latest
-            target: x86_64-pc-windows-msvc
-            package_dir: cli-win32-x64-msvc
-            artifact_name: cli-binary-x86_64-pc-windows-msvc
-            bin_name: tokens.exe
-            build: cargo build --release --manifest-path cli/Cargo.toml -p tokens-cli --target x86_64-pc-windows-msvc
-            strip: ""
-          - host: windows-latest
-            target: aarch64-pc-windows-msvc
-            package_dir: cli-win32-arm64-msvc
-            artifact_name: cli-binary-aarch64-pc-windows-msvc
-            bin_name: tokens.exe
-            build: cargo build --release --manifest-path cli/Cargo.toml -p tokens-cli --target aarch64-pc-windows-msvc
-            strip: ""
+        include:
+          - { target: aarch64-apple-darwin,        os: macos-latest,   pkg: cli-darwin-arm64,     bin: tokens }
+          - { target: x86_64-apple-darwin,         os: macos-latest,   pkg: cli-darwin-x64,       bin: tokens }
+          - { target: x86_64-unknown-linux-gnu,    os: ubuntu-latest,  pkg: cli-linux-x64-gnu,    bin: tokens, zig: true }
+          - { target: x86_64-unknown-linux-musl,   os: ubuntu-latest,  pkg: cli-linux-x64-musl,   bin: tokens, zig: true }
+          - { target: aarch64-unknown-linux-gnu,   os: ubuntu-latest,  pkg: cli-linux-arm64-gnu,  bin: tokens, zig: true }
+          - { target: aarch64-unknown-linux-musl,  os: ubuntu-latest,  pkg: cli-linux-arm64-musl, bin: tokens, zig: true }
+          - { target: x86_64-pc-windows-msvc,      os: windows-latest, pkg: cli-win32-x64-msvc,   bin: tokens.exe }
+          - { target: aarch64-pc-windows-msvc,     os: windows-latest, pkg: cli-win32-arm64-msvc, bin: tokens.exe }
 
     steps:
       - uses: actions/checkout@v6
 
-      - name: Download bumped release files
-        uses: actions/download-artifact@v8
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          name: bumped-manifests
-          path: .
+          targets: ${{ matrix.target }}
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: 20
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.settings.target }}
-
-      - name: Cache cargo
-        uses: actions/cache@v5
+      - uses: actions/cache@v5
         with:
           path: |
-            ~/.cargo/bin/
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             cli/target/
-          key: cli-${{ matrix.settings.target }}-cargo-${{ matrix.settings.host }}-${{ hashFiles('cli/Cargo.lock') }}
-          # Every release the bump step rewrites the workspace version in
-          # Cargo.lock, so the exact key never matches a prior run. Fall back
-          # to the newest cache for this target so cargo only recompiles the
-          # bumped workspace crates (a quick relink) instead of all deps.
-          restore-keys: |
-            cli-${{ matrix.settings.target }}-cargo-${{ matrix.settings.host }}-
+          key: cli-${{ matrix.target }}-${{ hashFiles('cli/Cargo.lock') }}
+          restore-keys: cli-${{ matrix.target }}-
 
       - uses: mlugg/setup-zig@v2
-        if: ${{ contains(matrix.settings.target, 'linux') }}
+        if: matrix.zig
         with:
           version: 0.13.0
-
-      - name: Install cargo-zigbuild
-        uses: taiki-e/install-action@v2
-        if: ${{ contains(matrix.settings.target, 'linux') }}
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
+      - uses: taiki-e/install-action@v2
+        if: matrix.zig
         with:
           tool: cargo-zigbuild
 
-      - name: Build CLI binary
+      - name: Set version
         shell: bash
-        run: ${{ matrix.settings.build }}
+        run: bash scripts/set-version.sh "${{ inputs.version }}"
 
-      - name: Install cross-compilation strip tool
-        if: contains(matrix.settings.target, 'aarch64') && runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y binutils-aarch64-linux-gnu
-
-      - name: Strip CLI binary
-        if: ${{ matrix.settings.strip != '' }}
-        shell: bash
-        run: ${{ matrix.settings.strip }}
-
-      - name: Stage release artifact
+      - name: Build
         shell: bash
         run: |
-          mkdir -p dist
-          cp "cli/target/${{ matrix.settings.target }}/release/${{ matrix.settings.bin_name }}" dist/
-          ls -la dist
-
-      - name: Upload CLI binary artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: ${{ matrix.settings.artifact_name }}
-          path: dist
-          if-no-files-found: error
-
-  smoke-release-artifacts:
-    name: Smoke release artifacts
-    needs: [bump-versions, build-cli-binary]
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Download bumped release files
-        uses: actions/download-artifact@v8
-        with:
-          name: bumped-manifests
-          path: .
-
-      - name: Download CLI binary artifacts
-        uses: actions/download-artifact@v8
-        with:
-          pattern: cli-binary-*
-          path: release-artifacts
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.1.38
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: 20
-
-      - name: Install workspace dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Smoke release package artifacts
-        run: bash scripts/test-release-package-artifacts.sh
-
-  prepare-release-provenance:
-    name: Commit release provenance
-    needs: [bump-versions, build-cli-binary, smoke-release-artifacts]
-    runs-on: ubuntu-latest
-    outputs:
-      release_commit: ${{ steps.prepare.outputs.release_commit }}
-
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: ${{ github.sha }}
-          token: ${{ secrets.GITHUB_TOKEN }}
-          persist-credentials: true
-          fetch-depth: 0
-          fetch-tags: true
-
-      - name: Download bumped package.json files
-        uses: actions/download-artifact@v8
-        with:
-          name: bumped-manifests
-          path: .
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: 20
-          registry-url: https://registry.npmjs.org
-
-      - name: Configure Git
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-      - name: Check npm release state
-        env:
-          NEW_VERSION: ${{ needs.bump-versions.outputs.version }}
-          RELEASE_BASE_VERSION: ${{ needs.bump-versions.outputs.base_version }}
-          RELEASE_RECOVERY: ${{ inputs.recovery }}
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: bash scripts/check-npm-release-state.sh
-
-      - name: Commit and push release provenance
-        id: prepare
-        env:
-          NEW_VERSION: ${{ needs.bump-versions.outputs.version }}
-          RELEASE_REF_NAME: ${{ github.ref_name }}
-          RELEASE_REF_TYPE: ${{ github.ref_type }}
-          EXPECTED_RELEASE_BASE_SHA: ${{ github.sha }}
-          RELEASE_RECOVERY: ${{ inputs.recovery }}
-        run: bash scripts/prepare-release-provenance.sh
-
-  publish-platform-packages:
-    name: Publish platform package - ${{ matrix.settings.package_name }}
-    needs: [bump-versions, build-cli-binary, prepare-release-provenance]
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        settings:
-          - package_name: 'tokens-cli-darwin-x64'
-            package_dir: cli-darwin-x64
-            artifact_name: cli-binary-x86_64-apple-darwin
-            binary_name: tokens
-          - package_name: 'tokens-cli-darwin-arm64'
-            package_dir: cli-darwin-arm64
-            artifact_name: cli-binary-aarch64-apple-darwin
-            binary_name: tokens
-          - package_name: 'tokens-cli-linux-x64-gnu'
-            package_dir: cli-linux-x64-gnu
-            artifact_name: cli-binary-x86_64-unknown-linux-gnu
-            binary_name: tokens
-          - package_name: 'tokens-cli-linux-x64-musl'
-            package_dir: cli-linux-x64-musl
-            artifact_name: cli-binary-x86_64-unknown-linux-musl
-            binary_name: tokens
-          - package_name: 'tokens-cli-linux-arm64-gnu'
-            package_dir: cli-linux-arm64-gnu
-            artifact_name: cli-binary-aarch64-unknown-linux-gnu
-            binary_name: tokens
-          - package_name: 'tokens-cli-linux-arm64-musl'
-            package_dir: cli-linux-arm64-musl
-            artifact_name: cli-binary-aarch64-unknown-linux-musl
-            binary_name: tokens
-          - package_name: 'tokens-cli-win32-x64-msvc'
-            package_dir: cli-win32-x64-msvc
-            artifact_name: cli-binary-x86_64-pc-windows-msvc
-            binary_name: tokens.exe
-          - package_name: 'tokens-cli-win32-arm64-msvc'
-            package_dir: cli-win32-arm64-msvc
-            artifact_name: cli-binary-aarch64-pc-windows-msvc
-            binary_name: tokens.exe
-
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: ${{ needs.prepare-release-provenance.outputs.release_commit }}
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.1.38
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: 20
-          registry-url: https://registry.npmjs.org
-
-      - name: Download CLI binary artifact
-        uses: actions/download-artifact@v8
-        with:
-          name: ${{ matrix.settings.artifact_name }}
-          path: artifacts/${{ matrix.settings.package_dir }}
-
-      - name: Prepare package binary
-        shell: bash
-        run: |
-          mkdir -p "packages/${{ matrix.settings.package_dir }}/bin"
-          cp "artifacts/${{ matrix.settings.package_dir }}/${{ matrix.settings.binary_name }}" "packages/${{ matrix.settings.package_dir }}/bin/${{ matrix.settings.binary_name }}"
-          if [ "${{ matrix.settings.binary_name }}" = "tokens" ]; then
-            chmod +x "packages/${{ matrix.settings.package_dir }}/bin/tokens"
-          fi
-          ls -la "packages/${{ matrix.settings.package_dir }}/bin"
-
-      - name: Publish platform package
-        run: |
-          echo "📦 Publishing ${{ matrix.settings.package_name }} version: $(jq -r '.version' "packages/${{ matrix.settings.package_dir }}/package.json")"
-          bash scripts/publish-npm-package.sh "packages/${{ matrix.settings.package_dir }}"
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          RELEASE_RECOVERY: ${{ inputs.recovery }}
-
-  publish-cli:
-    name: Publish tokens-cli
-    needs: [prepare-release-provenance, publish-platform-packages]
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: ${{ needs.prepare-release-provenance.outputs.release_commit }}
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.1.38
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: 20
-          registry-url: https://registry.npmjs.org
-
-      - name: Install dependencies
-        working-directory: packages/cli
-        run: bun install
-
-      - name: Build CLI
-        working-directory: packages/cli
-        run: bun run build
-
-      - name: Publish tokens-cli
-        run: |
-          echo "📦 Publishing version: $(jq -r '.version' packages/cli/package.json)"
-          bash scripts/publish-npm-package.sh packages/cli
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          RELEASE_RECOVERY: ${{ inputs.recovery }}
-
-  finalize:
-    name: Create release
-    needs: [bump-versions, prepare-release-provenance, publish-cli]
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: ${{ needs.prepare-release-provenance.outputs.release_commit }}
-          token: ${{ secrets.GITHUB_TOKEN }}
-          persist-credentials: true
-          fetch-depth: 0
-          fetch-tags: true
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.1.38
-
-      - name: Create tag and GitHub release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-        run: |
-          NEW_VERSION="${{ needs.bump-versions.outputs.version }}"
-          RELEASE_COMMIT="${{ needs.prepare-release-provenance.outputs.release_commit }}"
-
-          if git rev-parse "v$NEW_VERSION" >/dev/null 2>&1; then
-            TAG_COMMIT="$(git rev-list -n 1 "v$NEW_VERSION")"
-            if [ "$TAG_COMMIT" != "$RELEASE_COMMIT" ]; then
-              echo "Tag v$NEW_VERSION already points at $TAG_COMMIT, expected $RELEASE_COMMIT" >&2
-              exit 1
-            fi
-            echo "🏷️ Tag v$NEW_VERSION already points at release commit $RELEASE_COMMIT"
+          if [ "${{ matrix.zig }}" = "true" ]; then
+            CARGO="cargo zigbuild"
           else
-            git tag "v$NEW_VERSION" "$RELEASE_COMMIT"
-            git push origin "v$NEW_VERSION"
-            echo "🏷️ Created tag v$NEW_VERSION"
+            CARGO="cargo"
           fi
+          $CARGO build --release --manifest-path cli/Cargo.toml -p tokens-cli --target ${{ matrix.target }}
 
-          NOTES_FILE=$(mktemp)
-          bun scripts/generate-release-notes.ts "$NEW_VERSION" > "$NOTES_FILE"
-
-          if gh release view "v$NEW_VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release edit "v$NEW_VERSION" \
-              --repo "$GITHUB_REPOSITORY" \
-              --title "v$NEW_VERSION" \
-              --notes-file "$NOTES_FILE"
-            echo "♻️ Updated existing GitHub release v$NEW_VERSION"
-          else
-            gh release create "v$NEW_VERSION" \
-              --repo "$GITHUB_REPOSITORY" \
-              --title "v$NEW_VERSION" \
-              --notes-file "$NOTES_FILE"
-            echo "🎉 Created GitHub release: https://github.com/${{ github.repository }}/releases/tag/v$NEW_VERSION"
-          fi
-
-          rm -f "$NOTES_FILE"
-
-
-  publish-release-archives:
-    name: Upload release archive - ${{ matrix.target }}
-    needs: [bump-versions, build-cli-binary, finalize]
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: aarch64-apple-darwin
-            artifact_name: cli-binary-aarch64-apple-darwin
-          - target: x86_64-apple-darwin
-            artifact_name: cli-binary-x86_64-apple-darwin
-          - target: x86_64-unknown-linux-gnu
-            artifact_name: cli-binary-x86_64-unknown-linux-gnu
-          - target: aarch64-unknown-linux-gnu
-            artifact_name: cli-binary-aarch64-unknown-linux-gnu
-
-    steps:
-      - name: Download prebuilt CLI binary
-        uses: actions/download-artifact@v8
-        with:
-          name: ${{ matrix.artifact_name }}
-          path: dist
-
-      - name: Package and upload GitHub Release archive
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          VERSION: ${{ needs.bump-versions.outputs.version }}
-          TARGET: ${{ matrix.target }}
+      - name: Strip
+        if: runner.os != 'Windows'
+        shell: bash
         run: |
           set -euo pipefail
-          TAG="v${VERSION}"
-          ARCHIVE="tokens-${TAG}-${TARGET}.tar.gz"
-          CHECKSUM="tokens-${TAG}-${TARGET}.sha256"
+          BIN="cli/target/${{ matrix.target }}/release/${{ matrix.bin }}"
+          case "${{ matrix.target }}" in
+            aarch64-unknown-linux-*)
+              sudo apt-get update -qq && sudo apt-get install -y -qq binutils-aarch64-linux-gnu
+              aarch64-linux-gnu-strip "$BIN" ;;
+            *-apple-darwin) strip -x "$BIN" ;;
+            *)              strip "$BIN" ;;
+          esac
 
-          # Reuse the exact binary already built for the npm platform package
-          # (stripped, in the matching artifact) rather than recompiling — this
-          # is what the old, separate release.yml workflow did via
-          # upload-rust-binary-action, doubling the cross-compile work.
-          #
-          # The archive layout (a bare `tokens` at the root) and the sidecar
-          # checksum name/format are kept byte-for-byte compatible with the
-          # previous release assets, so install.sh and the Homebrew tap need no
-          # changes across this migration.
-          chmod +x dist/tokens
-          FILES=(tokens)
-          tar czf "${ARCHIVE}" -C dist "${FILES[@]}"
-          sha256sum "${ARCHIVE}" > "${CHECKSUM}"
+      # The one check worth keeping: does the thing we are about to ship run,
+      # and does it say the version we asked for? Only on the natively runnable
+      # targets — the rest are cross-compiled and cannot execute here.
+      - name: Verify
+        if: matrix.target == 'aarch64-apple-darwin' || matrix.target == 'x86_64-unknown-linux-gnu'
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT="$(cli/target/${{ matrix.target }}/release/${{ matrix.bin }} --version)"
+          echo "$OUT"
+          [ "$OUT" = "tokens ${{ inputs.version }}" ] || { echo "expected 'tokens ${{ inputs.version }}'" >&2; exit 1; }
 
-          gh release upload "${TAG}" "${ARCHIVE}" "${CHECKSUM}" \
-            --repo "${GITHUB_REPOSITORY}" --clobber
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.pkg }}
+          path: cli/target/${{ matrix.target }}/release/${{ matrix.bin }}
+          if-no-files-found: error
+
+  publish:
+    name: Publish
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+
+      - name: Set version
+        run: bash scripts/set-version.sh "${{ inputs.version }}"
+
+      - name: Stage binaries into their packages
+        run: |
+          set -euo pipefail
+          for dir in artifacts/cli-*; do
+            pkg="$(basename "$dir")"
+            mkdir -p "packages/${pkg}/bin"
+            cp "$dir"/* "packages/${pkg}/bin/"
+            chmod +x "packages/${pkg}/bin/"*
+            echo "staged ${pkg}: $(ls "packages/${pkg}/bin")"
+          done
+
+      - name: Build the launcher
+        run: |
+          bun install --frozen-lockfile
+          bun run --cwd packages/cli build
+
+      - name: Publish to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          # A prerelease must never land on the `latest` dist-tag, or every
+          # plain `npm i tokens-cli` would pull it.
+          V="${{ inputs.version }}"
+          case "$V" in
+            *-*) TAG="$(echo "${V#*-}" | cut -d. -f1)" ;;
+            *)   TAG=latest ;;
+          esac
+          echo "dist-tag: $TAG"
+
+          # Platform packages first: the launcher pins them by exact version and
+          # would install with no binary if it landed ahead of them.
+          for dir in packages/cli-*; do
+            (cd "$dir" && npm publish --access public --tag "$TAG")
+          done
+          (cd packages/cli && npm publish --access public --tag "$TAG")
+
+      - name: Commit the version bump
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add cli/Cargo.toml cli/Cargo.lock packages/*/package.json
+          git commit -m "chore(release): ${{ inputs.version }}" || { echo "nothing to commit"; exit 0; }
+          git push origin "HEAD:${{ github.ref_name }}"
+
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # pkg:target. A plain list rather than an associative array so the
+          # same snippet runs under bash 3.2 and can be rehearsed locally.
+          PAIRS="
+            cli-darwin-arm64:aarch64-apple-darwin
+            cli-darwin-x64:x86_64-apple-darwin
+            cli-linux-x64-gnu:x86_64-unknown-linux-gnu
+            cli-linux-x64-musl:x86_64-unknown-linux-musl
+            cli-linux-arm64-gnu:aarch64-unknown-linux-gnu
+            cli-linux-arm64-musl:aarch64-unknown-linux-musl
+            cli-win32-x64-msvc:x86_64-pc-windows-msvc
+            cli-win32-arm64-msvc:aarch64-pc-windows-msvc
+          "
+          # Archive layout is a bare binary at the root, matching every release
+          # since 3.x — install.sh and the Homebrew tap depend on it.
+          mkdir -p dist
+          for pair in $PAIRS; do
+            pkg="${pair%%:*}"; target="${pair#*:}"
+            # Name the member explicitly: `-C dir .` would add a leading `./`
+            # that previous releases do not have.
+            tar czf "dist/tokens-v${{ inputs.version }}-${target}.tar.gz" \
+              -C "artifacts/$pkg" "$(ls "artifacts/$pkg")"
+          done
+          ls -la dist
+
+          PRERELEASE=""
+          case "${{ inputs.version }}" in *-*) PRERELEASE="--prerelease" ;; esac
+
+          gh release create "v${{ inputs.version }}" \
+            --title "v${{ inputs.version }}" \
+            --generate-notes \
+            $PRERELEASE \
+            dist/*.tar.gz
