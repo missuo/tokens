@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "nextjs-toploader/app";
 import { usePathname, useSearchParams } from "next/navigation";
-import { SearchIcon } from "lucide-react";
+import { ArrowLeftRightIcon, SearchIcon } from "lucide-react";
 import { useSettings } from "@/lib/useSettings";
 import {
   Table,
@@ -172,17 +172,53 @@ function DeveloperRow({
         </div>
       </TableCell>
 
-      <TableCell className="hidden w-32 pr-6 text-right sm:table-cell">
+      <TableCell className="hidden w-32 pr-4 text-right sm:table-cell">
         <span
           className={cn(
             "tabular text-sm",
             sortBy === "cost" ? "text-foreground" : "text-muted-foreground"
           )}
         >
-          {formatCurrency(user.totalCost, true)}
+          {formatCurrency(user.totalCost, compact)}
         </span>
       </TableCell>
     </TableRow>
+  );
+}
+
+/**
+ * A numeric column header that also switches abbreviated/exact formatting.
+ *
+ * The affordance is the point: the swap icon stays visible at rest (not only
+ * on hover) because a hover-only hint is invisible on touch and easy to miss
+ * on a pointer. The title spells out what the click will do, in the direction
+ * it will do it.
+ */
+function FormatToggle({
+  label,
+  compact,
+  onToggle,
+}: {
+  label: string;
+  compact: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-label={
+        compact ? `${label}: show exact numbers` : `${label}: abbreviate numbers`
+      }
+      title={compact ? "Show exact numbers" : "Abbreviate numbers"}
+      className="flex h-full w-full items-center justify-end gap-1.5 px-2 py-2 transition-colors hover:text-foreground"
+    >
+      {label}
+      <ArrowLeftRightIcon
+        aria-hidden
+        className="size-3 shrink-0 opacity-45 transition-opacity group-hover/head:opacity-100"
+      />
+    </button>
   );
 }
 
@@ -380,34 +416,34 @@ export default function Leaderboard({
               <TableHead className="w-12 pl-4 sm:pl-6">#</TableHead>
               <TableHead>Developer</TableHead>
               <TableHead className="pr-4 text-right sm:hidden">Usage</TableHead>
-              {/* Clicking the header swaps abbreviated figures (1.2B) for
-                  exact ones, a toggle contributed upstream by Fai Chou that
-                  people rely on when comparing close totals. */}
+              {/* Both numeric headers toggle abbreviated figures (1.2B) for
+                  exact ones — a toggle contributed upstream by Fai Chou that
+                  people rely on when comparing close totals. It was invisible:
+                  a bare header that happened to be clickable, which nobody who
+                  had not read the code would ever try. Each now carries a
+                  permanently visible swap icon, and both drive the one
+                  preference so the two columns cannot disagree. */}
               <TableHead className="hidden w-44 p-0 text-right sm:table-cell">
-                <button
-                  type="button"
-                  onClick={() =>
+                <FormatToggle
+                  label="Tokens"
+                  compact={tokenFormat === "compact"}
+                  onToggle={() =>
                     setLeaderboardTokenFormat(
                       tokenFormat === "compact" ? "full" : "compact"
                     )
                   }
-                  aria-label={
-                    tokenFormat === "compact"
-                      ? "Show exact token counts"
-                      : "Show abbreviated token counts"
-                  }
-                  title={
-                    tokenFormat === "compact"
-                      ? "Show exact numbers"
-                      : "Abbreviate numbers"
-                  }
-                  className="h-full w-full px-2 py-2 text-right transition-colors hover:text-foreground"
-                >
-                  Tokens
-                </button>
+                />
               </TableHead>
-              <TableHead className="hidden w-32 pr-6 text-right sm:table-cell">
-                Cost
+              <TableHead className="hidden w-32 p-0 pr-4 text-right sm:table-cell">
+                <FormatToggle
+                  label="Cost"
+                  compact={tokenFormat === "compact"}
+                  onToggle={() =>
+                    setLeaderboardTokenFormat(
+                      tokenFormat === "compact" ? "full" : "compact"
+                    )
+                  }
+                />
               </TableHead>
             </TableRow>
           </TableHeader>

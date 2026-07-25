@@ -8,6 +8,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CommandBlock, type DocCommand } from "@/components/docs/CommandBlock";
 import { BrandGlyph } from "@/components/profile/ModelIcon";
 import { CONTAINER } from "@/components/layout/Container";
+import {
+  SOURCE_DISPLAY_NAMES,
+  SOURCE_LOGOS,
+  SUPPORTED_CLIENTS,
+} from "@/lib/constants";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { cn } from "@/lib/utils";
 
@@ -258,7 +263,12 @@ export default function DocsPage() {
                   Open the invitation link above on the same device and tap
                   Accept.
                 </li>
-                <li>Install Tokens from TestFlight, then sign in with GitHub.</li>
+                <li>
+                  Install Tokens from TestFlight, then enter a GitHub username.
+                  There is no sign-in: every profile on Tokens is public, so the
+                  app just reads the one you name. Enter your own username or
+                  the widgets will show someone else&apos;s usage.
+                </li>
                 <li>
                   Long-press your Home or Lock screen to add the widgets.
                 </li>
@@ -343,10 +353,34 @@ export default function DocsPage() {
         >
           <div className="flex flex-col gap-4">
             <p className="text-sm leading-relaxed text-muted-foreground">
-              Claude Code, Codex, Cursor, Copilot, Gemini, OpenCode, Kimi, Qwen,
-              Amp, Droid, Antigravity, Zed, Kiro, Trae, Warp, Cline, Grok, Junie
-              and more. New clients land through upstream parser updates.
+              All {SUPPORTED_CLIENTS.length} of these are detected automatically
+              — if the client is installed and has written sessions, it is
+              counted.
             </p>
+
+            {/* A plain responsive grid rather than a table: these are names,
+                not tabular data, and at 39 entries a table would force either
+                a very long single column or horizontal scrolling on a phone. */}
+            <ul className="grid grid-cols-2 gap-x-4 gap-y-2.5 sm:grid-cols-3 lg:grid-cols-4">
+              {SUPPORTED_CLIENTS.map((client) => (
+                <li key={client} className="flex min-w-0 items-center gap-2.5">
+                  {/* Plain <img>: these are 39 small third-party marks in a
+                      mix of png/jpg/webp, already served from our own origin,
+                      so the optimizer would add requests without adding much. */}
+                  <img
+                    src={SOURCE_LOGOS[client]}
+                    alt=""
+                    width={20}
+                    height={20}
+                    loading="lazy"
+                    className="size-5 shrink-0 rounded-[4px] object-contain"
+                  />
+                  <span className="truncate text-sm text-muted-foreground">
+                    {SOURCE_DISPLAY_NAMES[client]}
+                  </span>
+                </li>
+              ))}
+            </ul>
             <div className="rounded-lg border p-4">
               <h3 className="text-sm font-medium">Orca</h3>
               <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">

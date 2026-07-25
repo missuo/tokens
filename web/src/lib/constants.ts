@@ -165,6 +165,56 @@ export const SOURCE_COLORS: Record<ClientType, string> = {
   "devin-desktop": "#334155",
 };
 
+/**
+ * Every client the CLI scans, in display order.
+ *
+ * Mirrors `define_clients!` in `cli/tokens-core/src/clients.rs` — 39 entries,
+ * excluding the two filter-only aliases (`synthetic`, `9router`) that have no
+ * scan path of their own. Kept as an explicit list rather than derived from
+ * SOURCE_DISPLAY_NAMES, which also carries those aliases and legacy keys.
+ */
+export const SUPPORTED_CLIENTS: readonly ClientType[] = [
+  "amp",
+  "antigravity",
+  "antigravity-cli",
+  "claude",
+  "cline",
+  "codebuddy",
+  "codebuff",
+  "codex",
+  "commandcode",
+  "copilot",
+  "crush",
+  "cursor",
+  "devin-cli",
+  "devin-desktop",
+  "droid",
+  "gjc",
+  "gemini",
+  "goose",
+  "grok",
+  "hermes",
+  "jcode",
+  "junie",
+  "kilo",
+  "kilocode",
+  "kimi",
+  "kiro",
+  "micode",
+  "mux",
+  "openclaw",
+  "opencode",
+  "opencodereview",
+  "pi",
+  "qwen",
+  "roocode",
+  "trae",
+  "warp",
+  "workbuddy",
+  "zcode",
+  "zed",
+] as const;
+
 // Derived values
 export const CELL_SIZE = BOX_WIDTH + BOX_MARGIN;
 
