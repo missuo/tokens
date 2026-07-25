@@ -1,8 +1,9 @@
 "use client";
 
-import styled from "styled-components";
 import type { DailyContribution } from "@/lib/types";
 import { formatCurrency, formatDateFull, formatNumber } from "@/lib/utils";
+import { tw } from "@/lib/tw";
+import { cn } from "@/lib/utils";
 
 const WEEKDAY_NAMES = [
   "Sunday",
@@ -109,118 +110,86 @@ export function ProfileHabits({ contributions }: ProfileHabitsProps) {
   );
 }
 
-const Panel = styled.section`
-  overflow: hidden;
-  border: 1px solid var(--service-border);
-  border-radius: 12px;
-  background: var(--service-surface);
-`;
+const Panel = tw("section", "overflow-hidden rounded-xl border bg-card");
 
-const Header = styled.div`
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 14px 16px;
-  border-bottom: 1px solid var(--service-border);
-`;
+const Header = tw(
+  "div",
+  "flex items-baseline justify-between gap-3 border-b px-4 py-3.5"
+);
 
-const Title = styled.h2`
-  margin: 0;
-  color: var(--service-text);
-  font-size: 16px;
-  font-weight: 500;
-`;
+const Title = tw("h2", "m-0 text-base font-medium text-foreground");
+const Range = tw("span", "text-xs text-muted-foreground");
 
-const Range = styled.span`
-  color: var(--service-text-muted-foreground);
-  font-size: 12px;
-`;
+const Highlights = tw("div", "grid grid-cols-2 border-b");
 
-const Highlights = styled.div`
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  border-bottom: 1px solid var(--service-border);
-`;
+// The divider is on the second cell rather than between them, which is what
+// `& + &` did — the first column must not carry a left edge.
+const Highlight = tw(
+  "div",
+  "min-w-0 px-4 py-3.5 [&+&]:border-l [&+&]:border-border"
+);
 
-const Highlight = styled.div`
-  min-width: 0;
-  padding: 14px 16px;
+const Label = tw(
+  "p",
+  "m-0 text-[11px] font-semibold uppercase tracking-[0.06em] text-muted-foreground"
+);
 
-  & + & {
-    border-left: 1px solid var(--service-border);
-  }
-`;
+const Value = ({
+  $accent,
+  className,
+  ...props
+}: React.ComponentPropsWithoutRef<"p"> & { $accent?: boolean }) => (
+  <p
+    {...props}
+    className={cn(
+      "m-0 mt-[5px] overflow-hidden text-ellipsis whitespace-nowrap text-base font-semibold [font-variant-numeric:tabular-nums]",
+      $accent ? "text-primary" : "text-foreground",
+      className
+    )}
+  />
+);
 
-const Label = styled.p`
-  margin: 0;
-  color: var(--service-text-muted-foreground);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-`;
+const Meta = tw(
+  "p",
+  "m-0 mt-[3px] overflow-hidden text-ellipsis whitespace-nowrap text-xs text-muted-foreground [font-variant-numeric:tabular-nums]"
+);
 
-const Value = styled.p<{ $accent?: boolean }>`
-  overflow: hidden;
-  margin: 5px 0 0;
-  color: ${({ $accent }) =>
-    $accent ? "var(--service-accent)" : "var(--service-text)"};
-  font-size: 16px;
-  font-variant-numeric: tabular-nums;
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-`;
+const Distribution = tw("div", "px-4 pb-4 pt-3.5");
+const Bars = tw("div", "mt-2.5 flex items-end gap-2");
+const BarColumn = tw("div", "flex min-w-0 flex-1 flex-col items-center gap-1.5");
+const BarTrack = tw("div", "flex h-16 w-full items-end");
 
-const Meta = styled.p`
-  overflow: hidden;
-  margin: 3px 0 0;
-  color: var(--service-text-muted-foreground);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-`;
+// Height is a percentage computed per bar, so it stays inline.
+const Bar = ({
+  $height,
+  $top,
+  style,
+  ...props
+}: React.ComponentPropsWithoutRef<"div"> & {
+  $height: number;
+  $top: boolean;
+}) => (
+  <div
+    {...props}
+    style={{ height: `${$height}%`, ...style }}
+    className={cn(
+      "w-full rounded-b-sm rounded-t",
+      $top ? "bg-primary" : "bg-muted"
+    )}
+  />
+);
 
-const Distribution = styled.div`
-  padding: 14px 16px 16px;
-`;
-
-const Bars = styled.div`
-  display: flex;
-  align-items: flex-end;
-  gap: 8px;
-  margin-top: 10px;
-`;
-
-const BarColumn = styled.div`
-  display: flex;
-  min-width: 0;
-  flex: 1;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-`;
-
-const BarTrack = styled.div`
-  display: flex;
-  width: 100%;
-  height: 64px;
-  align-items: flex-end;
-`;
-
-const Bar = styled.div<{ $height: number; $top: boolean }>`
-  width: 100%;
-  height: ${({ $height }) => `${$height}%`};
-  border-radius: 4px 4px 2px 2px;
-  background: ${({ $top }) =>
-    $top ? "var(--service-accent)" : "var(--service-surface-muted)"};
-`;
-
-const BarLabel = styled.span<{ $top: boolean }>`
-  color: ${({ $top }) =>
-    $top ? "var(--service-text)" : "var(--service-text-muted-foreground)"};
-  font-size: 10px;
-  font-weight: 500;
-`;
+const BarLabel = ({
+  $top,
+  className,
+  ...props
+}: React.ComponentPropsWithoutRef<"span"> & { $top: boolean }) => (
+  <span
+    {...props}
+    className={cn(
+      "text-[10px] font-medium",
+      $top ? "text-foreground" : "text-muted-foreground",
+      className
+    )}
+  />
+);

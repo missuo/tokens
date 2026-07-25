@@ -2,7 +2,6 @@
 
 import { useMemo, useState, useSyncExternalStore } from "react";
 import Image from "next/image";
-import styled from "styled-components";
 import { toast } from "react-toastify";
 import { formatCurrency, formatNumber } from "@/lib/utils";
 import { Code2Icon, Share2Icon } from "lucide-react";
@@ -11,6 +10,8 @@ import { VerifiedBadge } from "@/components/ui/VerifiedBadge";
 import { ProfileEmbedDialog } from "./ProfileEmbedDialog";
 import { ProfileSocialLinks } from "./ProfileSocialLinks";
 import type { ProfileSocialLink, ProfileStatsData, ProfileUser } from "./types";
+import { tw } from "@/lib/tw";
+import { cn } from "@/lib/utils";
 
 export interface ProfileOverviewProps {
   user: ProfileUser;
@@ -22,206 +23,85 @@ export interface ProfileOverviewProps {
   className?: string;
 }
 
-const OverviewPanel = styled.section`
-  overflow: hidden;
-  border: 1px solid var(--service-border);
-  border-radius: 12px;
-  background: var(--service-surface);
-  color: var(--service-text);
-  container-type: inline-size;
-`;
+// The metrics row reflows on the panel's own width, not the viewport's, so
+// the panel is the container and the grid keys off @[40rem].
+const OverviewPanel = tw(
+  "section",
+  "@container overflow-hidden rounded-xl border bg-card text-foreground"
+);
 
-const OverviewHeader = styled.div`
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 0.875rem 1.25rem;
-  padding: 0.875rem 1rem;
+const OverviewHeader = tw(
+  "div",
+  "flex flex-wrap items-start justify-between gap-x-5 gap-y-3.5 px-4 py-3.5 sm:px-[1.125rem] sm:py-4"
+);
 
-  @media (min-width: 640px) {
-    padding: 1rem 1.125rem;
-  }
-`;
+const Identity = tw("div", "flex min-w-0 flex-[1_1_19rem] items-center gap-4");
+const AvatarShell = tw("div", "relative flex-none");
 
-const Identity = styled.div`
-  display: flex;
-  min-width: 0;
-  flex: 1 1 19rem;
-  align-items: center;
-  gap: 1rem;
-`;
+const Avatar = tw(
+  "div",
+  "relative size-[72px] flex-none overflow-hidden rounded-xl border border-muted-foreground/30 bg-muted sm:size-20"
+);
 
-const AvatarShell = styled.div`
-  position: relative;
-  flex: 0 0 auto;
-`;
+const AvatarVerifiedBadge = ({ className, ...props }: React.ComponentProps<typeof VerifiedBadge>) => (
+  <VerifiedBadge {...props} className={cn("absolute -bottom-1 -right-1", className)} />
+);
 
-const Avatar = styled.div`
-  position: relative;
-  width: 72px;
-  height: 72px;
-  overflow: hidden;
-  flex: 0 0 auto;
-  border: 1px solid var(--service-border-strong);
-  border-radius: 12px;
-  background: var(--service-surface-muted);
+const AvatarImage = ({ className, ...props }: React.ComponentProps<typeof Image>) => (
+  <Image {...props} className={cn("object-cover", className)} />
+);
 
-  @media (min-width: 640px) {
-    width: 80px;
-    height: 80px;
-  }
-`;
+const IdentityCopy = tw("div", "min-w-0");
 
-const AvatarVerifiedBadge = styled(VerifiedBadge)`
-  position: absolute;
-  right: -4px;
-  bottom: -4px;
-`;
+const DisplayName = tw(
+  "h1",
+  "m-0 overflow-hidden text-ellipsis whitespace-nowrap text-[clamp(1.125rem,4vw,1.375rem)] font-semibold leading-tight text-foreground"
+);
 
-const AvatarImage = styled(Image)`
-  object-fit: cover;
-`;
+const Handle = tw(
+  "p",
+  "m-0 mt-1 overflow-hidden text-ellipsis whitespace-nowrap text-sm leading-tight text-muted-foreground"
+);
 
-const IdentityCopy = styled.div`
-  min-width: 0;
-`;
+const Metadata = tw(
+  "ul",
+  "mb-0 mt-1.5 flex list-none flex-wrap items-center gap-x-2 gap-y-1 p-0 text-[0.8125rem] leading-snug text-muted-foreground"
+);
 
-const DisplayName = styled.h1`
-  overflow: hidden;
-  margin: 0;
-  color: var(--service-text);
-  font-size: clamp(1.125rem, 4vw, 1.375rem);
-  font-weight: 600;
-  line-height: 1.2;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-`;
+// Every item after the first is preceded by a 2px dot, so the separators live
+// with the items rather than being spliced into the markup.
+const MetadataItem = tw(
+  "li",
+  "inline-flex items-center gap-2 [&:not(:first-child)]:before:size-0.5 [&:not(:first-child)]:before:rounded-full [&:not(:first-child)]:before:bg-muted-foreground/40 [&:not(:first-child)]:before:content-['']"
+);
 
-const Handle = styled.p`
-  overflow: hidden;
-  margin: 0.2rem 0 0;
-  color: var(--service-text-muted-foreground);
-  font-size: 0.875rem;
-  line-height: 1.25;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-`;
+const RankItem = tw(
+  "li",
+  "inline-flex items-baseline gap-1 rounded-md border border-[color-mix(in_srgb,var(--primary)_42%,transparent)] bg-primary/10 px-[0.4375rem] py-[0.1875rem] text-xs font-semibold leading-tight text-foreground [&_strong]:font-bold [&_strong]:text-primary"
+);
 
-const Metadata = styled.ul`
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.25rem 0.5rem;
-  margin-top: 0.4rem;
-  margin-bottom: 0;
-  padding: 0;
-  color: var(--service-text-muted-foreground);
-  font-size: 0.8125rem;
-  line-height: 1.3;
-  list-style: none;
-`;
+const Metrics = tw(
+  "dl",
+  "m-0 grid grid-cols-2 border-t text-left @[40rem]:grid-cols-[repeat(4,9.25rem)] @[40rem]:justify-start"
+);
 
-const MetadataItem = styled.li`
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
+// 2x2 on a narrow panel: the right column takes a left edge and the second row
+// takes a top edge. Once the four fit on one line, every cell but the first
+// takes a left edge and the row rule goes away.
+const Metric = tw(
+  "div",
+  "flex min-w-0 flex-col items-start px-4 py-[0.6875rem] text-left [&:nth-child(even)]:border-l [&:nth-child(even)]:border-border [&:nth-child(n+3)]:border-t [&:nth-child(n+3)]:border-border @[40rem]:px-5 @[40rem]:[&:not(:first-child)]:border-l @[40rem]:[&:nth-child(n+3)]:border-t-0"
+);
 
-  &:not(:first-child)::before {
-    width: 2px;
-    height: 2px;
-    border-radius: 50%;
-    background: var(--service-border-strong);
-    content: "";
-  }
-`;
+const MetricLabel = tw(
+  "dt",
+  "w-full overflow-hidden text-ellipsis whitespace-nowrap text-left text-xs leading-tight text-muted-foreground"
+);
 
-const RankItem = styled.li`
-  display: inline-flex;
-  align-items: baseline;
-  gap: 0.25rem;
-  padding: 0.1875rem 0.4375rem;
-  border: 1px solid color-mix(in srgb, var(--service-accent) 42%, transparent);
-  border-radius: 0.375rem;
-  background: var(--service-accent-soft);
-  color: var(--service-text);
-  font-size: 0.75rem;
-  font-weight: 600;
-  line-height: 1.2;
-
-  strong {
-    color: var(--service-accent);
-    font-weight: 700;
-  }
-`;
-
-const Metrics = styled.dl`
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  margin: 0;
-  border-top: 1px solid var(--service-border);
-  text-align: left;
-
-  @container (min-width: 40rem) {
-    grid-template-columns: repeat(4, 9.25rem);
-    justify-content: start;
-  }
-`;
-
-const Metric = styled.div`
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  align-items: flex-start;
-  padding: 0.6875rem 1rem;
-  text-align: left;
-
-  &:nth-child(even) {
-    border-left: 1px solid var(--service-border);
-  }
-
-  &:nth-child(n + 3) {
-    border-top: 1px solid var(--service-border);
-  }
-
-  @container (min-width: 40rem) {
-    padding-right: 1.25rem;
-    padding-left: 1.25rem;
-
-    &:not(:first-child) {
-      border-left: 1px solid var(--service-border);
-    }
-
-    &:nth-child(n + 3) {
-      border-top: 0;
-    }
-  }
-`;
-
-const MetricLabel = styled.dt`
-  width: 100%;
-  overflow: hidden;
-  color: var(--service-text-muted-foreground);
-  font-size: 0.75rem;
-  line-height: 1.2;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  text-align: left;
-`;
-
-const MetricValue = styled.dd`
-  width: 100%;
-  overflow: hidden;
-  margin: 0.3rem 0 0;
-  color: var(--service-text);
-  font-size: clamp(1.05rem, 4vw, 1.35rem);
-  font-variant-numeric: tabular-nums;
-  font-weight: 600;
-  line-height: 1.1;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  text-align: left;
-`;
+const MetricValue = tw(
+  "dd",
+  "m-0 mt-1.5 w-full overflow-hidden text-ellipsis whitespace-nowrap text-left text-[clamp(1.05rem,4vw,1.35rem)] font-semibold leading-none text-foreground [font-variant-numeric:tabular-nums]"
+);
 
 const subscribeNoop = () => () => {};
 

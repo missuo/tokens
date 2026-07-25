@@ -1,9 +1,9 @@
 "use client";
 
 import { useId, type CSSProperties } from "react";
-import styled from "styled-components";
 import { formatNumber } from "@/lib/utils";
 import type { ProfileStatsData } from "./types";
+import { tw } from "@/lib/tw";
 
 export interface TokenBreakdownProps {
   stats: ProfileStatsData;
@@ -18,111 +18,92 @@ const TOKEN_MIX_COLORS = {
   reasoning: "var(--token-reasoning)",
 } as const;
 
-const BreakdownPanel = styled.section`
-  overflow: hidden;
-  border: 1px solid var(--service-border);
-  border-radius: 12px;
-  background: var(--service-surface);
-  color: var(--service-text);
-`;
+const BreakdownPanel = tw(
+  "section",
+  "overflow-hidden rounded-xl border bg-card text-foreground"
+);
 
-const BreakdownHeader = styled.header`
-  padding: 0.875rem 1rem;
-  border-bottom: 1px solid var(--service-border);
-`;
+const BreakdownHeader = tw("header", "border-b px-4 py-3.5");
 
-const BreakdownHeading = styled.h2`
-  margin: 0;
-  color: var(--service-text);
-  font-size: 0.9375rem;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-`;
+const BreakdownHeading = tw(
+  "h2",
+  "m-0 text-[0.9375rem] font-semibold tracking-tight text-foreground"
+);
 
-const BreakdownDescription = styled.p`
-  max-width: 46ch;
-  margin: 0.25rem 0 0;
-  color: var(--service-text-muted-foreground);
-  font-size: 0.8125rem;
-  line-height: 1.45;
-`;
+const BreakdownDescription = tw(
+  "p",
+  "m-0 mt-1 max-w-[46ch] text-[0.8125rem] leading-snug text-muted-foreground"
+);
 
-const BreakdownBody = styled.div`
-  padding: 0.875rem 1rem 1rem;
-`;
+const BreakdownBody = tw("div", "px-4 pb-4 pt-3.5");
 
-const SegmentedBar = styled.div`
-  display: flex;
-  width: 100%;
-  height: 10px;
-  overflow: hidden;
-  border: 1px solid var(--service-border);
-  border-radius: 4px;
-  background: var(--service-surface-muted);
-`;
+const SegmentedBar = tw(
+  "div",
+  "flex h-2.5 w-full overflow-hidden rounded border bg-muted"
+);
 
-const Segment = styled.span<{ $color: string; $weight: number }>`
-  min-width: ${(props) => (props.$weight > 0 ? "3px" : 0)};
-  flex: ${(props) => props.$weight} 1 0;
-  background: ${(props) => props.$color};
-`;
+// flex-grow and the fill are per-token runtime values, so they stay inline.
+// A zero-weight segment collapses entirely; anything above it keeps 3px so a
+// token that was used at all is still visible in the bar.
+const Segment = ({
+  $color,
+  $weight,
+  style,
+  ...props
+}: React.ComponentPropsWithoutRef<"span"> & {
+  $color: string;
+  $weight: number;
+}) => (
+  <span
+    {...props}
+    style={{
+      minWidth: $weight > 0 ? "3px" : 0,
+      flex: `${$weight} 1 0`,
+      background: $color,
+      ...style,
+    }}
+  />
+);
 
-const BreakdownList = styled.dl`
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(7.5rem, 1fr));
-  gap: 0.75rem;
-  margin: 0.875rem 0 0;
-`;
+const BreakdownList = tw(
+  "dl",
+  "m-0 mt-3.5 grid grid-cols-[repeat(auto-fit,minmax(7.5rem,1fr))] gap-3"
+);
 
-const BreakdownItem = styled.div`
-  min-width: 0;
-  border-left: 2px solid var(--segment-color);
-  padding-left: 0.5rem;
-`;
+// --segment-color is set per item by the caller.
+const BreakdownItem = tw(
+  "div",
+  "min-w-0 border-l-2 border-l-[var(--segment-color)] pl-2"
+);
 
-const LabelRow = styled.div`
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 0.375rem;
-`;
+const LabelRow = tw("div", "flex min-w-0 items-center gap-1.5");
 
-const Marker = styled.span<{ $color: string }>`
-  flex: 0 0 auto;
-  width: 0.5rem;
-  height: 0.5rem;
-  background: ${(props) => props.$color};
-  border-radius: 2px;
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--service-text) 10%, transparent);
-`;
+const Marker = ({
+  $color,
+  style,
+  ...props
+}: React.ComponentPropsWithoutRef<"span"> & { $color: string }) => (
+  <span
+    {...props}
+    style={{ background: $color, ...style }}
+    className="size-2 flex-none rounded-sm shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--foreground)_10%,transparent)]"
+  />
+);
 
-const Label = styled.dt`
-  overflow: hidden;
-  color: var(--service-text-muted-foreground);
-  font-size: 0.75rem;
-  line-height: 1.2;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-`;
+const Label = tw(
+  "dt",
+  "overflow-hidden text-ellipsis whitespace-nowrap text-xs leading-tight text-muted-foreground"
+);
 
-const ValueRow = styled.dd`
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0.25rem;
-  margin: 0.25rem 0 0;
-  color: var(--service-text);
-  font-size: 0.9375rem;
-  font-variant-numeric: tabular-nums;
-  font-weight: 600;
-  line-height: 1.2;
-`;
+const ValueRow = tw(
+  "dd",
+  "m-0 mt-1 flex flex-wrap items-baseline gap-1 text-[0.9375rem] font-semibold leading-tight text-foreground [font-variant-numeric:tabular-nums]"
+);
 
-const Percentage = styled.span`
-  color: var(--service-text-muted-foreground);
-  font-size: 0.6875rem;
-  font-weight: 500;
-`;
+const Percentage = tw(
+  "span",
+  "text-[0.6875rem] font-medium text-muted-foreground"
+);
 
 function finiteNonnegative(value: number | undefined): number {
   return Number.isFinite(value) ? Math.max(0, value ?? 0) : 0;
