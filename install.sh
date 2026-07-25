@@ -9,7 +9,7 @@
 #   curl -fsSL https://s.ee/tokens | bash
 #
 # Optional environment overrides:
-#   TOKENS_VERSION=v3.0.0       install a specific release (default: latest)
+#   TOKENS_VERSION=v27.0.0      install a specific release (default: latest)
 #   TOKENS_INSTALL_DIR=<dir>    install location (default: /usr/local/bin as
 #                               root, otherwise ~/.local/bin)
 #   TOKENS_NO_SERVICE=1         skip the systemd service setup
