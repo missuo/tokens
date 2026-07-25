@@ -434,6 +434,48 @@ button {
   --chart-5: oklch(0.72 0.12 145);
 }
 
+/* ---------------------------------------------------------------------------
+   Legacy token bridge.
+   ---------------------------------------------------------------------------
+   The styled-components views still read an older token vocabulary, and the
+   block far above still answers with hardcoded hex. Those hex values drifted
+   from the palette: dark --surface was #12151E, a +12 blue lean against the
+   +3 of the theme's own --background, which is why Settings and the profile
+   read cooler than the rest of the site.
+
+   Restating them here — after the palette, so these win — makes one set of
+   colours authoritative. Nothing below introduces a colour; every line points
+   at a token defined above.
+
+   This block is temporary. It exists so the styled-components views can be
+   converted one at a time without the site looking like two products in the
+   meantime, and it is deleted with the last of them.
+   --------------------------------------------------------------------------- */
+:root,
+.light,
+[data-theme="light"],
+.dark,
+[data-theme="dark"] {
+  --surface: var(--card);
+  --surface-secondary: var(--muted);
+  --surface-tertiary: var(--accent);
+  --overlay: var(--popover);
+  --separator: var(--border);
+
+  --service-canvas: var(--background);
+  --service-surface: var(--card);
+  --service-surface-muted: var(--muted);
+  --service-border: var(--border);
+  --service-text: var(--foreground);
+  --service-text-muted: var(--muted-foreground);
+  /* Referenced 64 times across the profile views and never defined — a global
+     rename of --muted to --muted-foreground caught the tail of this name too.
+     An unresolvable var() makes the whole declaration invalid at computed-value
+     time, so every one of those muted labels was inheriting body colour instead
+     of receding. Defined here so the fix lands before the rewrite does. */
+  --service-text-muted-foreground: var(--muted-foreground);
+}
+
 /* Figures are compared column-to-column, so every numeral in the product is
    set in the mono face with tabular figures. */
 .tabular {
