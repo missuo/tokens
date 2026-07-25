@@ -38,6 +38,26 @@ export const metadata: Metadata = {
 
 const TESTFLIGHT_URL = "https://testflight.apple.com/join/NWmvqqTX";
 
+/**
+ * What the Supported clients grid renders.
+ *
+ * The scanned clients, plus Orca. Orca is not a client of its own — it runs
+ * Codex against an isolated runtime home, and the scanner finds that directory
+ * and counts what is there under Codex. It still belongs in this list, because
+ * the question a reader has is "will my setup be picked up", and for Orca the
+ * answer is yes.
+ */
+const CLIENT_GRID: ReadonlyArray<{ id: string; name: string; logo: string }> = [
+  ...SUPPORTED_CLIENTS.map((client) => ({
+    id: client,
+    name: SOURCE_DISPLAY_NAMES[client],
+    logo: SOURCE_LOGOS[client],
+  })),
+  // No Orca mark in .github/assets yet, so it takes the same neutral glyph the
+  // other unbranded entries use.
+  { id: "orca", name: "Orca", logo: "/clients/client-generic.svg" },
+].sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
+
 const MACOS: readonly DocCommand[] = [
   { command: "brew install owo-network/brew/tokens", note: "install" },
   { command: "tokens login", note: "link your GitHub account" },
@@ -353,22 +373,21 @@ export default function DocsPage() {
         >
           <div className="flex flex-col gap-4">
             <p className="text-sm leading-relaxed text-muted-foreground">
-              All {SUPPORTED_CLIENTS.length} of these are detected automatically
-              — if the client is installed and has written sessions, it is
-              counted.
+              All {CLIENT_GRID.length} of these are detected automatically — if
+              it is installed and has written sessions, it is counted.
             </p>
 
             {/* A plain responsive grid rather than a table: these are names,
                 not tabular data, and at 39 entries a table would force either
                 a very long single column or horizontal scrolling on a phone. */}
             <ul className="grid grid-cols-2 gap-x-4 gap-y-2.5 sm:grid-cols-3 lg:grid-cols-4">
-              {SUPPORTED_CLIENTS.map((client) => (
-                <li key={client} className="flex min-w-0 items-center gap-2.5">
-                  {/* Plain <img>: these are 39 small third-party marks in a
-                      mix of png/jpg/webp, already served from our own origin,
-                      so the optimizer would add requests without adding much. */}
+              {CLIENT_GRID.map(({ id, name, logo }) => (
+                <li key={id} className="flex min-w-0 items-center gap-2.5">
+                  {/* Plain <img>: these are small third-party marks in a mix of
+                      png/jpg/webp/svg, already served from our own origin, so
+                      the optimizer would add requests without adding much. */}
                   <img
-                    src={SOURCE_LOGOS[client]}
+                    src={logo}
                     alt=""
                     width={20}
                     height={20}
@@ -376,21 +395,11 @@ export default function DocsPage() {
                     className="size-5 shrink-0 rounded-[4px] object-contain"
                   />
                   <span className="truncate text-sm text-muted-foreground">
-                    {SOURCE_DISPLAY_NAMES[client]}
+                    {name}
                   </span>
                 </li>
               ))}
             </ul>
-            <div className="rounded-lg border p-4">
-              <h3 className="text-sm font-medium">Orca</h3>
-              <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">
-                Orca runs Codex with its own isolated runtime home rather than
-                the shell&apos;s, so a plain scan would miss those sessions
-                entirely. The CLI discovers Orca&apos;s runtime directory on
-                macOS automatically and counts what it finds under Codex — it is
-                the same Codex usage, just stored elsewhere. Nothing to enable.
-              </p>
-            </div>
           </div>
         </Section>
 
