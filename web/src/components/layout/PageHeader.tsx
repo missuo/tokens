@@ -20,8 +20,13 @@ export function PageHeader({
         <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
           {title}
         </h1>
+        {/* The measure is capped rather than left to the 1200px container: at
+            this size a full-width line runs ~148 characters, which is past the
+            point where the eye reliably finds the next line. 90ch (~700px) is
+            the compromise — long descriptions like /shame's use noticeably more
+            of the width than the previous 72ch, short ones are unaffected. */}
         {description && (
-          <p className="max-w-[72ch] text-sm leading-relaxed text-muted-foreground">
+          <p className="max-w-[90ch] text-sm leading-relaxed text-muted-foreground">
             {description}
           </p>
         )}

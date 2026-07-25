@@ -606,25 +606,6 @@ impl ClientFilter {
             .copied()
             .find(|f| f.as_filter_str() == s)
     }
-
-    /// The "no filter" default set: every real client, with `Synthetic`
-    /// **excluded**. Matches the pre-refactor behavior where a missing
-    /// filter scanned every `ClientId` but did NOT post-process synthetic
-    /// (synthetic detection has always been opt-in because it
-    /// re-attributes messages from other clients to a different bucket).
-    ///
-    /// Single source of truth: every code path that needs a default
-    /// filter (TUI launch, `submit` warm cache, etc.) must consult this
-    /// so the cache key, the in-app state, and the loader filter all
-    /// agree. Drift between them produces stale-cache misses on every
-    /// launch.
-    pub fn default_set() -> std::collections::HashSet<Self> {
-        Self::value_variants()
-            .iter()
-            .copied()
-            .filter(|f| !matches!(f, Self::Synthetic | Self::NineRouter))
-            .collect()
-    }
 }
 
 #[derive(Args, Clone, Debug, Default)]

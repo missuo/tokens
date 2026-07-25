@@ -337,6 +337,36 @@ export default function Leaderboard({
         </div>
       </div>
 
+      {/* Own standing, anchored directly under the period controls so it is
+          visible without paginating to wherever the rank happens to fall. It
+          follows the period/sort query like the table does, because the server
+          recomputes it per period. Suppressed when the row is already visible
+          in the table below, so the same row never renders twice on one
+          screen. */}
+      {initialUserRank && !selfOnPage && (
+        <div
+          className={cn("mt-4 transition-opacity", pending && "opacity-50")}
+          aria-busy={pending}
+        >
+          <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+            Your position
+          </span>
+          <div className="mt-1.5 overflow-hidden rounded-lg border">
+            <Table>
+              <TableBody>
+                <DeveloperRow
+                  user={initialUserRank}
+                  isSelf
+                  max={max || initialUserRank.totalTokens}
+                  sortBy={sortBy}
+                  tokenFormat={tokenFormat}
+                />
+              </TableBody>
+            </Table>
+          </div>
+        </div>
+      )}
+
       <div
         className={cn(
           "mt-4 overflow-hidden rounded-lg border transition-opacity",
@@ -406,28 +436,6 @@ export default function Leaderboard({
           </Empty>
         )}
       </div>
-
-      {/* Own standing, pinned when it falls outside the current page. */}
-      {initialUserRank && !selfOnPage && (
-        <div className="mt-4">
-          <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-            Your position
-          </span>
-          <div className="mt-1.5 overflow-hidden rounded-lg border">
-            <Table>
-              <TableBody>
-                <DeveloperRow
-                  user={initialUserRank}
-                  isSelf
-                  max={max || initialUserRank.totalTokens}
-                  sortBy={sortBy}
-                  tokenFormat={tokenFormat}
-                />
-              </TableBody>
-            </Table>
-          </div>
-        </div>
-      )}
 
       {pagination.totalPages > 1 && (
         <nav className="mt-6 flex items-center justify-between" aria-label="Pagination">
