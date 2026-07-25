@@ -3,6 +3,17 @@ const GITHUB_CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET!;
 const NEXT_PUBLIC_URL = process.env.NEXT_PUBLIC_URL || "http://localhost:3000";
 const GITHUB_REDIRECT_URI = `${NEXT_PUBLIC_URL}/api/auth/github/callback`;
 
+/**
+ * GitHub's REST API rejects any request without a User-Agent with a 403 and
+ * no JSON body — it is documented as required, and unlike a browser or Node,
+ * the Workers runtime does not supply a default one.
+ *
+ * lib/githubSocials.ts already learned this. Sign-in did not, because the
+ * migration to Workers carried every existing session cookie across, so
+ * nobody walked the OAuth path again until the first person logged out.
+ */
+const GITHUB_USER_AGENT = "tokens-ci";
+
 export interface GitHubUser {
   id: number;
   login: string;
@@ -34,6 +45,7 @@ export async function exchangeCodeForToken(code: string): Promise<string> {
     headers: {
       Accept: "application/json",
       "Content-Type": "application/json",
+      "User-Agent": GITHUB_USER_AGENT,
     },
     body: JSON.stringify({
       client_id: GITHUB_CLIENT_ID,
@@ -62,6 +74,7 @@ export async function getGitHubUser(accessToken: string): Promise<GitHubUser> {
     headers: {
       Authorization: `Bearer ${accessToken}`,
       Accept: "application/vnd.github.v3+json",
+      "User-Agent": GITHUB_USER_AGENT,
     },
   });
 
@@ -83,6 +96,7 @@ export async function getGitHubUserEmail(
       headers: {
         Authorization: `Bearer ${accessToken}`,
         Accept: "application/vnd.github.v3+json",
+        "User-Agent": GITHUB_USER_AGENT,
       },
     });
 
