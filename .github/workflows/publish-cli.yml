@@ -158,9 +158,13 @@ jobs:
             echo "staged ${pkg}: $(ls "packages/${pkg}/bin")"
           done
 
+      # The launcher is a tsc build over two devDependencies. Deliberately not
+      # --frozen-lockfile: bun installs the whole workspace, so a stale bun.lock
+      # caused by an unrelated web change would otherwise fail a CLI release
+      # after all eight targets had already been built.
       - name: Build the launcher
         run: |
-          bun install --frozen-lockfile
+          bun install
           bun run --cwd packages/cli build
 
       - name: Publish to npm
