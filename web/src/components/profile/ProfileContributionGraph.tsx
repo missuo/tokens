@@ -12,7 +12,6 @@ import {
   type MouseEvent as ReactMouseEvent,
   type PointerEvent,
 } from "react";
-import styled, { css } from "styled-components";
 import { SourceLogo } from "@/components/SourceLogo";
 import { SOURCE_COLORS, SOURCE_DISPLAY_NAMES, SOURCE_LOGOS } from "@/lib/constants";
 import { getContributionIntensity } from "@/lib/embed/embedShared";
@@ -32,6 +31,8 @@ import {
   type GraphColorPalette,
 } from "@/lib/themes";
 import { formatCurrency, formatTokenCount } from "@/lib/utils";
+import { tw } from "@/lib/tw";
+import { cn } from "@/lib/utils";
 
 export interface ProfileContributionGraphProps {
   breakdownId?: string;
@@ -961,924 +962,559 @@ function clientHasLogo(client: ClientType): boolean {
   );
 }
 
-const Figure = styled.figure`
-  width: 100%;
-  min-width: 0;
-  max-width: 100%;
-  display: flex;
-  flex-direction: column;
-  margin: 0;
-  overflow: hidden;
-  color: var(--service-text);
-  background: var(--service-surface);
-  border: 1px solid var(--service-border);
-  border-radius: 0.75rem;
-  container-type: inline-size;
-`;
+// ============================================================================
+// Calendar chrome
+// ============================================================================
+//
+// The figure is the container, so the calendar reflows on its own width — it
+// is embedded at several widths and the viewport tells it nothing useful.
+//
+// Grade colours arrive from the palette at runtime and differ per theme, so
+// they ride in as --lc/--dc custom properties with a static class pair that
+// Tailwind can see. Light uses the light grade, dark the dark one.
 
-const Header = styled.figcaption`
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 0.875rem 1rem;
-  border-bottom: 1px solid var(--service-border);
+const Figure = tw(
+  "figure",
+  "@container m-0 flex w-full min-w-0 max-w-full flex-col overflow-hidden rounded-xl border bg-card text-foreground"
+);
 
-  @container (max-width: 28rem) {
-    flex-direction: column;
-    gap: 0.625rem;
-  }
-`;
+const Header = tw(
+  "figcaption",
+  "flex items-start justify-between gap-4 border-b px-4 py-3.5 @max-[28rem]:flex-col @max-[28rem]:gap-2.5"
+);
 
-const HeadingGroup = styled.div`
-  min-width: 0;
-`;
+const HeadingGroup = tw("div", "min-w-0");
+const HeadingRow = tw("div", "flex min-w-0 items-center gap-2");
 
-const HeadingRow = styled.div`
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 0.5rem;
-`;
+const Heading = tw(
+  "h2",
+  "m-0 text-[0.9375rem] font-semibold tracking-tight text-foreground"
+);
 
-const Heading = styled.h2`
-  margin: 0;
-  color: var(--service-text);
-  font-size: 0.9375rem;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-`;
+// The chevron is drawn into a second grid column so the select can size to its
+// own text without the arrow overlapping it.
+const RangeSelectWrapper = tw(
+  "span",
+  "relative inline-grid min-w-0 grid-cols-[minmax(0,1fr)_0.75rem] items-center after:pointer-events-none after:col-start-2 after:row-start-1 after:size-[0.3125rem] after:-translate-y-0.5 after:rotate-45 after:border-b after:border-r after:border-muted-foreground after:content-['']"
+);
 
-const RangeSelectWrapper = styled.span`
-  position: relative;
-  display: inline-grid;
-  min-width: 0;
-  grid-template-columns: minmax(0, 1fr) 0.75rem;
-  align-items: center;
+const RangeSelect = tw(
+  "select",
+  "col-span-full row-start-1 min-w-0 cursor-pointer appearance-none overflow-hidden text-ellipsis rounded-none border-0 border-b border-dotted border-b-muted-foreground bg-transparent pb-0.5 pl-0 pr-4 pt-0 text-xs font-medium leading-5 text-muted-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring pointer-coarse:min-h-11 pointer-coarse:py-2.5 [&_option]:bg-card [&_option]:text-foreground"
+);
 
-  &::after {
-    width: 0.3125rem;
-    height: 0.3125rem;
-    grid-column: 2;
-    grid-row: 1;
-    border-right: 1px solid var(--service-text-muted-foreground);
-    border-bottom: 1px solid var(--service-text-muted-foreground);
-    content: "";
-    pointer-events: none;
-    transform: translateY(-0.125rem) rotate(45deg);
-  }
-`;
+const Description = tw(
+  "p",
+  "m-0 mt-1 max-w-[46ch] text-[0.8125rem] leading-snug text-muted-foreground"
+);
 
-const RangeSelect = styled.select`
-  min-width: 0;
-  grid-column: 1 / -1;
-  grid-row: 1;
-  padding: 0 1rem 0.125rem 0;
-  appearance: none;
-  overflow: hidden;
-  color: var(--service-text-muted-foreground);
-  background: transparent;
-  border: 0;
-  border-bottom: 1px dotted var(--service-text-muted-foreground);
-  border-radius: 0;
-  font-size: 0.75rem;
-  font-weight: 500;
-  line-height: 1.25rem;
-  text-overflow: ellipsis;
-  cursor: pointer;
+const HeaderAside = tw(
+  "div",
+  "flex flex-none items-start gap-3 @max-[28rem]:w-full @max-[28rem]:justify-between"
+);
 
-  option {
-    color: var(--service-text);
-    background: var(--service-surface);
-  }
+const ViewToggle = tw(
+  "div",
+  "inline-flex rounded-lg border bg-muted p-0.5"
+);
 
-  &:focus-visible {
-    outline: 2px solid var(--service-focus);
-    outline-offset: 2px;
-  }
+// The inner span carries the active pill so the hit area stays 44px on touch
+// while the pill itself keeps its 2rem width.
+const ViewButton = ({
+  $active,
+  className,
+  ...props
+}: React.ComponentPropsWithoutRef<"button"> & { $active: boolean }) => (
+  <button
+    {...props}
+    className={cn(
+      "relative inline-flex h-6 min-w-8 cursor-pointer items-center justify-center rounded-[0.35rem] border-0 bg-transparent p-0 text-[0.625rem] font-semibold focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring",
+      "[&>span]:inline-flex [&>span]:h-full [&>span]:w-full [&>span]:items-center [&>span]:justify-center [&>span]:rounded-[inherit]",
+      "pointer-coarse:min-w-11 pointer-coarse:after:absolute pointer-coarse:after:left-1/2 pointer-coarse:after:top-1/2 pointer-coarse:after:h-11 pointer-coarse:after:w-full pointer-coarse:after:-translate-x-1/2 pointer-coarse:after:-translate-y-1/2 pointer-coarse:after:content-[''] pointer-coarse:[&>span]:w-8",
+      $active
+        ? "text-foreground [&>span]:bg-card"
+        : "text-muted-foreground [&>span]:bg-transparent",
+      className
+    )}
+  />
+);
 
-  @media (pointer: coarse) {
-    min-height: 2.75rem;
-    padding-top: 0.625rem;
-    padding-bottom: 0.625rem;
-  }
-`;
+const Summary = tw(
+  "div",
+  "flex-none text-right [font-variant-numeric:tabular-nums] @max-[28rem]:ml-auto @max-[28rem]:block @max-[28rem]:w-auto"
+);
 
-const Description = styled.p`
-  max-width: 46ch;
-  margin: 0.25rem 0 0;
-  color: var(--service-text-muted-foreground);
-  font-size: 0.8125rem;
-  line-height: 1.45;
-`;
+const ActiveDays = tw(
+  "div",
+  "text-[0.8125rem] font-semibold text-foreground"
+);
 
-const HeaderAside = styled.div`
-  display: flex;
-  flex: 0 0 auto;
-  align-items: flex-start;
-  gap: 0.75rem;
+const Range = tw(
+  "div",
+  "mt-0.5 whitespace-nowrap text-[0.6875rem] text-muted-foreground"
+);
 
-  @container (max-width: 28rem) {
-    width: 100%;
-    align-items: flex-start;
-    justify-content: space-between;
-  }
-`;
+const CalendarBody = tw(
+  "div",
+  "relative flex min-w-0 flex-col justify-center overflow-x-auto px-4 pb-3 pt-3.5 [-webkit-overflow-scrolling:touch] [overscroll-behavior-inline:contain] [scrollbar-width:thin] @max-[24rem]:px-3"
+);
 
-const ViewToggle = styled.div`
-  display: inline-flex;
-  padding: 2px;
-  border: 1px solid var(--service-border);
-  border-radius: 0.5rem;
-  background: var(--service-surface-muted);
-`;
+const IsometricBody = tw(
+  "div",
+  "relative grid min-h-48 min-w-0 place-items-center overflow-hidden px-4 py-3 @max-[24rem]:min-h-40 @max-[24rem]:px-3"
+);
 
-const ViewButton = styled.button<{ $active: boolean }>`
-  position: relative;
-  display: inline-flex;
-  min-width: 2rem;
-  height: 1.5rem;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  border: 0;
-  border-radius: 0.35rem;
-  background: transparent;
-  color: ${(props) =>
-    props.$active ? "var(--service-text)" : "var(--service-text-muted-foreground)"};
-  font-size: 0.625rem;
-  font-weight: 600;
-  cursor: pointer;
+const IsometricSvg = tw("svg", "block max-h-80 w-full overflow-visible");
 
-  > span {
-    display: inline-flex;
-    width: 100%;
-    height: 100%;
-    align-items: center;
-    justify-content: center;
-    border-radius: inherit;
-    background: ${(props) =>
-      props.$active ? "var(--service-surface)" : "transparent"};
-  }
+// aria-hidden cells are spacers: they keep pointer events so the grid does not
+// gap, but they must not look interactive.
+//
+// $active and $selected are accepted and dropped. The stylesheet declared them
+// and never read them — the highlight is drawn by IsometricTop's stroke — and
+// styled-components filtered $-prefixed props out on the way to the DOM, so
+// forwarding them now would only produce unknown-attribute warnings.
+const IsometricCell = ({
+  $active: _active,
+  $selected: _selected,
+  className,
+  ...props
+}: React.ComponentPropsWithRef<"g"> & {
+  $active: boolean;
+  $selected: boolean;
+}) => (
+  <g
+    {...props}
+    className={cn(
+      "cursor-pointer outline-none [&[aria-hidden='true']]:cursor-default [&[aria-hidden='true']]:pointer-events-auto [&_polygon]:transition-[stroke,filter] [&_polygon]:duration-100 motion-reduce:[&_polygon]:transition-none [&:not([aria-hidden='true']):hover_polygon]:brightness-110 [&:not([aria-hidden='true']):focus-visible_polygon]:brightness-110",
+      className
+    )}
+  />
+);
 
-  &:focus-visible {
-    outline: 2px solid var(--service-focus);
-    outline-offset: 1px;
-  }
-
-  @media (pointer: coarse) {
-    min-width: 2.75rem;
-
-    &::after {
-      position: absolute;
-      top: 50%;
-      left: 50%;
-      width: 100%;
-      height: 2.75rem;
-      content: "";
-      transform: translate(-50%, -50%);
-    }
-
-    > span {
-      width: 2rem;
-    }
-  }
-`;
-
-const Summary = styled.div`
-  flex: 0 0 auto;
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-
-  @container (max-width: 28rem) {
-    display: block;
-    width: auto;
-    margin-left: auto;
-    text-align: right;
-  }
-`;
-
-const ActiveDays = styled.div`
-  color: var(--service-text);
-  font-size: 0.8125rem;
-  font-weight: 600;
-`;
-
-const Range = styled.div`
-  margin-top: 0.125rem;
-  color: var(--service-text-muted-foreground);
-  font-size: 0.6875rem;
-  white-space: nowrap;
-`;
-
-const CalendarBody = styled.div`
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  min-width: 0;
-  overflow-x: auto;
-  overscroll-behavior-inline: contain;
-  padding: 0.875rem 1rem 0.75rem;
-  scrollbar-width: thin;
-  -webkit-overflow-scrolling: touch;
-
-  @container (max-width: 24rem) {
-    padding-right: 0.75rem;
-    padding-left: 0.75rem;
-  }
-`;
-
-const IsometricBody = styled.div`
-  position: relative;
-  display: grid;
-  min-width: 0;
-  min-height: 12rem;
-  padding: 0.75rem 1rem;
-  place-items: center;
-  overflow: hidden;
-
-  @container (max-width: 24rem) {
-    min-height: 10rem;
-    padding-right: 0.75rem;
-    padding-left: 0.75rem;
-  }
-`;
-
-const IsometricSvg = styled.svg`
-  display: block;
-  width: 100%;
-  max-height: 20rem;
-  overflow: visible;
-`;
-
-const IsometricCell = styled.g<{ $active: boolean; $selected: boolean }>`
-  cursor: pointer;
-  outline: none;
-
-  &[aria-hidden="true"] {
-    pointer-events: auto;
-    cursor: default;
-  }
-
-  polygon {
-    transition:
-      stroke 120ms ease,
-      filter 120ms ease;
-  }
-
-  &:not([aria-hidden="true"]):hover polygon,
-  &:not([aria-hidden="true"]):focus-visible polygon {
-    filter: brightness(1.12);
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    polygon {
-      transition: none;
-    }
-  }
-`;
-
-const IsometricTop = styled.polygon<{
+const IsometricTop = ({
+  $active,
+  $darkColor,
+  $lightColor,
+  $selected,
+  style,
+  ...props
+}: React.ComponentPropsWithoutRef<"polygon"> & {
   $active: boolean;
   $darkColor: string;
   $lightColor: string;
   $selected: boolean;
-}>`
-  fill: ${(props) => props.$lightColor};
-  stroke: ${(props) =>
-    props.$selected
-      ? "var(--service-focus)"
-      : props.$active
-        ? "var(--service-text)"
-        : "color-mix(in srgb, var(--service-text) 8%, transparent)"};
-  stroke-width: ${(props) => (props.$active || props.$selected ? 1.4 : 0.55)};
-  vector-effect: non-scaling-stroke;
+}) => (
+  <polygon
+    {...props}
+    style={
+      {
+        "--lc": $lightColor,
+        "--dc": $darkColor,
+        stroke: $selected
+          ? "var(--ring)"
+          : $active
+            ? "var(--foreground)"
+            : "color-mix(in srgb, var(--foreground) 8%, transparent)",
+        strokeWidth: $active || $selected ? 1.4 : 0.55,
+        ...style,
+      } as React.CSSProperties
+    }
+    className="fill-[var(--lc)] [vector-effect:non-scaling-stroke] dark:fill-[var(--dc)]"
+  />
+);
 
-  :where(.dark, [data-theme="dark"]) & {
-    fill: ${(props) => props.$darkColor};
-  }
-`;
-
-const IsometricSide = styled.polygon<{
+const IsometricSide = ({
+  $darkColor,
+  $lightColor,
+  style,
+  ...props
+}: React.ComponentPropsWithoutRef<"polygon"> & {
   $darkColor: string;
   $lightColor: string;
-}>`
-  fill: ${(props) => props.$lightColor};
+}) => (
+  <polygon
+    {...props}
+    style={{ "--lc": $lightColor, "--dc": $darkColor, ...style } as React.CSSProperties}
+    className="fill-[var(--lc)] dark:fill-[var(--dc)]"
+  />
+);
 
-  :where(.dark, [data-theme="dark"]) & {
-    fill: ${(props) => props.$darkColor};
-  }
-`;
+// Column width is the cell size unless the range is short enough that wider
+// cells read better. Track counts are runtime values, so the template is
+// inline.
+const cellTrack = (weeks: number) =>
+  weeks <= 5 ? "1.25rem" : `${PROFILE_CONTRIBUTION_CELL_SIZE}px`;
 
-const MonthRow = styled.div<{ $weeks: number }>`
-  display: grid;
-  grid-template-columns: repeat(
-    ${(props) => props.$weeks},
-    ${(props) =>
-      props.$weeks <= 5 ? "1.25rem" : `${PROFILE_CONTRIBUTION_CELL_SIZE}px`}
-  );
-  column-gap: ${PROFILE_CONTRIBUTION_CELL_GAP}px;
-  box-sizing: border-box;
-  width: max-content;
-  min-width: 0;
-  height: 1.125rem;
-  padding-left: 1.75rem;
-  color: var(--service-text-muted-foreground);
+const MonthRow = ({
+  $weeks,
+  style,
+  ...props
+}: React.ComponentPropsWithoutRef<"div"> & { $weeks: number }) => (
+  <div
+    {...props}
+    style={{
+      gridTemplateColumns: `repeat(${$weeks}, ${cellTrack($weeks)})`,
+      columnGap: `${PROFILE_CONTRIBUTION_CELL_GAP}px`,
+      ...style,
+    }}
+    className="box-border grid h-[1.125rem] w-max min-w-0 pl-7 text-muted-foreground @max-[22rem]:pl-0"
+  />
+);
 
-  @container (max-width: 22rem) {
-    padding-left: 0;
-  }
-`;
-
-const Month = styled.span<{
+// The ::after is the tick mark under each month label.
+const Month = ({
+  $compactVisible,
+  $week,
+  className,
+  style,
+  ...props
+}: React.ComponentPropsWithoutRef<"span"> & {
   $compactVisible: boolean;
   $week: number;
-}>`
-  position: relative;
-  grid-column: ${(props) => props.$week + 1};
-  min-width: 0;
-  font-size: 0.625rem;
-  font-variant-numeric: tabular-nums;
-  line-height: 1;
-  white-space: nowrap;
+}) => (
+  <span
+    {...props}
+    style={{ gridColumn: $week + 1, ...style }}
+    className={cn(
+      "relative min-w-0 whitespace-nowrap text-[0.625rem] leading-none [font-variant-numeric:tabular-nums]",
+      "after:absolute after:left-0 after:top-3 after:h-1 after:w-px after:bg-muted-foreground/40 after:content-['']",
+      !$compactVisible && "@max-[32rem]:hidden",
+      className
+    )}
+  />
+);
 
-  &::after {
-    position: absolute;
-    top: 0.75rem;
-    left: 0;
-    width: 1px;
-    height: 0.25rem;
-    background: var(--service-border-strong);
-    content: "";
-  }
+const CalendarRow = tw(
+  "div",
+  "grid w-max min-w-0 grid-cols-[1.25rem_max-content] items-stretch gap-2 @max-[22rem]:grid-cols-[max-content]"
+);
 
-  @container (max-width: 32rem) {
-    ${(props) =>
-      !props.$compactVisible &&
-      css`
-        display: none;
-      `}
-  }
-`;
+const DayLabels = ({ style, ...props }: React.ComponentPropsWithoutRef<"div">) => (
+  <div
+    {...props}
+    style={{ gap: `${PROFILE_CONTRIBUTION_CELL_GAP}px`, ...style }}
+    className="grid grid-rows-[repeat(7,minmax(0,1fr))] text-[0.625rem] leading-none text-muted-foreground @max-[22rem]:hidden"
+  />
+);
 
-const CalendarRow = styled.div`
-  display: grid;
-  grid-template-columns: 1.25rem max-content;
-  align-items: stretch;
-  gap: 0.5rem;
-  width: max-content;
-  min-width: 0;
+const DayLabel = ({
+  $row,
+  style,
+  ...props
+}: React.ComponentPropsWithoutRef<"span"> & { $row: number }) => (
+  <span {...props} style={{ gridRow: $row, ...style }} className="self-center" />
+);
 
-  @container (max-width: 22rem) {
-    grid-template-columns: max-content;
-  }
-`;
+const Grid = ({
+  $weeks,
+  style,
+  ...props
+}: React.ComponentPropsWithoutRef<"div"> & { $weeks: number }) => (
+  <div
+    {...props}
+    style={{
+      gridTemplateColumns: `repeat(${$weeks}, ${cellTrack($weeks)})`,
+      gridTemplateRows: `repeat(7, ${cellTrack($weeks)})`,
+      gap: `${PROFILE_CONTRIBUTION_CELL_GAP}px`,
+      ...style,
+    }}
+    className="grid w-max min-w-0 grid-flow-col"
+  />
+);
 
-const DayLabels = styled.div`
-  display: grid;
-  grid-template-rows: repeat(7, minmax(0, 1fr));
-  gap: ${PROFILE_CONTRIBUTION_CELL_GAP}px;
-  color: var(--service-text-muted-foreground);
-  font-size: 0.625rem;
-  line-height: 1;
-
-  @container (max-width: 22rem) {
-    display: none;
-  }
-`;
-
-const DayLabel = styled.span<{ $row: number }>`
-  grid-row: ${(props) => props.$row};
-  align-self: center;
-`;
-
-const Grid = styled.div<{ $weeks: number }>`
-  display: grid;
-  grid-auto-flow: column;
-  grid-template-columns: repeat(
-    ${(props) => props.$weeks},
-    ${(props) =>
-      props.$weeks <= 5 ? "1.25rem" : `${PROFILE_CONTRIBUTION_CELL_SIZE}px`}
-  );
-  grid-template-rows: repeat(
-    7,
-    ${(props) =>
-      props.$weeks <= 5 ? "1.25rem" : `${PROFILE_CONTRIBUTION_CELL_SIZE}px`}
-  );
-  gap: ${PROFILE_CONTRIBUTION_CELL_GAP}px;
-  width: max-content;
-  min-width: 0;
-`;
-
-const Cell = styled.button<{
+// Out-of-range cells stay in the layout but hidden, so the grid keeps its
+// shape at the start and end of a range. The inset shadow gives an empty cell
+// an edge; the outer one is selection or hover.
+const Cell = ({
+  $active,
+  $darkColor,
+  $inRange,
+  $lightColor,
+  $selected,
+  style,
+  ...props
+}: React.ComponentPropsWithRef<"button"> & {
   $active: boolean;
   $darkColor: string;
   $inRange: boolean;
   $lightColor: string;
   $selected: boolean;
-}>`
-  display: block;
-  min-width: 0;
-  padding: 0;
-  aspect-ratio: 1;
-  visibility: ${(props) => (props.$inRange ? "visible" : "hidden")};
-  background: ${(props) => props.$lightColor};
-  border: 0;
-  border-radius: ${PROFILE_CONTRIBUTION_CELL_RADIUS}px;
-  box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--service-text) 4%, transparent),
-    ${(props) =>
-      props.$selected
-        ? "0 0 0 1px var(--service-focus)"
-        : props.$active
-          ? "0 0 0 1px var(--service-text)"
-          : "0 0 0 0 transparent"};
-  cursor: pointer;
+}) => (
+  <button
+    {...props}
+    style={
+      {
+        "--lc": $lightColor,
+        "--dc": $darkColor,
+        visibility: $inRange ? "visible" : "hidden",
+        borderRadius: `${PROFILE_CONTRIBUTION_CELL_RADIUS}px`,
+        boxShadow: `inset 0 0 0 1px color-mix(in srgb, var(--foreground) 4%, transparent), ${
+          $selected
+            ? "0 0 0 1px var(--ring)"
+            : $active
+              ? "0 0 0 1px var(--foreground)"
+              : "0 0 0 0 transparent"
+        }`,
+        ...style,
+      } as React.CSSProperties
+    }
+    className="block aspect-square min-w-0 cursor-pointer border-0 bg-[var(--lc)] p-0 disabled:cursor-default focus-visible:relative focus-visible:z-[2] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring dark:bg-[var(--dc)]"
+  />
+);
 
-  :where(.dark, [data-theme="dark"]) & {
-    background: ${(props) => props.$darkColor};
-  }
+const Footer = tw(
+  "div",
+  "flex items-center justify-between gap-3 px-4 pb-3.5 @max-[24rem]:px-3"
+);
 
-  &:disabled {
-    cursor: default;
-  }
+const PaletteControl = tw(
+  "label",
+  "relative inline-flex min-w-0 items-center gap-1.5 text-[0.6875rem] text-muted-foreground after:pointer-events-none after:absolute after:right-2.5 after:size-[0.3125rem] after:-translate-y-0.5 after:rotate-45 after:border-b after:border-r after:border-muted-foreground after:content-[''] pointer-coarse:min-h-11"
+);
 
-  &:focus-visible {
-    position: relative;
-    z-index: 2;
-    outline: 2px solid var(--service-focus);
-    outline-offset: 1px;
-  }
-`;
+const PaletteSelect = tw(
+  "select",
+  "h-7 max-w-30 cursor-pointer appearance-none rounded-[0.4375rem] border bg-muted pl-2 pr-6 text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring"
+);
 
-const Footer = styled.div`
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  padding: 0 1rem 0.875rem;
+const PalettePreview = tw(
+  "span",
+  "inline-grid grid-cols-[repeat(4,0.625rem)] gap-[0.1875rem] overflow-hidden rounded-sm"
+);
 
-  @container (max-width: 24rem) {
-    padding-right: 0.75rem;
-    padding-left: 0.75rem;
-  }
-`;
-
-const PaletteControl = styled.label`
-  position: relative;
-  display: inline-flex;
-  min-width: 0;
-  align-items: center;
-  gap: 0.375rem;
-  color: var(--service-text-muted-foreground);
-  font-size: 0.6875rem;
-
-  &::after {
-    position: absolute;
-    right: 0.625rem;
-    width: 0.3125rem;
-    height: 0.3125rem;
-    border-right: 1px solid var(--service-text-muted-foreground);
-    border-bottom: 1px solid var(--service-text-muted-foreground);
-    content: "";
-    pointer-events: none;
-    transform: translateY(-0.125rem) rotate(45deg);
-  }
-
-  @media (pointer: coarse) {
-    min-height: 2.75rem;
-  }
-`;
-
-const PaletteSelect = styled.select`
-  max-width: 7.5rem;
-  height: 1.75rem;
-  padding: 0 1.5rem 0 0.5rem;
-  appearance: none;
-  color: var(--service-text);
-  background: var(--service-surface-muted);
-  border: 1px solid var(--service-border);
-  border-radius: 0.4375rem;
-  font: inherit;
-  cursor: pointer;
-
-  &:focus-visible {
-    outline: 2px solid var(--service-focus);
-    outline-offset: 1px;
-  }
-`;
-
-const PalettePreview = styled.span`
-  display: inline-grid;
-  grid-template-columns: repeat(4, 0.625rem);
-  gap: 0.1875rem;
-  overflow: hidden;
-  border-radius: 2px;
-`;
-
-const PalettePreviewSwatch = styled.span<{
+const PalettePreviewSwatch = ({
+  $darkColor,
+  $lightColor,
+  style,
+  ...props
+}: React.ComponentPropsWithoutRef<"span"> & {
   $darkColor: string;
   $lightColor: string;
-}>`
-  width: 0.625rem;
-  height: 0.625rem;
-  background: ${(props) => props.$lightColor};
+}) => (
+  <span
+    {...props}
+    style={{ "--lc": $lightColor, "--dc": $darkColor, ...style } as React.CSSProperties}
+    className="size-2.5 bg-[var(--lc)] dark:bg-[var(--dc)]"
+  />
+);
 
-  :where(.dark, [data-theme="dark"]) & {
-    background: ${(props) => props.$darkColor};
-  }
-`;
+const Legend = tw(
+  "div",
+  "inline-flex items-center gap-[0.3125rem] text-[0.6875rem] text-muted-foreground"
+);
 
-const Legend = styled.div`
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3125rem;
-  color: var(--service-text-muted-foreground);
-  font-size: 0.6875rem;
-`;
+const LegendSwatches = tw(
+  "span",
+  "inline-grid grid-cols-[repeat(5,0.625rem)] gap-[0.1875rem]"
+);
 
-const LegendSwatches = styled.span`
-  display: inline-grid;
-  grid-template-columns: repeat(5, 0.625rem);
-  gap: 0.1875rem;
-`;
-
-const LegendSwatch = styled.span<{
+const LegendSwatch = ({
+  $darkColor,
+  $lightColor,
+  style,
+  ...props
+}: React.ComponentPropsWithoutRef<"span"> & {
   $darkColor: string;
   $lightColor: string;
-}>`
-  width: 0.625rem;
-  height: 0.625rem;
-  background: ${(props) => props.$lightColor};
-  border-radius: 2px;
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--service-text) 5%, transparent);
+}) => (
+  <span
+    {...props}
+    style={{ "--lc": $lightColor, "--dc": $darkColor, ...style } as React.CSSProperties}
+    className="size-2.5 rounded-sm bg-[var(--lc)] shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--foreground)_5%,transparent)] dark:bg-[var(--dc)]"
+  />
+);
 
-  :where(.dark, [data-theme="dark"]) & {
-    background: ${(props) => props.$darkColor};
-  }
-`;
+// Positioned against the viewport, not the figure, so it is never clipped by
+// the calendar's own horizontal scroll.
+const CellTooltip = ({
+  $left,
+  $top,
+  style,
+  ...props
+}: React.ComponentPropsWithoutRef<"div"> & { $left: number; $top: number }) => (
+  <div
+    {...props}
+    style={{ top: `${$top}px`, left: `${$left}px`, ...style }}
+    className="pointer-events-none fixed z-[80] grid max-h-[calc(100dvh-1.5rem)] w-[min(17.5rem,calc(100vw-1.5rem))] gap-2 overflow-hidden rounded-[0.625rem] border border-muted-foreground/30 bg-muted p-3 text-foreground shadow-[0_12px_32px_rgb(0_0_0/0.34)] [font-variant-numeric:tabular-nums]"
+  />
+);
 
-const CellTooltip = styled.div<{
-  $left: number;
-  $top: number;
-}>`
-  position: fixed;
-  z-index: 80;
-  top: ${(props) => props.$top}px;
-  left: ${(props) => props.$left}px;
-  display: grid;
-  width: min(17.5rem, calc(100vw - 1.5rem));
-  max-height: calc(100dvh - 1.5rem);
-  gap: 0.5rem;
-  overflow: hidden;
-  padding: 0.75rem;
-  color: var(--service-text);
-  background: var(--service-surface-muted);
-  border: 1px solid var(--service-border-strong);
-  border-radius: 0.625rem;
-  box-shadow: 0 12px 32px rgb(0 0 0 / 0.34);
-  font-variant-numeric: tabular-nums;
-  pointer-events: none;
-`;
+const CellTooltipDate = tw("span", "text-[0.6875rem] text-muted-foreground");
+const TooltipTotal = tw("div", "flex items-baseline justify-between gap-3");
+const TooltipTotalLabel = tw("span", "text-[0.6875rem] text-muted-foreground");
 
-const CellTooltipDate = styled.span`
-  color: var(--service-text-muted-foreground);
-  font-size: 0.6875rem;
-`;
+const CellTooltipValue = tw(
+  "strong",
+  "text-base font-semibold tracking-tight text-foreground"
+);
 
-const TooltipTotal = styled.div`
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 0.75rem;
-`;
+const TooltipDivider = tw("span", "block h-px bg-border");
 
-const TooltipTotalLabel = styled.span`
-  color: var(--service-text-muted-foreground);
-  font-size: 0.6875rem;
-`;
+const TooltipMetricGrid = tw(
+  "div",
+  "grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1 text-[0.6875rem]"
+);
 
-const CellTooltipValue = styled.strong`
-  color: var(--service-text);
-  font-size: 1rem;
-  font-weight: 600;
-  letter-spacing: -0.02em;
-`;
+const TooltipMetricLabel = tw(
+  "span",
+  "min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-muted-foreground"
+);
 
-const TooltipDivider = styled.span`
-  display: block;
-  height: 1px;
-  background: var(--service-border);
-`;
+const TooltipMetricValue = tw(
+  "span",
+  "text-right font-mono font-semibold text-foreground"
+);
 
-const TooltipMetricGrid = styled.div`
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 0.25rem 0.75rem;
-  font-size: 0.6875rem;
-`;
+const TooltipSectionLabel = tw(
+  "span",
+  "text-[0.625rem] font-semibold uppercase tracking-[0.06em] text-muted-foreground"
+);
 
-const TooltipMetricLabel = styled.span`
-  min-width: 0;
-  overflow: hidden;
-  color: var(--service-text-muted-foreground);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-`;
+// Standalone it is its own card; inline it is the section below the calendar
+// and only needs the rule joining them.
+const DetailPanel = ({
+  $standalone,
+  className,
+  ...props
+}: React.ComponentPropsWithoutRef<"section"> & { $standalone: boolean }) => (
+  <section
+    {...props}
+    className={cn(
+      "@container overflow-hidden border-border bg-[color-mix(in_srgb,var(--muted)_42%,var(--card))]",
+      $standalone ? "rounded-xl border" : "rounded-none border-x-0 border-b-0 border-t",
+      className
+    )}
+  />
+);
 
-const TooltipMetricValue = styled.span`
-  color: var(--service-text);
-  font-family: var(--font-mono);
-  font-weight: 600;
-  text-align: right;
-`;
+const DetailHeader = tw(
+  "header",
+  "flex items-start justify-between gap-3 border-b px-4 py-3.5"
+);
 
-const TooltipSectionLabel = styled.span`
-  color: var(--service-text-muted-foreground);
-  font-size: 0.625rem;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-`;
+const DetailEyebrow = tw(
+  "div",
+  "mb-0.5 text-[0.625rem] font-semibold uppercase tracking-[0.07em] text-muted-foreground"
+);
 
-const DetailPanel = styled.section<{ $standalone: boolean }>`
-  overflow: hidden;
-  border: 1px solid var(--service-border);
-  border-width: ${(props) => (props.$standalone ? "1px" : "1px 0 0")};
-  border-radius: ${(props) => (props.$standalone ? "0.75rem" : "0")};
-  background: color-mix(
-    in srgb,
-    var(--service-surface-muted) 42%,
-    var(--service-surface)
-  );
-  container-type: inline-size;
-`;
+const DetailTitle = tw(
+  "h3",
+  "m-0 text-sm font-semibold tracking-tight text-foreground"
+);
 
-const DetailHeader = styled.header`
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 0.75rem;
-  padding: 0.875rem 1rem;
-  border-bottom: 1px solid var(--service-border);
-`;
+const DetailClose = tw(
+  "button",
+  "inline-grid size-7 flex-none cursor-pointer place-items-center rounded-[0.4375rem] border border-transparent bg-transparent p-0 text-muted-foreground hover:border-border hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring"
+);
 
-const DetailEyebrow = styled.div`
-  margin-bottom: 0.125rem;
-  color: var(--service-text-muted-foreground);
-  font-size: 0.625rem;
-  font-weight: 600;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
-`;
+const DetailBody = tw("div", "grid gap-4 p-4");
 
-const DetailTitle = styled.h3`
-  margin: 0;
-  color: var(--service-text);
-  font-size: 0.875rem;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-`;
+const DetailSummary = tw(
+  "div",
+  "grid grid-cols-3 overflow-hidden rounded-lg border [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent [&>div]:p-2.5 [&>div+div]:border-l [&>div+div]:border-border"
+);
 
-const DetailClose = styled.button`
-  display: inline-grid;
-  flex: 0 0 auto;
-  width: 1.75rem;
-  height: 1.75rem;
-  padding: 0;
-  place-items: center;
-  color: var(--service-text-muted-foreground);
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 0.4375rem;
-  cursor: pointer;
+const DetailMetric = tw("div", "min-w-0 px-3 py-2.5");
 
-  &:hover {
-    color: var(--service-text);
-    background: var(--service-surface-muted);
-    border-color: var(--service-border);
-  }
+const DetailMetricLabel = tw(
+  "div",
+  "mb-0.5 text-[0.625rem] text-muted-foreground"
+);
 
-  &:focus-visible {
-    outline: 2px solid var(--service-focus);
-    outline-offset: 1px;
-  }
-`;
+const DetailMetricValue = tw(
+  "div",
+  "overflow-hidden text-ellipsis whitespace-nowrap font-mono text-[0.8125rem] font-semibold text-foreground"
+);
 
-const DetailBody = styled.div`
-  display: grid;
-  gap: 1rem;
-  padding: 1rem;
-`;
+// Five across, then three, then two. Each step re-picks which cells start a
+// row so the vertical rules never sit on a row edge.
+const TokenDetailGrid = tw(
+  "div",
+  cn(
+    "grid grid-cols-5 overflow-hidden rounded-lg border [&>div+div]:border-l [&>div+div]:border-border",
+    "@max-[36rem]:grid-cols-3 @max-[36rem]:[&>div:nth-child(4)]:border-l-0 @max-[36rem]:[&>div:nth-child(n+4)]:border-t @max-[36rem]:[&>div:nth-child(n+4)]:border-border",
+    "@max-[24rem]:grid-cols-2 @max-[24rem]:[&>div:nth-child(odd)]:border-l-0 @max-[24rem]:[&>div:nth-child(4)]:border-l @max-[24rem]:[&>div:nth-child(n+3)]:border-t @max-[24rem]:[&>div:nth-child(n+3)]:border-border"
+  )
+);
 
-const DetailSummary = styled.div`
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  overflow: hidden;
-  border: 1px solid var(--service-border);
-  border-radius: 0.5rem;
+const DetailSection = tw("section", "grid gap-2");
 
-  > div {
-    padding: 0.625rem;
-    background: transparent;
-    border: 0;
-    border-radius: 0;
-  }
+const DetailSectionTitle = tw(
+  "h4",
+  "m-0 text-[0.6875rem] font-semibold text-muted-foreground"
+);
 
-  > div + div {
-    border-left: 1px solid var(--service-border);
-  }
-`;
+// Scrolls inside the inline panel; on its own page, and on a narrow one, it
+// runs to full height instead.
+const ClientList = ({
+  $standalone,
+  className,
+  ...props
+}: React.ComponentPropsWithoutRef<"div"> & { $standalone: boolean }) => (
+  <div
+    {...props}
+    className={cn(
+      "grid rounded-[0.625rem] border focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
+      $standalone ? "max-h-none overflow-visible" : "max-h-100 overflow-auto",
+      "@max-[28rem]:max-h-none @max-[28rem]:overflow-visible",
+      className
+    )}
+  />
+);
 
-const DetailMetric = styled.div`
-  min-width: 0;
-  padding: 0.625rem 0.75rem;
-`;
+const ClientSection = tw(
+  "section",
+  "min-w-0 p-3 [&+&]:border-t [&+&]:border-border"
+);
 
-const DetailMetricLabel = styled.div`
-  margin-bottom: 0.125rem;
-  color: var(--service-text-muted-foreground);
-  font-size: 0.625rem;
-`;
+const ClientHeader = tw("div", "flex items-center justify-between gap-3");
+const ClientIdentity = tw("div", "flex min-w-0 items-center gap-2");
 
-const DetailMetricValue = styled.div`
-  overflow: hidden;
-  color: var(--service-text);
-  font-family: var(--font-mono);
-  font-size: 0.8125rem;
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-`;
+const ClientDot = ({
+  $color,
+  style,
+  ...props
+}: React.ComponentPropsWithoutRef<"span"> & { $color: string }) => (
+  <span
+    {...props}
+    style={{ background: $color, ...style }}
+    className="size-2 flex-none rounded-full border border-[color-mix(in_srgb,var(--foreground)_28%,transparent)]"
+  />
+);
 
-const TokenDetailGrid = styled.div`
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  overflow: hidden;
-  border: 1px solid var(--service-border);
-  border-radius: 0.5rem;
+const ClientName = tw(
+  "strong",
+  "overflow-hidden text-ellipsis whitespace-nowrap text-xs font-semibold text-foreground"
+);
 
-  > div + div {
-    border-left: 1px solid var(--service-border);
-  }
+const ClientTotal = tw(
+  "span",
+  "flex-none font-mono text-[0.6875rem] text-muted-foreground [font-variant-numeric:tabular-nums]"
+);
 
-  @container (max-width: 36rem) {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+const ModelList = tw("div", "mt-2.5 grid gap-1.5 pl-4");
 
-    > div:nth-child(4) {
-      border-left: 0;
-    }
+const ModelRow = tw(
+  "div",
+  "grid min-w-0 grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-0.5 border-l border-muted-foreground/30 pl-2.5"
+);
 
-    > div:nth-child(n + 4) {
-      border-top: 1px solid var(--service-border);
-    }
-  }
+const ModelName = tw(
+  "span",
+  "overflow-hidden text-ellipsis whitespace-nowrap font-mono text-[0.6875rem] text-foreground"
+);
 
-  @container (max-width: 24rem) {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+const ModelValue = tw(
+  "span",
+  "font-mono text-[0.6875rem] text-foreground [font-variant-numeric:tabular-nums]"
+);
 
-    > div:nth-child(3) {
-      border-left: 0;
-    }
+const ModelMeta = tw(
+  "span",
+  "col-span-full text-[0.6875rem] leading-snug text-muted-foreground"
+);
 
-    > div:nth-child(4) {
-      border-left: 1px solid var(--service-border);
-    }
-
-    > div:nth-child(odd) {
-      border-left: 0;
-    }
-
-    > div:nth-child(n + 3) {
-      border-top: 1px solid var(--service-border);
-    }
-  }
-`;
-
-const DetailSection = styled.section`
-  display: grid;
-  gap: 0.5rem;
-`;
-
-const DetailSectionTitle = styled.h4`
-  margin: 0;
-  color: var(--service-text-muted-foreground);
-  font-size: 0.6875rem;
-  font-weight: 600;
-`;
-
-const ClientList = styled.div<{ $standalone: boolean }>`
-  display: grid;
-  max-height: ${(props) => (props.$standalone ? "none" : "25rem")};
-  overflow: ${(props) => (props.$standalone ? "visible" : "auto")};
-  border: 1px solid var(--service-border);
-  border-radius: 0.625rem;
-
-  &:focus-visible {
-    outline: 2px solid var(--service-focus);
-    outline-offset: 2px;
-  }
-
-  @container (max-width: 28rem) {
-    max-height: none;
-    overflow: visible;
-  }
-`;
-
-const ClientSection = styled.section`
-  min-width: 0;
-  padding: 0.75rem;
-
-  & + & {
-    border-top: 1px solid var(--service-border);
-  }
-`;
-
-const ClientHeader = styled.div`
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-`;
-
-const ClientIdentity = styled.div`
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 0.5rem;
-`;
-
-const ClientDot = styled.span<{ $color: string }>`
-  flex: 0 0 auto;
-  width: 0.5rem;
-  height: 0.5rem;
-  background: ${(props) => props.$color};
-  border: 1px solid color-mix(in srgb, var(--service-text) 28%, transparent);
-  border-radius: 999px;
-`;
-
-const ClientName = styled.strong`
-  overflow: hidden;
-  color: var(--service-text);
-  font-size: 0.75rem;
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-`;
-
-const ClientTotal = styled.span`
-  flex: 0 0 auto;
-  color: var(--service-text-muted-foreground);
-  font-family: var(--font-mono);
-  font-size: 0.6875rem;
-  font-variant-numeric: tabular-nums;
-`;
-
-const ModelList = styled.div`
-  display: grid;
-  gap: 0.375rem;
-  margin-top: 0.625rem;
-  padding-left: 1rem;
-`;
-
-const ModelRow = styled.div`
-  display: grid;
-  min-width: 0;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 0.125rem 0.75rem;
-  padding-left: 0.625rem;
-  border-left: 1px solid var(--service-border-strong);
-`;
-
-const ModelName = styled.span`
-  overflow: hidden;
-  color: var(--service-text);
-  font-family: var(--font-mono);
-  font-size: 0.6875rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-`;
-
-const ModelValue = styled.span`
-  color: var(--service-text);
-  font-family: var(--font-mono);
-  font-size: 0.6875rem;
-  font-variant-numeric: tabular-nums;
-`;
-
-const ModelMeta = styled.span`
-  grid-column: 1 / -1;
-  color: var(--service-text-muted-foreground);
-  font-size: 0.6875rem;
-  line-height: 1.45;
-`;
-
-const NoDayActivity = styled.p`
-  margin: 0;
-  color: var(--service-text-muted-foreground);
-  font-size: 0.75rem;
-`;
+const NoDayActivity = tw("p", "m-0 text-xs text-muted-foreground");
 
 function formatFullDay(date: string): string {
   const timestamp = parseUtcDate(date);
@@ -2154,24 +1790,15 @@ export function ProfileContributionBreakdown({
   );
 }
 
-const EmptyState = styled.div`
-  padding: 1.5rem 1rem;
-  color: var(--service-text-muted-foreground);
-  font-size: 0.8125rem;
-  text-align: center;
-`;
+const EmptyState = tw(
+  "div",
+  "px-4 py-6 text-center text-[0.8125rem] text-muted-foreground"
+);
 
-const VisuallyHidden = styled.span`
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
-`;
+const VisuallyHidden = tw(
+  "span",
+  "absolute m-[-1px] h-px w-px overflow-hidden whitespace-nowrap border-0 p-0 [clip:rect(0,0,0,0)]"
+);
 
 export function ProfileContributionGraph({
   breakdownId: providedBreakdownId,
