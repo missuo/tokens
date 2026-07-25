@@ -150,6 +150,16 @@ jobs:
         with:
           path: artifacts
 
+      # upload-artifact/download-artifact do not preserve the executable bit,
+      # so everything arrives as 0644. Restore it once, here, rather than in
+      # each consumer: 27.0.1 shipped release tarballs containing a
+      # non-executable binary because only the npm staging step chmodded.
+      - name: Restore the executable bit
+        run: |
+          set -euo pipefail
+          chmod +x artifacts/cli-*/*
+          ls -l artifacts/cli-darwin-arm64
+
       - name: Set version
         run: bash scripts/set-version.sh "${{ inputs.version }}"
 
@@ -159,9 +169,8 @@ jobs:
           for dir in artifacts/cli-*; do
             pkg="$(basename "$dir")"
             mkdir -p "packages/${pkg}/bin"
-            cp "$dir"/* "packages/${pkg}/bin/"
-            chmod +x "packages/${pkg}/bin/"*
-            echo "staged ${pkg}: $(ls "packages/${pkg}/bin")"
+            cp -p "$dir"/* "packages/${pkg}/bin/"
+            echo "staged ${pkg}: $(ls -l "packages/${pkg}/bin" | tail -1)"
           done
 
       # The launcher is a tsc build over two devDependencies. Deliberately not
