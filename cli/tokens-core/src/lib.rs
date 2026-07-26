@@ -8,6 +8,7 @@ pub mod content_extractor;
 pub mod fs_atomic;
 pub mod mcp;
 mod message_cache;
+pub use message_cache::clear_source_message_cache;
 pub mod model_alias;
 pub mod opencode_model_name;
 mod parser;

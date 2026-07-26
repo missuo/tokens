@@ -135,6 +135,28 @@ enum Commands {
     },
     #[command(about = "Delete all submitted usage data from the server")]
     DeleteSubmittedData,
+    #[command(about = "Show local token usage (Menu Bar / machine-readable)")]
+    Usage {
+        #[arg(long, help = "Output as JSON")]
+        json: bool,
+        #[arg(
+            long,
+            value_enum,
+            default_value_t = commands::usage_report::UsagePeriod::Today,
+            help = "Aggregation window: today, 7d, 30d, or all"
+        )]
+        period: commands::usage_report::UsagePeriod,
+        #[arg(
+            long,
+            help = "Rescan sessions (incremental cache) instead of reusing the usage snapshot"
+        )]
+        refresh: bool,
+        #[arg(
+            long,
+            help = "Clear source + usage caches and fully rescan all session files"
+        )]
+        force_rescan: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -370,6 +392,12 @@ fn main() -> Result<()> {
         Some(Commands::Warp { subcommand }) => {
             run_warp_command(subcommand)
         }
+        Some(Commands::Usage {
+            json,
+            period,
+            refresh,
+            force_rescan,
+        }) => commands::usage_report::run(json, period, refresh, force_rescan),
         Some(Commands::DeleteSubmittedData) => {
             run_delete_data_command()
         }

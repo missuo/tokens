@@ -1477,3 +1477,27 @@ pub(crate) fn codex_cache_entry_matches_fingerprint(
         && codex_incremental.prefix_hash == fingerprint.content_hash
 }
 
+
+/// Delete on-disk source-message cache shards so the next scan reparses everything.
+///
+/// Used by `tokens usage --force-rescan` (and similar UI "full rescan" actions).
+/// In-memory caches held by other processes are unaffected until those processes
+/// reload; this process always starts a fresh load after the call.
+pub fn clear_source_message_cache() -> Result<(), String> {
+    let Some(shard_root) = cache_shard_dir() else {
+        return Ok(());
+    };
+    if !shard_root.exists() {
+        return Ok(());
+    }
+    fs::remove_dir_all(&shard_root).map_err(|error| {
+        format!(
+            "failed to clear source message cache at {}: {error}",
+            shard_root.display()
+        )
+    })?;
+    if let Some(lock_path) = cache_lock_path() {
+        let _ = fs::remove_file(lock_path);
+    }
+    Ok(())
+}
