@@ -32,6 +32,23 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
+  # Pin the Apple build targets to the macos-15 runner so they link against
+  # the macOS 15 SDK, not the macOS 26 SDK that macos-latest now resolves to
+  # (migration completed 2026-07-15). The published v27.0.1 x86_64-apple-darwin
+  # binary, built against the 26 SDK, fails to launch on an Intel Mac running
+  # macOS 15 — confirmed by testing the release artifact on that machine.
+  # Building on macos-15 produces a binary that runs on macOS 15 Intel Macs.
+  #
+  # Measured impact of switching SDKs: zero. The __text section, undefined
+  # symbol set (255 symbols), and linked-dylib compatibility versions are
+  # byte-identical between a local SDK 15.4 build and a local SDK 26.5 build
+  # (same rustc, same Cargo.lock). The only Mach-O differences are metadata
+  # stamps — the SDK version field, the build UUID, and the dylib "current
+  # version" hints — none of which affect code generation or runtime behavior.
+  #
+  # macos-15 is a pinned runner label that will eventually be retired by
+  # GitHub; when that happens this workflow will fail hard rather than silently
+  # drift, which is the intended trade-off.
   MACOSX_DEPLOYMENT_TARGET: "10.13"
 
 jobs:
@@ -44,8 +61,8 @@ jobs:
       fail-fast: true
       matrix:
         include:
-          - { target: aarch64-apple-darwin,        os: macos-latest,   pkg: cli-darwin-arm64,     bin: tokens }
-          - { target: x86_64-apple-darwin,         os: macos-latest,   pkg: cli-darwin-x64,       bin: tokens }
+          - { target: aarch64-apple-darwin,        os: macos-15,       pkg: cli-darwin-arm64,     bin: tokens }
+          - { target: x86_64-apple-darwin,         os: macos-15,       pkg: cli-darwin-x64,       bin: tokens }
           - { target: x86_64-unknown-linux-gnu,    os: ubuntu-latest,  pkg: cli-linux-x64-gnu,    bin: tokens, zig: true }
           - { target: x86_64-unknown-linux-musl,   os: ubuntu-latest,  pkg: cli-linux-x64-musl,   bin: tokens, zig: true }
           - { target: aarch64-unknown-linux-gnu,   os: ubuntu-latest,  pkg: cli-linux-arm64-gnu,  bin: tokens, zig: true }
