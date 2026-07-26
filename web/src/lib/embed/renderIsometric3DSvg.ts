@@ -48,15 +48,15 @@ const darkBlueGrades = getDarkGradeColors(colorPalettes.blue);
 
 const THEMES: Record<EmbedTheme, ThemePalette> = {
   dark: {
-    surface: "#131822",
+    surface: "#141414",
     border: "#FFFFFF",
     borderOpacity: 0.09,
     text: "#F4F7FB",
-    muted: "#A8B3C5",
+    muted: "#A1A1AA",
     accent: "#57A5FF",
     divider: "#FFFFFF",
     dividerOpacity: 0.09,
-    graphGrade: ["#191F2B", ...darkBlueGrades],
+    graphGrade: ["#1A1A1A", ...darkBlueGrades],
   },
   light: {
     surface: "#FFFFFF",
