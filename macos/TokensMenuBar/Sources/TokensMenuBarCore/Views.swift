@@ -176,7 +176,7 @@ public struct MenuPanelView: View {
             )
     }
 
-    /// Snap body height + notify AppKit popover (coalesced there). No height spring.
+    /// Ease body height + notify AppKit popover (coalesced there).
     /// Skip resize while the tab is ahead of the loaded report (TODAY short vs 30D tall).
     private func syncBodyHeightAndPublish() {
         // Hold previous height until report matches selected period — prevents
@@ -186,7 +186,10 @@ public struct MenuPanelView: View {
         }
 
         if let target = targetBodyHeight, abs(target - bodyViewportHeight) > 0.5 {
-            bodyViewportHeight = target
+            // Gentle ease — not a spring (spring + popover frame felt like shake).
+            withAnimation(MenuBarMotion.heightEase) {
+                bodyViewportHeight = target
+            }
         }
 
         let chrome = chromeHeight > 0 ? chromeHeight : 140

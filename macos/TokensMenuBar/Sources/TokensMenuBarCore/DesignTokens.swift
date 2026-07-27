@@ -21,3 +21,11 @@ public enum MenuBarLayout {
     }
 }
 
+/// Subtle period-switch height transition (ease, no bounce).
+public enum MenuBarMotion {
+    /// Body viewport height when period content changes.
+    public static let heightEase: Animation = .easeInOut(duration: 0.28)
+    /// AppKit popover `contentSize` duration (matches heightEase).
+    public static let popoverSizeDuration: TimeInterval = 0.28
+}
+
