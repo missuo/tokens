@@ -6,6 +6,7 @@ public final class AppSettings: ObservableObject {
     private enum Keys {
         static let displayMode = "displayMode"
         static let scanInterval = "scanInterval"
+        static let scanIntervalCustomMinutes = "scanIntervalCustomMinutes"
         static let binaryOverride = "binaryOverride"
         static let lastPeriod = "lastPeriod"
     }
@@ -15,7 +16,13 @@ public final class AppSettings: ObservableObject {
     }
 
     @Published public var scanInterval: ScanIntervalOption {
-        didSet { UserDefaults.standard.set(scanInterval.rawValue, forKey: Keys.scanInterval) }
+        didSet {
+            UserDefaults.standard.set(scanInterval.storageKey, forKey: Keys.scanInterval)
+            // Remember last custom minutes so re-selecting CUSTOM restores it.
+            if case .custom(let minutes) = scanInterval {
+                UserDefaults.standard.set(minutes, forKey: Keys.scanIntervalCustomMinutes)
+            }
+        }
     }
 
     @Published public var binaryOverride: String {
@@ -26,10 +33,16 @@ public final class AppSettings: ObservableObject {
         didSet { UserDefaults.standard.set(lastPeriod.rawValue, forKey: Keys.lastPeriod) }
     }
 
+    /// Last Custom duration (minutes). Used when switching chip → CUSTOM.
+    public var lastCustomMinutes: Int {
+        let stored = UserDefaults.standard.object(forKey: Keys.scanIntervalCustomMinutes) as? Int
+        return ScanIntervalOption.clampMinutes(stored ?? 30)
+    }
+
     public init() {
         let defaults = UserDefaults.standard
         displayMode = MenuBarDisplayMode(rawValue: defaults.string(forKey: Keys.displayMode) ?? "") ?? .tokens
-        scanInterval = ScanIntervalOption(rawValue: defaults.string(forKey: Keys.scanInterval) ?? "") ?? .twelveHours
+        scanInterval = ScanIntervalOption.fromStorage(defaults.string(forKey: Keys.scanInterval))
         binaryOverride = defaults.string(forKey: Keys.binaryOverride) ?? ""
         lastPeriod = UsagePeriod(rawValue: defaults.string(forKey: Keys.lastPeriod) ?? "") ?? .today
     }

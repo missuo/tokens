@@ -120,7 +120,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.contentViewController = hosting
         window.title = "Settings"
         window.styleMask = [.titled, .closable]
-        window.setContentSize(NSSize(width: 420, height: 320))
+        // Tall enough for INTERVAL chips + Custom stepper row.
+        window.setContentSize(NSSize(width: 420, height: 380))
         window.center()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)

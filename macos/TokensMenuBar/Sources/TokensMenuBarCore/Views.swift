@@ -660,10 +660,14 @@ private struct BodyHeightPreferenceKey: PreferenceKey {
 public struct SettingsView: View {
     @ObservedObject public var store: UsageStore
     @ObservedObject public var settings: AppSettings
+    /// Custom row unit toggle (MIN / HR); derived when entering custom.
+    @State private var customUnit: ScanIntervalCustomUnit = .minutes
 
     public init(store: UsageStore, settings: AppSettings) {
         self.store = store
         self.settings = settings
+        let minutes = settings.scanInterval.customMinutesOrDefault
+        _customUnit = State(initialValue: ScanIntervalCustomUnit.preferred(forMinutes: minutes))
     }
 
     public var body: some View {
@@ -675,7 +679,15 @@ public struct SettingsView: View {
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 18)
-        .frame(width: 420, height: 320)
+        .frame(width: 420)
+        .frame(minHeight: 320, maxHeight: 420)
+        .onAppear {
+            if settings.scanInterval.isCustom {
+                customUnit = ScanIntervalCustomUnit.preferred(
+                    forMinutes: settings.scanInterval.customMinutesOrDefault
+                )
+            }
+        }
     }
 
     // MARK: Status title (menu bar display mode)
@@ -720,20 +732,25 @@ public struct SettingsView: View {
         VStack(alignment: .leading, spacing: 10) {
             settingsSectionLabel("SCANNING")
 
-            HStack(alignment: .center) {
-                Text("INTERVAL")
-                    .font(.system(size: 11, design: .monospaced))
-                    .tracking(0.4)
-                Spacer(minLength: 12)
-                Picker("", selection: $settings.scanInterval) {
-                    ForEach(ScanIntervalOption.allCases) { option in
-                        Text(option.title.uppercased()).tag(option)
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.menu)
+            Text("INTERVAL")
                 .font(.system(size: 11, design: .monospaced))
-                .onChange(of: settings.scanInterval) { _ in store.restartTimer() }
+                .tracking(0.4)
+
+            intervalChipRow
+
+            if settings.scanInterval.isCustom {
+                customIntervalRow
+                Text("5 MIN – 24 H · STEPS ON LADDER")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(.secondary)
+            } else {
+                Text(
+                    settings.scanInterval.isManual
+                        ? "BACKGROUND LOCAL RESCAN OFF · MANUAL ONLY"
+                        : "BACKGROUND LOCAL RESCAN CADENCE"
+                )
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundStyle(.secondary)
             }
 
             Button {
@@ -773,6 +790,180 @@ public struct SettingsView: View {
             .fixedSize(horizontal: false, vertical: true)
             .lineSpacing(2)
         }
+    }
+
+    private var intervalChipRow: some View {
+        HStack(spacing: 6) {
+            ForEach(ScanIntervalOption.chips) { chip in
+                let selected = chip.matches(settings.scanInterval)
+                Button {
+                    selectIntervalChip(chip)
+                } label: {
+                    Text(chip.monoTitle)
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .tracking(0.5)
+                        .foregroundStyle(
+                            selected
+                                ? Color(nsColor: .windowBackgroundColor)
+                                : Color.secondary
+                        )
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 7)
+                        .background(
+                            RoundedRectangle(cornerRadius: 3)
+                                .fill(selected ? Color.primary : Color.clear)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 3)
+                                .strokeBorder(
+                                    selected ? Color.primary : Color.primary.opacity(0.18),
+                                    lineWidth: 1
+                                )
+                        )
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(selected ? .isSelected : [])
+                .accessibilityLabel(chip.monoTitle)
+            }
+        }
+    }
+
+    private var customIntervalRow: some View {
+        let minutes = settings.scanInterval.customMinutesOrDefault
+        let displayValue: Int = {
+            switch customUnit {
+            case .minutes: return minutes
+            case .hours: return max(1, minutes / 60)
+            }
+        }()
+
+        return HStack(spacing: 10) {
+            Text("EVERY")
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .tracking(0.8)
+
+            HStack(spacing: 0) {
+                stepButton("−") { stepCustom(direction: -1) }
+                Text("\(displayValue)")
+                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                    .monospacedDigit()
+                    .frame(minWidth: 36)
+                    .padding(.vertical, 6)
+                    .overlay(alignment: .leading) {
+                        Rectangle().fill(Color.primary.opacity(0.12)).frame(width: 1)
+                    }
+                    .overlay(alignment: .trailing) {
+                        Rectangle().fill(Color.primary.opacity(0.12)).frame(width: 1)
+                    }
+                stepButton("+") { stepCustom(direction: 1) }
+            }
+            .overlay(
+                RoundedRectangle(cornerRadius: 3)
+                    .strokeBorder(Color.primary.opacity(0.18), lineWidth: 1)
+            )
+
+            HStack(spacing: 0) {
+                unitButton("MIN", unit: .minutes)
+                unitButton("HR", unit: .hours)
+            }
+            .overlay(
+                RoundedRectangle(cornerRadius: 3)
+                    .strokeBorder(Color.primary.opacity(0.18), lineWidth: 1)
+            )
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 4)
+                .fill(Color.primary.opacity(0.04))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 4)
+                .strokeBorder(Color.primary.opacity(0.18), lineWidth: 1)
+        )
+    }
+
+    private func stepButton(_ title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                .frame(width: 28, height: 26)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func unitButton(_ title: String, unit: ScanIntervalCustomUnit) -> some View {
+        let on = customUnit == unit
+        return Button {
+            setCustomUnit(unit)
+        } label: {
+            Text(title)
+                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .tracking(0.5)
+                .foregroundStyle(on ? Color(nsColor: .windowBackgroundColor) : Color.secondary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 7)
+                .background(on ? Color.primary : Color.clear)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func selectIntervalChip(_ chip: ScanIntervalChip) {
+        switch chip {
+        case .fifteenMinutes:
+            settings.scanInterval = .fifteenMinutes
+        case .oneHour:
+            settings.scanInterval = .oneHour
+        case .sixHours:
+            settings.scanInterval = .sixHours
+        case .twelveHours:
+            settings.scanInterval = .twelveHours
+        case .off:
+            settings.scanInterval = .manual
+        case .custom:
+            let minutes = settings.lastCustomMinutes
+            customUnit = ScanIntervalCustomUnit.preferred(forMinutes: minutes)
+            settings.scanInterval = .custom(minutes: minutes)
+        }
+        store.restartTimer()
+    }
+
+    private func stepCustom(direction: Int) {
+        let current = settings.scanInterval.customMinutesOrDefault
+        let next = ScanIntervalOption.steppedCustomMinutes(
+            from: current,
+            unit: customUnit,
+            direction: direction
+        )
+        settings.scanInterval = .custom(minutes: next)
+        // Keep unit coherent when stepping across the hour boundary.
+        if customUnit == .minutes, next >= 60, next % 60 == 0 {
+            customUnit = .hours
+        } else if customUnit == .hours, next < 60 {
+            customUnit = .minutes
+        }
+        store.restartTimer()
+    }
+
+    private func setCustomUnit(_ unit: ScanIntervalCustomUnit) {
+        guard customUnit != unit else { return }
+        let current = settings.scanInterval.customMinutesOrDefault
+        let converted: Int
+        switch unit {
+        case .minutes:
+            // Show minute ladder; if currently multi-hour, land on 60.
+            converted = current >= 60 ? 60 : ScanIntervalOption.clampMinutes(current)
+        case .hours:
+            let hours = max(1, Int((Double(current) / 60.0).rounded()))
+            converted = ScanIntervalOption.clampMinutes(hours * 60)
+        }
+        customUnit = unit
+        settings.scanInterval = .custom(minutes: converted)
+        store.restartTimer()
     }
 
     private func settingsSectionLabel(_ text: String) -> some View {

@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Tokens · Settings · Scan Interval</title>
+<style>
+  :root {
+    --bg: #0e0e10;
+    --canvas: #161618;
+    --window: #1c1c1e;
+    --titlebar: #242426;
+    --text: #f2f2f2;
+    --muted: #8a8a8e;
+    --dim: #5c5c60;
+    --line: rgba(255,255,255,0.18);
+    --line-soft: rgba(255,255,255,0.08);
+    --fill: rgba(255,255,255,0.04);
+    --invert: #f2f2f2;
+    --invert-text: #111113;
+    --mono: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background:
+      radial-gradient(ellipse 70% 50% at 50% 0%, #1a1a1e 0%, transparent 60%),
+      var(--bg);
+    color: var(--text);
+    font-family: var(--mono);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 36px;
+    padding: 48px 24px 64px;
+  }
+  h1 {
+    margin: 0;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 1.4px;
+    color: var(--muted);
+    text-transform: uppercase;
+  }
+  .row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 28px;
+    justify-content: center;
+    align-items: flex-start;
+    width: 100%;
+    max-width: 980px;
+  }
+  .caption {
+    margin-top: 10px;
+    font-size: 10px;
+    letter-spacing: 0.6px;
+    color: var(--dim);
+    text-align: center;
+    text-transform: uppercase;
+  }
+
+  /* macOS-ish settings window */
+  .window {
+    width: 420px;
+    background: var(--window);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 18px 50px rgba(0,0,0,0.45);
+  }
+  .titlebar {
+    height: 38px;
+    background: var(--titlebar);
+    border-bottom: 1px solid var(--line-soft);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+  }
+  .traffic {
+    position: absolute;
+    left: 12px;
+    display: flex;
+    gap: 7px;
+  }
+  .traffic i {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: #3a3a3c;
+    border: 1px solid rgba(255,255,255,0.08);
+  }
+  .titlebar span {
+    font-size: 12px;
+    letter-spacing: 0.3px;
+    color: var(--text);
+  }
+  .body {
+    padding: 18px 20px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 32px;
+    min-height: 282px;
+  }
+  .section { display: flex; flex-direction: column; gap: 10px; }
+  .section-label {
+    font-size: 10px;
+    letter-spacing: 1px;
+    color: var(--muted);
+    text-transform: uppercase;
+  }
+
+  /* STATUS TITLE segmented — matches app */
+  .seg {
+    display: inline-flex;
+    border: 1px solid rgba(255,255,255,0.35);
+    width: fit-content;
+  }
+  .seg button {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    color: var(--text);
+    font: 500 10px/1 var(--mono);
+    letter-spacing: 0.4px;
+    padding: 6px 12px;
+    cursor: default;
+  }
+  .seg button.on {
+    background: var(--invert);
+    color: var(--invert-text);
+  }
+
+  /* Interval chips */
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .chip {
+    font: 500 10px/1 var(--mono);
+    letter-spacing: 0.5px;
+    padding: 7px 9px;
+    border: 1px solid var(--line);
+    color: var(--muted);
+    background: transparent;
+    border-radius: 3px;
+    cursor: default;
+    text-transform: uppercase;
+  }
+  .chip.on {
+    background: var(--invert);
+    color: var(--invert-text);
+    border-color: var(--invert);
+  }
+
+  .field-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .field-row .label {
+    font-size: 11px;
+    letter-spacing: 0.4px;
+    color: var(--text);
+    text-transform: uppercase;
+  }
+  .field-row .spacer { flex: 1; }
+
+  /* Custom stepper row */
+  .custom {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    background: var(--fill);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+  }
+  .custom .every {
+    font-size: 10px;
+    letter-spacing: 0.8px;
+    color: var(--muted);
+  }
+  .step {
+    display: inline-flex;
+    align-items: center;
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .step button {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    color: var(--text);
+    font: 500 12px/1 var(--mono);
+    width: 28px;
+    height: 26px;
+    cursor: default;
+  }
+  .step .val {
+    min-width: 36px;
+    text-align: center;
+    font: 600 12px/26px var(--mono);
+    font-variant-numeric: tabular-nums;
+    border-left: 1px solid var(--line-soft);
+    border-right: 1px solid var(--line-soft);
+    color: var(--text);
+  }
+  .unit {
+    display: inline-flex;
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .unit span {
+    font: 500 10px/1 var(--mono);
+    letter-spacing: 0.5px;
+    padding: 7px 8px;
+    color: var(--muted);
+  }
+  .unit span.on {
+    background: var(--invert);
+    color: var(--invert-text);
+  }
+  .hint {
+    font-size: 10px;
+    color: var(--dim);
+    letter-spacing: 0.3px;
+    line-height: 1.45;
+  }
+
+  /* Full rescan */
+  .action {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    background: var(--fill);
+  }
+  .action .main {
+    flex: 1;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.4px;
+  }
+  .action .run {
+    font-size: 10px;
+    letter-spacing: 0.6px;
+    color: var(--muted);
+  }
+
+  /* Annotation card */
+  .notes {
+    width: 420px;
+    padding: 16px 18px;
+    border: 1px dashed var(--line);
+    border-radius: 8px;
+    background: var(--canvas);
+    font-size: 11px;
+    line-height: 1.55;
+    color: var(--muted);
+  }
+  .notes strong { color: var(--text); font-weight: 500; }
+  .notes code {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text);
+    background: var(--fill);
+    padding: 1px 5px;
+    border-radius: 2px;
+    border: 1px solid var(--line-soft);
+  }
+  .notes ul { margin: 8px 0 0; padding-left: 16px; }
+  .notes li { margin: 4px 0; }
+
+  /* light variant window for contrast check */
+  .window.light {
+    --window: #f4f4f5;
+    --titlebar: #ebebed;
+    --text: #111113;
+    --muted: #6b6b70;
+    --dim: #9a9aa0;
+    --line: rgba(0,0,0,0.16);
+    --line-soft: rgba(0,0,0,0.08);
+    --fill: rgba(0,0,0,0.03);
+    --invert: #111113;
+    --invert-text: #f4f4f5;
+    background: var(--window);
+  }
+</style>
+</head>
+<body>
+  <h1>Settings · Scanning Interval · Minimal Mono</h1>
+
+  <div class="row">
+    <!-- State A: preset 1H -->
+    <div>
+      <div class="window">
+        <div class="titlebar">
+          <div class="traffic"><i></i><i></i><i></i></div>
+          <span>Settings</span>
+        </div>
+        <div class="body">
+          <div class="section">
+            <div class="section-label">Status title</div>
+            <div class="seg">
+              <button>Tokens</button>
+              <button>Cost</button>
+              <button class="on">Both</button>
+            </div>
+          </div>
+
+          <div class="section">
+            <div class="section-label">Scanning</div>
+            <div class="field-row">
+              <span class="label">Interval</span>
+            </div>
+            <div class="chips">
+              <span class="chip">15m</span>
+              <span class="chip on">1h</span>
+              <span class="chip">6h</span>
+              <span class="chip">12h</span>
+              <span class="chip">Off</span>
+              <span class="chip">Custom</span>
+            </div>
+            <div class="hint">Background local rescan cadence. Off = manual only.</div>
+
+            <div class="action" style="margin-top:6px">
+              <span class="main">Full rescan now</span>
+              <span class="run">Run</span>
+            </div>
+            <div class="hint">We cache session scans. Full rescan rebuilds from all local files.</div>
+          </div>
+        </div>
+      </div>
+      <div class="caption">A · Preset selected (1h)</div>
+    </div>
+
+    <!-- State B: custom expanded -->
+    <div>
+      <div class="window">
+        <div class="titlebar">
+          <div class="traffic"><i></i><i></i><i></i></div>
+          <span>Settings</span>
+        </div>
+        <div class="body">
+          <div class="section">
+            <div class="section-label">Status title</div>
+            <div class="seg">
+              <button>Tokens</button>
+              <button>Cost</button>
+              <button class="on">Both</button>
+            </div>
+          </div>
+
+          <div class="section">
+            <div class="section-label">Scanning</div>
+            <div class="field-row">
+              <span class="label">Interval</span>
+            </div>
+            <div class="chips">
+              <span class="chip">15m</span>
+              <span class="chip">1h</span>
+              <span class="chip">6h</span>
+              <span class="chip">12h</span>
+              <span class="chip">Off</span>
+              <span class="chip on">Custom</span>
+            </div>
+
+            <div class="custom">
+              <span class="every">Every</span>
+              <div class="step">
+                <button>−</button>
+                <div class="val">30</div>
+                <button>+</button>
+              </div>
+              <div class="unit">
+                <span class="on">Min</span>
+                <span>Hr</span>
+              </div>
+            </div>
+            <div class="hint">5 min – 24 h · steps 5 / 15 / 30 min · 1 / 2 / 6 h</div>
+
+            <div class="action" style="margin-top:6px">
+              <span class="main">Full rescan now</span>
+              <span class="run">Run</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="caption">B · Custom expanded (30 min)</div>
+    </div>
+  </div>
+
+  <div class="row">
+    <!-- Light mode custom -->
+    <div>
+      <div class="window light">
+        <div class="titlebar">
+          <div class="traffic"><i></i><i></i><i></i></div>
+          <span>Settings</span>
+        </div>
+        <div class="body">
+          <div class="section">
+            <div class="section-label">Scanning</div>
+            <div class="chips">
+              <span class="chip on">15m</span>
+              <span class="chip">1h</span>
+              <span class="chip">6h</span>
+              <span class="chip">12h</span>
+              <span class="chip">Off</span>
+              <span class="chip">Custom</span>
+            </div>
+            <div class="hint">Near-realtime local updates without listing every minute.</div>
+          </div>
+        </div>
+      </div>
+      <div class="caption">C · Light · 15m preset</div>
+    </div>
+
+    <div class="notes">
+      <strong>Interaction notes</strong>
+      <ul>
+        <li>Presets only: <code>15M · 1H · 6H · 12H · OFF · CUSTOM</code> — no long minute menu.</li>
+        <li>Select <code>CUSTOM</code> → reveal one stepper row: <code>EVERY [−] 30 [+] MIN|HR</code>.</li>
+        <li>Minute steps: 5 / 15 / 30 (floor 5m). Hour steps: 1 / 2 / 3 / 6 / 12 / 24.</li>
+        <li>Leaving Custom for a preset collapses the stepper; value retained if user returns.</li>
+        <li>Matches existing Status Title mono segmented control language.</li>
+      </ul>
+    </div>
+  </div>
+</body>
+</html>
