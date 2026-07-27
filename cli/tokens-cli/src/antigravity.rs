@@ -731,7 +731,7 @@ fn candidate_probe_ports(candidate: &ProcessCandidate, mut ports: Vec<u16>) -> V
 fn detect_process_candidates() -> Result<Vec<ProcessCandidate>> {
     #[cfg(target_os = "windows")]
     {
-        return detect_windows_process_candidates();
+        detect_windows_process_candidates()
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -920,6 +920,7 @@ fn is_antigravity_process(command: &str) -> bool {
         || lower.contains("\\antigravity\\")
 }
 
+#[cfg(not(target_os = "windows"))]
 fn process_executable_path(pid: u32) -> Option<PathBuf> {
     #[cfg(target_os = "linux")]
     {
@@ -981,7 +982,7 @@ fn extract_flag_value(command: &str, flag: &str) -> Option<String> {
 fn find_listening_ports(pid: u32) -> Result<Vec<u16>> {
     #[cfg(target_os = "windows")]
     {
-        return find_windows_listening_ports(pid);
+        find_windows_listening_ports(pid)
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -1047,6 +1048,7 @@ fn parse_port_from_windows_address(address: &str) -> Option<u16> {
     port.parse::<u16>().ok()
 }
 
+#[cfg(not(target_os = "windows"))]
 fn run_port_query(program: &str, warning_label: &str, args: &[&str]) -> Result<Vec<u16>> {
     match run_command(program, args) {
         Ok(output) => Ok(parse_ports(&output)),
@@ -1069,6 +1071,7 @@ fn is_command_not_found(err: &anyhow::Error) -> bool {
     })
 }
 
+#[cfg(not(target_os = "windows"))]
 fn parse_ports(output: &str) -> Vec<u16> {
     let mut ports = Vec::new();
     for line in output.lines() {
@@ -1079,6 +1082,7 @@ fn parse_ports(output: &str) -> Vec<u16> {
     ports
 }
 
+#[cfg(not(target_os = "windows"))]
 fn parse_port_from_line(line: &str) -> Option<u16> {
     for token in line.split_whitespace() {
         if let Some(port) = token
@@ -1376,6 +1380,7 @@ fn contains_antigravity_marker(value: &Value) -> bool {
     }
 }
 
+#[cfg(not(target_os = "windows"))]
 fn run_command(program: &str, args: &[&str]) -> Result<String> {
     let output = run_command_output(program, args)?;
 

@@ -55,6 +55,9 @@ pub mod auth {
     use base64::Engine;
     use chrono::{DateTime, Utc};
     use serde::{Deserialize, Serialize};
+    // Only the unix branch of `save_credentials` writes through the trait; the
+    // other one calls `fs::write`, which does not need it in scope.
+    #[cfg(unix)]
     use std::io::Write;
     use std::path::PathBuf;
 
