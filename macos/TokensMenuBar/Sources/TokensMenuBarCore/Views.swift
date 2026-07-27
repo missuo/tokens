@@ -441,7 +441,7 @@ public struct MenuPanelView: View {
     }
 }
 
-// MARK: - Settings (Task 4 — structure left as-is)
+// MARK: - Settings (IX-C Minimal Mono)
 
 public struct SettingsView: View {
     @ObservedObject public var store: UsageStore
@@ -454,55 +454,243 @@ public struct SettingsView: View {
     }
 
     public var body: some View {
-        Form {
-            Section("Menu Bar") {
-                Picker("Display", selection: $settings.displayMode) {
-                    ForEach(MenuBarDisplayMode.allCases) { mode in
-                        Text(mode.title).tag(mode)
-                    }
+        VStack(alignment: .leading, spacing: 0) {
+            settingsHeader
+                .padding(.bottom, 18)
+
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 20) {
+                    menuBarSection
+                    scanningSection
+                    cliSection
                 }
-                .onChange(of: settings.displayMode) { _ in store.updateStatusTitle() }
             }
 
-            Section("Scanning") {
-                Picker("Interval", selection: $settings.scanInterval) {
-                    ForEach(ScanIntervalOption.allCases) { option in
-                        Text(option.title).tag(option)
-                    }
-                }
-                .onChange(of: settings.scanInterval) { _ in store.restartTimer() }
-
-                Button("Full Rescan Now") {
-                    store.fullRescan()
-                    dismiss()
-                }
-                .disabled(store.isLoading || store.binaryMissing)
-            }
-
-            Section("CLI") {
-                LabeledContent("Resolved path") {
-                    Text(store.binaryPath ?? "not found")
-                        .font(.body)
-                        .textSelection(.enabled)
-                        .foregroundStyle(store.binaryMissing ? .red : .secondary)
-                }
-                if let error = store.lastError {
-                    Text(error)
-                        .font(.body)
-                        .foregroundStyle(.red)
-                }
-                Button("Recheck CLI") {
-                    store.resolveBinary()
-                }
-            }
+            settingsFooter
+                .padding(.top, 16)
         }
-        .formStyle(.grouped)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 18)
         .frame(width: 420, height: 360)
-        .padding()
-        .toolbar {
-            ToolbarItem(placement: .cancellationAction) {
-                Button("Done") { dismiss() }
+    }
+
+    // MARK: Header
+
+    private var settingsHeader: some View {
+        HStack(alignment: .firstTextBaseline) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("SETTINGS")
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .tracking(1.6)
+                Text("tokens menu bar")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button {
+                dismiss()
+            } label: {
+                Text("DONE")
+                    .font(.system(size: 11, design: .monospaced))
+                    .tracking(0.6)
+                    .foregroundStyle(.primary)
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut(.cancelAction)
+        }
+    }
+
+    // MARK: Menu Bar
+
+    private var menuBarSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            settingsSectionLabel("MENU BAR")
+
+            HStack(alignment: .firstTextBaseline) {
+                Text("DISPLAY")
+                    .font(.system(size: 11, design: .monospaced))
+                    .tracking(0.4)
+                Spacer(minLength: 12)
+                displaySegmentedControl
+            }
+
+            Text("Title in status item: tokens only / cost only / both")
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var displaySegmentedControl: some View {
+        HStack(spacing: 0) {
+            ForEach(MenuBarDisplayMode.allCases) { mode in
+                Button {
+                    settings.displayMode = mode
+                    store.updateStatusTitle()
+                } label: {
+                    Text(mode.title.uppercased())
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .tracking(0.4)
+                        .foregroundStyle(settings.displayMode == mode ? Color(nsColor: .windowBackgroundColor) : Color.primary)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(
+                            Rectangle()
+                                .fill(settings.displayMode == mode ? Color.primary : Color.clear)
+                        )
+                }
+                .buttonStyle(.plain)
             }
         }
+        .overlay(
+            Rectangle()
+                .strokeBorder(Color.primary.opacity(0.35), lineWidth: 1)
+        )
+    }
+
+    // MARK: Scanning
+
+    private var scanningSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            settingsSectionLabel("SCANNING")
+
+            HStack(alignment: .center) {
+                Text("INTERVAL")
+                    .font(.system(size: 11, design: .monospaced))
+                    .tracking(0.4)
+                Spacer(minLength: 12)
+                Picker("", selection: $settings.scanInterval) {
+                    ForEach(ScanIntervalOption.allCases) { option in
+                        Text(option.title.uppercased()).tag(option)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .font(.system(size: 11, design: .monospaced))
+                .onChange(of: settings.scanInterval) { _ in store.restartTimer() }
+            }
+
+            Button {
+                store.fullRescan()
+                dismiss()
+            } label: {
+                HStack(alignment: .center, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("FULL RESCAN NOW")
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .tracking(0.4)
+                            .foregroundStyle(.primary)
+                        Text("Ignore caches · rebuild snapshot")
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 8)
+                    Text("RUN")
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .tracking(0.6)
+                        .foregroundStyle(store.isLoading || store.binaryMissing ? Color.secondary.opacity(0.5) : Color.secondary)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(Color.primary.opacity(0.04))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4)
+                        .strokeBorder(Color.primary.opacity(0.18), lineWidth: 1)
+                )
+            }
+            .buttonStyle(.plain)
+            .disabled(store.isLoading || store.binaryMissing)
+        }
+    }
+
+    // MARK: CLI
+
+    private var cliSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            settingsSectionLabel("CLI")
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("RESOLVED PATH")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .tracking(0.8)
+
+                Text(store.binaryPath ?? "not found")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(store.binaryMissing ? Color.red : Color.primary)
+                    .textSelection(.enabled)
+                    .lineLimit(2)
+                    .truncationMode(.middle)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(Color.primary.opacity(0.04))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 4)
+                            .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
+                    )
+            }
+
+            if let error = store.lastError {
+                Text(error)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    // MARK: Footer
+
+    private var settingsFooter: some View {
+        HStack(spacing: 10) {
+            Button {
+                store.resolveBinary()
+            } label: {
+                Text("RECHECK CLI")
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .tracking(0.6)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+                    .foregroundStyle(.primary)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 4)
+                            .strokeBorder(Color.primary.opacity(0.35), lineWidth: 1)
+                    )
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                dismiss()
+            } label: {
+                Text("DONE")
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .tracking(0.6)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+                    .foregroundStyle(Color(nsColor: .windowBackgroundColor))
+                    .background(
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(Color.primary)
+                    )
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut(.defaultAction)
+        }
+    }
+
+    private func settingsSectionLabel(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 10, design: .monospaced))
+            .foregroundStyle(.secondary)
+            .tracking(1.0)
+            .textCase(.uppercase)
     }
 }

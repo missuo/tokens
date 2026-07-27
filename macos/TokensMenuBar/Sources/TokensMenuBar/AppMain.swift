@@ -37,7 +37,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let hosting = NSHostingController(rootView: root)
 
         popover = NSPopover()
-        popover.contentSize = NSSize(width: 400, height: 640)
+        popover.contentSize = NSSize(width: 400, height: 680)
         popover.behavior = .transient
         popover.animates = true
         popover.contentViewController = hosting
@@ -70,9 +70,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let hosting = NSHostingController(rootView: view)
         let window = settingsWindow ?? NSWindow(contentViewController: hosting)
         window.contentViewController = hosting
-        window.title = "Tokens Settings"
+        window.title = "Settings"
         window.styleMask = [.titled, .closable]
-        window.setContentSize(NSSize(width: 400, height: 340))
+        window.setContentSize(NSSize(width: 420, height: 360))
         window.center()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
