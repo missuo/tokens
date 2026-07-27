@@ -49,7 +49,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let initialHeight = min(680, MenuBarLayout.panelMaxHeight())
         popover.contentSize = NSSize(width: MenuBarLayout.panelWidth, height: initialHeight)
         popover.behavior = .transient
-        popover.animates = true
+        // Never animate frame changes — TODAY (short) vs 30D (tall) otherwise shakes.
+        popover.animates = false
         popover.contentViewController = hosting
 
         store.$showSettings

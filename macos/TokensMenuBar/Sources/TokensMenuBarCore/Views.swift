@@ -13,6 +13,8 @@ public struct MenuPanelView: View {
     @State private var chromeHeight: CGFloat = 0
     /// Body viewport height (snaps; no spring).
     @State private var bodyViewportHeight: CGFloat = MenuBarLayout.fallbackContentHeight
+    /// CLIENT list: how many rows are visible (chevron loads more).
+    @State private var clientVisibleCount: Int = MenuBarLayout.clientPageSize
 
     public init(
         store: UsageStore,
@@ -31,10 +33,6 @@ public struct MenuPanelView: View {
         return max(160, panelMaxHeight - chrome)
     }
 
-    private var bodyNeedsScroll: Bool {
-        bodyContentHeight > maxBodyHeight + 1
-    }
-
     /// Target body height for the current measurement (nil when no report body).
     private var targetBodyHeight: CGFloat? {
         guard store.report != nil, !store.binaryMissing else { return nil }
@@ -42,6 +40,12 @@ public struct MenuPanelView: View {
             return MenuBarLayout.fallbackContentHeight
         }
         return min(bodyContentHeight, maxBodyHeight)
+    }
+
+    /// True when selected period and loaded report agree (safe to resize).
+    private var reportMatchesPeriod: Bool {
+        guard let report = store.report else { return false }
+        return report.period == store.period.cliValue
     }
 
     public var body: some View {
@@ -73,8 +77,8 @@ public struct MenuPanelView: View {
                         .padding(.bottom, 6)
                 }
 
-                // No `.id(period)` remount — that destroyed the tree mid-click and
-                // made period tabs feel like they needed a second press.
+                // Always ScrollView (even when short) so TODAY vs 30D does not
+                // flip layout structure and remeasure thrash the popover height.
                 reportBody(report)
                     .frame(height: bodyViewportHeight, alignment: .top)
                     .clipped()
@@ -117,38 +121,34 @@ public struct MenuPanelView: View {
         .onAppear { syncBodyHeightAndPublish() }
         .onChange(of: store.report?.generatedAt) { _ in syncBodyHeightAndPublish() }
         .onChange(of: store.period) { _ in
-            // Keep prior body height until the new period remeasures — avoids collapse flash.
-            syncBodyHeightAndPublish()
+            // Reset CLIENT expand page; keep prior panel height until new report lands.
+            clientVisibleCount = MenuBarLayout.clientPageSize
         }
         .onChange(of: store.isLoading) { _ in syncBodyHeightAndPublish() }
         .onChange(of: store.binaryMissing) { _ in syncBodyHeightAndPublish() }
         .onChange(of: store.lastError) { _ in syncBodyHeightAndPublish() }
+        .onChange(of: clientVisibleCount) { _ in
+            // Expanding clients grows content; remeasure after next layout pass.
+            DispatchQueue.main.async { syncBodyHeightAndPublish() }
+        }
     }
 
     @ViewBuilder
     private func reportBody(_ report: UsageReport) -> some View {
-        let sections = bodySections(report)
-            .padding(.horizontal, MenuBarLayout.horizontalPadding)
-            .padding(.top, 18)
-            .padding(.bottom, 12)
-            .fixedSize(horizontal: false, vertical: true)
-            .background(
-                GeometryReader { geo in
-                    Color.clear.preference(
-                        key: BodyHeightPreferenceKey.self,
-                        value: geo.size.height
-                    )
-                }
-            )
-
-        if bodyNeedsScroll {
-            ScrollView(.vertical, showsIndicators: true) {
-                sections
-            }
-        } else {
-            // Top-aligned intrinsic content inside the animated viewport frame.
-            sections
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        ScrollView(.vertical, showsIndicators: bodyContentHeight > maxBodyHeight + 1) {
+            bodySections(report)
+                .padding(.horizontal, MenuBarLayout.horizontalPadding)
+                .padding(.top, 18)
+                .padding(.bottom, 12)
+                .fixedSize(horizontal: false, vertical: true)
+                .background(
+                    GeometryReader { geo in
+                        Color.clear.preference(
+                            key: BodyHeightPreferenceKey.self,
+                            value: geo.size.height
+                        )
+                    }
+                )
         }
     }
 
@@ -180,7 +180,14 @@ public struct MenuPanelView: View {
     }
 
     /// Snap body height + notify AppKit popover (coalesced there). No height spring.
+    /// Skip resize while the tab is ahead of the loaded report (TODAY short vs 30D tall).
     private func syncBodyHeightAndPublish() {
+        // Hold previous height until report matches selected period — prevents
+        // intermediate collapse/expand when switching into TODAY.
+        if store.report != nil, !reportMatchesPeriod {
+            return
+        }
+
         if let target = targetBodyHeight, abs(target - bodyViewportHeight) > 0.5 {
             bodyViewportHeight = target
         }
@@ -351,16 +358,19 @@ public struct MenuPanelView: View {
     // MARK: - CLIENT
 
     private func clientSection(_ report: UsageReport) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        let all = report.byClient
+        let visible = Array(all.prefix(max(clientVisibleCount, 0)))
+        let hasMore = all.count > visible.count
+
+        return VStack(alignment: .leading, spacing: 12) {
             sectionLabel("CLIENT")
-            if report.byClient.isEmpty {
+            if all.isEmpty {
                 emptyHint("No client data")
-            } else if report.byClient.count > MenuBarLayout.nestedListThreshold {
-                nestedListScroll {
-                    clientRows(report.byClient)
-                }
             } else {
-                clientRows(report.byClient)
+                clientRows(visible)
+                if hasMore {
+                    clientExpandChevron(remaining: all.count - visible.count)
+                }
             }
         }
     }
@@ -371,6 +381,26 @@ public struct MenuPanelView: View {
                 clientRow(client)
             }
         }
+    }
+
+    /// Centered down-chevron: load another page of clients (no nested scrollbar).
+    private func clientExpandChevron(remaining: Int) -> some View {
+        Button {
+            clientVisibleCount = min(
+                clientVisibleCount + MenuBarLayout.clientPageSize,
+                clientVisibleCount + remaining
+            )
+        } label: {
+            Image(systemName: "chevron.down")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 6)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Show more clients")
+        .accessibilityHint("\(remaining) more")
     }
 
     private func clientRow(_ client: ClientUsage) -> some View {
