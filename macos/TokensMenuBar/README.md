@@ -40,5 +40,6 @@ swift test
 - Default auto-refresh every 12 hours (configurable)
 - Period switches reuse the CLI Layer B snapshot when possible
 - Settings → **Full Rescan Now** runs `tokens usage --force-rescan`
+- Popover height shrink-wraps to content, capped at **80% of the screen** visible frame
 
 See `docs/superpowers/specs/2026-07-26-macos-menubar-usage-design.md`.
