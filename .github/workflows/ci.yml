@@ -135,6 +135,16 @@ jobs:
       - name: Lint
         run: cd web && bun run lint
 
+      # cloudflare-env.d.ts is generated from wrangler.jsonc and gitignored, so
+      # a fresh clone has no CloudflareEnv and `db/index.ts` fails to typecheck
+      # on its HYPERDRIVE binding. Working copies pass only because the file is
+      # left over from a previous run — meaning local and CI typechecks have
+      # been reading different inputs all along. Generate it here so CI checks
+      # what the repository actually contains. Offline: it reads wrangler.jsonc,
+      # no credentials involved.
+      - name: Generate Cloudflare env types
+        run: cd web && bunx wrangler types --include-runtime=false --env-interface=CloudflareEnv cloudflare-env.d.ts
+
       - name: Typecheck
         run: cd web && bunx tsc --noEmit
 
