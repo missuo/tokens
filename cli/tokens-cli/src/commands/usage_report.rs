@@ -176,6 +176,12 @@ struct UsageErrorBody {
 struct UsageSnapshotFile {
     schema_version: u32,
     generated_at: String,
+    /// Calendar day in the bucket timezone when this snapshot was written
+    /// (`YYYY-MM-DD`). Used for same-day reuse — never derive this from the
+    /// UTC prefix of `generated_at` (that breaks after local midnight when
+    /// UTC has already rolled over).
+    #[serde(default)]
+    bucket_date: String,
     timezone: String,
     contributions: Vec<SnapshotDay>,
 }
@@ -350,10 +356,40 @@ fn timezone_label() -> String {
     }
 }
 
+
+/// Resolve the bucket-local calendar day this snapshot belongs to.
+fn snapshot_bucket_day(snapshot: &UsageSnapshotFile) -> Option<String> {
+    if !snapshot.bucket_date.is_empty() {
+        return Some(snapshot.bucket_date.clone());
+    }
+    // Legacy snapshots (no bucket_date): convert generated_at from absolute
+    // time into the process bucket timezone instead of slicing the UTC date.
+    bucket_day_from_generated_at(&snapshot.generated_at)
+}
+
+fn bucket_day_from_generated_at(generated_at: &str) -> Option<String> {
+    // Accept RFC3339 with or without fractional seconds.
+    let dt = chrono::DateTime::parse_from_rfc3339(generated_at)
+        .ok()
+        .map(|d| d.with_timezone(&chrono::Utc))
+        .or_else(|| {
+            chrono::DateTime::parse_from_str(generated_at, "%Y-%m-%dT%H:%M:%S%.f%z")
+                .ok()
+                .map(|d| d.with_timezone(&chrono::Utc))
+        })?;
+    let day = match bucket_timezone() {
+        BucketTimezone::Local => dt.with_timezone(&chrono::Local).date_naive(),
+        BucketTimezone::Named(tz) => dt.with_timezone(&tz).date_naive(),
+    };
+    Some(day.format("%Y-%m-%d").to_string())
+}
+
+
 fn write_snapshot_from_graph(graph: &GraphResult) -> Result<()> {
     let snapshot = UsageSnapshotFile {
         schema_version: SNAPSHOT_SCHEMA_VERSION,
         generated_at: graph.meta.generated_at.clone(),
+        bucket_date: bucket_timezone().today().format("%Y-%m-%d").to_string(),
         timezone: timezone_label(),
         contributions: graph
             .contributions
@@ -416,9 +452,9 @@ fn try_report_from_snapshot(
     if snapshot.schema_version != SNAPSHOT_SCHEMA_VERSION {
         return None;
     }
-    let generated_day = snapshot.generated_at.get(..10)?;
     let today_s = today.format("%Y-%m-%d").to_string();
-    if generated_day != today_s {
+    let snapshot_day = snapshot_bucket_day(&snapshot)?;
+    if snapshot_day != today_s {
         return None;
     }
     if snapshot.timezone != timezone_label() {
@@ -833,5 +869,25 @@ mod tests {
         filter_contributions(&mut days, Some("2026-07-26"), Some("2026-07-26"));
         assert_eq!(days.len(), 1);
         assert_eq!(days[0].date, "2026-07-26");
+    }
+
+    #[test]
+    fn bucket_day_from_utc_generated_at_uses_local_bucket() {
+        // 2026-07-27 03:33 UTC is still 2026-07-26 evening in America/Los_Angeles.
+        tokens_core::set_bucket_timezone(tokens_core::parse_bucket_timezone("America/Los_Angeles").unwrap());
+        let day = bucket_day_from_generated_at("2026-07-27T03:33:08.153036+00:00");
+        assert_eq!(day.as_deref(), Some("2026-07-26"));
+    }
+
+    #[test]
+    fn snapshot_bucket_date_field_wins() {
+        let snap = UsageSnapshotFile {
+            schema_version: 1,
+            generated_at: "2026-07-27T03:33:08.153036+00:00".into(),
+            bucket_date: "2026-07-26".into(),
+            timezone: "America/Los_Angeles".into(),
+            contributions: vec![],
+        };
+        assert_eq!(snapshot_bucket_day(&snap).as_deref(), Some("2026-07-26"));
     }
 }
