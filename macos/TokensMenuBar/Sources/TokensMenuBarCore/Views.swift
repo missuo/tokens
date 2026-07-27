@@ -51,13 +51,6 @@ public struct MenuPanelView: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            measuredChrome {
-                header
-                    .padding(.horizontal, MenuBarLayout.horizontalPadding)
-                    .padding(.top, 16)
-                    .padding(.bottom, 4)
-            }
-
             if store.binaryMissing {
                 measuredChrome {
                     missingCLI
@@ -203,25 +196,6 @@ public struct MenuPanelView: View {
         onIdealSizeChange?(CGSize(width: MenuBarLayout.panelWidth, height: height))
     }
 
-    // MARK: - Header
-
-    private var header: some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text("TOKENS")
-                .font(.system(size: 11, weight: .medium, design: .monospaced))
-                .tracking(1.6)
-            Spacer()
-            if store.isLoading {
-                ProgressView()
-                    .controlSize(.small)
-            } else {
-                Text("usage · local")
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
-
     // MARK: - Period tabs
 
     private var periodTabs: some View {
@@ -247,6 +221,12 @@ public struct MenuPanelView: View {
                     .accessibilityAddTraits(.isButton)
                     .accessibilityAddTraits(store.period == period ? .isSelected : [])
                     .accessibilityLabel(period.monoTitle)
+            }
+
+            if store.isLoading {
+                ProgressView()
+                    .controlSize(.mini)
+                    .padding(.leading, 4)
             }
         }
     }
@@ -631,7 +611,6 @@ private struct BodyHeightPreferenceKey: PreferenceKey {
 public struct SettingsView: View {
     @ObservedObject public var store: UsageStore
     @ObservedObject public var settings: AppSettings
-    @Environment(\.dismiss) private var dismiss
 
     public init(store: UsageStore, settings: AppSettings) {
         self.store = store
@@ -640,49 +619,21 @@ public struct SettingsView: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            settingsHeader
+            Text("SETTINGS")
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .tracking(1.6)
                 .padding(.bottom, 18)
 
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 20) {
                     menuBarSection
                     scanningSection
-                    cliSection
                 }
             }
-
-            settingsFooter
-                .padding(.top, 16)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 18)
-        .frame(width: 420, height: 360)
-    }
-
-    // MARK: Header
-
-    private var settingsHeader: some View {
-        HStack(alignment: .firstTextBaseline) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("SETTINGS")
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .tracking(1.6)
-                Text("tokens menu bar")
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-            Button {
-                dismiss()
-            } label: {
-                Text("DONE")
-                    .font(.system(size: 11, design: .monospaced))
-                    .tracking(0.6)
-                    .foregroundStyle(.primary)
-            }
-            .buttonStyle(.plain)
-            .keyboardShortcut(.cancelAction)
-        }
+        .frame(width: 420, height: 320)
     }
 
     // MARK: Menu Bar
@@ -757,18 +708,12 @@ public struct SettingsView: View {
 
             Button {
                 store.fullRescan()
-                dismiss()
             } label: {
                 HStack(alignment: .center, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("FULL RESCAN NOW")
-                            .font(.system(size: 11, weight: .medium, design: .monospaced))
-                            .tracking(0.4)
-                            .foregroundStyle(.primary)
-                        Text("Ignore caches · rebuild snapshot")
-                            .font(.system(size: 10, design: .monospaced))
-                            .foregroundStyle(.secondary)
-                    }
+                    Text("FULL RESCAN NOW")
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .tracking(0.4)
+                        .foregroundStyle(.primary)
                     Spacer(minLength: 8)
                     Text("RUN")
                         .font(.system(size: 10, weight: .medium, design: .monospaced))
@@ -789,85 +734,14 @@ public struct SettingsView: View {
             }
             .buttonStyle(.plain)
             .disabled(store.isLoading || store.binaryMissing)
-        }
-    }
 
-    // MARK: CLI
-
-    private var cliSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            settingsSectionLabel("CLI")
-
-            VStack(alignment: .leading, spacing: 6) {
-                Text("RESOLVED PATH")
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                    .tracking(0.8)
-
-                Text(store.binaryPath ?? "not found")
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(store.binaryMissing ? Color.red : Color.primary)
-                    .textSelection(.enabled)
-                    .lineLimit(2)
-                    .truncationMode(.middle)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 8)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(Color.primary.opacity(0.04))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 4)
-                            .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
-                    )
-            }
-
-            if let error = store.lastError {
-                Text(error)
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(.red)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-    }
-
-    // MARK: Footer
-
-    private var settingsFooter: some View {
-        HStack(spacing: 10) {
-            Button {
-                store.resolveBinary()
-            } label: {
-                Text("RECHECK CLI")
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .tracking(0.6)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 8)
-                    .foregroundStyle(.primary)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 4)
-                            .strokeBorder(Color.primary.opacity(0.35), lineWidth: 1)
-                    )
-            }
-            .buttonStyle(.plain)
-
-            Button {
-                dismiss()
-            } label: {
-                Text("DONE")
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .tracking(0.6)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 8)
-                    .foregroundStyle(Color(nsColor: .windowBackgroundColor))
-                    .background(
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(Color.primary)
-                    )
-            }
-            .buttonStyle(.plain)
-            .keyboardShortcut(.defaultAction)
+            Text(
+                "We cache local session scans so historical data is not re-read on every refresh. Use Full Rescan if numbers look wrong — it clears caches and rebuilds from all session files."
+            )
+            .font(.system(size: 10, design: .monospaced))
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .lineSpacing(2)
         }
     }
 
