@@ -33,11 +33,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         store.attachStatusItem(statusItem)
 
-        let root = MenuPanelView(store: store, settings: store.settings)
+        let root = MenuPanelView(store: store, settings: store.settings) { [weak self] size in
+            self?.updatePopoverSize(size)
+        }
         let hosting = NSHostingController(rootView: root)
 
         popover = NSPopover()
-        popover.contentSize = NSSize(width: 400, height: 680)
+        // Initial size; shrink-wraps to content up to 80% of screen via onIdealSizeChange.
+        let initialHeight = min(680, MenuBarLayout.panelMaxHeight())
+        popover.contentSize = NSSize(width: MenuBarLayout.panelWidth, height: initialHeight)
         popover.behavior = .transient
         popover.animates = true
         popover.contentViewController = hosting
@@ -77,5 +81,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         settingsWindow = window
+    }
+
+    /// Fit popover to content height, never taller than 80% of the screen.
+    private func updatePopoverSize(_ size: CGSize) {
+        let width = max(size.width, MenuBarLayout.panelWidth)
+        let maxH = MenuBarLayout.panelMaxHeight()
+        let height = min(max(size.height, 120), maxH)
+        let next = NSSize(width: width, height: height)
+        guard abs(popover.contentSize.height - next.height) > 0.5
+            || abs(popover.contentSize.width - next.width) > 0.5
+        else { return }
+        popover.contentSize = next
     }
 }
