@@ -132,7 +132,8 @@ public struct MenuPanelView: View {
 
     @ViewBuilder
     private func reportBody(_ report: UsageReport) -> some View {
-        ScrollView(.vertical, showsIndicators: bodyContentHeight > maxBodyHeight + 1) {
+        // Hide scrollbar chrome; wheel/trackpad scroll still works.
+        ScrollView(.vertical, showsIndicators: false) {
             bodySections(report)
                 .padding(.horizontal, MenuBarLayout.horizontalPadding)
                 .padding(.top, 18)
