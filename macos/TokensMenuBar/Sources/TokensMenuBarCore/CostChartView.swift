@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// 14-day cost bar chart with hover dimming, guide line, and tooltip (IX-A).
@@ -7,6 +8,7 @@ public struct CostChartView: View {
     /// Selected period raw value; hover clears when the period changes.
     public var periodRawValue: String
 
+    @Environment(\.colorScheme) private var colorScheme
     @State private var hoveredDate: String?
 
     private let padL: CGFloat = 34
@@ -26,12 +28,47 @@ public struct CostChartView: View {
         self.periodRawValue = periodRawValue
     }
 
+    /// Explicit mono fills — `Color.primary` inside a vibrant NSPopover can wash out to a solid white plate.
+    private var barColor: Color {
+        colorScheme == .dark
+            ? Color.white.opacity(0.92)
+            : Color.black.opacity(0.88)
+    }
+
+    private var dimBarColor: Color {
+        colorScheme == .dark
+            ? Color.white.opacity(0.28)
+            : Color.black.opacity(0.24)
+    }
+
+    private var gridColor: Color {
+        colorScheme == .dark
+            ? Color.white.opacity(0.12)
+            : Color.black.opacity(0.10)
+    }
+
+    private var baselineColor: Color {
+        colorScheme == .dark
+            ? Color.white.opacity(0.28)
+            : Color.black.opacity(0.22)
+    }
+
+    private var plotBackground: Color {
+        colorScheme == .dark
+            ? Color.white.opacity(0.04)
+            : Color.black.opacity(0.03)
+    }
+
+    private var tooltipBackground: Color {
+        Color(nsColor: .windowBackgroundColor)
+    }
+
     public var body: some View {
         let chartDays = CostChartMath.daysForChart(from: days)
         Group {
             if chartDays.isEmpty {
                 Text("No daily data")
-                    .font(.body)
+                    .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
@@ -54,54 +91,103 @@ public struct CostChartView: View {
 
         return GeometryReader { geo in
             let plotWidth = max(0, geo.size.width - padL - padR)
-            let plotHeight = max(0, height - padT - padB)
+            let plotHeight = max(0, geo.size.height - padT - padB)
+            let totalSpacing = barSpacing * CGFloat(max(count - 1, 0))
+            let barWidth = count > 0 ? max(1, (plotWidth - totalSpacing) / CGFloat(count)) : 1
 
             ZStack(alignment: .topLeading) {
+                // Plot well — keeps bars visible against both light and dark popover materials.
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .fill(plotBackground)
+                    .frame(width: plotWidth, height: plotHeight)
+                    .offset(x: padL, y: padT)
+
                 // Y-axis labels + grid lines
                 ForEach(Array(ticks.enumerated()), id: \.offset) { _, value in
                     let y = padT + plotHeight * (1 - CGFloat(value / yMax))
-                    Text("$\(Int(value))")
-                        .font(.system(size: 9).monospacedDigit())
+                    Text("$\(Int(value.rounded()))")
+                        .font(.system(size: 9, design: .monospaced).monospacedDigit())
                         .foregroundStyle(.secondary)
                         .frame(width: padL - 6, alignment: .trailing)
                         .position(x: (padL - 6) / 2, y: y)
 
                     Rectangle()
-                        .fill(Color.primary.opacity(value == 0 ? 0.22 : 0.06))
+                        .fill(value == 0 ? baselineColor : gridColor)
                         .frame(width: plotWidth, height: 1)
-                        .position(x: padL + plotWidth / 2, y: y)
+                        .offset(x: padL, y: y)
                 }
 
-                // Vertical hover guide through bar center
+                // Bars (Canvas avoids vibrant-material fill washout of Shape styles)
+                Canvas { context, _ in
+                    for (index, day) in chartDays.enumerated() {
+                        let rawHeight = yMax > 0 ? plotHeight * CGFloat(day.cost / yMax) : 0
+                        let barHeight: CGFloat = day.cost > 0 ? max(2, rawHeight) : 0
+                        guard barHeight > 0 else { continue }
+
+                        let x = padL + CGFloat(index) * (barWidth + barSpacing)
+                        let y = padT + plotHeight - barHeight
+                        let rect = CGRect(x: x, y: y, width: barWidth, height: barHeight)
+
+                        let isHovered = hoveredDate == day.date
+                        let anyHover = hoveredDate != nil
+                        let fill: Color = {
+                            if isHovered { return barColor }
+                            if anyHover { return dimBarColor }
+                            return barColor.opacity(0.95)
+                        }()
+
+                        context.fill(Path(rect), with: .color(fill))
+                        if isHovered {
+                            context.stroke(
+                                Path(rect.insetBy(dx: 0.5, dy: 0.5)),
+                                with: .color(barColor),
+                                lineWidth: 1
+                            )
+                        }
+                    }
+                }
+                .frame(width: geo.size.width, height: geo.size.height)
+                .allowsHitTesting(false)
+
+                // Invisible hit targets per bar (Canvas is not hoverable)
+                HStack(alignment: .bottom, spacing: barSpacing) {
+                    ForEach(chartDays) { day in
+                        Color.clear
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .contentShape(Rectangle())
+                            .onHover { inside in
+                                if inside {
+                                    hoveredDate = day.date
+                                } else if hoveredDate == day.date {
+                                    hoveredDate = nil
+                                }
+                            }
+                            .accessibilityElement(children: .ignore)
+                            .accessibilityLabel(
+                                "\(day.date), \(Formatting.cost(day.cost)), \(Formatting.compactTokens(day.tokens)) tokens"
+                            )
+                    }
+                }
+                .frame(width: plotWidth, height: plotHeight)
+                .offset(x: padL, y: padT)
+
+                // Vertical hover guide
                 if let hoveredIndex {
-                    let centerX = padL + barCenterX(
-                        index: hoveredIndex,
-                        count: count,
-                        plotWidth: plotWidth
-                    )
+                    let centerX = padL + CGFloat(hoveredIndex) * (barWidth + barSpacing) + barWidth / 2
                     Rectangle()
-                        .fill(Color.primary.opacity(0.22))
+                        .fill(baselineColor)
                         .frame(width: 1, height: plotHeight)
-                        .position(x: centerX, y: padT + plotHeight / 2)
+                        .offset(x: centerX, y: padT)
                         .allowsHitTesting(false)
                 }
 
-                // Bars
-                HStack(alignment: .bottom, spacing: barSpacing) {
-                    ForEach(chartDays) { day in
-                        barColumn(day: day, plotHeight: plotHeight, yMax: yMax)
-                    }
-                }
-                .frame(width: plotWidth, height: plotHeight, alignment: .bottom)
-                .offset(x: padL, y: padT)
-
-                // Sparse X labels (ends + every other + hovered)
+                // Sparse X labels
                 HStack(spacing: barSpacing) {
                     ForEach(Array(chartDays.enumerated()), id: \.element.id) { index, day in
                         let isHovered = hoveredDate == day.date
                         let show = index == 0 || index == count - 1 || index % 2 == 1 || isHovered
                         Text(Formatting.chartDayLabel(isoDate: day.date))
-                            .font(.system(size: 9).monospacedDigit())
+                            .font(.system(size: 9, design: .monospaced).monospacedDigit())
                             .fontWeight(isHovered ? .bold : .regular)
                             .foregroundStyle(isHovered ? Color.primary : Color.secondary)
                             .frame(maxWidth: .infinity)
@@ -110,22 +196,18 @@ public struct CostChartView: View {
                     }
                 }
                 .frame(width: plotWidth, height: padB, alignment: .bottom)
-                .offset(x: padL, y: height - padB)
+                .offset(x: padL, y: geo.size.height - padB)
 
-                // Tooltip near hovered bar, clamped inside bounds
+                // Tooltip
                 if let hoveredIndex {
                     let day = chartDays[hoveredIndex]
-                    let centerX = padL + barCenterX(
-                        index: hoveredIndex,
-                        count: count,
-                        plotWidth: plotWidth
-                    )
+                    let centerX = padL + CGFloat(hoveredIndex) * (barWidth + barSpacing) + barWidth / 2
                     let clampedLeft = min(
                         max(8, centerX - tooltipWidth / 2),
                         max(8, geo.size.width - tooltipWidth - 8)
                     )
                     tooltip(for: day)
-                        .offset(x: clampedLeft, y: 0)
+                        .offset(x: clampedLeft, y: 4)
                         .allowsHitTesting(false)
                         .zIndex(5)
                 }
@@ -133,50 +215,10 @@ public struct CostChartView: View {
         }
     }
 
-    private func barColumn(day: DayUsage, plotHeight: CGFloat, yMax: Double) -> some View {
-        let rawHeight = yMax > 0 ? plotHeight * CGFloat(day.cost / yMax) : 0
-        let barHeight: CGFloat = day.cost > 0 ? max(2, rawHeight) : 0
-        let isHovered = hoveredDate == day.date
-        let anyHover = hoveredDate != nil
-        let opacity: Double = {
-            if isHovered { return 1 }
-            if anyHover { return 0.28 }
-            return 0.88
-        }()
-
-        return VStack(spacing: 0) {
-            Spacer(minLength: 0)
-            Rectangle()
-                .fill(Color.primary)
-                .frame(maxWidth: .infinity)
-                .frame(height: barHeight)
-                .opacity(opacity)
-                .overlay {
-                    if isHovered {
-                        Rectangle()
-                            .strokeBorder(Color.primary, lineWidth: 1)
-                    }
-                }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .contentShape(Rectangle())
-        .onHover { inside in
-            if inside {
-                hoveredDate = day.date
-            } else if hoveredDate == day.date {
-                hoveredDate = nil
-            }
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(
-            "\(day.date), \(Formatting.cost(day.cost)), \(Formatting.compactTokens(day.tokens)) tokens"
-        )
-    }
-
     private func tooltip(for day: DayUsage) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(day.date)
-                .font(.system(size: 10))
+                .font(.system(size: 10, design: .monospaced))
                 .foregroundStyle(.secondary)
                 .tracking(0.8)
 
@@ -188,7 +230,7 @@ public struct CostChartView: View {
                     .fontWeight(.semibold)
                     .monospacedDigit()
             }
-            .font(.system(size: 12))
+            .font(.system(size: 12, design: .monospaced))
 
             HStack {
                 Text("tokens")
@@ -197,26 +239,19 @@ public struct CostChartView: View {
                 Text(Formatting.compactTokens(day.tokens))
                     .monospacedDigit()
             }
-            .font(.system(size: 12))
+            .font(.system(size: 12, design: .monospaced))
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
         .frame(width: tooltipWidth, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 4)
-                .fill(Color(nsColor: .controlBackgroundColor))
-                .shadow(color: .black.opacity(0.12), radius: 6, y: 2)
+                .fill(tooltipBackground)
+                .shadow(color: .black.opacity(0.18), radius: 6, y: 2)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 4)
-                .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
+                .strokeBorder(Color.primary.opacity(0.14), lineWidth: 1)
         )
-    }
-
-    private func barCenterX(index: Int, count: Int, plotWidth: CGFloat) -> CGFloat {
-        guard count > 0 else { return 0 }
-        let totalSpacing = barSpacing * CGFloat(max(count - 1, 0))
-        let barWidth = max(1, (plotWidth - totalSpacing) / CGFloat(count))
-        return CGFloat(index) * (barWidth + barSpacing) + barWidth / 2
     }
 }

@@ -7,7 +7,9 @@ public struct MenuPanelView: View {
     /// Called whenever the panel’s ideal size changes so `NSPopover.contentSize` can shrink-wrap.
     public var onIdealSizeChange: ((CGSize) -> Void)?
 
-    @State private var scrollContentHeight: CGFloat = 0
+    /// Intrinsic height of the scrollable body (sections only).
+    @State private var bodyContentHeight: CGFloat = 0
+    /// Intrinsic height of header + tabs + footer (+ error shells).
     @State private var chromeHeight: CGFloat = 0
 
     public init(
@@ -22,23 +24,26 @@ public struct MenuPanelView: View {
 
     private var panelMaxHeight: CGFloat { MenuBarLayout.panelMaxHeight() }
 
-    /// Space left for the scroll body after header / tabs / footer.
-    private var maxScrollHeight: CGFloat {
-        let chrome = chromeHeight > 0 ? chromeHeight : 160
-        return max(120, panelMaxHeight - chrome)
+    private var maxBodyHeight: CGFloat {
+        let chrome = chromeHeight > 0 ? chromeHeight : 140
+        return max(160, panelMaxHeight - chrome)
     }
 
-    /// Scroll viewport: content height when short, else capped (enables scrolling).
-    private var scrollViewportHeight: CGFloat {
-        let content = scrollContentHeight > 0
-            ? scrollContentHeight
-            : MenuBarLayout.fallbackContentHeight
-        return min(content, maxScrollHeight)
+    private var bodyNeedsScroll: Bool {
+        bodyContentHeight > maxBodyHeight + 1
+    }
+
+    private var bodyViewportHeight: CGFloat? {
+        guard store.report != nil, !store.binaryMissing else { return nil }
+        if bodyContentHeight <= 0 {
+            return MenuBarLayout.fallbackContentHeight
+        }
+        return min(bodyContentHeight, maxBodyHeight)
     }
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            chromeBlock {
+            measuredChrome {
                 header
                     .padding(.horizontal, MenuBarLayout.horizontalPadding)
                     .padding(.top, 16)
@@ -46,58 +51,35 @@ public struct MenuPanelView: View {
             }
 
             if store.binaryMissing {
-                chromeBlock {
+                measuredChrome {
                     missingCLI
                         .padding(.horizontal, MenuBarLayout.horizontalPadding)
                         .padding(.vertical, 18)
                 }
             } else if let error = store.lastError, store.report == nil {
-                chromeBlock {
+                measuredChrome {
                     errorBanner(error)
                         .padding(.horizontal, MenuBarLayout.horizontalPadding)
                         .padding(.vertical, 18)
                 }
             } else if let report = store.report {
-                chromeBlock {
+                measuredChrome {
                     periodTabs
                         .padding(.horizontal, MenuBarLayout.horizontalPadding)
                         .padding(.top, 14)
                         .padding(.bottom, 6)
                 }
 
-                ScrollView(.vertical, showsIndicators: true) {
-                    VStack(alignment: .leading, spacing: MenuBarLayout.sectionSpacing) {
-                        totalSection(report)
-                        breakdownSection(report)
-                        clientSection(report)
-                        modelSection(report)
-                        costChartSection(report)
-                        if let error = store.lastError {
-                            errorBanner(error)
-                        }
-                    }
-                    .padding(.horizontal, MenuBarLayout.horizontalPadding)
-                    .padding(.top, 18)
-                    .padding(.bottom, 12)
-                    .background(
-                        GeometryReader { geo in
-                            Color.clear.preference(
-                                key: ScrollContentHeightPreferenceKey.self,
-                                value: geo.size.height
-                            )
-                        }
-                    )
-                }
-                .frame(height: scrollViewportHeight)
+                reportBody(report)
 
-                chromeBlock {
+                measuredChrome {
                     footer(report)
                         .padding(.horizontal, MenuBarLayout.horizontalPadding)
                         .padding(.top, 4)
                         .padding(.bottom, 14)
                 }
             } else {
-                chromeBlock {
+                measuredChrome {
                     VStack(spacing: 12) {
                         ProgressView()
                             .controlSize(.small)
@@ -119,9 +101,9 @@ public struct MenuPanelView: View {
             }
             publishIdealSize()
         }
-        .onPreferenceChange(ScrollContentHeightPreferenceKey.self) { height in
-            if height > 0, abs(height - scrollContentHeight) > 0.5 {
-                scrollContentHeight = height
+        .onPreferenceChange(BodyHeightPreferenceKey.self) { height in
+            if height > 0, abs(height - bodyContentHeight) > 0.5 {
+                bodyContentHeight = height
             }
             publishIdealSize()
         }
@@ -133,9 +115,49 @@ public struct MenuPanelView: View {
         .onChange(of: store.lastError) { _ in publishIdealSize() }
     }
 
-    /// Wraps non-scrolling chrome; height is summed via `ChromeHeightPreferenceKey`.
     @ViewBuilder
-    private func chromeBlock<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+    private func reportBody(_ report: UsageReport) -> some View {
+        let sections = bodySections(report)
+            .padding(.horizontal, MenuBarLayout.horizontalPadding)
+            .padding(.top, 18)
+            .padding(.bottom, 12)
+            .fixedSize(horizontal: false, vertical: true)
+            .background(
+                GeometryReader { geo in
+                    Color.clear.preference(
+                        key: BodyHeightPreferenceKey.self,
+                        value: geo.size.height
+                    )
+                }
+            )
+
+        if bodyNeedsScroll {
+            ScrollView(.vertical, showsIndicators: true) {
+                sections
+            }
+            .frame(height: maxBodyHeight)
+        } else {
+            // Intrinsic height — no ScrollView so GeometryReader measures true content size.
+            sections
+        }
+    }
+
+    @ViewBuilder
+    private func bodySections(_ report: UsageReport) -> some View {
+        VStack(alignment: .leading, spacing: MenuBarLayout.sectionSpacing) {
+            totalSection(report)
+            breakdownSection(report)
+            clientSection(report)
+            modelSection(report)
+            costChartSection(report)
+            if let error = store.lastError {
+                errorBanner(error)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func measuredChrome<Content: View>(@ViewBuilder content: () -> Content) -> some View {
         content()
             .background(
                 GeometryReader { geo in
@@ -148,13 +170,8 @@ public struct MenuPanelView: View {
     }
 
     private func publishIdealSize() {
-        let chrome = chromeHeight > 0 ? chromeHeight : 160
-        let body: CGFloat
-        if store.report != nil, !store.binaryMissing {
-            body = scrollViewportHeight
-        } else {
-            body = 0
-        }
+        let chrome = chromeHeight > 0 ? chromeHeight : 140
+        let body = bodyViewportHeight ?? 0
         let ideal = min(chrome + body, panelMaxHeight)
         let height = max(ideal, 120)
         onIdealSizeChange?(CGSize(width: MenuBarLayout.panelWidth, height: height))
@@ -565,7 +582,6 @@ public struct MenuPanelView: View {
     }
 }
 
-
 /// Additive height of non-scroll chrome pieces (header, tabs, footer, error shells).
 private struct ChromeHeightPreferenceKey: PreferenceKey {
     static var defaultValue: CGFloat = 0
@@ -574,8 +590,8 @@ private struct ChromeHeightPreferenceKey: PreferenceKey {
     }
 }
 
-/// Natural height of the scrollable body (uncapped).
-private struct ScrollContentHeightPreferenceKey: PreferenceKey {
+/// Natural height of the report body sections (uncapped).
+private struct BodyHeightPreferenceKey: PreferenceKey {
     static var defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
         value = max(value, nextValue())
