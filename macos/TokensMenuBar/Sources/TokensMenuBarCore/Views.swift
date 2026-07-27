@@ -227,10 +227,9 @@ public struct MenuPanelView: View {
             if report.byClient.isEmpty {
                 emptyHint("No client data")
             } else if report.byClient.count > MenuBarLayout.nestedListThreshold {
-                ScrollView {
+                nestedListScroll {
                     clientRows(report.byClient)
                 }
-                .frame(maxHeight: MenuBarLayout.nestedListMaxHeight)
             } else {
                 clientRows(report.byClient)
             }
@@ -252,11 +251,12 @@ public struct MenuPanelView: View {
                     .font(.system(size: 12, design: .monospaced))
                     .lineLimit(1)
                     .truncationMode(.middle)
-                Spacer(minLength: 8)
+                    .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
                 Text("\(Formatting.compactTokens(client.tokens)) · \(Formatting.percent(client.share))")
                     .font(.system(size: 12, design: .monospaced))
                     .monospacedDigit()
                     .foregroundStyle(.primary)
+                    .layoutPriority(1)
             }
             shareBar(share: client.share)
         }
@@ -270,10 +270,9 @@ public struct MenuPanelView: View {
             if report.byModel.isEmpty {
                 emptyHint("No model data")
             } else if report.byModel.count > MenuBarLayout.nestedListThreshold {
-                ScrollView {
+                nestedListScroll {
                     modelRows(report.byModel)
                 }
-                .frame(maxHeight: MenuBarLayout.nestedListMaxHeight)
             } else {
                 modelRows(report.byModel)
             }
@@ -303,11 +302,14 @@ public struct MenuPanelView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
+                    .layoutPriority(1)
             }
-            Spacer(minLength: 8)
+            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+
             Text(Formatting.compactTokens(model.tokens))
                 .font(.system(size: 12, design: .monospaced))
                 .monospacedDigit()
+                .layoutPriority(2)
         }
     }
 
@@ -323,7 +325,7 @@ public struct MenuPanelView: View {
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
             }
-            CostChartView(days: report.byDay)
+            CostChartView(days: report.byDay, periodRawValue: store.period.rawValue)
         }
     }
 
@@ -337,9 +339,9 @@ public struct MenuPanelView: View {
             .font(.system(size: 11, design: .monospaced))
             .foregroundStyle(.secondary)
             .lineLimit(1)
-            .minimumScaleFactor(0.7)
-
-            Spacer(minLength: 8)
+            .minimumScaleFactor(0.65)
+            .truncationMode(.tail)
+            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
 
             footerButton("REFRESH", disabled: store.isLoading) {
                 store.manualRefresh()
@@ -372,6 +374,35 @@ public struct MenuPanelView: View {
     }
 
     // MARK: - Shared
+
+    /// Nested CLIENT/MODEL list with top/bottom edge fades (IX-B).
+    private func nestedListScroll<Content: View>(
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        let fade = Color(nsColor: .windowBackgroundColor)
+        return ScrollView {
+            content()
+        }
+        .frame(maxHeight: MenuBarLayout.nestedListMaxHeight)
+        .overlay(alignment: .top) {
+            LinearGradient(
+                colors: [fade, fade.opacity(0)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .frame(height: 16)
+            .allowsHitTesting(false)
+        }
+        .overlay(alignment: .bottom) {
+            LinearGradient(
+                colors: [fade.opacity(0), fade],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .frame(height: 16)
+            .allowsHitTesting(false)
+        }
+    }
 
     private func sectionLabel(_ text: String) -> some View {
         Text(text)

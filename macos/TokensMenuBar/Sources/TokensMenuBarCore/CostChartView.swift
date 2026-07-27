@@ -4,6 +4,8 @@ import SwiftUI
 public struct CostChartView: View {
     public let days: [DayUsage]
     public var height: CGFloat
+    /// Selected period raw value; hover clears when the period changes.
+    public var periodRawValue: String
 
     @State private var hoveredDate: String?
 
@@ -14,9 +16,14 @@ public struct CostChartView: View {
     private let barSpacing: CGFloat = 3
     private let tooltipWidth: CGFloat = 140
 
-    public init(days: [DayUsage], height: CGFloat = MenuBarLayout.chartHeight) {
+    public init(
+        days: [DayUsage],
+        height: CGFloat = MenuBarLayout.chartHeight,
+        periodRawValue: String = ""
+    ) {
         self.days = days
         self.height = height
+        self.periodRawValue = periodRawValue
     }
 
     public var body: some View {
@@ -33,6 +40,9 @@ public struct CostChartView: View {
         }
         .frame(maxWidth: .infinity)
         .frame(height: height)
+        .onChange(of: periodRawValue) { _ in
+            hoveredDate = nil
+        }
     }
 
     private func chartBody(_ chartDays: [DayUsage]) -> some View {
