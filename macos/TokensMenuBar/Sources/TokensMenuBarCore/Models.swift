@@ -18,6 +18,16 @@ public enum UsagePeriod: String, CaseIterable, Identifiable, Codable {
         case .all: return "All"
         }
     }
+
+    /// Uppercase tab labels for Minimal Mono period underlines.
+    public var monoTitle: String {
+        switch self {
+        case .today: return "TODAY"
+        case .days7: return "7D"
+        case .days30: return "30D"
+        case .all: return "ALL"
+        }
+    }
 }
 
 public enum MenuBarDisplayMode: String, CaseIterable, Identifiable, Codable {
