@@ -8,7 +8,7 @@ import {
   SORT_BY_COOKIE_NAME,
   resolveSortByParam,
 } from "@/lib/leaderboard/constants";
-import { parseCustomDateRange } from "@/lib/leaderboard/dateRange";
+import { isValidDateString, parseCustomDateRange } from "@/lib/leaderboard/dateRange";
 import LeaderboardClient from "@/components/leaderboard/Leaderboard";
 
 function isMissingDatabaseUrl(error: unknown): boolean {
@@ -86,7 +86,17 @@ async function LeaderboardWithPreferences({
     period = "all";
   }
 
-  const customFrom = customDateRange?.from;
+  // Daily rows are bucketed by the submitter's *local* date, so resolving
+  // "today" against the server's UTC date silently excludes everyone whose
+  // local calendar has already rolled over — eight hours out of every day for
+  // UTC+8. The client sends its own date up as `from` once it has hydrated;
+  // this is the only place that reads it back. Without this the whole "today"
+  // board, and every signed-in viewer's rank on it, is computed for the wrong
+  // day.
+  const localToday =
+    period === "today" && isValidDateString(fromParam) ? fromParam : undefined;
+
+  const customFrom = customDateRange?.from ?? localToday;
   const customTo = customDateRange?.to;
 
   const [initialData, session] = await Promise.all([

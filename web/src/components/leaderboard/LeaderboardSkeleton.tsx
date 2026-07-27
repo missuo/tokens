@@ -96,9 +96,17 @@ export function LeaderboardSkeleton() {
       </header>
       <Separator className="my-7" />
 
-      <section className="grid grid-cols-2 gap-6 sm:grid-cols-4" aria-hidden="true">
-        {Array.from({ length: 4 }, (_, i) => (
-          <div key={i} className="flex flex-col gap-1.5">
+      {/* Three, not four: the rank card is conditional on the viewer having a
+          standing in the selected period, which is not known until the data
+          lands. Reserving space for it would promise a card that most loads —
+          every signed-out visitor, and anyone with no usage in the period —
+          never get, trading one layout shift for a more frequent one. */}
+      <section className="grid grid-cols-2 gap-6 sm:grid-cols-3" aria-hidden="true">
+        {Array.from({ length: 3 }, (_, i) => (
+          <div
+            key={i}
+            className={cn("flex flex-col gap-1.5", i === 2 && "col-span-2 sm:col-span-1")}
+          >
             <span className="flex h-4 items-center">
               <Skeleton className="h-3 w-16" />
             </span>

@@ -29,6 +29,7 @@ import type {
   LeaderboardTokenFormat,
 } from "@/lib/leaderboard/constants";
 import type { LeaderboardData, LeaderboardUser, Period } from "@/lib/leaderboard/types";
+import { toLocalDateString } from "@/lib/leaderboard/dateRange";
 
 interface SessionUser {
   id: string;
@@ -62,13 +63,15 @@ function Stat({
   label,
   value,
   accent,
+  className,
 }: {
   label: string;
   value: string;
   accent?: boolean;
+  className?: string;
 }) {
   return (
-    <div className="flex flex-col gap-1.5">
+    <div className={cn("flex flex-col gap-1.5", className)}>
       <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
         {label}
       </span>
@@ -300,6 +303,29 @@ export default function Leaderboard({
     [pathname, router, searchParams]
   );
 
+  // The server can only resolve "today" in UTC, but daily rows are bucketed by
+  // the submitter's local date, so it lands on the wrong day for anyone not on
+  // UTC — and a signed-in viewer whose local day has rolled over gets no rank
+  // at all, because the rank is a position within the period. Send our own date
+  // up as soon as we have one. `replace` rather than `push` so the correction
+  // does not sit in the back stack, and the equality check makes it idempotent
+  // while still re-firing when the day rolls over under a long-lived tab.
+  useEffect(() => {
+    if (period !== "today") return;
+    const now = new Date();
+    const localDate = toLocalDateString(now);
+    const fromParam = searchParams.get("from");
+    if (fromParam === localDate) return;
+    // No `from` means the server fell back to its own UTC date. When that
+    // already agrees with ours there is nothing to correct, and navigating
+    // purely to write the parameter down would cost a round trip for nothing —
+    // which is most of the day even well away from UTC.
+    if (fromParam === null && localDate === now.toISOString().slice(0, 10)) return;
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("from", localDate);
+    router.replace(`${pathname}?${params.toString()}`);
+  }, [period, searchParams, pathname, router]);
+
   // "/" focuses search — the shortcut this audience reaches for by reflex.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -331,20 +357,31 @@ export default function Leaderboard({
         description="AI coding token usage, reported by the Tokens CLI."
       />
 
+      {/* The rank card exists only when there is a rank to put in it. A signed
+          out visitor has no standing to report, and a bare em dash reads as a
+          number that failed to load rather than as "not applicable" — so the
+          card goes, and the row re-flows to fill the width it left behind.
+          Column count follows card count; on phones the odd card spans both
+          columns so the grid never ends on a hole. */}
       <section
-        className="grid grid-cols-2 gap-6 sm:grid-cols-4"
+        className={cn(
+          "grid grid-cols-2 gap-6",
+          initialUserRank ? "sm:grid-cols-4" : "sm:grid-cols-3"
+        )}
         aria-label="Totals"
       >
         <Stat label="Tokens" value={formatNumber(stats.totalTokens, true)} />
         <Stat label="Cost" value={formatCurrency(stats.totalCost, true)} />
-        <Stat label="Developers" value={formatNumber(stats.uniqueUsers, false)} />
+        <Stat
+          label="Developers"
+          value={formatNumber(stats.uniqueUsers, false)}
+          className={initialUserRank ? undefined : "col-span-2 sm:col-span-1"}
+        />
         {/* The only figure here that is about the viewer, so it takes the
             accent — same signal as the highlighted self row below. */}
-        <Stat
-          label="Your rank"
-          value={initialUserRank ? `#${initialUserRank.rank}` : "—"}
-          accent={initialUserRank != null}
-        />
+        {initialUserRank && (
+          <Stat label="Your rank" value={`#${initialUserRank.rank}`} accent />
+        )}
       </section>
 
       {/* Controls stack on phones and sit on one line from sm up. Touch
@@ -361,7 +398,16 @@ export default function Leaderboard({
               const next = value[0] as Period | undefined;
               if (!next) return;
               setPendingPeriod(next);
-              pushQuery({ period: next, page: null });
+              // `from` only ever means "the viewer's local today". Carry it
+              // straight into a switch to Today — going via null would make
+              // the effect above correct it in a second navigation — and drop
+              // it everywhere else so it cannot linger into a period that
+              // reads it differently.
+              pushQuery({
+                period: next,
+                page: null,
+                from: next === "today" ? toLocalDateString(new Date()) : null,
+              });
             }}
             variant="outline"
             aria-label="Period"

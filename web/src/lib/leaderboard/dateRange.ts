@@ -20,6 +20,21 @@ export function isValidDateString(value: string | null | undefined): value is st
   );
 }
 
+/**
+ * The viewer's own calendar date as YYYY-MM-DD.
+ *
+ * `toISOString().slice(0, 10)` would give the UTC date, which is the whole
+ * problem this exists to avoid: daily rows are bucketed by the submitter's
+ * local date, so anywhere east or west of UTC spends part of every day
+ * disagreeing with it.
+ */
+export function toLocalDateString(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 export function parseCustomDateRange(
   from: string | null | undefined,
   to: string | null | undefined
