@@ -278,17 +278,12 @@ public struct MenuPanelView: View {
 
     private func breakdownSection(_ report: UsageReport) -> some View {
         let b = report.tokenBreakdown
-        // Input cache % = read hit rate. “Output cache %” maps to cache-write share of
-        // the prompt path (schema has no true output-cache field).
+        // Input cache % = cache-read hit rate (cacheRead / (input + cacheRead)).
+        // No “output cache” in the schema — only show rate on the input card.
         let inputCache = Formatting.inputCacheRate(input: b.input, cacheRead: b.cacheRead)
-        let outputCache = Formatting.cacheWriteRate(
-            input: b.input,
-            cacheRead: b.cacheRead,
-            cacheWrite: b.cacheWrite
-        )
         let items: [(String, Int64, Double?)] = [
             ("input", b.input, inputCache),
-            ("output", b.output, outputCache),
+            ("output", b.output, nil),
             ("cache", b.cacheRead, nil),
             ("reason", b.reasoning, nil),
         ]
@@ -313,25 +308,28 @@ public struct MenuPanelView: View {
         topAccent: Color
     ) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .firstTextBaseline, spacing: 4) {
-                Text(label)
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(.secondary)
+            Text(label)
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            HStack(alignment: .firstTextBaseline, spacing: 0) {
+                Text(Formatting.compactTokens(value))
+                    .font(.system(size: 12, weight: .bold, design: .monospaced))
+                    .monospacedDigit()
                     .lineLimit(1)
+                    .minimumScaleFactor(0.7)
                 if let cachePercent {
+                    Text(" · ")
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundStyle(.secondary)
                     Text(Formatting.percent(cachePercent))
-                        .font(.system(size: 10, design: .monospaced))
+                        .font(.system(size: 9, design: .monospaced))
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
                         .lineLimit(1)
                         .layoutPriority(1)
                 }
             }
-            Text(Formatting.compactTokens(value))
-                .font(.system(size: 12, weight: .bold, design: .monospaced))
-                .monospacedDigit()
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 8)
@@ -372,8 +370,7 @@ public struct MenuPanelView: View {
     ) -> String {
         var parts = ["\(label) \(Formatting.compactTokens(value))"]
         if let cachePercent {
-            let kind = label == "input" ? "input cache" : "cache write"
-            parts.append("\(kind) \(Formatting.percent(cachePercent))")
+            parts.append("input cache \(Formatting.percent(cachePercent))")
         }
         return parts.joined(separator: ", ")
     }

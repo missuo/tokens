@@ -51,23 +51,12 @@ public enum Formatting {
         String(format: "%.0f%%", share * 100)
     }
 
-    /// Input cache hit rate: cache-read / (input + cache-read).
-    /// Both sides of the ratio are input-path tokens; returns 0…1.
+    /// Input cache hit rate: cache-read / (input + cache-read). Returns 0…1.
     public static func inputCacheRate(input: Int64, cacheRead: Int64) -> Double {
-        ratio(numerator: cacheRead, denominator: input + cacheRead)
-    }
-
-    /// Cache-write share of the prompt path: cache-write / (input + cache-read + cache-write).
-    /// There is no true “output cache” in the schema; write is the second cache signal.
-    public static func cacheWriteRate(input: Int64, cacheRead: Int64, cacheWrite: Int64) -> Double {
-        ratio(numerator: cacheWrite, denominator: input + cacheRead + cacheWrite)
-    }
-
-    private static func ratio(numerator: Int64, denominator: Int64) -> Double {
+        let denominator = input + cacheRead
         guard denominator > 0 else { return 0 }
-        let n = max(0, Double(numerator))
-        let d = Double(denominator)
-        return min(1, n / d)
+        let n = max(0, Double(cacheRead))
+        return min(1, n / Double(denominator))
     }
 
     public static func relativeTime(fromISO8601 value: String) -> String {

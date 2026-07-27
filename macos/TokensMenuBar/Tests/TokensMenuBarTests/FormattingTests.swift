@@ -31,20 +31,6 @@ final class FormattingTests: XCTestCase {
         XCTAssertEqual(Formatting.inputCacheRate(input: 200, cacheRead: 0), 0, accuracy: 0.0001)
     }
 
-    func testCacheWriteRate() {
-        XCTAssertEqual(
-            Formatting.cacheWriteRate(input: 0, cacheRead: 0, cacheWrite: 0),
-            0,
-            accuracy: 0.0001
-        )
-        // 50 write of 100+50+50 = 200 → 25%
-        XCTAssertEqual(
-            Formatting.cacheWriteRate(input: 100, cacheRead: 50, cacheWrite: 50),
-            0.25,
-            accuracy: 0.0001
-        )
-    }
-
     func testMenuBarTitleModes() {
         let report = UsageReport(
             schemaVersion: 1,
