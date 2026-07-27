@@ -550,15 +550,31 @@ async function fetchLeaderboardData(
   };
 }
 
+// `page` and `search` reach here straight from a public URL and go into the
+// cache key below, so an uncapped value buys an unbounded number of cache
+// entries for the cost of one request; `page` additionally becomes the OFFSET.
+// Clamped here rather than at each caller because both the API route and the
+// /leaderboard page pass their query string through unmodified.
+// A username is at most 39 chars and the `client:`/`model:` directives add a
+// short prefix, so 120 is well past any real query; 500 pages of 100 is well
+// past the end of the board.
+const MAX_SEARCH_LENGTH = 120;
+const MAX_PAGE = 500;
+
 export function getLeaderboardData(
   period: Period = "all",
-  page: number = 1,
+  requestedPage: number = 1,
   limit: number = 50,
   sortBy: SortBy = "tokens",
-  search: string = "",
+  requestedSearch: string = "",
   customFrom?: string,
   customTo?: string
 ): Promise<LeaderboardData> {
+  const page = Number.isFinite(requestedPage)
+    ? Math.min(MAX_PAGE, Math.max(1, Math.floor(requestedPage)))
+    : 1;
+  const search = requestedSearch.slice(0, MAX_SEARCH_LENGTH);
+
   const cacheKey = period === "custom"
     ? `leaderboard:custom:${customFrom}:${customTo}:${page}:${limit}:${sortBy}:${search}`
     : period === "today"

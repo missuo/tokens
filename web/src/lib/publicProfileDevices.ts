@@ -10,7 +10,7 @@ import {
 } from "@/lib/db/usernameLookup";
 import { deviceDisplayLabel, toIsoString } from "@/lib/devices/shared";
 
-export interface PublicProfileDevicesRouteParams {
+interface PublicProfileDevicesRouteParams {
   params: Promise<{ username: string }>;
 }
 

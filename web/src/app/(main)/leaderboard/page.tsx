@@ -42,13 +42,22 @@ interface PageProps {
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }
 
-export default function LeaderboardPage({ searchParams }: PageProps) {
+// Mirrors SESSION_COOKIE_NAME in lib/auth/session.ts. Only its presence is
+// read, and only to decide whether the fallback reserves room for the "Your
+// position" block — resolving the real session here would mean awaiting a
+// query before the shell could stream.
+const SESSION_COOKIE_NAME = "tt_session";
+
+export default async function LeaderboardPage({ searchParams }: PageProps) {
+  const cookieStore = await cookies();
+  const maybeSignedIn = cookieStore.has(SESSION_COOKIE_NAME);
+
   return (
     // The board component owns the page container; wrapping it in
     // .main-container again stacked a second set of paddings and made this
     // route sit lower than the others.
     <main id="main-content">
-      <Suspense fallback={<LeaderboardSkeleton />}>
+      <Suspense fallback={<LeaderboardSkeleton showUserRank={maybeSignedIn} />}>
         <LeaderboardWithPreferences searchParams={searchParams} />
       </Suspense>
     </main>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Panel } from "@/components/ui/primitives";
 
@@ -14,19 +14,42 @@ interface User {
 export default function DeviceClient() {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  // "Could not load the session" is not the same answer as "signed out":
+  // treating a failed request as signed out sends an authenticated user back
+  // through OAuth for no reason.
+  const [sessionFailed, setSessionFailed] = useState(false);
   const [code, setCode] = useState("");
   const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
   const [error, setError] = useState("");
+  const successHeadingRef = useRef<HTMLHeadingElement>(null);
 
-  useEffect(() => {
+  const loadSession = useCallback(() => {
+    setIsLoading(true);
+    setSessionFailed(false);
     fetch("/api/auth/session")
-      .then((res) => res.json())
+      .then((res) => {
+        if (!res.ok) throw new Error("Failed to load session");
+        return res.json();
+      })
       .then((data) => {
-        setUser(data.user);
+        setUser(data.user ?? null);
         setIsLoading(false);
       })
-      .catch(() => setIsLoading(false));
+      .catch(() => {
+        setSessionFailed(true);
+        setIsLoading(false);
+      });
   }, []);
+
+  useEffect(() => {
+    loadSession();
+  }, [loadSession]);
+
+  // The form the user was operating is replaced wholesale on success, so focus
+  // would otherwise be left on a button that no longer exists.
+  useEffect(() => {
+    if (status === "success") successHeadingRef.current?.focus();
+  }, [status]);
 
   const handleCodeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     let value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "");
@@ -57,14 +80,14 @@ export default function DeviceClient() {
 
   if (isLoading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background px-4">
+      <main id="main-content" className="flex flex-1 items-center justify-center bg-background px-4">
         <div className="text-sm text-muted-foreground">Loading...</div>
-      </div>
+      </main>
     );
   }
 
   return (
-    <div className="mx-auto mt-10 w-full max-w-[460px] px-4">
+    <main id="main-content" className="mx-auto mt-10 w-full max-w-[460px] px-4">
       <Panel className="p-6">
         <div className="mb-6 text-center">
           <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-lg border border-border bg-muted">
@@ -87,7 +110,21 @@ export default function DeviceClient() {
           <p className="mt-1 text-sm text-muted-foreground">Connect your terminal to Tokens</p>
         </div>
 
-        {!user ? (
+        {sessionFailed ? (
+          <div className="text-center" role="alert">
+            <p className="mb-5 text-sm text-muted-foreground">
+              We could not check whether you are signed in. You may still be —
+              this is a connection problem, not a sign-out.
+            </p>
+            <button
+              type="button"
+              onClick={loadSession}
+              className="inline-flex h-11 w-full items-center justify-center rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground transition hover:opacity-90"
+            >
+              Try again
+            </button>
+          </div>
+        ) : !user ? (
           <div className="text-center">
             <p className="mb-5 text-sm text-muted-foreground">Sign in with GitHub to authorize the CLI.</p>
             <a
@@ -101,7 +138,7 @@ export default function DeviceClient() {
             </a>
           </div>
         ) : status === "success" ? (
-          <div className="text-center">
+          <div className="text-center" role="status" aria-live="polite">
             <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full border border-success/40 bg-success/10">
               <svg
                 className="h-6 w-6 text-success"
@@ -113,7 +150,13 @@ export default function DeviceClient() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
               </svg>
             </div>
-            <h2 className="mb-1 text-lg font-semibold tracking-tight text-foreground">Device Authorized!</h2>
+            <h2
+              ref={successHeadingRef}
+              tabIndex={-1}
+              className="mb-1 text-lg font-semibold tracking-tight text-foreground outline-none"
+            >
+              Device Authorized!
+            </h2>
             <p className="text-sm text-muted-foreground">You can close this window and return to your terminal.</p>
           </div>
         ) : (
@@ -158,6 +201,6 @@ export default function DeviceClient() {
           </form>
         )}
       </Panel>
-    </div>
+    </main>
   );
 }

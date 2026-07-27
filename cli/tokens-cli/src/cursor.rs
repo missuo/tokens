@@ -24,16 +24,16 @@ fn home_dir() -> Result<PathBuf> {
     dirs::home_dir().context("Could not determine home directory")
 }
 
-fn cursor_credentials_path(home_dir: &Path) -> PathBuf {
-    home_dir.join(".config/tokens/cursor-credentials.json")
+fn cursor_credentials_path() -> PathBuf {
+    crate::paths::get_config_dir().join("cursor-credentials.json")
 }
 
 fn old_cursor_credentials_path(home_dir: &Path) -> PathBuf {
     home_dir.join(".tokens/cursor-credentials.json")
 }
 
-fn cursor_cache_dir(home_dir: &Path) -> PathBuf {
-    home_dir.join(".config/tokens/cursor-cache")
+fn cursor_cache_dir() -> PathBuf {
+    crate::paths::get_config_dir().join("cursor-cache")
 }
 
 fn old_cursor_cache_dir(home_dir: &Path) -> PathBuf {
@@ -93,16 +93,22 @@ pub struct SyncCursorResult {
 }
 
 pub fn get_cursor_credentials_path() -> Result<PathBuf> {
-    Ok(cursor_credentials_path(&home_dir()?))
+    Ok(cursor_credentials_path())
 }
 
 pub fn get_cursor_cache_dir() -> Result<PathBuf> {
-    Ok(cursor_cache_dir(&home_dir()?))
+    Ok(cursor_cache_dir())
 }
 
 fn migrate_cache_dir_from_old_path_in_home(home_dir: &Path) {
+    // Same hermeticity gate as the credentials probe above: with an explicit
+    // TOKENS_CONFIG_DIR this would copy the real `~/.tokens/cursor-cache` into
+    // the sandbox and then `remove_dir_all` the original.
+    if crate::paths::is_config_dir_overridden() {
+        return;
+    }
     let old_dir = old_cursor_cache_dir(home_dir);
-    let new_dir = cursor_cache_dir(home_dir);
+    let new_dir = cursor_cache_dir();
     if !new_dir.exists()
         && old_dir.exists()
         && fs::create_dir_all(&new_dir).is_ok()
@@ -217,8 +223,8 @@ fn atomic_write_file(path: &std::path::Path, contents: &str) -> Result<()> {
     Ok(())
 }
 
-fn ensure_config_dir_in_home(home_dir: &Path) -> Result<()> {
-    let config_dir = home_dir.join(".config/tokens");
+fn ensure_config_dir() -> Result<()> {
+    let config_dir = crate::paths::get_config_dir();
 
     if !config_dir.exists() {
         fs::create_dir_all(&config_dir)?;
@@ -293,11 +299,18 @@ pub fn load_credentials_store() -> Option<CursorCredentialsStore> {
 }
 
 fn load_credentials_store_from_home(home_dir: &Path) -> Option<CursorCredentialsStore> {
-    let path = cursor_credentials_path(home_dir);
+    let path = cursor_credentials_path();
     let old_path = old_cursor_credentials_path(home_dir);
+    // The `~/.tokens` probe is skipped when TOKENS_CONFIG_DIR is set, per the
+    // contract in tokens_core::paths: an explicit root must stay hermetic.
+    // Without the gate, an isolated profile reads the user's *real*
+    // credentials, copies them into the sandbox, and then deletes the
+    // original — so the next unsandboxed run finds nothing and the user is
+    // silently signed out of Cursor, with their token left in whatever
+    // directory the sandbox happened to point at.
     let read_path = if path.exists() {
         path.clone()
-    } else if old_path.exists() {
+    } else if !crate::paths::is_config_dir_overridden() && old_path.exists() {
         old_path
     } else {
         return None;
@@ -314,11 +327,15 @@ fn load_credentials_store_from_home(home_dir: &Path) -> Option<CursorCredentials
                     changed = true;
                 }
             }
-            if changed || read_path != path {
-                let _ = save_credentials_store_in_home(home_dir, &store);
+            let migrated = read_path != path;
+            // Drop the legacy copy only once the new one is provably on disk.
+            // The old code ignored the save's result and deleted regardless,
+            // so a failed write destroyed the only copy of the token.
+            if (changed || migrated) && save_credentials_store(&store).is_err() {
+                return Some(store);
             }
-            if read_path != path {
-                let _ = fs::remove_file(old_cursor_credentials_path(home_dir));
+            if migrated {
+                let _ = fs::remove_file(&read_path);
             }
             return Some(store);
         }
@@ -334,9 +351,8 @@ fn load_credentials_store_from_home(home_dir: &Path) -> Option<CursorCredentials
             accounts,
         };
 
-        let _ = save_credentials_store_in_home(home_dir, &migrated);
-        if read_path != path {
-            let _ = fs::remove_file(old_cursor_credentials_path(home_dir));
+        if save_credentials_store(&migrated).is_ok() && read_path != path {
+            let _ = fs::remove_file(&read_path);
         }
         return Some(migrated);
     }
@@ -345,12 +361,8 @@ fn load_credentials_store_from_home(home_dir: &Path) -> Option<CursorCredentials
 }
 
 pub fn save_credentials_store(store: &CursorCredentialsStore) -> Result<()> {
-    save_credentials_store_in_home(&home_dir()?, store)
-}
-
-fn save_credentials_store_in_home(home_dir: &Path, store: &CursorCredentialsStore) -> Result<()> {
-    ensure_config_dir_in_home(home_dir)?;
-    let path = cursor_credentials_path(home_dir);
+    ensure_config_dir()?;
+    let path = cursor_credentials_path();
     let json = serde_json::to_string_pretty(store)?;
     atomic_write_file(&path, &json)?;
 
@@ -638,7 +650,7 @@ fn is_cursor_usage_csv_filename(name: &str) -> bool {
 
 pub fn has_cursor_usage_cache_in_home(home_dir: &Path) -> bool {
     migrate_cache_dir_from_old_path_in_home(home_dir);
-    let cache_dir = cursor_cache_dir(home_dir);
+    let cache_dir = cursor_cache_dir();
     if !cache_dir.exists() {
         return false;
     }
@@ -720,7 +732,12 @@ pub async fn validate_cursor_session(token: &str) -> ValidateSessionResult {
             return ValidateSessionResult {
                 valid: false,
                 membership_type: None,
-                error: Some(format!("Failed to parse response: {}", e)),
+                // Lead with the action the user can take; keep the parse error
+                // trailing so it is still available for a bug report.
+                error: Some(format!(
+                    "Could not read the Cursor API response - run `tokens cursor login` to re-authenticate ({})",
+                    e
+                )),
             };
         }
     };
@@ -830,7 +847,7 @@ where
         };
     }
 
-    let cache_dir = cursor_cache_dir(home_dir);
+    let cache_dir = cursor_cache_dir();
     if let Err(e) = fs::create_dir_all(&cache_dir) {
         return SyncCursorResult {
             synced: false,
@@ -1167,8 +1184,17 @@ pub fn run_cursor_sync(json: bool) -> Result<()> {
     let rt = Runtime::new()?;
     let result = rt.block_on(sync_cursor_cache());
 
+    // A failed sync must exit non-zero so `tokens cursor sync && ...` stops,
+    // and the human-readable failure belongs on stderr so `--json` stdout stays
+    // parseable. The JSON payload itself is still written to stdout first.
+    // A failed sync must exit non-zero so `tokens cursor sync && ...` stops.
+    // The `--json` branch keeps stdout to the payload alone; the human-readable
+    // diagnostic goes to stderr, and the bail is terse so it does not repeat it.
     if json {
         println!("{}", serde_json::to_string_pretty(&result)?);
+        if !result.synced {
+            anyhow::bail!("Cursor sync failed");
+        }
         return Ok(());
     }
 
@@ -1179,16 +1205,18 @@ pub fn run_cursor_sync(json: bool) -> Result<()> {
             format!("  Synced {} Cursor usage event(s).", result.rows).green()
         );
         if let Some(error) = result.error {
-            println!("{}", format!("  Warning: {}", error).yellow());
+            eprintln!("{}", format!("  Warning: {}", error).yellow());
         }
-    } else if let Some(error) = result.error {
-        println!("{}", format!("  Sync failed: {}", error).red());
-    } else {
-        println!("{}", "  Sync failed.".red());
+        println!();
+        return Ok(());
     }
-    println!();
 
-    Ok(())
+    match result.error {
+        Some(error) => eprintln!("{}\n", format!("  Sync failed: {}", error).red()),
+        None => eprintln!("{}\n", "  Sync failed.".red()),
+    }
+
+    anyhow::bail!("Cursor sync failed");
 }
 
 pub fn run_cursor_switch(name: &str) -> Result<()> {

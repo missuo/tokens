@@ -3,22 +3,6 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
-pub struct McpServerEntry {
-    pub name: String,
-    pub source: McpSource,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum McpSource {
-    ClaudeCode,
-    ClaudeDesktop,
-    Cursor,
-    Kiro,
-    OpenCodeSkill,
-}
-
 pub fn discover_mcp_server_names(home_dir: Option<&Path>) -> Vec<String> {
     let home = match home_dir.map(PathBuf::from).or_else(dirs::home_dir) {
         Some(h) => h,

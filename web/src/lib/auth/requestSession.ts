@@ -36,6 +36,23 @@ function getAllowedOrigins(): string[] {
   return origins;
 }
 
+/**
+ * The CSRF Origin gate on its own, without a session lookup.
+ *
+ * `getSessionFromRequest` collapses "forged origin" and "no valid session"
+ * into the same `null`, which is right for routes that need a user but wrong
+ * for logout: clearing a cookie is not privileged, and refusing to do it when
+ * the session has already expired or the account was banned strands a live
+ * cookie in the browser for the rest of its 30-day life.
+ */
+export function hasAllowedOrigin(request: Request): boolean {
+  if (!MUTATING_METHODS.has(request.method)) {
+    return true;
+  }
+  const origin = request.headers.get("Origin");
+  return Boolean(origin && getAllowedOrigins().includes(origin));
+}
+
 export async function getSessionFromRequest(
   request: Request,
   options: GetSessionFromRequestOptions = {}

@@ -275,6 +275,9 @@ export default function Leaderboard({
 
   const [sortBy, setSortBy] = useState<LeaderboardSortBy>(initialSortBy);
   const [search, setSearch] = useState(searchParams.get("search") ?? "");
+  // The query these results actually answer, as opposed to what is currently
+  // typed in the box.
+  const appliedSearch = searchParams.get("search")?.trim() ?? "";
   const [pendingPeriod, setPendingPeriod] = useState<Period | null>(null);
 
   // The server resolves the period, so it is read from props rather than
@@ -552,9 +555,18 @@ export default function Leaderboard({
         {users.length === 0 && (
           <Empty className="border-0">
             <EmptyHeader>
-              <EmptyTitle>Nothing recorded</EmptyTitle>
+              {/* A search that matched nothing is a different situation from a
+                  period nobody submitted in, and telling a searcher "no usage
+                  was submitted" reads as the leaderboard being broken. Keyed on
+                  the applied query rather than the input, which can have been
+                  typed past what these results answer. */}
+              <EmptyTitle>
+                {appliedSearch ? "No developers found" : "Nothing recorded"}
+              </EmptyTitle>
               <EmptyDescription>
-                No usage was submitted for this period.
+                {appliedSearch
+                  ? `No developer matches "${appliedSearch}" for this period.`
+                  : "No usage was submitted for this period."}
               </EmptyDescription>
             </EmptyHeader>
           </Empty>

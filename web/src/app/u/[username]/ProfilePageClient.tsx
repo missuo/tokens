@@ -7,12 +7,13 @@ import { ProfileToday } from "@/components/profile/ProfileToday";
 import { ProfileEmbedDialog } from "@/components/profile/ProfileEmbedDialog";
 import { cn } from "@/lib/utils";
 
-import { useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { useRouter } from "nextjs-toploader/app";
 import {
   createContributionRangeOptions,
   getContributionDayForDate,
   getDefaultContributionDate,
+  ProfileContributionBreakdown,
   ProfileContributionGraph,
   ProfileDevices,
   ProfileHabits,
@@ -194,6 +195,16 @@ export default function ProfilePageClient({
     [data.contributions, selectedContributionDate],
   );
 
+  // Read after mount rather than during render: the clock gives the server and
+  // the browser different answers across a timezone boundary, which would be a
+  // hydration mismatch. Until it lands the day card just does not claim to be
+  // today, which is the safe direction to be wrong in.
+  const [currentUtcDate, setCurrentUtcDate] = useState<string | null>(null);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setCurrentUtcDate(new Date().toISOString().slice(0, 10));
+  }, []);
+
   const user: ProfileUser = useMemo(
     () => ({
       username: data.user.username,
@@ -263,31 +274,42 @@ export default function ProfilePageClient({
             // The graph drives a selected date; the breakdown beside it renders
             // that day. It resolves to today by default, which is the figure
             // most people open their own profile to check.
-            <ProfileContributionGraph
-              breakdownId={contributionBreakdownId}
-              contributions={data.contributions}
-              onPaletteChange={setContributionPalette}
-              onRangeChange={setContributionRangeValue}
-              onSelectedDateChange={(date) => {
-                if (date) {
-                  setContributionSelection({
-                    date,
-                    rangeIdentity: contributionRangeIdentity,
-                  });
-                }
-              }}
-              onViewChange={setContributionView}
-              paletteName={contributionPalette}
-              persistentSelection
-              rangeStart={chartRange.start}
-              rangeEnd={chartRange.end}
-              rangeOptions={contributionRangeOptions}
-              rangeValue={selectedContributionRange?.value}
-              selectableRangeEnd={contributionSelectionEnd}
-              selectedDate={selectedContributionDate}
-              showBreakdown={false}
-              view={contributionView}
-            />
+            <div className="flex flex-col gap-4">
+              <ProfileContributionGraph
+                breakdownId={contributionBreakdownId}
+                contributions={data.contributions}
+                onPaletteChange={setContributionPalette}
+                onRangeChange={setContributionRangeValue}
+                onSelectedDateChange={(date) => {
+                  if (date) {
+                    setContributionSelection({
+                      date,
+                      rangeIdentity: contributionRangeIdentity,
+                    });
+                  }
+                }}
+                onViewChange={setContributionView}
+                paletteName={contributionPalette}
+                persistentSelection
+                rangeStart={chartRange.start}
+                rangeEnd={chartRange.end}
+                rangeOptions={contributionRangeOptions}
+                rangeValue={selectedContributionRange?.value}
+                selectableRangeEnd={contributionSelectionEnd}
+                selectedDate={selectedContributionDate}
+                showBreakdown={false}
+                view={contributionView}
+              />
+              {/* Its own card rather than the graph's footer, and it carries
+                  the id the selected cell points at with aria-controls. */}
+              {selectedContributionDay && (
+                <ProfileContributionBreakdown
+                  day={selectedContributionDay}
+                  id={contributionBreakdownId}
+                  paletteName={contributionPalette}
+                />
+              )}
+            </div>
           ) : (
             <p className="py-10 text-center text-sm text-muted-foreground">
               No activity recorded for this period.
@@ -297,12 +319,11 @@ export default function ProfilePageClient({
         today={
           <ProfileToday
             day={selectedContributionDay}
-            // Compared against the default selection rather than a fresh
-            // Date(): reading the clock during render gives the server and the
-            // client different answers across a timezone boundary, which is a
-            // hydration mismatch. The default selection is the latest day in
-            // the data, so equality here means "nothing was picked".
-            isToday={selectedContributionDate === defaultContributionDate}
+            // Compared against the actual current UTC date, not against the
+            // default selection. "Nothing was picked" is not the same as
+            // "today": inside a historical range the default is that range's
+            // last day, and heading a 2024-12-31 card "Today" is simply wrong.
+            isToday={selectedContributionDate === currentUtcDate}
           />
         }
         usageChart={
@@ -323,7 +344,14 @@ export default function ProfilePageClient({
         modelsSection={
           <ProfileModels models={data.models} modelUsage={data.modelUsage} />
         }
-        devices={<ProfileDevices devices={initialDevices ?? []} />}
+        // undefined rather than an always-truthy element: ProfileDevices
+        // renders null when the list is empty, and ProfileView cannot tell the
+        // difference from the outside.
+        devices={
+          initialDevices && initialDevices.length > 0 ? (
+            <ProfileDevices devices={initialDevices} />
+          ) : undefined
+        }
       />
 
       <ProfileEmbedDialog

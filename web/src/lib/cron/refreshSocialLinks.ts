@@ -4,7 +4,7 @@ import { isVerifiedBySocialLinks } from "@/lib/socialVerification";
 
 const SYNC_CONCURRENCY = 4;
 
-export interface RefreshSocialLinksResult {
+interface RefreshSocialLinksResult {
   users: number;
   verified: number;
 }

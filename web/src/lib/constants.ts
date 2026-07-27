@@ -215,6 +215,11 @@ export const SUPPORTED_CLIENTS: readonly ClientType[] = [
   "zed",
 ] as const;
 
+// Install command. Shared so the docs page and the local viewer cannot drift —
+// the plain `brew install tokens` the viewer used to print installs a different
+// package. Matches install.sh's macOS hint.
+export const BREW_INSTALL_COMMAND = "brew install owo-network/brew/tokens";
+
 // Derived values
 export const CELL_SIZE = BOX_WIDTH + BOX_MARGIN;
 

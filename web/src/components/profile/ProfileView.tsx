@@ -7,6 +7,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 
 import {
   Table,
@@ -218,6 +219,7 @@ export function ProfileView({
   onEmbedClick,
   activity,
   today,
+  usageChart,
   habits,
   breakdown,
   modelsSection,
@@ -245,7 +247,7 @@ export function ProfileView({
   const topModels = models.slice(0, 12);
 
   return (
-    <div className={cn(CONTAINER, "pb-24 pt-10 sm:pt-14")}>
+    <main id="main-content" className={cn(CONTAINER, "pb-24 pt-10 sm:pt-14")}>
       {/* ---- Identity -------------------------------------------------- */}
       <header className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
         <div className="flex min-w-0 items-start gap-4">
@@ -275,7 +277,10 @@ export function ProfileView({
             </span>
 
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-              <span>Joined {joined}</span>
+              {/* toLocaleDateString reads the runtime's locale and zone, so the
+                  server and the browser can disagree — same reason as Updated
+                  below. */}
+              <span suppressHydrationWarning>Joined {joined}</span>
               {updatedAt && (
                 <>
                   <span aria-hidden="true">·</span>
@@ -353,28 +358,31 @@ export function ProfileView({
         <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
           Usage detail
         </span>
-        <div className="flex items-center gap-1 rounded-lg border p-0.5">
+        {/* Same primitive and the same shape as the leaderboard's period
+            control, so the two pages do not offer the identical choice through
+            two different-looking widgets. */}
+        <ToggleGroup
+          value={[period]}
+          onValueChange={(value) => {
+            const next = value[0] as ProfileViewProps["period"] | undefined;
+            if (next) onPeriodChange(next);
+          }}
+          variant="outline"
+          aria-label="Period"
+          className="[&>*]:h-8 [&>*]:px-2.5 [&>*]:text-xs"
+        >
           {PERIODS.map((p) => (
-            <button
-              key={p.value}
-              type="button"
-              onClick={() => onPeriodChange(p.value)}
-              aria-pressed={period === p.value}
-              className={cn(
-                "rounded-md px-2.5 py-1 text-xs transition-colors",
-                period === p.value
-                  ? "bg-muted font-medium text-foreground"
-                  : "text-muted-foreground hover:text-foreground"
-              )}
-            >
+            <ToggleGroupItem key={p.value} value={p.value}>
               {p.label}
-            </button>
+            </ToggleGroupItem>
           ))}
-        </div>
+        </ToggleGroup>
       </div>
 
       <div className="mt-8 flex flex-col gap-12">
         <Section title="Contributions">{activity}</Section>
+
+        {usageChart && <Section title="Usage">{usageChart}</Section>}
 
         {breakdown && <Section title="Token breakdown">{breakdown}</Section>}
 
@@ -452,8 +460,11 @@ export function ProfileView({
           </div>
         </Section>
 
-        {devices && <Section title="Devices">{devices}</Section>}
+        {/* ProfileDevices carries its own "Devices · all-time" heading, so no
+            Section wrapper here — one would give the block two headings, and an
+            empty device list (ProfileDevices returns null) a bare one. */}
+        {devices}
       </div>
-    </div>
+    </main>
   );
 }

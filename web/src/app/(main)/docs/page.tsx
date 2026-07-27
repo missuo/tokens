@@ -9,6 +9,7 @@ import { CommandBlock, type DocCommand } from "@/components/docs/CommandBlock";
 import { BrandGlyph } from "@/components/profile/ModelIcon";
 import { CONTAINER } from "@/components/layout/Container";
 import {
+  BREW_INSTALL_COMMAND,
   SOURCE_DISPLAY_NAMES,
   SOURCE_LOGOS,
   SUPPORTED_CLIENTS,
@@ -57,7 +58,7 @@ const CLIENT_GRID: ReadonlyArray<{ id: string; name: string; logo: string }> = [
 ].sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
 
 const MACOS: readonly DocCommand[] = [
-  { command: "brew install owo-network/brew/tokens", note: "install" },
+  { command: BREW_INSTALL_COMMAND, note: "install" },
   { command: "tokens login", note: "link your GitHub account" },
   { command: "brew services start tokens", note: "submit automatically" },
 ];
@@ -317,9 +318,11 @@ export default function DocsPage() {
           description="A small check next to a name on the leaderboard. It says the account is a real, findable person — nothing more."
         >
           <div className="flex flex-col gap-4">
-            <div className="rounded-lg border p-4">
-              <h3 className="text-sm font-medium">How to get it</h3>
-              <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">
+            <Card size="sm">
+              <CardHeader>
+                <CardTitle className="text-sm">How to get it</CardTitle>
+              </CardHeader>
+              <CardContent className="text-sm leading-relaxed text-muted-foreground">
                 Add at least <strong className="font-medium text-foreground">two social
                 links</strong> to your GitHub profile — the &ldquo;Social accounts&rdquo;
                 fields in{" "}
@@ -333,22 +336,26 @@ export default function DocsPage() {
                 </a>
                 . Any two count: a personal site, X, LinkedIn, Mastodon, YouTube.
                 That is the whole rule.
-              </p>
-            </div>
+              </CardContent>
+            </Card>
 
-            <div className="rounded-lg border p-4">
-              <h3 className="text-sm font-medium">When it appears</h3>
-              <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">
+            <Card size="sm">
+              <CardHeader>
+                <CardTitle className="text-sm">When it appears</CardTitle>
+              </CardHeader>
+              <CardContent className="text-sm leading-relaxed text-muted-foreground">
                 Links are re-read once a day, at 03:20 UTC. Adding them now means
                 the badge appears on the next run rather than immediately —
                 signing out and back in does not speed it up. Dropping below two
                 links removes it on the same schedule.
-              </p>
-            </div>
+              </CardContent>
+            </Card>
 
-            <div className="rounded-lg border p-4">
-              <h3 className="text-sm font-medium">Why two links</h3>
-              <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">
+            <Card size="sm">
+              <CardHeader>
+                <CardTitle className="text-sm">Why two links</CardTitle>
+              </CardHeader>
+              <CardContent className="text-sm leading-relaxed text-muted-foreground">
                 A leaderboard attracts throwaway accounts. Filling in two social
                 fields is trivial for someone who already exists online and
                 tedious to fake at scale, which is all the badge claims. It is
@@ -359,8 +366,8 @@ export default function DocsPage() {
                   Hall of Shame
                 </a>
                 .
-              </p>
-            </div>
+              </CardContent>
+            </Card>
           </div>
         </Section>
 
@@ -407,32 +414,38 @@ export default function DocsPage() {
           description="What runs where. The repository is public so this can be checked rather than taken on trust."
         >
           <div className="flex flex-col gap-4">
-            <div className="rounded-lg border p-4">
-              <h3 className="text-sm font-medium">The site and the API</h3>
-              <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">
+            <Card size="sm">
+              <CardHeader>
+                <CardTitle className="text-sm">The site and the API</CardTitle>
+              </CardHeader>
+              <CardContent className="text-sm leading-relaxed text-muted-foreground">
                 Next.js, deployed to Cloudflare Workers through OpenNext — one
                 Worker serves both the pages and the API, with no origin server
                 behind it. Static assets and the share cards are cached at the
                 edge, so most requests are answered without running any code at
                 all.
-              </p>
-            </div>
+              </CardContent>
+            </Card>
 
-            <div className="rounded-lg border p-4">
-              <h3 className="text-sm font-medium">The database</h3>
-              <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">
+            <Card size="sm">
+              <CardHeader>
+                <CardTitle className="text-sm">The database</CardTitle>
+              </CardHeader>
+              <CardContent className="text-sm leading-relaxed text-muted-foreground">
                 Neon (Postgres), reached through Cloudflare Hyperdrive, which
                 keeps warm pooled connections beside the database so a page
                 issuing several queries does not pay a fresh handshake for each.
                 The Worker is pinned to the same region: a request crosses the
                 ocean once, and every query after that is a local hop. Schema
                 changes go through Drizzle migrations applied at build time.
-              </p>
-            </div>
+              </CardContent>
+            </Card>
 
-            <div className="rounded-lg border p-4">
-              <h3 className="text-sm font-medium">The CLI</h3>
-              <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">
+            <Card size="sm">
+              <CardHeader>
+                <CardTitle className="text-sm">The CLI</CardTitle>
+              </CardHeader>
+              <CardContent className="text-sm leading-relaxed text-muted-foreground">
                 Rust, distributed as a prebuilt binary per platform through npm.
                 It reads the session files your clients already write, totals
                 them on your machine, and sends only the totals — token counts,
@@ -440,19 +453,21 @@ export default function DocsPage() {
                 never leave the machine.{" "}
                 <code className="font-mono text-[13px]">tokens submit --dry-run</code>{" "}
                 prints exactly what would be uploaded.
-              </p>
-            </div>
+              </CardContent>
+            </Card>
 
-            <div className="rounded-lg border p-4">
-              <h3 className="text-sm font-medium">Caching and scheduled work</h3>
-              <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">
+            <Card size="sm">
+              <CardHeader>
+                <CardTitle className="text-sm">Caching and scheduled work</CardTitle>
+              </CardHeader>
+              <CardContent className="text-sm leading-relaxed text-muted-foreground">
                 Rendered pages live in R2, with Durable Objects tracking which
                 tags a submission invalidates — so your own numbers update the
                 moment you submit rather than on a timer. The daily badge
                 refresh runs as a Worker cron trigger, in-process, with no
                 external scheduler holding a key.
-              </p>
-            </div>
+              </CardContent>
+            </Card>
           </div>
         </Section>
 

@@ -8,7 +8,8 @@ import { useSettings } from "@/lib/useSettings";
 import { filterByClient, filterByYear, recalculateIntensity, findBestDay, calculateCurrentStreak, calculateLongestStreak, resolveSelectedDay } from "@/lib/utils";
 import { TokenGraph2D } from "./TokenGraph2D";
 
-// Lazy load 3D graph (Three.js) - reduces initial bundle, SSR disabled for WebGL
+// Lazy load the isometric view (obelisk.js, drawn to a 2D canvas) — it is only
+// needed once someone switches to 3D, and it touches window on import.
 const TokenGraph3D = dynamic(() => import("./TokenGraph3D").then((mod) => mod.TokenGraph3D), {
   ssr: false,
   loading: () => (
@@ -148,6 +149,7 @@ export function GraphContainer({ data, totalActiveTimeMs, sessionCount, mcpServe
               dateRange={dateRange}
               onDayHover={handleDayHover}
               onDayClick={handleDayClick}
+              onReturnTo2D={() => setView("2d")}
             />
           )}
         </div>

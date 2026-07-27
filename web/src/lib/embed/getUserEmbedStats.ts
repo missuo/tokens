@@ -51,7 +51,6 @@ export interface EmbedTodayUsage {
 
 export interface UserEmbedStats {
   user: {
-    id: string;
     username: string;
     displayName: string | null;
     avatarUrl: string | null;
@@ -134,7 +133,6 @@ async function fetchUserEmbedStats(
 
   return {
     user: {
-      id: result.id,
       username: result.username,
       displayName: result.displayName,
       avatarUrl: result.avatarUrl,

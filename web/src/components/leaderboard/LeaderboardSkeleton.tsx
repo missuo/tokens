@@ -80,7 +80,16 @@ function SkeletonRow() {
   );
 }
 
-export function LeaderboardSkeleton() {
+export function LeaderboardSkeleton({
+  /**
+   * Whether the loaded page will render its "Your position" block — it does for
+   * anyone signed in. Omitting it here was worth ~70px of shift on every
+   * logged-in load, which is exactly what this file exists to prevent.
+   */
+  showUserRank = false,
+}: {
+  showUserRank?: boolean;
+}) {
   return (
     <div className={cn(CONTAINER, "pb-24 pt-10 sm:pt-14")}>
       {/* PageHeader. The title and description are known before the data is,
@@ -127,6 +136,23 @@ export function LeaderboardSkeleton() {
           <Skeleton className="h-10 flex-1 rounded-md sm:ml-auto sm:h-8 sm:w-56 sm:flex-none" />
         </div>
       </div>
+
+      {showUserRank && (
+        <div className="mt-4">
+          {/* The label is a permanent string in the loaded page, so it renders
+              as itself — same reasoning as the column headings below. */}
+          <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+            Your position
+          </span>
+          <div className="mt-1.5 overflow-hidden rounded-lg border">
+            <Table>
+              <TableBody>
+                <SkeletonRow />
+              </TableBody>
+            </Table>
+          </div>
+        </div>
+      )}
 
       <div className="mt-4 overflow-hidden rounded-lg border">
         <Table>

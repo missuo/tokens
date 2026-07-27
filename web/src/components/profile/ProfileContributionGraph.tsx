@@ -1069,19 +1069,12 @@ const IsometricSvg = tw("svg", "block max-h-80 w-full overflow-visible");
 // aria-hidden cells are spacers: they keep pointer events so the grid does not
 // gap, but they must not look interactive.
 //
-// $active and $selected are accepted and dropped. The stylesheet declared them
-// and never read them — the highlight is drawn by IsometricTop's stroke — and
-// styled-components filtered $-prefixed props out on the way to the DOM, so
-// forwarding them now would only produce unknown-attribute warnings.
+// The selection highlight is drawn by IsometricTop's stroke, so this wrapper
+// carries no active/selected state of its own.
 const IsometricCell = ({
-  $active: _active,
-  $selected: _selected,
   className,
   ...props
-}: React.ComponentPropsWithRef<"g"> & {
-  $active: boolean;
-  $selected: boolean;
-}) => (
+}: React.ComponentPropsWithRef<"g">) => (
   <g
     {...props}
     className={cn(
@@ -2299,8 +2292,6 @@ export function ProfileContributionGraph({
                         cell.inRange ? cell.date : undefined
                       }
                       data-contribution-view={interactive ? "3d" : undefined}
-                      $active={active}
-                      $selected={selected}
                       onClick={interactive ? () => selectCell(cell) : undefined}
                       onPointerEnter={(event) =>
                         interactive && handleCellPointerEnter(cell, event)

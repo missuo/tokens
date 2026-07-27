@@ -172,11 +172,23 @@ impl PricingService {
     }
 
     async fn fetch_inner() -> Result<Self, String> {
+        // On a cold cache these three fetches hit the network at a 30s timeout
+        // each, so the command can sit silent for tens of seconds. Announce it
+        // on stderr (stdout stays reserved for report / `--json` output), but
+        // only once the wait is actually noticeable — a warm cache resolves in
+        // milliseconds and should stay quiet.
+        let notice = tokio::spawn(async {
+            tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+            eprintln!("[tokens] Fetching model pricing...");
+        });
+
         let (litellm_result, openrouter_data, models_dev_result) = tokio::join!(
             litellm::fetch(),
             openrouter::fetch_all_mapped(),
             models_dev::fetch()
         );
+
+        notice.abort();
 
         let litellm_data = litellm_result.map_err(|e| e.to_string())?;
         let litellm_data = Self::filter_litellm_data(litellm_data);

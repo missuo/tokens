@@ -7,6 +7,9 @@ export default async function ProfilePage() {
   if (session) {
     redirect(`/u/${session.username}`);
   } else {
-    redirect("/api/auth/github");
+    // Comes back here after the handshake, which then forwards to /u/<name>.
+    // Without returnTo the OAuth route falls back to /leaderboard and the user
+    // never reaches the profile they asked for.
+    redirect("/api/auth/github?returnTo=/profile");
   }
 }

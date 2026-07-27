@@ -18,6 +18,27 @@ const BRAND = "#4f8ff0";
 const INK = "#e9ecf3";
 const MUTED = "#8b9099";
 
+/** Satori fetches `<img src>` itself, from the server, so `avatar` is an
+ *  unauthenticated SSRF vector — `next.config.ts` `remotePatterns` governs
+ *  next/image and never sees this request. Every avatar we render comes from
+ *  the GitHub profile we stored at sign-in (`users.avatar_url`), so an exact
+ *  host match over https covers the real traffic and rejects everything else.
+ *  Kept as a URL check rather than a DB read so the rendered card stays a pure
+ *  function of the query string, which is what the immutable cache below
+ *  depends on. */
+const AVATAR_HOST = "avatars.githubusercontent.com";
+
+function safeAvatarUrl(value: string | null): string | null {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:" || url.hostname !== AVATAR_HOST) return null;
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
 /** The Tokens mark, drawn rather than referenced: Satori cannot resolve
  *  `currentColor` from an external file, and an <img> to our own asset would
  *  need a network round trip from inside the renderer. */
@@ -43,7 +64,7 @@ export async function GET(request: Request) {
   const title = (searchParams.get("title") || "Tokens").slice(0, 60);
   const subtitle = (searchParams.get("subtitle") || "").slice(0, 120);
   const handle = (searchParams.get("handle") || "").slice(0, 40);
-  const avatar = searchParams.get("avatar");
+  const avatar = safeAvatarUrl(searchParams.get("avatar"));
   const rank = searchParams.get("rank");
   const tokens = searchParams.get("tokens");
   const cost = searchParams.get("cost");

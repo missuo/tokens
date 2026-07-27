@@ -366,8 +366,6 @@ export function sortClientsByCost(clients: ClientContribution[]): ClientContribu
   return [...clients].sort((a, b) => b.cost - a.cost);
 }
 
-export { formatDuration } from "./format";
-
 // ---------------------------------------------------------------------------
 // Class-name helper used by the shadcn/ui component layer. It lives here
 // because that is the import path components.json points at.

@@ -10,7 +10,7 @@ function formatDateFullFromString(dateStr: string): string {
   return format(new Date(year, month - 1, day), "MMMM d, yyyy");
 }
 
-export function getContributionLocalDate(contrib: { date: string; timestampMs?: number | null }): string {
+function getContributionLocalDate(contrib: { date: string; timestampMs?: number | null }): string {
   if (contrib.timestampMs != null) {
     const d = new Date(contrib.timestampMs);
     const y = d.getFullYear();

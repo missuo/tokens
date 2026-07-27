@@ -397,7 +397,7 @@ type TokenBreakdown = SubmissionData["contributions"][number]["tokenBreakdown"];
 // VALIDATION FUNCTIONS
 // ============================================================================
 
-export interface ValidationResult {
+interface ValidationResult {
   valid: boolean;
   errors: string[];
   warnings: string[];

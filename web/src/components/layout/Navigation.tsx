@@ -151,15 +151,52 @@ export function Navigation() {
   const pathname = usePathname();
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  // A failed session request is not a sign-out. Holding the skeleton keeps the
+  // header from flipping an authenticated user to a "Sign in" button — which,
+  // if clicked, would send them back through OAuth for nothing.
+  const [sessionFailed, setSessionFailed] = useState(false);
 
+  // Retry rather than latch. Holding the skeleton on the first failure was
+  // meant to avoid flipping an authenticated user to "Sign in", but with no
+  // retry it never came back: one bad response left the header showing an
+  // avatar placeholder forever, with the auth-only links hidden and no way to
+  // sign in at all — including for signed-out visitors. A deploy takes this
+  // service through roughly a minute of 502s, so that was a routine state, not
+  // an edge case. After the retries are spent, fall through to the signed-out
+  // header: a wrongly-shown "Sign in" costs one OAuth round trip, while a
+  // permanent skeleton costs a manual reload the user has no reason to guess.
   useEffect(() => {
-    fetch("/api/auth/session")
-      .then((res) => res.json())
-      .then((data) => {
+    let cancelled = false;
+    const delays = [800, 2000, 5000];
+
+    const attempt = async (tries = 0): Promise<void> => {
+      try {
+        const res = await fetch("/api/auth/session");
+        if (!res.ok) throw new Error("Failed to load session");
+        const data = await res.json();
+        if (cancelled) return;
         setUser(data.user || null);
+        setSessionFailed(false);
         setIsLoading(false);
-      })
-      .catch(() => setIsLoading(false));
+      } catch {
+        if (cancelled) return;
+        if (tries < delays.length) {
+          setSessionFailed(true);
+          setTimeout(() => {
+            if (!cancelled) void attempt(tries + 1);
+          }, delays[tries]);
+          return;
+        }
+        setSessionFailed(false);
+        setUser(null);
+        setIsLoading(false);
+      }
+    };
+
+    void attempt();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const signOut = async () => {
@@ -167,6 +204,12 @@ export function Navigation() {
     setUser(null);
     window.location.href = "/leaderboard";
   };
+
+  // Sign-in comes back to where it was clicked rather than dropping everyone on
+  // /leaderboard, which is what the route falls back to when returnTo is absent.
+  // Pathname only: the query string would need useSearchParams, which forces a
+  // Suspense boundary around the whole header.
+  const returnTo = pathname.startsWith("/") ? pathname : "/leaderboard";
 
   const links = NAV_LINKS.filter((l) => !l.authOnly || user);
   const hrefFor = (link: (typeof NAV_LINKS)[number]) =>
@@ -224,12 +267,20 @@ export function Navigation() {
 
           <ThemeToggle />
 
-          {isLoading ? (
+          {isLoading || sessionFailed ? (
             <Skeleton className="size-8 rounded-full" />
           ) : user ? (
             <UserMenu user={user} onSignOut={signOut} />
           ) : (
-            <Button size="sm" className="h-8" render={<a href="/api/auth/github" />}>
+            <Button
+              size="sm"
+              className="h-8"
+              render={
+                <a
+                  href={`/api/auth/github?returnTo=${encodeURIComponent(returnTo)}`}
+                />
+              }
+            >
               <GitHubIcon className="size-3.5" data-icon="inline-start" />
               Sign in
             </Button>

@@ -372,10 +372,12 @@ export async function POST(request: Request) {
         .values({
           userId: tokenRecord.userId,
           deviceKey: submitDevice.key,
-          // Fall back to the authenticating token's name (the hostname captured
-          // at `tokens login`) when the submit payload carries no device name —
-          // otherwise these rows render as "Unnamed device" in Settings.
-          displayName: submitDevice.name ?? tokenRecord.tokenName,
+          // Only ever the name the payload carried. This column is rendered on
+          // the public profile (lib/publicProfileDevices.ts), and the
+          // authenticating token's name is `CLI on <hostname>` — falling back
+          // to it published the user's machine hostname. Unnamed devices get
+          // the "Unnamed device" label from deviceDisplayLabel instead.
+          displayName: submitDevice.name,
           lastSubmittedAt: submittedAt,
           updatedAt: submittedAt,
         })

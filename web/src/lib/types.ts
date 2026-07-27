@@ -163,24 +163,7 @@ export interface TooltipPosition {
   y: number;
 }
 
-export interface GraphState {
-  view: ViewMode;
-  colorPalette: ColorPaletteName;
-  selectedYear: string | null;
-  hoveredDay: DailyContribution | null;
-  selectedDay: DailyContribution | null;
-  tooltipPosition: TooltipPosition | null;
-  clientFilter: ClientType[];
-  modelFilter: string[];
-}
-
 export interface WeekData {
   weekIndex: number;
   days: (DailyContribution | null)[];
-}
-
-export interface CellHitResult {
-  row: number;
-  col: number;
-  day: DailyContribution | null;
 }

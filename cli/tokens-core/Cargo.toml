@@ -19,7 +19,6 @@ bincode = { workspace = true }
 walkdir = { workspace = true }
 chrono = { workspace = true }
 chrono-tz = { workspace = true }
-thiserror = { workspace = true }
 reqwest = { workspace = true }
 tokio = { workspace = true }
 dirs = { workspace = true }

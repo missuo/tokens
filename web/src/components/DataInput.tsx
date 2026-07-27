@@ -1,6 +1,8 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useCallback, useId, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { BREW_INSTALL_COMMAND } from "@/lib/constants";
 import type { TokenContributionData } from "@/lib/types";
 import { isValidContributionData } from "@/lib/utils";
 
@@ -9,6 +11,9 @@ interface DataInputProps {
 }
 
 export function DataInput({ onDataLoaded }: DataInputProps) {
+  const textareaId = useId();
+  const hintId = useId();
+  const errorId = useId();
   const [rawJson, setRawJson] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -64,7 +69,13 @@ export function DataInput({ onDataLoaded }: DataInputProps) {
       </div>
 
       <div className="mb-4">
+        <label htmlFor={textareaId} className="mb-2 block text-sm font-medium text-foreground">
+          Token usage JSON
+        </label>
         <textarea
+          id={textareaId}
+          aria-describedby={error ? `${errorId} ${hintId}` : hintId}
+          aria-invalid={error ? true : undefined}
           value={rawJson}
           onChange={(e) => {
             setRawJson(e.target.value);
@@ -83,28 +94,37 @@ export function DataInput({ onDataLoaded }: DataInputProps) {
               : "border-border focus:border-primary focus:ring-primary/25"
           }`}
         />
-        <p className="mt-2 text-sm text-muted-foreground">Tip: Press Ctrl+Enter (Cmd+Enter on Mac) to parse</p>
+        <p id={hintId} className="mt-2 text-sm text-muted-foreground">
+          Tip: Press Ctrl+Enter (Cmd+Enter on Mac) to parse
+        </p>
       </div>
 
       {error && (
-        <div className="mb-4 rounded-lg border border-danger/40 bg-danger/10 px-4 py-3 text-sm text-danger">
+        <div
+          id={errorId}
+          role="alert"
+          className="mb-4 rounded-lg border border-danger/40 bg-danger/10 px-4 py-3 text-sm text-danger"
+        >
           {error}
         </div>
       )}
 
       <div className="flex flex-wrap gap-3">
-        <button
+        <Button
+          type="button"
+          className="h-10"
           onClick={parseJson}
           disabled={isLoading || !rawJson.trim()}
-          className="inline-flex h-10 items-center justify-center rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
         >
           Parse JSON
-        </button>
+        </Button>
 
-        <button
+        <Button
+          type="button"
+          variant="outline"
+          className="h-10"
           onClick={loadSampleData}
           disabled={isLoading}
-          className="inline-flex h-10 items-center justify-center gap-1.5 rounded-lg border border-border bg-card px-4 text-sm font-medium text-foreground transition hover:border-foreground/20 hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
         >
           {isLoading ? (
             <>
@@ -117,7 +137,7 @@ export function DataInput({ onDataLoaded }: DataInputProps) {
           ) : (
             "Load Sample Data"
           )}
-        </button>
+        </Button>
       </div>
 
       <div className="mt-8 rounded-xl border border-border bg-card p-4 sm:p-6">
@@ -126,7 +146,7 @@ export function DataInput({ onDataLoaded }: DataInputProps) {
           <li className="leading-relaxed">
             Install tokens:{" "}
             <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-[0.85em] text-foreground">
-              brew install tokens
+              {BREW_INSTALL_COMMAND}
             </code>
           </li>
           <li className="leading-relaxed">

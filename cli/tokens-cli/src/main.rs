@@ -28,7 +28,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    #[command(about = "Login to Tokens (opens browser for GitHub auth)")]
+    #[command(about = "Login to Tokens (browser auth, or --token to save an existing token)")]
     Login {
         #[arg(long, help = "Save an existing Tokens API token without browser auth")]
         token: Option<String>,
@@ -228,7 +228,7 @@ enum AntigravitySubcommand {
 enum TraeSubcommand {
     #[command(about = "Authenticate Trae — auto-detect from desktop client or paste JWT")]
     Login {
-        #[arg(long, help = "Paste access token directly (for manual fallback)")]
+        #[arg(long, help = "Prompt for an access token instead of auto-detecting")]
         manual: bool,
         #[arg(long, help = "Target Trae variant (solo, ide)")]
         variant: Option<String>,
@@ -281,13 +281,46 @@ enum WarpSubcommand {
     },
 }
 
+/// Install the `tracing` subscriber so `tokens-core`'s `tracing::warn!` calls
+/// are actually visible — notably `scanner.rs`'s heads-up that a scan path
+/// escaped `$HOME`. Off by default (a report must stay quiet); opt in with
+/// `TOKENS_LOG=warn`, `TOKENS_LOG=debug`, or any `EnvFilter` directive.
+/// Logs go to stderr so `--json` output on stdout stays parseable.
+fn init_tracing() {
+    let Ok(filter) = std::env::var("TOKENS_LOG") else {
+        return;
+    };
+    if filter.trim().is_empty() {
+        return;
+    }
+
+    let Ok(env_filter) = tracing_subscriber::EnvFilter::try_new(&filter) else {
+        eprintln!("[tokens] Ignoring invalid TOKENS_LOG filter: {}", filter);
+        return;
+    };
+
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(env_filter)
+        .with_writer(std::io::stderr)
+        .try_init();
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
+
+    init_tracing();
 
     // Install user-configured model aliases once, before any scan runs, so
     // model-name variants fold consistently across every command. An empty or
     // absent config is a strict no-op.
     tokens_core::model_alias::set_global(&settings::load_model_aliases());
+
+    // Install OpenCode's configured model display names alongside the aliases.
+    // Presentation only — the model id used for pricing, caching, and submit is
+    // untouched. An absent or unreadable OpenCode config is a strict no-op.
+    tokens_core::opencode_model_name::set_global(
+        tokens_core::opencode_model_name::load_for_home(None),
+    );
 
     // Pin the date-bucketing timezone before any scanning so usage is
     // attributed to stable calendar dates regardless of where `submit` runs.
@@ -1342,8 +1375,13 @@ fn run_delete_data_command() -> Result<()> {
     let api_url = auth::get_api_base_url();
     let rt = Runtime::new()?;
 
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .build()?;
+
     let response = rt.block_on(async {
-        reqwest::Client::new()
+        client
             .delete(format!("{}/api/settings/submitted-data", api_url))
             .header("Authorization", format!("Bearer {}", auth_token.token))
             .send()
@@ -2190,7 +2228,7 @@ fn run_submit_command(
             eprintln!("\n  {}", "Not logged in.".yellow());
             eprintln!(
                 "{}",
-                "  Run 'bunx tokens-cli@latest login' or set TOKENS_API_TOKEN.\n".bright_black()
+                "  Run 'tokens login' or set TOKENS_API_TOKEN.\n".bright_black()
             );
             std::process::exit(1);
         }
@@ -2349,8 +2387,16 @@ fn run_submit_command(
     let submit_payload =
         to_ts_token_contribution_data(&graph_result, Some(&submit_device), replacement.as_ref());
 
+    // `tokens serve` drives this unattended, so the request must be bounded.
+    // The overall budget is more generous than the 30s used elsewhere because a
+    // submission body carries a full contribution history, not just metadata.
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(120))
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .build()?;
+
     let response = rt.block_on(async {
-        reqwest::Client::new()
+        client
             .post(format!("{}/api/submit", api_url))
             .header("Content-Type", "application/json")
             .header("Authorization", format!("Bearer {}", auth_token.token))
@@ -2395,7 +2441,7 @@ fn run_submit_command(
                         eprintln!("{}", format!("    - {}", detail).bright_black());
                     }
                 }
-                println!();
+                eprintln!();
                 if mode == SubmitMode::Autosubmit {
                     return Err(anyhow::anyhow!(error));
                 }

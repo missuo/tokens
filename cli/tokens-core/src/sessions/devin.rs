@@ -411,10 +411,6 @@ fn desktop_message(
     message
 }
 
-pub fn parse_devin_desktop_ndjson(path: &Path) -> Vec<UnifiedMessage> {
-    parse_devin_desktop_ndjson_with_lookup(path, &DevinDesktopSessionLookup::default())
-}
-
 /// Parse a Devin Desktop ACP event stream.
 ///
 /// Canonical ACP `usage_update` events contain cumulative input/cache counts

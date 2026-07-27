@@ -1,29 +1,12 @@
 //! OpenClaw session parser
 //!
 //! Parses OpenClaw transcript JSONL files from agent directories.
-//! Supports legacy sessions.json index parsing for compatibility.
 
-use super::utils::read_file_or_none;
 use super::UnifiedMessage;
 use crate::TokenBreakdown;
 use serde::Deserialize;
-use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
-use std::path::{Path, PathBuf};
-
-#[derive(Debug, Deserialize)]
-struct SessionIndex {
-    #[serde(flatten)]
-    sessions: HashMap<String, SessionEntry>,
-}
-
-#[derive(Debug, Deserialize)]
-struct SessionEntry {
-    #[serde(rename = "sessionId")]
-    session_id: String,
-    #[serde(rename = "sessionFile")]
-    session_file: Option<String>,
-}
+use std::path::Path;
 
 #[derive(Debug, Deserialize)]
 struct OpenClawEntry {
@@ -73,31 +56,6 @@ struct OpenClawCost {
     total: Option<f64>,
 }
 
-pub fn parse_openclaw_index(index_path: &Path) -> Vec<UnifiedMessage> {
-    let Some(data) = read_file_or_none(index_path) else {
-        return Vec::new();
-    };
-
-    let mut bytes = data;
-    let index: SessionIndex = match simd_json::from_slice(&mut bytes) {
-        Ok(i) => i,
-        Err(_) => return Vec::new(),
-    };
-
-    let mut all_messages = Vec::new();
-    let index_dir = index_path.parent().unwrap_or_else(|| Path::new("."));
-
-    for (_key, entry) in index.sessions {
-        let session_path = resolve_session_path(index_dir, &entry);
-        if session_path.exists() {
-            let messages = parse_openclaw_session(&session_path, &entry.session_id);
-            all_messages.extend(messages);
-        }
-    }
-
-    all_messages
-}
-
 pub fn parse_openclaw_transcript(transcript_path: &Path) -> Vec<UnifiedMessage> {
     let session_id = match transcript_path
         .file_name()
@@ -113,25 +71,6 @@ pub fn parse_openclaw_transcript(transcript_path: &Path) -> Vec<UnifiedMessage> 
     };
 
     parse_openclaw_session(transcript_path, &session_id)
-}
-
-fn resolve_session_path(index_dir: &Path, entry: &SessionEntry) -> PathBuf {
-    match entry
-        .session_file
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
-        Some(session_file) => {
-            let path = Path::new(session_file);
-            if path.is_absolute() {
-                path.to_path_buf()
-            } else {
-                index_dir.join(path)
-            }
-        }
-        None => index_dir.join(format!("{}.jsonl", entry.session_id)),
-    }
 }
 
 fn parse_openclaw_session(session_path: &Path, session_id: &str) -> Vec<UnifiedMessage> {

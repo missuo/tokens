@@ -4,18 +4,21 @@ import { useState } from "react";
 import type { TokenContributionData } from "@/lib/types";
 import { DataInput } from "@/components/DataInput";
 import { GraphContainer } from "@/components/GraphContainer";
-import { Panel, PageHeader } from "@/components/ui/primitives";
+import { Panel } from "@/components/ui/primitives";
+import { PageHeader } from "@/components/layout/PageHeader";
 
 export default function LocalClient() {
   const [data, setData] = useState<TokenContributionData | null>(null);
 
   return (
-    <div className="min-h-screen bg-background px-4 py-8 sm:px-6">
+    // No min-h-screen: layout.tsx's body is already `min-h-dvh flex flex-col`
+    // with this content in a `flex-1` wrapper, so adding a viewport height here
+    // made the page 100vh *plus* the nav and footer.
+    <main id="main-content" className="bg-background px-4 py-8 sm:px-6">
       <div className="mx-auto max-w-[820px]">
         <PageHeader
           title="Local Viewer"
-          subtitle="View your token usage data locally without submitting"
-          className="mb-8"
+          description="View your token usage data locally without submitting"
         />
 
         {!data ? (
@@ -48,6 +51,6 @@ export default function LocalClient() {
           </div>
         )}
       </div>
-    </div>
+    </main>
   );
 }

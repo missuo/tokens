@@ -256,10 +256,6 @@ pub fn copilot_exporter_path_with_env_strategy(use_env_roots: bool) -> Option<Pa
     Some(PathBuf::from(trimmed))
 }
 
-pub fn copilot_exporter_path() -> Option<PathBuf> {
-    copilot_exporter_path_with_env_strategy(true)
-}
-
 /// Scan a single directory for session files
 pub fn scan_directory(root: &str, pattern: &str) -> Vec<PathBuf> {
     if !std::path::Path::new(root).exists() {

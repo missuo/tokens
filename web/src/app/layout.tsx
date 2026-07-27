@@ -94,6 +94,15 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
       </head>
       <body className="flex min-h-dvh flex-col font-sans">
         <NextTopLoader color="#0073FF" showSpinner={false} />
+        {/* Every route's <main> carries id="main-content"; this is the link the
+            anchors were always for. Off-screen until focused, so it costs
+            nothing visually and is the first stop for a keyboard user. */}
+        <a
+          href="#main-content"
+          className="sr-only rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-[100]"
+        >
+          Skip to content
+        </a>
         <Providers>
           {/* Rendered once here so it persists across route changes (no remount
               flicker) and switching Leaderboard <-> Profile is a seamless

@@ -1,6 +1,6 @@
 import { cookies } from "next/headers";
 import { db, sessions, users } from "@/lib/db";
-import { eq, and, gt } from "drizzle-orm";
+import { eq, and, gt, lt } from "drizzle-orm";
 import { generateRandomString, hashToken } from "./utils";
 import { authenticatePersonalToken } from "./personalTokens";
 
@@ -71,6 +71,15 @@ export async function createSession(
   const tokenHash = hashToken(token);
   const expiresAt = new Date(Date.now() + SESSION_DURATION_MS);
 
+  // getSession() only filters expired rows, and clearSession() only removes the
+  // one being signed out of, so nothing else ever deletes them. Sweep on
+  // create — best-effort, since a failed sweep must not block a sign-in.
+  try {
+    await db.delete(sessions).where(lt(sessions.expiresAt, new Date()));
+  } catch (error) {
+    console.error("Expired session cleanup error:", error);
+  }
+
   await db.insert(sessions).values({
     userId,
     tokenHash,
@@ -115,7 +124,7 @@ export async function clearSession(): Promise<void> {
  * Validate API token for CLI requests.
  * Returns the user if token is valid, null otherwise.
  */
-export async function validateApiToken(
+async function validateApiToken(
   token: string
 ): Promise<SessionUser | null> {
   const result = await authenticatePersonalToken(token);

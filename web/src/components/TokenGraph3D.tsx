@@ -22,6 +22,8 @@ interface TokenGraph3DProps {
   dateRange: { start: string; end: string };
   onDayHover: (day: DailyContribution | null, position: TooltipPosition | null) => void;
   onDayClick: (day: DailyContribution | null) => void;
+  /** Escape hatch when the isometric renderer cannot be loaded at all. */
+  onReturnTo2D: () => void;
 }
 
 export function TokenGraph3D({
@@ -38,10 +40,12 @@ export function TokenGraph3D({
   dateRange,
   onDayHover,
   onDayClick,
+  onReturnTo2D,
 }: TokenGraph3DProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [obeliskLoaded, setObeliskLoaded] = useState(false);
+  const [obeliskFailed, setObeliskFailed] = useState(false);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const obeliskRef = useRef<any>(null);
   const weeksData = useMemo(() => groupByWeek(contributions, year), [contributions, year]);
@@ -56,6 +60,7 @@ export function TokenGraph3D({
         setObeliskLoaded(true);
       } catch (err) {
         console.error("Failed to load obelisk.js:", err);
+        setObeliskFailed(true);
       }
     }
     loadObelisk();
@@ -157,6 +162,31 @@ export function TokenGraph3D({
   );
 
   const aspect = { aspectRatio: `${ISO_CANVAS_WIDTH} / ${ISO_CANVAS_HEIGHT}` };
+
+  // The renderer never arrived, so there is nothing to draw on and never will
+  // be. Say so and offer the way back, rather than leaving the stats and streak
+  // overlays floating over a permanently blank canvas.
+  if (obeliskFailed) {
+    return (
+      <div
+        ref={containerRef}
+        role="alert"
+        className="flex w-full flex-col items-center justify-center gap-3 bg-background px-4 text-center"
+        style={aspect}
+      >
+        <p className="text-sm text-muted-foreground">
+          The 3D view could not be loaded.
+        </p>
+        <button
+          type="button"
+          onClick={onReturnTo2D}
+          className="inline-flex h-10 items-center justify-center rounded-lg border border-border bg-card px-4 text-sm font-medium text-foreground transition hover:border-foreground/20 hover:bg-muted"
+        >
+          Return to 2D
+        </button>
+      </div>
+    );
+  }
 
   if (!obeliskLoaded) {
     return (

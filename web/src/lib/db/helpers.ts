@@ -13,7 +13,7 @@ export interface ModelBreakdownData {
   messages: number;
 }
 
-export interface ClientBreakdownProvenanceData {
+interface ClientBreakdownProvenanceData {
   schemaVersion: number;
   messageCount: number;
   modelCount: number;
@@ -41,42 +41,42 @@ export interface ClientBreakdownData {
   modelId?: string;
 }
 
-export interface MergeClientBreakdownsResult {
+interface MergeClientBreakdownsResult {
   merged: Record<string, ClientBreakdownData>;
   warnings: string[];
 }
 
-export interface IncomingClientModelBreakdown {
+interface IncomingClientModelBreakdown {
   client: string;
   modelId: string;
   breakdown: ModelBreakdownData;
   provenance?: ClientBreakdownProvenanceData;
 }
 
-export interface RejectedClientRevision {
+interface RejectedClientRevision {
   client: string;
   incomingRevision: number;
   storedRevision: number;
 }
 
-export interface FilterClientBreakdownsResult {
+interface FilterClientBreakdownsResult {
   accepted: Record<string, ClientBreakdownData>;
   rejected: RejectedClientRevision[];
 }
 
-export interface AuthoritativeClientCoverage {
+interface AuthoritativeClientCoverage {
   client: string;
   parserRevision: number;
   start: string;
   end: string;
 }
 
-export interface ApplyAuthoritativeClientCoverageResult {
+interface ApplyAuthoritativeClientCoverageResult {
   mergeBase: Record<string, ClientBreakdownData>;
   tombstonedClients: string[];
 }
 
-export interface DayTotals {
+interface DayTotals {
   tokens: number;
   cost: number;
   inputTokens: number;

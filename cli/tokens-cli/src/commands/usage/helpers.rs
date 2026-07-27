@@ -29,6 +29,14 @@ pub fn atomic_write_secret(path: &std::path::Path, data: &[u8]) -> std::io::Resu
         )
     })?;
     std::fs::create_dir_all(dir)?;
+    // Set 0700 unconditionally: this can be the first writer to create the
+    // config/cache root, and the `ensure_cache_dir` helpers elsewhere only
+    // chmod when they create the directory themselves.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
+    }
     let temp_path = path.with_extension(format!("{}.tmp", std::process::id()));
     {
         #[cfg(unix)]

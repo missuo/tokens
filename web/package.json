@@ -22,8 +22,6 @@
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",
-    "@heroui/react": "^3.1.0",
-    "@heroui/styles": "^3.1.0",
     "@lobehub/icons-static-svg": "^1.94.0",
     "@opennextjs/cloudflare": "^1.20.2",
     "@radix-ui/react-tooltip": "^1.2.8",

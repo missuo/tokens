@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::IsTerminal;
@@ -9,10 +9,6 @@ use std::io::Write;
 use std::path::PathBuf;
 
 const API_TOKEN_ENV_VAR: &str = "TOKENS_API_TOKEN";
-
-fn home_dir() -> Result<PathBuf> {
-    dirs::home_dir().context("Could not determine home directory")
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Credentials {
@@ -46,17 +42,31 @@ struct DeviceCodeResponse {
     #[serde(rename = "verificationUrl")]
     verification_url: String,
     #[serde(rename = "expiresIn")]
-    #[allow(dead_code)]
     expires_in: u64,
     interval: u64,
 }
 
+/// Bounds on the server-supplied device-flow poll interval. `interval: 0` would
+/// otherwise spin an unthrottled poll loop, and an absurdly large value would
+/// stall the login with no output.
+const MIN_POLL_INTERVAL_SECS: u64 = 1;
+const MAX_POLL_INTERVAL_SECS: u64 = 60;
+
+/// Bounds on the server-supplied code lifetime, which drives the poll deadline.
+const MIN_CODE_LIFETIME_SECS: u64 = 60;
+const MAX_CODE_LIFETIME_SECS: u64 = 30 * 60;
+
 #[derive(Debug, Deserialize)]
 struct PollResponse {
-    status: String,
+    // Optional because the server omits it entirely on its error paths:
+    // web/src/app/api/auth/device/poll/route.ts returns a bare `{"error": …}`
+    // with no `status` key. A required field made the whole body fail to
+    // deserialize, so the error was silently dropped and login polled on to a
+    // generic timeout — the exact symptom surfacing `error` was meant to fix.
+    #[serde(default)]
+    status: Option<String>,
     token: Option<String>,
     user: Option<UserInfo>,
-    #[allow(dead_code)]
     error: Option<String>,
 }
 
@@ -73,7 +83,7 @@ struct TokenValidationResponse {
 }
 
 fn get_credentials_path() -> Result<PathBuf> {
-    Ok(home_dir()?.join(".config/tokens/credentials.json"))
+    Ok(crate::paths::get_config_dir().join("credentials.json"))
 }
 
 pub fn credentials_path() -> Result<PathBuf> {
@@ -81,7 +91,7 @@ pub fn credentials_path() -> Result<PathBuf> {
 }
 
 fn ensure_config_dir() -> Result<()> {
-    let config_dir = home_dir()?.join(".config/tokens");
+    let config_dir = crate::paths::get_config_dir();
 
     if !config_dir.exists() {
         fs::create_dir_all(&config_dir)?;
@@ -102,6 +112,7 @@ pub fn save_credentials(credentials: &Credentials) -> Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
+        use std::os::unix::fs::PermissionsExt;
 
         let mut file = fs::OpenOptions::new()
             .create(true)
@@ -109,6 +120,10 @@ pub fn save_credentials(credentials: &Credentials) -> Result<()> {
             .truncate(true)
             .mode(0o600)
             .open(&path)?;
+        // `.mode()` only applies when the file is created, so a credentials
+        // file left behind by an older release (or the non-unix branch below)
+        // would keep its original mode. Repair it on every write.
+        file.set_permissions(fs::Permissions::from_mode(0o600))?;
         file.write_all(json.as_bytes())?;
     }
 
@@ -120,13 +135,32 @@ pub fn save_credentials(credentials: &Credentials) -> Result<()> {
     Ok(())
 }
 
-pub fn load_credentials() -> Option<Credentials> {
-    let path = get_credentials_path().ok()?;
-    if !path.exists() {
+/// Pre-`get_config_dir()` credential location: a hardcoded
+/// `$HOME/.config/tokens/credentials.json` on every platform.
+///
+/// macOS resolves to the same path either way, but on Windows the config dir
+/// is now `%APPDATA%\tokens` and on Linux it honours `XDG_CONFIG_HOME`, so
+/// switching to the shared helper moved the file out from under everyone who
+/// was already logged in on those platforms — silently, since a missing file
+/// is indistinguishable from never having logged in. Gated on the override for
+/// the same hermeticity reason as the cursor probe.
+fn legacy_credentials_path() -> Option<PathBuf> {
+    if crate::paths::is_config_dir_overridden() {
         return None;
     }
+    Some(dirs::home_dir()?.join(".config/tokens/credentials.json"))
+}
 
-    let content = fs::read_to_string(path).ok()?;
+pub fn load_credentials() -> Option<Credentials> {
+    let path = get_credentials_path().ok()?;
+
+    let read_path = if path.exists() {
+        path
+    } else {
+        legacy_credentials_path().filter(|legacy| legacy.exists() && *legacy != path)?
+    };
+
+    let content = fs::read_to_string(read_path).ok()?;
     serde_json::from_str(&content).ok()
 }
 
@@ -158,12 +192,24 @@ pub fn resolve_api_token() -> Option<ApiTokenAuth> {
 
 pub fn clear_credentials() -> Result<bool> {
     let path = get_credentials_path()?;
+    let mut cleared = false;
+
     if path.exists() {
-        fs::remove_file(path)?;
-        Ok(true)
-    } else {
-        Ok(false)
+        fs::remove_file(&path)?;
+        cleared = true;
     }
+
+    // `load_credentials` will still read the pre-migration file, so leaving it
+    // behind means `tokens logout` reports success while a working token stays
+    // on disk and the next command signs straight back in.
+    if let Some(legacy) = legacy_credentials_path() {
+        if legacy != path && legacy.exists() {
+            fs::remove_file(&legacy)?;
+            cleared = true;
+        }
+    }
+
+    Ok(cleared)
 }
 
 pub fn get_api_base_url() -> String {
@@ -191,6 +237,72 @@ fn should_auto_open_browser() -> bool {
 #[cfg(not(target_os = "linux"))]
 fn should_auto_open_browser() -> bool {
     true
+}
+
+/// Validate a server-supplied verification URL before it reaches a terminal
+/// escape sequence or the platform URL opener.
+///
+/// Control characters are rejected because `\x1b`/`\x07` would close the OSC-8
+/// hyperlink early and inject terminal output. The scheme is restricted to
+/// `https`, plus plain `http` on loopback so a locally hosted `TOKENS_API_URL`
+/// still works — otherwise a compromised server could hand `open`/`xdg-open`/
+/// `cmd /C start` a `file://` path or a custom URI-handler scheme.
+/// Server-supplied text on its way to the terminal.
+///
+/// The verification URL is validated before it is printed, but the poll
+/// response's free-form `error` string was going straight into `bail!`. That is
+/// a wider hole than the one URL validation closed: an OSC/CSI sequence in it
+/// can retitle the window, clear the screen, or paint a convincing fake prompt.
+/// Drop control characters and bound the length — a legitimate server message
+/// needs neither.
+fn sanitize_server_text(text: &str) -> String {
+    const MAX: usize = 300;
+    let cleaned: String = text.chars().filter(|c| !c.is_control()).collect();
+    if cleaned.chars().count() > MAX {
+        let head: String = cleaned.chars().take(MAX).collect();
+        format!("{head}…")
+    } else {
+        cleaned
+    }
+}
+
+/// Characters `cmd.exe /C` treats as syntax. Rust's argument escaping does not
+/// neutralise them when cmd is the program being invoked, so `start "" <url>`
+/// would run whatever follows an `&`.
+#[cfg(target_os = "windows")]
+const CMD_METACHARACTERS: &[char] = &['&', '|', '<', '>', '^', '"', '%', '!'];
+
+fn validate_verification_url(url: &str) -> Result<()> {
+    if url.chars().any(|c| c.is_control()) {
+        anyhow::bail!("Server returned a verification URL containing control characters.");
+    }
+
+    let parsed = reqwest::Url::parse(url)
+        .map_err(|_| anyhow::anyhow!("Server returned an invalid verification URL."))?;
+
+    let is_loopback_http = parsed.scheme() == "http"
+        && matches!(parsed.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"));
+
+    if parsed.scheme() != "https" && !is_loopback_http {
+        anyhow::bail!(
+            "Server returned a verification URL with an unsupported scheme: {}",
+            parsed.scheme()
+        );
+    }
+
+    // Userinfo lets a URL read as one host while resolving to another
+    // (`https://accounts.google.com@evil.example/`), and nothing legitimate
+    // puts credentials in a verification link.
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        anyhow::bail!("Server returned a verification URL containing credentials.");
+    }
+
+    #[cfg(target_os = "windows")]
+    if url.contains(CMD_METACHARACTERS) {
+        anyhow::bail!("Server returned a verification URL containing shell metacharacters.");
+    }
+
+    Ok(())
 }
 
 fn open_browser(url: &str) -> bool {
@@ -261,6 +373,8 @@ pub async fn login() -> Result<()> {
 
     let device_data: DeviceCodeResponse = device_code_response.json().await?;
 
+    validate_verification_url(&device_data.verification_url)?;
+
     println!();
     println!("{}", "  Open this URL in your browser:".white());
     let url_display = if std::io::stdout().is_terminal() {
@@ -288,10 +402,19 @@ pub async fn login() -> Result<()> {
 
     println!("{}", "  Waiting for authorization...".bright_black());
 
-    let poll_interval = std::time::Duration::from_secs(device_data.interval);
-    let max_attempts = 180;
+    let poll_interval = std::time::Duration::from_secs(
+        device_data
+            .interval
+            .clamp(MIN_POLL_INTERVAL_SECS, MAX_POLL_INTERVAL_SECS),
+    );
+    let deadline = std::time::Instant::now()
+        + std::time::Duration::from_secs(
+            device_data
+                .expires_in
+                .clamp(MIN_CODE_LIFETIME_SECS, MAX_CODE_LIFETIME_SECS),
+        );
 
-    for attempt in 0..max_attempts {
+    loop {
         tokio::time::sleep(poll_interval).await;
 
         let poll_response = client
@@ -305,7 +428,7 @@ pub async fn login() -> Result<()> {
         match poll_response {
             Ok(response) => {
                 if let Ok(data) = response.json::<PollResponse>().await {
-                    if data.status == "complete" {
+                    if data.status.as_deref() == Some("complete") {
                         if let (Some(token), Some(user)) = (data.token, data.user) {
                             let credentials = Credentials {
                                 token,
@@ -329,8 +452,21 @@ pub async fn login() -> Result<()> {
                         }
                     }
 
-                    if data.status == "expired" {
+                    if data.status.as_deref() == Some("expired") {
                         anyhow::bail!("Authorization code expired. Please try again.");
+                    }
+
+                    // Any other rejection (revoked code, banned account, rate
+                    // limit) is terminal, so show it instead of polling on to a
+                    // generic timeout.
+                    if let Some(error) = data
+                        .error
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|error| !error.is_empty())
+                    {
+                        println!();
+                        anyhow::bail!("{}", sanitize_server_text(error));
                     }
 
                     print!("{}", ".".bright_black());
@@ -345,12 +481,10 @@ pub async fn login() -> Result<()> {
             }
         }
 
-        if attempt >= max_attempts - 1 {
+        if std::time::Instant::now() >= deadline {
             anyhow::bail!("Timeout: Authorization took too long. Please try again.");
         }
     }
-
-    Ok(())
 }
 
 pub async fn login_with_token(token: &str) -> Result<()> {

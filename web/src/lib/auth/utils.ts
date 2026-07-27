@@ -14,11 +14,19 @@ export function generateRandomString(length: number): string {
 export function generateUserCode(): string {
   // Exclude ambiguous characters: 0, O, I, L, 1
   const chars = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+  // 256 is not a multiple of 31, so a plain `byte % 31` would make the first
+  // eight characters ~12.5% more likely. Reject anything at or above the
+  // largest multiple of the alphabet size and draw again (~3% of bytes).
+  const limit = 256 - (256 % chars.length);
   let code = "";
-  const bytes = randomBytes(8);
 
   for (let i = 0; i < 8; i++) {
-    code += chars[bytes[i] % chars.length];
+    let byte = randomBytes(1)[0];
+    while (byte >= limit) {
+      byte = randomBytes(1)[0];
+    }
+
+    code += chars[byte % chars.length];
     if (i === 3) code += "-";
   }
 

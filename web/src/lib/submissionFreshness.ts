@@ -1,6 +1,6 @@
-export const DEFAULT_SUBMISSION_FRESHNESS_DAYS = 30;
+const DEFAULT_SUBMISSION_FRESHNESS_DAYS = 30;
 
-export interface SubmissionFreshness {
+interface SubmissionFreshness {
   lastUpdated: string;
   cliVersion: string | null;
   schemaVersion: number;
@@ -13,7 +13,7 @@ interface SubmissionFreshnessInput {
   schemaVersion?: number | null;
 }
 
-export function getSubmissionFreshnessWindowDays(): number {
+function getSubmissionFreshnessWindowDays(): number {
   const rawValue = process.env.SUBMISSION_FRESHNESS_DAYS;
   if (!rawValue) {
     return DEFAULT_SUBMISSION_FRESHNESS_DAYS;
@@ -27,7 +27,7 @@ export function getSubmissionFreshnessWindowDays(): number {
   return Math.max(1, Math.floor(parsed));
 }
 
-export function isSubmissionStale(
+function isSubmissionStale(
   updatedAt: Date | string,
   now: Date = new Date(),
   freshnessWindowDays: number = getSubmissionFreshnessWindowDays()

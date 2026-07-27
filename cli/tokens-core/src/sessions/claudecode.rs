@@ -412,22 +412,9 @@ fn extract_agent_id_from_text(text: &str) -> Option<String> {
 }
 
 /// Parse a Claude Code JSONL file
-pub fn parse_claude_file(path: &Path) -> Vec<UnifiedMessage> {
-    let home_dir = dirs::home_dir();
-    parse_claude_file_with_home(path, home_dir.as_deref())
-}
-
 pub fn parse_claude_file_with_home(path: &Path, home_dir: Option<&Path>) -> Vec<UnifiedMessage> {
     let mut parent_cache = ParentSubagentTypeCache::new();
     parse_claude_file_with_cache_and_home(path, &mut parent_cache, home_dir)
-}
-
-pub fn parse_claude_file_with_cache(
-    path: &Path,
-    parent_cache: &mut ParentSubagentTypeCache,
-) -> Vec<UnifiedMessage> {
-    let home_dir = dirs::home_dir();
-    parse_claude_file_with_cache_and_home(path, parent_cache, home_dir.as_deref())
 }
 
 pub fn parse_claude_file_with_cache_and_home(

@@ -14,7 +14,7 @@ const GITHUB_REDIRECT_URI = `${NEXT_PUBLIC_URL}/api/auth/github/callback`;
  */
 const GITHUB_USER_AGENT = "tokens-ci";
 
-export interface GitHubUser {
+interface GitHubUser {
   id: number;
   login: string;
   name: string | null;

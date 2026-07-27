@@ -182,7 +182,7 @@ pub mod auth {
         get_trae_cache_dir().join(variant.credentials_filename())
     }
 
-    fn ensure_cache_dir() -> Result<()> {
+    pub(super) fn ensure_cache_dir() -> Result<()> {
         let dir = get_trae_cache_dir();
         if !dir.exists() {
             std::fs::create_dir_all(&dir)?;
@@ -429,6 +429,21 @@ pub mod auth {
         refresh_expired_at: String,
     }
 
+    /// Cap on how much of an HTTP error body is echoed into an error message.
+    const MAX_ERROR_BODY_CHARS: usize = 300;
+
+    /// Trim an HTTP error body down to something safe to show in a terminal.
+    /// Trae's gateway can answer with a full HTML error page, and dumping it
+    /// verbatim floods the screen and buries the status code.
+    pub(super) fn truncate_error_body(body: &str) -> String {
+        let body = body.trim();
+        if body.chars().count() <= MAX_ERROR_BODY_CHARS {
+            return body.to_string();
+        }
+        let head: String = body.chars().take(MAX_ERROR_BODY_CHARS).collect();
+        format!("{}... (truncated)", head)
+    }
+
     /// Call the `ExchangeToken` endpoint to mint a new `access_token` from a
     /// `refresh_token`.
     async fn exchange_token(
@@ -457,9 +472,9 @@ pub mod auth {
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
             return Err(anyhow::anyhow!(
-                "ExchangeToken returned {}: {}",
+                "ExchangeToken returned {}: {}. Run `tokens trae login --manual` to paste a fresh token.",
                 status,
-                body
+                truncate_error_body(&body)
             ));
         }
         let data: ExchangeResponse = resp.json().await?;
@@ -843,19 +858,22 @@ pub mod sync {
     }
 
     fn save_manifest(manifest: &TraeManifest) -> Result<()> {
-        let dir = get_trae_cache_dir();
-        if !dir.exists() {
-            std::fs::create_dir_all(&dir)?;
-        }
+        auth::ensure_cache_dir()?;
         let json = serde_json::to_string_pretty(manifest)?;
         std::fs::write(manifest_path(), json)?;
         Ok(())
     }
 
     fn ensure_sessions_dir() -> Result<PathBuf> {
+        auth::ensure_cache_dir()?;
         let dir = sessions_dir();
         if !dir.exists() {
             std::fs::create_dir_all(&dir)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))?;
+            }
         }
         Ok(dir)
     }
@@ -903,7 +921,11 @@ pub mod sync {
             let status = resp.status();
             if !status.is_success() {
                 let body = resp.text().await.unwrap_or_default();
-                return Err(anyhow::anyhow!("usage API returned {}: {}", status, body));
+                return Err(anyhow::anyhow!(
+                    "usage API returned {}: {}. Run `tokens trae login` to re-authenticate.",
+                    status,
+                    auth::truncate_error_body(&body)
+                ));
             }
 
             let data: UsageResponse = resp.json().await?;

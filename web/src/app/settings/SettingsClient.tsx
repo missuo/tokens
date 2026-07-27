@@ -1,9 +1,13 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useId, useRef } from "react";
 import { useRouter } from "nextjs-toploader/app";
-import { KeyIcon } from "@/components/ui/Icons";
+import { KeyIcon } from "lucide-react";
+import { toast } from "react-toastify";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Skeleton } from "@/components/ui/skeleton";
 import { deviceDisplayLabel } from "@/lib/devices/shared";
+import { tw } from "@/lib/tw";
 import { cn, formatNumber, formatCurrency } from "@/lib/utils";
 import { formatRelativeTime } from "@/lib/format";
 
@@ -61,27 +65,15 @@ function validateDeviceName(name: string): string | null {
 // Shared UI primitives
 // ============================================================================
 //
-// These were styled-components. `tw` keeps the same ergonomics — a named
-// element with baked-in classes that still forwards every DOM prop — so the
-// markup below is unchanged.
+// These were styled-components. The shared `tw` helper keeps the same
+// ergonomics — a named element with baked-in classes that still forwards every
+// DOM prop, `ref` included — so the markup below is unchanged.
 //
 // Colours come from the shared palette, with two deliberate exceptions:
 // --danger and --success are semantic colours carrying meaning, not neutrals
 // that drifted, and shadcn's --destructive is a visibly softer red (#C84941
 // against #B42318 in light), so folding them into it would restyle every
 // destructive control on the page.
-
-function tw<T extends keyof React.JSX.IntrinsicElements>(Tag: T, base: string) {
-  const Component = ({
-    className,
-    ...props
-  }: React.ComponentPropsWithoutRef<T>) => {
-    const Element = Tag as React.ElementType;
-    return <Element className={cn(base, className)} {...props} />;
-  };
-  Component.displayName = `tw(${String(Tag)})`;
-  return Component;
-}
 
 const PageWrapper = tw(
   "div",
@@ -95,8 +87,6 @@ const MainContent = tw(
   "main",
   "mx-auto w-full max-w-[1200px] flex-1 px-4 pb-24 pt-10 sm:px-6 sm:pt-14"
 );
-
-const LoadingMain = tw("main", "flex flex-1 items-center justify-center");
 
 // Mirrors PageHeader: 2xl/3xl semibold, not a one-off 1.75rem bold.
 const Title = tw(
@@ -155,18 +145,21 @@ const SecondaryButton = tw(
   "h-[38px] cursor-pointer rounded-md border bg-background px-3 text-[13px] font-semibold text-foreground"
 );
 
-const ErrorText = tw("p", "-mt-1 mb-4 text-[13px] text-[var(--danger)]");
 const EmptyState = tw("div", "py-8 text-center");
 const EmptyIcon = tw("div", "mx-auto mb-3 opacity-50");
 const EmptyText = tw("p", "mt-2 text-sm");
 const TokenList = tw("div", "flex flex-col gap-3");
 
+// Token names run to 100 characters and device names to 120, so the text
+// column has to be allowed to shrink (min-w-0) and truncate — without it a
+// long name pushes Revoke/Rename off the right edge at 375px. Below 560px the
+// row stacks, matching DeviceEditRow.
 const TokenItem = tw(
   "div",
-  "flex items-center justify-between rounded-xl border bg-muted p-4"
+  "flex items-center justify-between gap-3 rounded-xl border bg-muted p-4 max-[560px]:flex-col max-[560px]:items-stretch"
 );
 
-const TokenInfo = tw("div", "flex items-center gap-3");
+const TokenInfo = tw("div", "flex min-w-0 items-center gap-3");
 const IconWrapper = tw("div", "text-muted-foreground");
 
 const DeviceEditRow = tw(
@@ -189,7 +182,7 @@ const AvatarImg = tw(
   "flex-shrink-0 rounded-md object-cover ring-1 ring-border"
 );
 
-const TokenName = tw("p", "font-medium");
+const TokenName = tw("p", "truncate font-medium");
 
 // ============================================================================
 // Danger Zone
@@ -228,9 +221,12 @@ const ModalOverlay = tw(
   "fixed inset-0 z-[1000] flex items-center justify-center bg-black/60 backdrop-blur-[4px]"
 );
 
+// Capped to the viewport and scrollable: on a short window, or at high browser
+// zoom, the delete-account bullets are tall enough to push Cancel/Confirm off
+// the bottom of an unbounded card with nothing to scroll.
 const ModalCard = tw(
   "div",
-  "w-[calc(100%-32px)] max-w-[480px] rounded-2xl border bg-background p-6 shadow-[0_16px_48px_rgba(0,0,0,0.35)]"
+  "max-h-[calc(100dvh-2rem)] w-[calc(100%-32px)] max-w-[480px] overflow-y-auto rounded-2xl border bg-background p-6 shadow-[0_16px_48px_rgba(0,0,0,0.35)] outline-none"
 );
 
 const ModalTitle = tw("h3", "mb-3 text-base font-semibold text-[var(--danger)]");
@@ -280,6 +276,114 @@ const StepDot = ({ $active }: { $active: boolean }) => (
     )}
   />
 );
+
+/**
+ * The dialog shell every modal on this page renders into.
+ *
+ * Same semantics as ProfileEmbedDialog: labelled `role="dialog"` with
+ * `aria-modal`, focus moved into the card on open, Tab trapped inside it,
+ * Escape to dismiss, and focus restored to whatever opened it. These are the
+ * most destructive controls in the product, so a keyboard or screen-reader
+ * user has to be able to tell the dialog is there and get back out of it.
+ */
+function ModalShell({
+  labelledBy,
+  dismissable,
+  onClose,
+  children,
+}: {
+  labelledBy: string;
+  /** False while a request is in flight — the action can no longer be cancelled. */
+  dismissable: boolean;
+  onClose: () => void;
+  children: React.ReactNode;
+}) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  // Read through a ref so the trap is installed once per open rather than
+  // torn down and rebuilt — and focus restored — every time `dismissable`
+  // flips as the request starts.
+  const dismissableRef = useRef(dismissable);
+  useEffect(() => {
+    dismissableRef.current = dismissable;
+  }, [dismissable]);
+
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    const previousFocus = document.activeElement as HTMLElement | null;
+    const focusDialog = window.requestAnimationFrame(() => {
+      dialogRef.current?.focus();
+    });
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        if (!dismissableRef.current) return;
+        event.preventDefault();
+        onClose();
+        return;
+      }
+
+      if (event.key !== "Tab" || !dialogRef.current) return;
+
+      const focusableElements = Array.from(
+        dialogRef.current.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        )
+      ).filter((element) => element.getClientRects().length > 0);
+
+      if (focusableElements.length === 0) {
+        event.preventDefault();
+        dialogRef.current.focus();
+        return;
+      }
+
+      const firstElement = focusableElements[0];
+      const lastElement = focusableElements[focusableElements.length - 1];
+      const activeElement = document.activeElement;
+
+      if (
+        event.shiftKey &&
+        (activeElement === firstElement ||
+          activeElement === dialogRef.current ||
+          !dialogRef.current.contains(activeElement))
+      ) {
+        event.preventDefault();
+        lastElement.focus();
+      } else if (
+        !event.shiftKey &&
+        (activeElement === lastElement ||
+          !dialogRef.current.contains(activeElement))
+      ) {
+        event.preventDefault();
+        firstElement.focus();
+      }
+    };
+
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      window.cancelAnimationFrame(focusDialog);
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", handleKeyDown);
+      previousFocus?.focus();
+    };
+  }, [onClose]);
+
+  return (
+    <ModalOverlay onClick={dismissable ? onClose : undefined}>
+      <ModalCard
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={labelledBy}
+        tabIndex={-1}
+        onClick={(event) => event.stopPropagation()}
+      >
+        {children}
+      </ModalCard>
+    </ModalOverlay>
+  );
+}
 
 // ============================================================================
 // Confirmation modal component
@@ -384,6 +488,7 @@ function DangerConfirmationModal({
 }) {
   const config = CONFIRMATION_CONFIGS[action];
   const totalSteps = config.steps.length + 1; // +1 for typed confirmation step
+  const titleId = useId();
   const [step, setStep] = useState(0);
   const [typedValue, setTypedValue] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -399,7 +504,9 @@ function DangerConfirmationModal({
         await config.onConfirm();
         onSuccess();
       } catch {
-        alert(`Failed to ${action === "delete-data" ? "delete submitted data" : "delete account"}. Please try again.`);
+        toast.error(
+          `Failed to ${action === "delete-data" ? "delete submitted data" : "delete account"}. Please try again.`
+        );
         setIsSubmitting(false);
       }
     } else {
@@ -408,55 +515,108 @@ function DangerConfirmationModal({
   }, [isTypedStep, typedMatch, isSubmitting, config, onSuccess, action]);
 
   return (
-    <ModalOverlay onClick={isSubmitting ? undefined : onClose}>
-      <ModalCard onClick={(e) => e.stopPropagation()}>
-        <StepIndicator>
-          {["step-1", "step-2", "step-3"].slice(0, totalSteps).map((id, i) => (
-            <StepDot key={id} $active={i <= step} />
-          ))}
-        </StepIndicator>
+    <ModalShell
+      labelledBy={titleId}
+      dismissable={!isSubmitting}
+      onClose={onClose}
+    >
+      <StepIndicator>
+        {["step-1", "step-2", "step-3"].slice(0, totalSteps).map((id, i) => (
+          <StepDot key={id} $active={i <= step} />
+        ))}
+      </StepIndicator>
 
-        <ModalTitle>⚠ {config.title}</ModalTitle>
+      <ModalTitle id={titleId}>⚠ {config.title}</ModalTitle>
 
-        {isTypedStep ? (
-          <>
-            <ModalBody>
-              Type <strong>{config.typedConfirmation}</strong> to confirm:
-            </ModalBody>
-            <ModalInput
-              autoFocus
-              value={typedValue}
-              onChange={(e) => setTypedValue(e.target.value)}
-              placeholder={config.typedConfirmation}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && typedMatch && !isSubmitting) {
-                  handleConfirm();
-                }
-              }}
-            />
-          </>
-        ) : (
-          config.steps[step].body
-        )}
+      {isTypedStep ? (
+        <>
+          <ModalBody>
+            Type <strong>{config.typedConfirmation}</strong> to confirm:
+          </ModalBody>
+          <ModalInput
+            autoFocus
+            value={typedValue}
+            onChange={(e) => setTypedValue(e.target.value)}
+            placeholder={config.typedConfirmation}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && typedMatch && !isSubmitting) {
+                handleConfirm();
+              }
+            }}
+          />
+        </>
+      ) : (
+        config.steps[step].body
+      )}
 
-        <ModalActions>
-          <CancelButton onClick={onClose} disabled={isSubmitting}>
-            Cancel
-          </CancelButton>
-          <ConfirmDangerButton
-            $disabled={isTypedStep ? !typedMatch : false}
-            disabled={(isTypedStep && !typedMatch) || isSubmitting}
-            onClick={handleConfirm}
-          >
-            {isSubmitting
-              ? "Deleting..."
-              : isTypedStep
-                ? config.steps[config.steps.length - 1].confirmLabel.replace("I understand, continue", "Delete permanently")
-                : config.steps[step].confirmLabel}
-          </ConfirmDangerButton>
-        </ModalActions>
-      </ModalCard>
-    </ModalOverlay>
+      <ModalActions>
+        <CancelButton onClick={onClose} disabled={isSubmitting}>
+          Cancel
+        </CancelButton>
+        <ConfirmDangerButton
+          $disabled={isTypedStep ? !typedMatch : false}
+          disabled={(isTypedStep && !typedMatch) || isSubmitting}
+          onClick={handleConfirm}
+        >
+          {isSubmitting
+            ? "Deleting..."
+            : isTypedStep
+              ? config.steps[config.steps.length - 1].confirmLabel.replace("I understand, continue", "Delete permanently")
+              : config.steps[step].confirmLabel}
+        </ConfirmDangerButton>
+      </ModalActions>
+    </ModalShell>
+  );
+}
+
+/**
+ * Revoking a token is destructive and cannot be undone, so it keeps a
+ * confirmation step — but through the same accessible dialog as everything
+ * else on the page rather than a native `confirm()`.
+ */
+function RevokeTokenModal({
+  token,
+  onClose,
+  onConfirm,
+}: {
+  token: ApiToken;
+  onClose: () => void;
+  onConfirm: () => Promise<void>;
+}) {
+  const titleId = useId();
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleConfirm = async () => {
+    if (isSubmitting) return;
+    setIsSubmitting(true);
+    try {
+      await onConfirm();
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <ModalShell
+      labelledBy={titleId}
+      dismissable={!isSubmitting}
+      onClose={onClose}
+    >
+      <ModalTitle id={titleId}>⚠ Revoke token</ModalTitle>
+      <ModalBody>
+        <strong>{token.name}</strong> will stop working immediately. Anything
+        submitting with it — CI, a machine running <code>tokens serve</code> —
+        will start failing until it is given a new token.
+      </ModalBody>
+      <ModalActions>
+        <CancelButton onClick={onClose} disabled={isSubmitting}>
+          Cancel
+        </CancelButton>
+        <ConfirmDangerButton disabled={isSubmitting} onClick={handleConfirm}>
+          {isSubmitting ? "Revoking..." : "Revoke token"}
+        </ConfirmDangerButton>
+      </ModalActions>
+    </ModalShell>
   );
 }
 
@@ -484,8 +644,12 @@ function mergeApiTokenList(
   return [...localTokens, ...serverTokens];
 }
 
+// Both listings throw on failure rather than resolving to []. An empty array is
+// a real answer — "you have no tokens" — and collapsing a 500 into it told
+// users their credentials were gone when they were not.
 async function fetchApiTokens(): Promise<ApiToken[]> {
   const tokensResponse = await fetch("/api/settings/tokens");
+  if (!tokensResponse.ok) throw new Error("Failed to load API tokens");
   const tokensData = await tokensResponse.json();
   return Array.isArray(tokensData.tokens) ? tokensData.tokens : [];
 }
@@ -494,7 +658,7 @@ async function fetchDevices(username: string): Promise<SettingsDevice[]> {
   const devicesResponse = await fetch(
     `/api/users/${encodeURIComponent(username)}/devices`
   );
-  if (!devicesResponse.ok) return [];
+  if (!devicesResponse.ok) throw new Error("Failed to load devices");
   const devicesData = await devicesResponse.json();
   return Array.isArray(devicesData.devices) ? devicesData.devices : [];
 }
@@ -505,6 +669,8 @@ async function fetchDevices(username: string): Promise<SettingsDevice[]> {
 
 export default function SettingsClient() {
   const router = useRouter();
+  const createTokenErrorId = useId();
+  const deviceErrorId = useId();
   const [user, setUser] = useState<User | null>(null);
   const [tokens, setTokens] = useState<ApiToken[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -518,6 +684,31 @@ export default function SettingsClient() {
   const [editingDeviceName, setEditingDeviceName] = useState("");
   const [isSavingDeviceName, setIsSavingDeviceName] = useState(false);
   const [deviceError, setDeviceError] = useState<string | null>(null);
+  // Per-list load failures, kept apart from the empty state so a 500 reads as
+  // "we could not load these" rather than "you have none".
+  const [tokensLoadFailed, setTokensLoadFailed] = useState(false);
+  const [devicesLoadFailed, setDevicesLoadFailed] = useState(false);
+  const [revokingToken, setRevokingToken] = useState<ApiToken | null>(null);
+  const [revokingTokenId, setRevokingTokenId] = useState<string | null>(null);
+
+  const loadTokens = useCallback(async () => {
+    setTokensLoadFailed(false);
+    try {
+      const loadedTokens = await fetchApiTokens();
+      setTokens((current) => mergeApiTokenList(loadedTokens, current));
+    } catch {
+      setTokensLoadFailed(true);
+    }
+  }, []);
+
+  const loadDevices = useCallback(async (username: string) => {
+    setDevicesLoadFailed(false);
+    try {
+      setDevices(await fetchDevices(username));
+    } catch {
+      setDevicesLoadFailed(true);
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -533,19 +724,13 @@ export default function SettingsClient() {
           return;
         }
 
-        const [loadedTokens, loadedDevices] = await Promise.all([
-          fetchApiTokens().catch(() => []),
-          fetchDevices(sessionData.user.username).catch(
-            () => [] as SettingsDevice[]
-          ),
-        ]);
+        setUser(sessionData.user);
+        setIsLoading(false);
 
-        if (!cancelled) {
-          setUser(sessionData.user);
-          setTokens((current) => mergeApiTokenList(loadedTokens, current));
-          setDevices(loadedDevices);
-          setIsLoading(false);
-        }
+        await Promise.all([
+          loadTokens(),
+          loadDevices(sessionData.user.username),
+        ]);
       } catch {
         if (!cancelled) {
           router.push("/leaderboard");
@@ -557,21 +742,23 @@ export default function SettingsClient() {
     return () => {
       cancelled = true;
     };
-  }, [router]);
+  }, [router, loadTokens, loadDevices]);
 
-  const handleRevokeToken = async (tokenId: string) => {
-    if (!confirm("Are you sure you want to revoke this token?")) return;
-
+  const handleRevokeToken = async (token: ApiToken) => {
+    setRevokingTokenId(token.id);
     try {
-      const response = await fetch(`/api/settings/tokens/${tokenId}`, {
+      const response = await fetch(`/api/settings/tokens/${token.id}`, {
         method: "DELETE",
       });
+      if (!response.ok) throw new Error("Failed to revoke token");
 
-      if (response.ok) {
-        setTokens(tokens.filter((t) => t.id !== tokenId));
-      }
+      setTokens((current) => current.filter((t) => t.id !== token.id));
+      setRevokingToken(null);
+      toast.success(`Revoked "${token.name}"`);
     } catch {
-      alert("Failed to revoke token");
+      toast.error("Failed to revoke token. Please try again.");
+    } finally {
+      setRevokingTokenId(null);
     }
   };
 
@@ -582,7 +769,7 @@ export default function SettingsClient() {
     } else {
       // Data deleted — close modal and stay.
       setDangerAction(null);
-      alert("Submitted data has been deleted.");
+      toast.success("Submitted data has been deleted.");
     }
   }, [dangerAction]);
 
@@ -690,11 +877,22 @@ export default function SettingsClient() {
   };
 
   if (isLoading) {
+    // Mirrors the loaded page — same container, same top alignment, same
+    // section boxes. The previous centred "Loading..." sat in the middle of a
+    // full-height wrapper, so arriving content jumped a whole viewport.
     return (
       <PageWrapper style={{ backgroundColor: "var(--background)" }}>
-        <LoadingMain>
-          <div style={{ color: "var(--muted-foreground)" }}>Loading...</div>
-        </LoadingMain>
+        <MainContent aria-busy="true" aria-label="Loading settings">
+          <Skeleton className="h-8 w-40 sm:h-9" />
+          <Skeleton className="mb-7 mt-1.5 h-5 w-full max-w-[28rem]" />
+          {[0, 1, 2].map((section) => (
+            <Section key={section}>
+              <Skeleton className="mb-4 h-6 w-32" />
+              <Skeleton className="h-4 w-full max-w-[32rem]" />
+              <Skeleton className="mt-4 h-20 w-full" />
+            </Section>
+          ))}
+        </MainContent>
       </PageWrapper>
     );
   }
@@ -767,6 +965,8 @@ export default function SettingsClient() {
               value={tokenName}
               onChange={(event) => setTokenName(event.target.value)}
               maxLength={100}
+              aria-invalid={createTokenError ? true : undefined}
+              aria-describedby={createTokenError ? createTokenErrorId : undefined}
             />
             <PrimaryButton
               type="button"
@@ -777,7 +977,16 @@ export default function SettingsClient() {
             </PrimaryButton>
           </ActionRow>
 
-          {createTokenError && <ErrorText>{createTokenError}</ErrorText>}
+          {createTokenError && (
+            <Alert
+              id={createTokenErrorId}
+              variant="destructive"
+              className="mb-4"
+            >
+              <AlertTitle>Could not create the token</AlertTitle>
+              <AlertDescription>{createTokenError}</AlertDescription>
+            </Alert>
+          )}
 
           {createdToken && (
             <TokenReveal>
@@ -795,7 +1004,22 @@ export default function SettingsClient() {
             </TokenReveal>
           )}
 
-          {tokens.length === 0 ? (
+          {tokensLoadFailed ? (
+            <Alert variant="destructive">
+              <AlertTitle>Could not load your API tokens</AlertTitle>
+              <AlertDescription>
+                Your tokens are still there — this page just could not reach the
+                server.{" "}
+                <SecondaryButton
+                  type="button"
+                  className="ml-1 h-7 px-2 text-xs"
+                  onClick={loadTokens}
+                >
+                  Try again
+                </SecondaryButton>
+              </AlertDescription>
+            </Alert>
+          ) : tokens.length === 0 ? (
             <EmptyState style={{ color: "var(--muted-foreground)" }}>
               <EmptyIcon>
                 <KeyIcon size={32} />
@@ -819,7 +1043,7 @@ export default function SettingsClient() {
                     <IconWrapper>
                       <KeyIcon size={20} />
                     </IconWrapper>
-                    <div>
+                    <div className="min-w-0">
                       <TokenName style={{ color: "var(--foreground)" }}>
                         {token.name}
                       </TokenName>
@@ -832,9 +1056,12 @@ export default function SettingsClient() {
                     </div>
                   </TokenInfo>
                   <DangerButton
-                    onClick={() => handleRevokeToken(token.id)}
+                    type="button"
+                    disabled={revokingTokenId === token.id}
+                    className="disabled:cursor-not-allowed disabled:opacity-60"
+                    onClick={() => setRevokingToken(token)}
                   >
-                    Revoke
+                    {revokingTokenId === token.id ? "Revoking..." : "Revoke"}
                   </DangerButton>
                 </TokenItem>
               ))}
@@ -851,9 +1078,29 @@ export default function SettingsClient() {
             your machines apart — the name is shown on your public profile.
           </Description>
 
-          {deviceError && <ErrorText>{deviceError}</ErrorText>}
+          {deviceError && (
+            <Alert id={deviceErrorId} variant="destructive" className="mb-4">
+              <AlertTitle>Could not rename the device</AlertTitle>
+              <AlertDescription>{deviceError}</AlertDescription>
+            </Alert>
+          )}
 
-          {devices.length === 0 ? (
+          {devicesLoadFailed ? (
+            <Alert variant="destructive">
+              <AlertTitle>Could not load your devices</AlertTitle>
+              <AlertDescription>
+                Your devices are still registered — this page just could not
+                reach the server.{" "}
+                <SecondaryButton
+                  type="button"
+                  className="ml-1 h-7 px-2 text-xs"
+                  onClick={() => user && loadDevices(user.username)}
+                >
+                  Try again
+                </SecondaryButton>
+              </AlertDescription>
+            </Alert>
+          ) : devices.length === 0 ? (
             <EmptyState style={{ color: "var(--muted-foreground)" }}>
               <p>No devices yet.</p>
               <EmptyText>
@@ -879,6 +1126,8 @@ export default function SettingsClient() {
                         placeholder="Device name (empty to reset)"
                         autoFocus
                         disabled={isSavingDeviceName}
+                        aria-invalid={deviceError ? true : undefined}
+                        aria-describedby={deviceError ? deviceErrorId : undefined}
                         onChange={(event) =>
                           setEditingDeviceName(event.target.value)
                         }
@@ -909,7 +1158,7 @@ export default function SettingsClient() {
                   ) : (
                     <>
                       <TokenInfo>
-                        <div>
+                        <div className="min-w-0">
                           <TokenName style={{ color: "var(--foreground)" }}>
                             {device.displayName}
                           </TokenName>
@@ -972,6 +1221,14 @@ export default function SettingsClient() {
         </DangerSection>
 
       </MainContent>
+
+      {revokingToken && (
+        <RevokeTokenModal
+          token={revokingToken}
+          onClose={() => setRevokingToken(null)}
+          onConfirm={() => handleRevokeToken(revokingToken)}
+        />
+      )}
 
       {dangerAction && (
         <DangerConfirmationModal

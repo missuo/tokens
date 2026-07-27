@@ -2,7 +2,7 @@ import { and, desc, eq, sql } from "drizzle-orm";
 import { db, apiTokens, users } from "@/lib/db";
 import { generateApiToken, hashToken } from "@/lib/auth/utils";
 
-export interface PersonalTokenListItem {
+interface PersonalTokenListItem {
   id: string;
   userId: string;
   name: string;
@@ -11,18 +11,18 @@ export interface PersonalTokenListItem {
   expiresAt: Date | null;
 }
 
-export interface IssuePersonalTokenInput {
+interface IssuePersonalTokenInput {
   userId: string;
   name: string;
   expiresAt?: Date | null;
   ensureUniqueName?: boolean;
 }
 
-export interface IssuedPersonalToken extends PersonalTokenListItem {
+interface IssuedPersonalToken extends PersonalTokenListItem {
   token: string;
 }
 
-export interface AuthenticatedPersonalToken {
+interface AuthenticatedPersonalToken {
   tokenId: string;
   /** The token's own name (e.g. the hostname captured at `tokens login`). */
   tokenName: string;
@@ -33,13 +33,13 @@ export interface AuthenticatedPersonalToken {
   expiresAt: Date | null;
 }
 
-export type PersonalTokenAuthResult =
+type PersonalTokenAuthResult =
   | { status: "invalid" }
   | { status: "expired" }
   | { status: "banned" }
   | ({ status: "valid" } & AuthenticatedPersonalToken);
 
-export interface AuthenticatePersonalTokenOptions {
+interface AuthenticatePersonalTokenOptions {
   touchLastUsedAt?: boolean;
 }
 

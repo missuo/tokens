@@ -1080,7 +1080,10 @@ async fn fetch_with_auth_async(
         .clone()
         .ok_or_else(|| anyhow::anyhow!("No Codex access token."))?;
 
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .build()?;
     let mut effective_tokens = tokens.clone();
     let mut effective_access_token = access_token.clone();
     let resp = match fetch_usage(&client, &access_token, tokens.account_id.as_deref()).await {
@@ -1379,6 +1382,7 @@ pub fn run_codex_status(name: Option<String>, json: bool) -> Result<()> {
             #[serde(skip_serializing_if = "Option::is_none")]
             error: Option<String>,
         }
+        let failed = result.is_err();
         let output = match result {
             Ok((account, usage)) => Output {
                 account,
@@ -1392,6 +1396,10 @@ pub fn run_codex_status(name: Option<String>, json: bool) -> Result<()> {
             },
         };
         println!("{}", serde_json::to_string_pretty(&output)?);
+        // Exit non-zero on failure while keeping stdout to the payload alone.
+        if failed {
+            anyhow::bail!("Codex status failed");
+        }
         return Ok(());
     }
 
@@ -1427,7 +1435,9 @@ pub fn run_codex_status(name: Option<String>, json: bool) -> Result<()> {
             }
         }
         Err(e) => {
-            println!("  {}", format!("Status failed: {e}").red());
+            // Diagnostic on stderr, non-zero exit so `&&` chains stop here.
+            eprintln!("  {}\n", format!("Status failed: {e}").red());
+            anyhow::bail!("Codex status failed");
         }
     }
     println!();

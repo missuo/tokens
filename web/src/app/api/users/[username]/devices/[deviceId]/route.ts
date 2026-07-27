@@ -3,6 +3,7 @@ import { and, desc, eq, sql } from "drizzle-orm";
 // `and` is used to enforce ownership and id match in a single WHERE.
 import { db, dailyBreakdown, submittedDevices, users } from "@/lib/db";
 import {
+  AmbiguousUsernameError,
   USERNAME_LOOKUP_LIMIT,
   getSingleUsernameMatch,
   usernameEqualsIgnoreCase,
@@ -45,6 +46,7 @@ export async function GET(_request: Request, { params }: RouteParams) {
         username: users.username,
         displayName: users.displayName,
         avatarUrl: users.avatarUrl,
+        bannedAt: users.bannedAt,
       })
       .from(users)
       .where(usernameEqualsIgnoreCase(username))
@@ -53,6 +55,13 @@ export async function GET(_request: Request, { params }: RouteParams) {
     const user = getSingleUsernameMatch(matchingUsers, username);
     if (!user) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
+    }
+
+    // Banned users expose no usage data, device stats included — the listing
+    // endpoint (src/lib/publicProfileDevices.ts) hands out no device ids for
+    // them, so this detail view must not answer for one either.
+    if (user.bannedAt) {
+      return NextResponse.json({ error: "Device not found" }, { status: 404 });
     }
 
     // Resolve device but check user ownership in the same WHERE so we never
@@ -140,6 +149,13 @@ export async function GET(_request: Request, { params }: RouteParams) {
       })),
     });
   } catch (error) {
+    if (error instanceof AmbiguousUsernameError) {
+      return NextResponse.json(
+        { error: "Username is ambiguous" },
+        { status: 409 }
+      );
+    }
+
     console.error("Get user device detail error:", error);
     return NextResponse.json(
       { error: "Failed to fetch device" },

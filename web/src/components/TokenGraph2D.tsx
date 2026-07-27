@@ -144,14 +144,37 @@ export function TokenGraph2D({ contributions, palette, year, onDayHover, onDayCl
     <div className="overflow-x-auto">
       <canvas
         ref={canvasRef}
+        role="img"
+        aria-label={`Token usage contribution graph for ${year}. A list of the same days follows.`}
         className="cursor-pointer"
         onMouseMove={handleMouseMove}
         onMouseLeave={() => onDayHover(null, null)}
         onClick={handleClick}
         style={{ minWidth: canvasWidth }}
       />
+
+      {/* A canvas cannot hold focusable children, so the day panel — the whole
+          point of the graph — is unreachable by keyboard through the pixels.
+          This is the same grid as a list of buttons, visually hidden but in the
+          tab order, so every day the pointer can open the keyboard can too. */}
+      <ul className="sr-only">
+        {contributions.map((day) => (
+          <li key={day.date}>
+            <button type="button" onClick={() => onDayClick(day)}>
+              {dayButtonLabel(day)}
+            </button>
+          </li>
+        ))}
+      </ul>
     </div>
   );
+}
+
+function dayButtonLabel(day: DailyContribution): string {
+  return `${day.date}: ${day.totals.tokens.toLocaleString("en-US")} tokens, ${day.totals.cost.toLocaleString(
+    "en-US",
+    { style: "currency", currency: "USD" }
+  )}`;
 }
 
 function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, width: number, height: number, radius: number) {

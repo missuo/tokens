@@ -2,8 +2,6 @@ import Link from "next/link";
 import { CONTAINER } from "@/components/layout/Container";
 import { cn } from "@/lib/utils";
 
-const YEAR = 2026;
-
 /**
  * Site footer. Navigation lives in the header, so this only carries the
  * things that belong at the bottom of a page: what this is, what it runs on,
@@ -13,6 +11,11 @@ const YEAR = 2026;
  * the attribution is both honest and cheap to keep.
  */
 export function ServiceFooter() {
+  // Read at render rather than hardcoded. This is a server component, so the
+  // year comes from the server clock once and ships in the HTML — no hydration
+  // mismatch, and no January where the site still claims the previous year.
+  const year = new Date().getFullYear();
+
   return (
     <footer className="mt-auto border-t" aria-label="Site footer">
       <div
@@ -29,7 +32,7 @@ export function ServiceFooter() {
             reachable from every page, but they are not something anyone came
             for, so they sit at the same weight as the rest of the footer. */}
         <span className="text-xs text-muted-foreground">
-          Tokens · © {YEAR} ·{" "}
+          Tokens · © {year} ·{" "}
           <Link href="/privacy" className="transition-colors hover:text-foreground">
             Privacy
           </Link>{" "}

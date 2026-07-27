@@ -209,7 +209,7 @@ impl Default for Settings {
 
 /// Thin helper that loads settings and returns just the scanner portion.
 ///
-/// Every CLI entry point that builds `LocalParseOptions`/`ReportOptions`
+/// Every CLI entry point that builds a `ReportOptions`
 /// calls this so user-configured scanner paths are honored on every
 /// invocation. Errors during load fall through to
 /// [`ScannerSettings::default`] — a missing or malformed settings.json
@@ -242,6 +242,11 @@ impl Settings {
 
         if !config_dir.exists() {
             fs::create_dir_all(&config_dir)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(&config_dir, fs::Permissions::from_mode(0o700))?;
+            }
         }
 
         Ok(config_dir.join("settings.json"))
@@ -257,7 +262,7 @@ impl Settings {
     pub fn load() -> Self {
         let primary = Self::config_path()
             .ok()
-            .and_then(|path| fs::read_to_string(path).ok());
+            .and_then(|path| Some((fs::read_to_string(&path).ok()?, path)));
 
         // Transparent macOS fallback: pre-fix releases wrote settings.json under
         // `~/Library/Application Support/tokens/`. Read it once if the new
@@ -271,12 +276,32 @@ impl Settings {
             if crate::paths::is_config_dir_overridden() {
                 return None;
             }
-            Self::legacy_macos_path().and_then(|legacy| fs::read_to_string(legacy).ok())
+            Self::legacy_macos_path()
+                .and_then(|legacy| Some((fs::read_to_string(&legacy).ok()?, legacy)))
         });
 
-        raw.and_then(|content| serde_json::from_str(&content).ok())
-            .map(Settings::normalize)
-            .unwrap_or_default()
+        let Some((content, path)) = raw else {
+            return Settings::default();
+        };
+
+        match serde_json::from_str::<Settings>(&content) {
+            Ok(settings) => settings.normalize(),
+            // Falling back to defaults silently discards defaultClients, the
+            // pinned timezone, scanner.extraScanPaths and autosubmit — and a
+            // reverted timezone is exactly the drift that double-counts days.
+            // Name the file and the parse error instead.
+            Err(error) => {
+                // `load()` runs several times per command, so warn once per
+                // process instead of repeating the same message.
+                static WARNED: std::sync::atomic::AtomicBool =
+                    std::sync::atomic::AtomicBool::new(false);
+                if !WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                    eprintln!("  Warning: failed to parse {}: {}", path.display(), error);
+                    eprintln!("  Continuing with default settings.");
+                }
+                Settings::default()
+            }
+        }
     }
 
     pub fn save(&self) -> Result<()> {

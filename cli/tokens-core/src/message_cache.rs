@@ -106,7 +106,7 @@ fn warn_cache_failure_once(context: &'static str, path: &Path, error: &impl std:
     static WARNED_CONTEXTS: OnceLock<Mutex<HashSet<&'static str>>> = OnceLock::new();
     let warned = WARNED_CONTEXTS.get_or_init(|| Mutex::new(HashSet::new()));
     if warned.lock().is_ok_and(|mut warned| warned.insert(context)) {
-        eprintln!("tokens: warning: {context} ({}): {error}", path.display());
+        eprintln!("[tokens] Warning: {context} ({}): {error}", path.display());
     }
 }
 
