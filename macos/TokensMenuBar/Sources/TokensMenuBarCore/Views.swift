@@ -279,8 +279,8 @@ public struct MenuPanelView: View {
     private func breakdownSection(_ report: UsageReport) -> some View {
         let b = report.tokenBreakdown
         let items: [(String, Int64)] = [
-            ("in", b.input),
-            ("out", b.output),
+            ("input", b.input),
+            ("output", b.output),
             ("cache", b.cacheRead),
             ("reason", b.reasoning),
         ]
