@@ -21,12 +21,8 @@ public enum MenuBarLayout {
     }
 }
 
-/// Period-switch motion: height spring + content crossfade (synced, not sequential).
+/// Period-switch motion. Height snaps; only content may crossfade.
 public enum MenuBarMotion {
-    /// Popover / body height — stable spring, little overshoot.
-    public static let heightSpring: Animation = .spring(response: 0.36, dampingFraction: 0.9)
-    /// TOTAL / lists body opacity while period content swaps.
+    /// TOTAL / lists body opacity while period content swaps (no panel bounce).
     public static let contentCrossfade: Animation = .easeInOut(duration: 0.2)
-    /// AppKit popover `contentSize` duration (pairs with `heightSpring`).
-    public static let popoverSizeDuration: TimeInterval = 0.34
 }

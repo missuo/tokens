@@ -109,8 +109,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Fit popover to content height, never taller than 80% of the screen.
-    /// When visible, ease height so period switches don’t hard-cut.
+    /// Height snaps instantly — animating `contentSize` made the whole panel bounce.
     private func applyPopoverSize(_ size: CGSize, animated: Bool) {
+        _ = animated // kept for call-site compatibility; height is never tweened
         let width = max(size.width, MenuBarLayout.panelWidth)
         let maxH = MenuBarLayout.panelMaxHeight()
         let height = min(max(size.height, 120), maxH)
@@ -120,37 +121,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             || abs(current.width - next.width) > 0.5
         else { return }
 
-        sizeAnimGeneration += 1
-        let generation = sizeAnimGeneration
-
-        guard animated else {
-            popover.contentSize = next
-            return
-        }
-
-        let fromH = current.height
-        let toH = next.height
-        let fromW = current.width
-        let toW = next.width
-        let duration = MenuBarMotion.popoverSizeDuration
-        let start = CACurrentMediaTime()
-
-        func tick() {
-            guard sizeAnimGeneration == generation else { return }
-            let t = min(1, (CACurrentMediaTime() - start) / duration)
-            // Smooth stop: 1 - (1-t)^3 — pairs with SwiftUI height spring feel.
-            let eased = 1 - pow(1 - t, 3)
-            let h = fromH + (toH - fromH) * CGFloat(eased)
-            let w = fromW + (toW - fromW) * CGFloat(eased)
-            popover.contentSize = NSSize(width: w, height: h)
-            if t < 1 {
-                DispatchQueue.main.async {
-                    tick()
-                }
-            } else {
-                popover.contentSize = next
-            }
-        }
-        tick()
+        sizeAnimGeneration += 1 // cancel any legacy in-flight work
+        popover.contentSize = next
     }
 }

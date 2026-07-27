@@ -16,9 +16,7 @@ final class LayoutTests: XCTestCase {
     }
 
     func testMotionTokensMatchSpec() {
-        XCTAssertEqual(MenuBarMotion.popoverSizeDuration, 0.34, accuracy: 0.001)
-        // Ensure motion tokens exist for height spring + content crossfade (values are Animation).
-        _ = MenuBarMotion.heightSpring
+        // Height no longer animates; only content crossfade remains.
         _ = MenuBarMotion.contentCrossfade
     }
 }

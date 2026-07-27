@@ -110,8 +110,8 @@ public struct MenuPanelView: View {
         }
         .frame(width: MenuBarLayout.panelWidth)
         .frame(maxHeight: panelMaxHeight)
+        // Content may crossfade; never spring the panel/body height (popover bounce).
         .animation(MenuBarMotion.contentCrossfade, value: contentIdentity)
-        .animation(MenuBarMotion.heightSpring, value: animatedBodyHeight)
         .onPreferenceChange(ChromeHeightPreferenceKey.self) { height in
             if abs(height - chromeHeight) > 0.5 {
                 chromeHeight = height
@@ -189,18 +189,11 @@ public struct MenuPanelView: View {
             )
     }
 
-    /// Push animated body height + notify AppKit popover (coalesced there).
+    /// Snap body height + notify AppKit popover (coalesced there). No height spring.
     private func syncBodyHeightAndPublish() {
-        if let target = targetBodyHeight {
-            if abs(target - animatedBodyHeight) > 0.5 {
-                if hasPublishedSize {
-                    withAnimation(MenuBarMotion.heightSpring) {
-                        animatedBodyHeight = target
-                    }
-                } else {
-                    animatedBodyHeight = target
-                }
-            }
+        if let target = targetBodyHeight, abs(target - animatedBodyHeight) > 0.5 {
+            // Instant height — springing this reflowed the whole NSPopover and felt like shake.
+            animatedBodyHeight = target
         }
 
         let chrome = chromeHeight > 0 ? chromeHeight : 140
