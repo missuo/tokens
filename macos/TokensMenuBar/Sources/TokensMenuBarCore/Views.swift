@@ -618,17 +618,10 @@ public struct SettingsView: View {
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text("SETTINGS")
-                .font(.system(size: 11, weight: .medium, design: .monospaced))
-                .tracking(1.6)
-                .padding(.bottom, 18)
-
-            ScrollView(.vertical, showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 32) {
-                    menuBarSection
-                    scanningSection
-                }
+        ScrollView(.vertical, showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 32) {
+                menuBarSection
+                scanningSection
             }
         }
         .padding(.horizontal, 20)
