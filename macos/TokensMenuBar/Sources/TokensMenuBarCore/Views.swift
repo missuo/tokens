@@ -412,16 +412,17 @@ public struct MenuPanelView: View {
         .animation(.easeOut(duration: 0.18), value: clientVisibleCount)
     }
 
-    /// Centered down-chevron: load another page (no nested scrollbar).
+    /// Centered "More" control: load another page (no nested scrollbar).
     private func expandChevron(
         remaining: Int,
         accessibilityNoun: String,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            Image(systemName: "chevron.down")
-                .font(.system(size: 11, weight: .semibold))
+            Text("More")
+                .font(.system(size: 11, design: .monospaced))
                 .foregroundStyle(.secondary)
+                .tracking(0.4)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 6)
                 .contentShape(Rectangle())
