@@ -274,6 +274,9 @@ fn build_report(period: UsagePeriod, refresh: bool, force_rescan: bool) -> Resul
     let graph = scan_all_local()?;
     write_snapshot_from_graph(&graph)?;
 
+    // Keep full history for the always-14-day cost chart; filter only for
+    // summary / client / model rolls (period-scoped).
+    let chart_source = graph.contributions.clone();
     let mut contributions = graph.contributions;
     filter_contributions(&mut contributions, since.as_deref(), until.as_deref());
 
@@ -293,6 +296,8 @@ fn build_report(period: UsagePeriod, refresh: bool, force_rescan: bool) -> Resul
         0,
         0,
         &contributions,
+        &chart_source,
+        today,
         &graph.meta.generated_at,
     ))
 }
@@ -461,6 +466,10 @@ fn try_report_from_snapshot(
         return None;
     }
 
+    // Full snapshot history drives the 14-day cost chart even when the selected
+    // period is `today` (which would otherwise leave byDay empty/almost empty
+    // right after midnight).
+    let chart_source = snapshot_days_to_contributions(&snapshot.contributions);
     let mut days = snapshot.contributions;
     if let Some(since) = since {
         days.retain(|d| d.date.as_str() >= since);
@@ -469,7 +478,8 @@ fn try_report_from_snapshot(
         days.retain(|d| d.date.as_str() <= until);
     }
 
-    Some(report_from_snapshot_days(
+    let contributions = snapshot_days_to_contributions(&days);
+    Some(report_from_contributions(
         period,
         false,
         "snapshot",
@@ -477,24 +487,15 @@ fn try_report_from_snapshot(
         false,
         0,
         0,
-        &days,
+        &contributions,
+        &chart_source,
+        today,
         &snapshot.generated_at,
     ))
 }
 
-fn report_from_snapshot_days(
-    period: UsagePeriod,
-    force_rescan: bool,
-    mode: &str,
-    duration_ms: u32,
-    snapshot_rebuilt: bool,
-    source_hits: u64,
-    source_misses: u64,
-    days: &[SnapshotDay],
-    generated_at: &str,
-) -> UsageReport {
-    let contributions: Vec<DailyContribution> = days
-        .iter()
+fn snapshot_days_to_contributions(days: &[SnapshotDay]) -> Vec<DailyContribution> {
+    days.iter()
         .map(|d| DailyContribution {
             date: d.date.clone(),
             totals: DailyTotals {
@@ -530,19 +531,7 @@ fn report_from_snapshot_days(
                 .collect(),
             active_time_ms: None,
         })
-        .collect();
-
-    report_from_contributions(
-        period,
-        force_rescan,
-        mode,
-        duration_ms,
-        snapshot_rebuilt,
-        source_hits,
-        source_misses,
-        &contributions,
-        generated_at,
-    )
+        .collect()
 }
 
 fn report_from_contributions(
@@ -553,7 +542,11 @@ fn report_from_contributions(
     snapshot_rebuilt: bool,
     source_hits: u64,
     source_misses: u64,
+    // contributions: period-filtered (TOTAL / BREAKDOWN / CLIENT / MODEL)
+    // chart_contributions: wider history for the fixed 14-day cost chart
     contributions: &[DailyContribution],
+    chart_contributions: &[DailyContribution],
+    today: NaiveDate,
     generated_at: &str,
 ) -> UsageReport {
     let (range_start, range_end) = date_range_of(contributions, period);
@@ -688,16 +681,9 @@ fn report_from_contributions(
         .collect();
     by_model_out.sort_by(|a, b| b.tokens.cmp(&a.tokens));
 
-    let by_day: Vec<DayUsage> = contributions
-        .iter()
-        .map(|d| DayUsage {
-            date: d.date.clone(),
-            tokens: d.totals.tokens,
-            cost: d.totals.cost,
-            messages: d.totals.messages,
-            intensity: d.intensity,
-        })
-        .collect();
+    // Cost chart is always the last 14 calendar days, independent of period.
+    // Zero-fill missing days so the axis stays continuous after midnight.
+    let by_day = chart_by_day(chart_contributions, today, 14);
 
     UsageReport {
         schema_version: 1,
@@ -740,6 +726,45 @@ fn report_from_contributions(
             timezone: timezone_label(),
         },
     }
+}
+
+/// Last `limit` calendar days ending on `today`, ascending, zero-filled.
+fn chart_by_day(source: &[DailyContribution], today: NaiveDate, limit: i64) -> Vec<DayUsage> {
+    let limit = limit.max(1);
+    let start = today - Duration::days(limit - 1);
+    let mut by_date: BTreeMap<String, &DailyContribution> = BTreeMap::new();
+    for day in source {
+        if let Ok(d) = NaiveDate::parse_from_str(&day.date, "%Y-%m-%d") {
+            if d >= start && d <= today {
+                by_date.insert(day.date.clone(), day);
+            }
+        }
+    }
+
+    let mut out = Vec::with_capacity(limit as usize);
+    let mut cursor = start;
+    while cursor <= today {
+        let key = cursor.format("%Y-%m-%d").to_string();
+        if let Some(day) = by_date.get(&key) {
+            out.push(DayUsage {
+                date: day.date.clone(),
+                tokens: day.totals.tokens,
+                cost: day.totals.cost,
+                messages: day.totals.messages,
+                intensity: day.intensity,
+            });
+        } else {
+            out.push(DayUsage {
+                date: key,
+                tokens: 0,
+                cost: 0.0,
+                messages: 0,
+                intensity: 0,
+            });
+        }
+        cursor += Duration::days(1);
+    }
+    out
 }
 
 fn date_range_of(contributions: &[DailyContribution], period: UsagePeriod) -> (String, String) {
@@ -817,6 +842,8 @@ mod tests {
 
     #[test]
     fn report_rolls_up_client_and_model() {
+        let day = sample_day();
+        let today = NaiveDate::from_ymd_opt(2026, 7, 26).unwrap();
         let report = report_from_contributions(
             UsagePeriod::Today,
             false,
@@ -825,7 +852,9 @@ mod tests {
             true,
             0,
             0,
-            &[sample_day()],
+            &[day.clone()],
+            &[day],
+            today,
             "2026-07-26T00:00:00Z",
         );
         assert_eq!(report.summary.total_tokens, 1000);
@@ -835,6 +864,53 @@ mod tests {
         assert_eq!(report.by_model[0].model_id, "claude-opus");
         assert_eq!(report.by_model[0].clients, vec!["claude-code".to_string()]);
         assert!((report.by_client[0].share - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn by_day_is_always_last_14_calendar_days() {
+        // Period-filtered "today" summary must not strip the cost chart history.
+        let history: Vec<DailyContribution> = (13..=26)
+            .map(|d| {
+                let mut day = sample_day();
+                day.date = format!("2026-07-{d:02}");
+                day.totals.cost = d as f64;
+                day
+            })
+            .collect();
+        let today_only = vec![history.last().unwrap().clone()];
+        let today = NaiveDate::from_ymd_opt(2026, 7, 26).unwrap();
+        let report = report_from_contributions(
+            UsagePeriod::Today,
+            false,
+            "snapshot",
+            0,
+            false,
+            0,
+            0,
+            &today_only,
+            &history,
+            today,
+            "2026-07-26T00:00:00Z",
+        );
+        assert_eq!(report.summary.total_tokens, 1000);
+        assert_eq!(report.by_day.len(), 14);
+        assert_eq!(report.by_day.first().unwrap().date, "2026-07-13");
+        assert_eq!(report.by_day.last().unwrap().date, "2026-07-26");
+        assert!((report.by_day.last().unwrap().cost - 26.0).abs() < f64::EPSILON);
+        // Missing intermediate days would be zero-filled; all present here.
+        assert!(report.by_day.iter().all(|d| d.cost > 0.0));
+    }
+
+    #[test]
+    fn chart_by_day_zero_fills_gaps() {
+        let today = NaiveDate::from_ymd_opt(2026, 7, 26).unwrap();
+        let sparse = vec![sample_day()]; // only 2026-07-26
+        let days = chart_by_day(&sparse, today, 14);
+        assert_eq!(days.len(), 14);
+        assert_eq!(days.first().unwrap().date, "2026-07-13");
+        assert_eq!(days.last().unwrap().date, "2026-07-26");
+        assert_eq!(days.first().unwrap().cost, 0.0);
+        assert!((days.last().unwrap().cost - 1.5).abs() < f64::EPSILON);
     }
 
     #[test]

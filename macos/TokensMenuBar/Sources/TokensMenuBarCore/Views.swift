@@ -459,9 +459,6 @@ public struct MenuPanelView: View {
             footerButton("SETTINGS") {
                 store.showSettings = true
             }
-            footerButton("TOKENS.CI") {
-                store.openTokensSite()
-            }
             footerButton("QUIT") {
                 store.quit()
             }
