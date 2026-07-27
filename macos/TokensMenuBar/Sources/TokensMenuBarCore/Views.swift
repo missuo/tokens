@@ -271,11 +271,6 @@ public struct MenuPanelView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .padding(.top, 16)
-
-            Text("\(report.dateRange.start) — \(report.dateRange.end)")
-                .font(.system(size: 10, design: .monospaced))
-                .foregroundStyle(.secondary)
-                .padding(.top, 12)
         }
     }
 
@@ -477,14 +472,7 @@ public struct MenuPanelView: View {
 
     private func costChartSection(_ report: UsageReport) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline) {
-                sectionLabel("COST · 14 DAYS")
-                Spacer()
-                Text("Y = $ · X = date")
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-            }
+            sectionLabel("COST")
             CostChartView(days: report.byDay, periodRawValue: store.period.rawValue)
         }
     }
@@ -494,7 +482,7 @@ public struct MenuPanelView: View {
     private func footer(_ report: UsageReport) -> some View {
         HStack(spacing: 10) {
             Text(
-                "UPDATED \(Formatting.relativeTime(fromISO8601: report.generatedAt).uppercased()) · \(report.scan.mode.uppercased())"
+                "UPDATED \(Formatting.relativeTime(fromISO8601: report.generatedAt).uppercased())"
             )
             .font(.system(size: 11, design: .monospaced))
             .foregroundStyle(.secondary)
