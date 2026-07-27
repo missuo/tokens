@@ -278,11 +278,19 @@ public struct MenuPanelView: View {
 
     private func breakdownSection(_ report: UsageReport) -> some View {
         let b = report.tokenBreakdown
-        let items: [(String, Int64)] = [
-            ("input", b.input),
-            ("output", b.output),
-            ("cache", b.cacheRead),
-            ("reason", b.reasoning),
+        // Input cache % = read hit rate. “Output cache %” maps to cache-write share of
+        // the prompt path (schema has no true output-cache field).
+        let inputCache = Formatting.inputCacheRate(input: b.input, cacheRead: b.cacheRead)
+        let outputCache = Formatting.cacheWriteRate(
+            input: b.input,
+            cacheRead: b.cacheRead,
+            cacheWrite: b.cacheWrite
+        )
+        let items: [(String, Int64, Double?)] = [
+            ("input", b.input, inputCache),
+            ("output", b.output, outputCache),
+            ("cache", b.cacheRead, nil),
+            ("reason", b.reasoning, nil),
         ]
         let accents: [Double] = [1, 0.72, 0.48, 0.28]
 
@@ -291,17 +299,34 @@ public struct MenuPanelView: View {
                 breakdownCard(
                     label: item.0,
                     value: item.1,
+                    cachePercent: item.2,
                     topAccent: Color.primary.opacity(accents[index])
                 )
             }
         }
     }
 
-    private func breakdownCard(label: String, value: Int64, topAccent: Color) -> some View {
+    private func breakdownCard(
+        label: String,
+        value: Int64,
+        cachePercent: Double?,
+        topAccent: Color
+    ) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(label)
-                .font(.system(size: 10, design: .monospaced))
-                .foregroundStyle(.secondary)
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text(label)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                if let cachePercent {
+                    Text(Formatting.percent(cachePercent))
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                        .lineLimit(1)
+                        .layoutPriority(1)
+                }
+            }
             Text(Formatting.compactTokens(value))
                 .font(.system(size: 12, weight: .bold, design: .monospaced))
                 .monospacedDigit()
@@ -332,6 +357,25 @@ public struct MenuPanelView: View {
                     )
                 )
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(breakdownAccessibilityLabel(
+            label: label,
+            value: value,
+            cachePercent: cachePercent
+        ))
+    }
+
+    private func breakdownAccessibilityLabel(
+        label: String,
+        value: Int64,
+        cachePercent: Double?
+    ) -> String {
+        var parts = ["\(label) \(Formatting.compactTokens(value))"]
+        if let cachePercent {
+            let kind = label == "input" ? "input cache" : "cache write"
+            parts.append("\(kind) \(Formatting.percent(cachePercent))")
+        }
+        return parts.joined(separator: ", ")
     }
 
     // MARK: - CLIENT
