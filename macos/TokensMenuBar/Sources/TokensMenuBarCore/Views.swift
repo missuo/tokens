@@ -625,7 +625,7 @@ public struct SettingsView: View {
                 .padding(.bottom, 18)
 
             ScrollView(.vertical, showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 32) {
                     menuBarSection
                     scanningSection
                 }
@@ -636,11 +636,11 @@ public struct SettingsView: View {
         .frame(width: 420, height: 320)
     }
 
-    // MARK: Menu Bar
+    // MARK: Status title (menu bar display mode)
 
     private var menuBarSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            settingsSectionLabel("MENU BAR")
+            settingsSectionLabel("STATUS TITLE")
 
             HStack(alignment: .firstTextBaseline) {
                 Text("DISPLAY")
@@ -649,11 +649,6 @@ public struct SettingsView: View {
                 Spacer(minLength: 12)
                 displaySegmentedControl
             }
-
-            Text("Title in status item: tokens only / cost only / both")
-                .font(.system(size: 10, design: .monospaced))
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
