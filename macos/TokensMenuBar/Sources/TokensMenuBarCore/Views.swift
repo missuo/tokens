@@ -1,8 +1,16 @@
 import SwiftUI
 
+private let categoryPreviewLimit = 5
+
 public struct MenuPanelView: View {
     @ObservedObject public var store: UsageStore
     @ObservedObject public var settings: AppSettings
+
+    @State private var clientsExpanded = false
+    @State private var modelsExpanded = false
+    @State private var daysExpanded = false
+    /// Client ids whose nested model lists are fully expanded.
+    @State private var expandedClientModels: Set<String> = []
 
     public init(store: UsageStore, settings: AppSettings) {
         self.store = store
@@ -62,6 +70,13 @@ public struct MenuPanelView: View {
             }
         }
         .frame(width: 400)
+        // Period changes: collapse expanded lists so defaults stay at 5.
+        .onChange(of: store.period) { _ in
+            clientsExpanded = false
+            modelsExpanded = false
+            daysExpanded = false
+            expandedClientModels.removeAll()
+        }
     }
 
     private var header: some View {
@@ -122,84 +137,165 @@ public struct MenuPanelView: View {
     }
 
     private func clientSection(_ report: UsageReport) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        let all = report.byClient
+        let visible = clientsExpanded ? Array(all) : Array(all.prefix(categoryPreviewLimit))
+
+        return VStack(alignment: .leading, spacing: 10) {
             sectionTitle("By client")
-            if report.byClient.isEmpty {
+            if all.isEmpty {
                 Text("No client data")
                     .font(.body)
                     .foregroundStyle(.secondary)
             } else {
-                ForEach(report.byClient.prefix(12)) { client in
-                    DisclosureGroup {
-                        VStack(alignment: .leading, spacing: 10) {
-                            ForEach(client.models.prefix(10)) { model in
-                                row(
-                                    title: model.modelId,
-                                    subtitle: model.providerId,
-                                    tokens: model.tokens,
-                                    cost: model.cost,
-                                    share: model.share
-                                )
-                            }
-                        }
-                        .padding(.leading, 18)
-                        .padding(.top, 6)
-                        .padding(.bottom, 4)
-                    } label: {
-                        row(
-                            title: client.client,
-                            subtitle: Formatting.percent(client.share),
-                            tokens: client.tokens,
-                            cost: client.cost,
-                            share: client.share
-                        )
-                        .padding(.vertical, 2)
-                    }
-                    .padding(.vertical, 2)
+                ForEach(visible) { client in
+                    clientRow(client)
+                }
+                expandToggle(
+                    total: all.count,
+                    expanded: clientsExpanded
+                ) {
+                    clientsExpanded.toggle()
                 }
             }
         }
     }
 
+    private func clientRow(_ client: ClientUsage) -> some View {
+        let modelsExpandedForClient = expandedClientModels.contains(client.client)
+        let allModels = client.models
+        let visibleModels = modelsExpandedForClient
+            ? Array(allModels)
+            : Array(allModels.prefix(categoryPreviewLimit))
+
+        return DisclosureGroup {
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(visibleModels) { model in
+                    row(
+                        title: model.modelId,
+                        subtitle: model.providerId,
+                        tokens: model.tokens,
+                        cost: model.cost,
+                        share: model.share
+                    )
+                }
+                expandToggle(
+                    total: allModels.count,
+                    expanded: modelsExpandedForClient
+                ) {
+                    if modelsExpandedForClient {
+                        expandedClientModels.remove(client.client)
+                    } else {
+                        expandedClientModels.insert(client.client)
+                    }
+                }
+            }
+            .padding(.leading, 18)
+            .padding(.top, 6)
+            .padding(.bottom, 4)
+        } label: {
+            row(
+                title: client.client,
+                subtitle: Formatting.percent(client.share),
+                tokens: client.tokens,
+                cost: client.cost,
+                share: client.share
+            )
+            .padding(.vertical, 2)
+        }
+        .padding(.vertical, 2)
+    }
+
     private func modelSection(_ report: UsageReport) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        let all = report.byModel
+        let visible = modelsExpanded ? Array(all) : Array(all.prefix(categoryPreviewLimit))
+
+        return VStack(alignment: .leading, spacing: 10) {
             sectionTitle("By model")
-            ForEach(report.byModel.prefix(12)) { model in
-                row(
-                    title: model.modelId,
-                    subtitle: model.providerId,
-                    tokens: model.tokens,
-                    cost: model.cost,
-                    share: model.share
-                )
+            if all.isEmpty {
+                Text("No model data")
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(visible) { model in
+                    row(
+                        title: model.modelId,
+                        subtitle: model.providerId,
+                        tokens: model.tokens,
+                        cost: model.cost,
+                        share: model.share
+                    )
+                }
+                expandToggle(
+                    total: all.count,
+                    expanded: modelsExpanded
+                ) {
+                    modelsExpanded.toggle()
+                }
             }
         }
     }
 
     private func daySection(_ report: UsageReport) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        // Newest first.
+        let all = Array(report.byDay.reversed())
+        let visible = daysExpanded ? all : Array(all.prefix(categoryPreviewLimit))
+
+        return VStack(alignment: .leading, spacing: 10) {
             sectionTitle("By day")
-            ForEach(report.byDay.suffix(14).reversed()) { day in
-                HStack(spacing: 10) {
-                    Text(day.date)
-                        .font(.body.monospacedDigit())
-                        .frame(width: 100, alignment: .leading)
-                    GeometryReader { geo in
-                        let width = max(
-                            6,
-                            geo.size.width * CGFloat(min(max(day.shareProxy(in: report), 0.02), 1))
-                        )
-                        RoundedRectangle(cornerRadius: 3)
-                            .fill(Color.accentColor.opacity(0.35 + 0.1 * Double(day.intensity)))
-                            .frame(width: width, height: 10)
-                            .frame(maxHeight: .infinity, alignment: .center)
+            if all.isEmpty {
+                Text("No daily data")
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(visible) { day in
+                    HStack(spacing: 10) {
+                        Text(day.date)
+                            .font(.body.monospacedDigit())
+                            .frame(width: 100, alignment: .leading)
+                        GeometryReader { geo in
+                            let width = max(
+                                6,
+                                geo.size.width * CGFloat(min(max(day.shareProxy(in: report), 0.02), 1))
+                            )
+                            RoundedRectangle(cornerRadius: 3)
+                                .fill(Color.accentColor.opacity(0.35 + 0.1 * Double(day.intensity)))
+                                .frame(width: width, height: 10)
+                                .frame(maxHeight: .infinity, alignment: .center)
+                        }
+                        .frame(height: 14)
+                        Text(Formatting.compactTokens(day.tokens))
+                            .font(.body.monospacedDigit())
+                            .frame(width: 64, alignment: .trailing)
                     }
-                    .frame(height: 14)
-                    Text(Formatting.compactTokens(day.tokens))
-                        .font(.body.monospacedDigit())
-                        .frame(width: 64, alignment: .trailing)
+                }
+                expandToggle(
+                    total: all.count,
+                    expanded: daysExpanded
+                ) {
+                    daysExpanded.toggle()
                 }
             }
+        }
+    }
+
+    /// Down-chevron to expand past the default 5 rows; up-chevron collapses.
+    @ViewBuilder
+    private func expandToggle(total: Int, expanded: Bool, action: @escaping () -> Void) -> some View {
+        if total > categoryPreviewLimit {
+            Button(action: action) {
+                HStack(spacing: 6) {
+                    Image(systemName: expanded ? "chevron.up" : "chevron.down")
+                        .font(.body.weight(.semibold))
+                    Text(expanded ? "Show less" : "Show all \(total)")
+                        .font(.subheadline)
+                }
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 8)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(expanded ? "Collapse to \(categoryPreviewLimit)" : "Show all \(total) items")
         }
     }
 
