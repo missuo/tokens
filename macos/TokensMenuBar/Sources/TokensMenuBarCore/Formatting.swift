@@ -64,4 +64,12 @@ public enum Formatting {
         rel.unitsStyle = .short
         return rel.localizedString(for: date, relativeTo: Date())
     }
+
+    /// Dense chart axis label: `"2026-07-24"` → `"24"`. Tooltip should use full ISO date.
+    public static func chartDayLabel(isoDate: String) -> String {
+        if isoDate.count >= 10 {
+            return String(isoDate.suffix(2))
+        }
+        return isoDate
+    }
 }

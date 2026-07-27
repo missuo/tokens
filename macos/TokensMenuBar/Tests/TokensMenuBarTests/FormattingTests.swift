@@ -15,6 +15,12 @@ final class FormattingTests: XCTestCase {
         XCTAssertEqual(Formatting.cost(4.2), "$4.20")
     }
 
+    func testChartDayLabel() {
+        XCTAssertEqual(Formatting.chartDayLabel(isoDate: "2026-07-24"), "24")
+        XCTAssertEqual(Formatting.chartDayLabel(isoDate: "2026-07-01"), "01")
+        XCTAssertEqual(Formatting.chartDayLabel(isoDate: "short"), "short")
+    }
+
     func testMenuBarTitleModes() {
         let report = UsageReport(
             schemaVersion: 1,
