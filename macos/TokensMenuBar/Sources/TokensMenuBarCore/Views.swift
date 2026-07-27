@@ -11,7 +11,7 @@ public struct MenuPanelView: View {
     @State private var bodyContentHeight: CGFloat = 0
     /// Intrinsic height of header + tabs + footer (+ error shells).
     @State private var chromeHeight: CGFloat = 0
-    /// Body viewport height (snaps; no spring).
+    /// Body viewport height — tracks measured content (CLIENT/MODEL lists push this open).
     @State private var bodyViewportHeight: CGFloat = MenuBarLayout.fallbackContentHeight
     /// CLIENT / MODEL lists: how many rows are visible (chevron loads more).
     @State private var clientVisibleCount: Int = MenuBarLayout.listPageSize
@@ -176,7 +176,8 @@ public struct MenuPanelView: View {
             )
     }
 
-    /// Ease body height + notify AppKit popover (coalesced there).
+    /// Size body viewport to measured content and notify AppKit popover (coalesced there).
+    /// Height is content-driven: CLIENT/MODEL list length sets the body, no forced tween.
     /// Skip resize while the tab is ahead of the loaded report (TODAY short vs 30D tall).
     private func syncBodyHeightAndPublish() {
         // Hold previous height until report matches selected period — prevents
@@ -185,11 +186,10 @@ public struct MenuPanelView: View {
             return
         }
 
+        // Snap to content height. List rows appearing (period data / chevron) is
+        // what “opens” the panel — not a parallel height animation.
         if let target = targetBodyHeight, abs(target - bodyViewportHeight) > 0.5 {
-            // Gentle ease — not a spring (spring + popover frame felt like shake).
-            withAnimation(MenuBarMotion.heightEase) {
-                bodyViewportHeight = target
-            }
+            bodyViewportHeight = target
         }
 
         let chrome = chromeHeight > 0 ? chromeHeight : 140
@@ -353,9 +353,10 @@ public struct MenuPanelView: View {
                 clientRows(visible)
                 if hasMore {
                     expandChevron(remaining: all.count - visible.count, accessibilityNoun: "clients") {
+                        // Content grows first; panel height follows measurement.
                         clientVisibleCount = min(
                             clientVisibleCount + MenuBarLayout.listPageSize,
-                            clientVisibleCount + (all.count - visible.count)
+                            all.count
                         )
                     }
                 }
@@ -367,8 +368,12 @@ public struct MenuPanelView: View {
         VStack(alignment: .leading, spacing: 12) {
             ForEach(clients) { client in
                 clientRow(client)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
+        // Chevron page-in only. Period switches remeasure content and snap height —
+        // the lists push the panel open; no forced height tween.
+        .animation(.easeOut(duration: 0.18), value: clientVisibleCount)
     }
 
     /// Centered down-chevron: load another page (no nested scrollbar).
@@ -424,7 +429,7 @@ public struct MenuPanelView: View {
                     expandChevron(remaining: all.count - visible.count, accessibilityNoun: "models") {
                         modelVisibleCount = min(
                             modelVisibleCount + MenuBarLayout.listPageSize,
-                            modelVisibleCount + (all.count - visible.count)
+                            all.count
                         )
                     }
                 }
@@ -436,8 +441,10 @@ public struct MenuPanelView: View {
         VStack(alignment: .leading, spacing: 10) {
             ForEach(models) { model in
                 modelRow(model)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
+        .animation(.easeOut(duration: 0.18), value: modelVisibleCount)
     }
 
     private func modelRow(_ model: ModelUsage) -> some View {

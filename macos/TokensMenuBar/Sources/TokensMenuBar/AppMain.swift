@@ -25,8 +25,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Coalesce preference-driven size thrash into one apply per turn.
     private var pendingPopoverSize: CGSize?
     private var sizeApplyScheduled = false
-    /// Bumps to cancel an in-flight height interpolation when a newer size arrives.
-    private var sizeAnimGeneration = 0
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         store = UsageStore()
@@ -49,7 +47,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let initialHeight = min(680, MenuBarLayout.panelMaxHeight())
         popover.contentSize = NSSize(width: MenuBarLayout.panelWidth, height: initialHeight)
         popover.behavior = .transient
-        // Never animate frame changes — TODAY (short) vs 30D (tall) otherwise shakes.
+        // Never animate frame changes — forced height tweens felt laggy; size follows content.
         popover.animates = false
         popover.contentViewController = hosting
 
@@ -72,7 +70,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             // Snap to latest measured size before show — no open animation from a stale height.
             if let pending = pendingPopoverSize {
-                applyPopoverSize(pending, animated: false)
+                applyPopoverSize(pending)
                 pendingPopoverSize = nil
             }
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
@@ -105,13 +103,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.sizeApplyScheduled = false
             guard let pending = self.pendingPopoverSize else { return }
             self.pendingPopoverSize = nil
-            self.applyPopoverSize(pending, animated: self.popover.isShown)
+            self.applyPopoverSize(pending)
         }
     }
 
     /// Fit popover to content height, never taller than 80% of the screen.
-    /// When visible, ease height gently (no spring overshoot — that felt like shake).
-    private func applyPopoverSize(_ size: CGSize, animated: Bool) {
+    /// Snap only — panel height is driven by measured CLIENT/MODEL content, not a tween.
+    private func applyPopoverSize(_ size: CGSize) {
         let width = max(size.width, MenuBarLayout.panelWidth)
         let maxH = MenuBarLayout.panelMaxHeight()
         let height = min(max(size.height, 120), maxH)
@@ -120,38 +118,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard abs(current.height - next.height) > 0.5
             || abs(current.width - next.width) > 0.5
         else { return }
-
-        sizeAnimGeneration += 1
-        let generation = sizeAnimGeneration
-
-        guard animated else {
-            popover.contentSize = next
-            return
-        }
-
-        let fromH = current.height
-        let toH = next.height
-        let fromW = current.width
-        let toW = next.width
-        let duration = MenuBarMotion.popoverSizeDuration
-        let start = CACurrentMediaTime()
-
-        func tick() {
-            guard sizeAnimGeneration == generation else { return }
-            let t = min(1, (CACurrentMediaTime() - start) / duration)
-            // Smoothstep ease-in-out — no overshoot.
-            let eased = t * t * (3 - 2 * t)
-            let h = fromH + (toH - fromH) * CGFloat(eased)
-            let w = fromW + (toW - fromW) * CGFloat(eased)
-            popover.contentSize = NSSize(width: w, height: h)
-            if t < 1 {
-                DispatchQueue.main.async {
-                    tick()
-                }
-            } else {
-                popover.contentSize = next
-            }
-        }
-        tick()
+        popover.contentSize = next
     }
 }
