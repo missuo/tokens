@@ -641,14 +641,7 @@ public struct SettingsView: View {
     private var menuBarSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             settingsSectionLabel("STATUS TITLE")
-
-            HStack(alignment: .firstTextBaseline) {
-                Text("DISPLAY")
-                    .font(.system(size: 11, design: .monospaced))
-                    .tracking(0.4)
-                Spacer(minLength: 12)
-                displaySegmentedControl
-            }
+            displaySegmentedControl
         }
     }
 
