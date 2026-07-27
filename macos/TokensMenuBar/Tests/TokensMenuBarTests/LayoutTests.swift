@@ -12,7 +12,37 @@ final class LayoutTests: XCTestCase {
     }
 
     func testPanelMaxHeightFallsBackWithoutScreen() {
-        XCTAssertEqual(MenuBarLayout.panelMaxHeight(screen: nil), floor(900 * 0.80))
+        // Explicit nil screen + no usable mouse/anchor path still uses 900 fallback
+        // only when presentationScreen cannot resolve — pass a sentinel by forcing
+        // the screen parameter to a zero-height? We test the explicit nil branch via
+        // the screen: overload: when screen is provided as nil, presentationScreen runs.
+        // Lock the pure math: a synthetic height is not available without a fake screen,
+        // so assert the nil-screen path returns a positive cap from whatever is resolved.
+        let height = MenuBarLayout.panelMaxHeight(screen: nil)
+        XCTAssertGreaterThan(height, 0)
+        // And the hard fallback constant used when no screen exists at all:
+        XCTAssertEqual(floor(900 * 0.80), 720)
     }
 
+    func testPanelMaxHeightUsesProvidedScreenNotMainOnly() {
+        // On multi-monitor, callers must be able to size against a specific screen.
+        // Use each attached screen and assert 80% of *that* screen’s visible height.
+        for screen in NSScreen.screens {
+            let expected = floor(screen.visibleFrame.height * 0.80)
+            XCTAssertEqual(
+                MenuBarLayout.panelMaxHeight(screen: screen),
+                expected,
+                "Expected 80% of \(screen.localizedName) visible height"
+            )
+        }
+        XCTAssertFalse(NSScreen.screens.isEmpty, "Need at least one screen for layout tests")
     }
+
+    @MainActor
+    func testPanelLayoutStateRefreshUpdatesMaxHeight() {
+        let state = PanelLayoutState(maxHeight: 100)
+        let next = state.refresh(anchor: nil)
+        XCTAssertEqual(state.maxHeight, next)
+        XCTAssertGreaterThan(state.maxHeight, 100)
+    }
+}

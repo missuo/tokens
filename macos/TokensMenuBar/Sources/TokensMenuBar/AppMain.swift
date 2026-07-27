@@ -19,6 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var popover: NSPopover!
     private var store: UsageStore!
+    private var layoutState: PanelLayoutState!
     private var settingsWindow: NSWindow?
     private var cancellables = Set<AnyCancellable>()
 
@@ -28,6 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         store = UsageStore()
+        layoutState = PanelLayoutState()
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem.button {
@@ -37,14 +39,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         store.attachStatusItem(statusItem)
 
-        let root = MenuPanelView(store: store, settings: store.settings) { [weak self] size in
+        // Size against the status-item’s current display (not always main).
+        layoutState.refresh(anchor: statusItem.button)
+
+        let root = MenuPanelView(
+            store: store,
+            settings: store.settings,
+            layout: layoutState
+        ) { [weak self] size in
             self?.queuePopoverSize(size)
         }
         let hosting = NSHostingController(rootView: root)
 
         popover = NSPopover()
-        // Initial size; shrink-wraps to content up to 80% of screen via onIdealSizeChange.
-        let initialHeight = min(680, MenuBarLayout.panelMaxHeight())
+        // Initial size; shrink-wraps to content up to 80% of presentation screen.
+        let initialHeight = min(680, layoutState.maxHeight)
         popover.contentSize = NSSize(width: MenuBarLayout.panelWidth, height: initialHeight)
         popover.behavior = .transient
         // Never animate frame changes — forced height tweens felt laggy; size follows content.
@@ -60,6 +69,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             .store(in: &cancellables)
 
+        // Display arrangement / resolution changes — reclamp to the active screen.
+        NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.refreshPresentationHeight()
+            }
+            .store(in: &cancellables)
+
         store.bootstrap()
     }
 
@@ -68,6 +85,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if popover.isShown {
             popover.performClose(sender)
         } else {
+            // Resolve 80% max against the display that owns this status item click.
+            refreshPresentationHeight()
             // Snap to latest measured size before show — no open animation from a stale height.
             if let pending = pendingPopoverSize {
                 applyPopoverSize(pending)
@@ -75,6 +94,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             popover.contentViewController?.view.window?.makeKey()
+            // After show, window.screen is definitive — refresh once more if needed.
+            DispatchQueue.main.async { [weak self] in
+                self?.refreshPresentationHeight()
+            }
+        }
+    }
+
+    /// Update layout max height from the status-item’s screen (multi-monitor safe).
+    private func refreshPresentationHeight() {
+        _ = layoutState.refresh(anchor: statusItem.button)
+        // Re-clamp any pending/applied popover size to the new cap.
+        if let pending = pendingPopoverSize {
+            applyPopoverSize(pending)
+        } else {
+            applyPopoverSize(popover.contentSize)
         }
     }
 
@@ -107,11 +141,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Fit popover to content height, never taller than 80% of the screen.
+    /// Fit popover to content height, never taller than 80% of the *presentation* screen.
     /// Snap only — panel height is driven by measured CLIENT/MODEL content, not a tween.
     private func applyPopoverSize(_ size: CGSize) {
         let width = max(size.width, MenuBarLayout.panelWidth)
-        let maxH = MenuBarLayout.panelMaxHeight()
+        // Prefer live layoutState (status-item screen); fall back to anchor resolve.
+        let maxH = layoutState?.maxHeight
+            ?? MenuBarLayout.panelMaxHeight(anchor: statusItem?.button)
         let height = min(max(size.height, 120), maxH)
         let next = NSSize(width: width, height: height)
         let current = popover.contentSize

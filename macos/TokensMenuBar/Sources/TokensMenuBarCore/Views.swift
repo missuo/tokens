@@ -4,6 +4,7 @@ import SwiftUI
 public struct MenuPanelView: View {
     @ObservedObject public var store: UsageStore
     @ObservedObject public var settings: AppSettings
+    @ObservedObject public var layout: PanelLayoutState
     /// Called whenever the panel’s ideal size changes so `NSPopover.contentSize` can shrink-wrap.
     public var onIdealSizeChange: ((CGSize) -> Void)?
 
@@ -20,14 +21,17 @@ public struct MenuPanelView: View {
     public init(
         store: UsageStore,
         settings: AppSettings,
+        layout: PanelLayoutState,
         onIdealSizeChange: ((CGSize) -> Void)? = nil
     ) {
         self.store = store
         self.settings = settings
+        self.layout = layout
         self.onIdealSizeChange = onIdealSizeChange
     }
 
-    private var panelMaxHeight: CGFloat { MenuBarLayout.panelMaxHeight() }
+    /// Cap from the presentation display (refreshed by AppDelegate from status-item screen).
+    private var panelMaxHeight: CGFloat { layout.maxHeight }
 
     private var maxBodyHeight: CGFloat {
         let chrome = chromeHeight > 0 ? chromeHeight : 140
@@ -127,6 +131,10 @@ public struct MenuPanelView: View {
         }
         .onChange(of: modelVisibleCount) { _ in
             DispatchQueue.main.async { syncBodyHeightAndPublish() }
+        }
+        .onChange(of: layout.maxHeight) { _ in
+            // Multi-monitor: opening on a smaller display must reclamp body + popover.
+            syncBodyHeightAndPublish()
         }
     }
 
