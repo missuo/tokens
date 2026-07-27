@@ -15,8 +15,4 @@ final class LayoutTests: XCTestCase {
         XCTAssertEqual(MenuBarLayout.panelMaxHeight(screen: nil), floor(900 * 0.80))
     }
 
-    func testMotionTokensMatchSpec() {
-        // Height no longer animates; only content crossfade remains.
-        _ = MenuBarMotion.contentCrossfade
     }
-}

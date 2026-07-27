@@ -21,8 +21,3 @@ public enum MenuBarLayout {
     }
 }
 
-/// Period-switch motion. Height snaps; only content may crossfade.
-public enum MenuBarMotion {
-    /// TOTAL / lists body opacity while period content swaps (no panel bounce).
-    public static let contentCrossfade: Animation = .easeInOut(duration: 0.2)
-}

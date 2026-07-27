@@ -11,10 +11,8 @@ public struct MenuPanelView: View {
     @State private var bodyContentHeight: CGFloat = 0
     /// Intrinsic height of header + tabs + footer (+ error shells).
     @State private var chromeHeight: CGFloat = 0
-    /// Animated body viewport height (explicit so period switches can spring).
-    @State private var animatedBodyHeight: CGFloat = MenuBarLayout.fallbackContentHeight
-    /// Skip spring on first layout so open isn’t a grow-in.
-    @State private var hasPublishedSize = false
+    /// Body viewport height (snaps; no spring).
+    @State private var bodyViewportHeight: CGFloat = MenuBarLayout.fallbackContentHeight
 
     public init(
         store: UsageStore,
@@ -46,11 +44,6 @@ public struct MenuPanelView: View {
         return min(bodyContentHeight, maxBodyHeight)
     }
 
-    /// Identity for content crossfade — period of the displayed report.
-    private var contentIdentity: String {
-        store.report?.period ?? store.period.rawValue
-    }
-
     public var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             measuredChrome {
@@ -80,12 +73,11 @@ public struct MenuPanelView: View {
                         .padding(.bottom, 6)
                 }
 
-                // Explicit height + clip so spring and content fade stay in sync.
+                // No `.id(period)` remount — that destroyed the tree mid-click and
+                // made period tabs feel like they needed a second press.
                 reportBody(report)
-                    .frame(height: animatedBodyHeight, alignment: .top)
+                    .frame(height: bodyViewportHeight, alignment: .top)
                     .clipped()
-                    .id(contentIdentity)
-                    .transition(.opacity)
 
                 measuredChrome {
                     footer(report)
@@ -110,8 +102,6 @@ public struct MenuPanelView: View {
         }
         .frame(width: MenuBarLayout.panelWidth)
         .frame(maxHeight: panelMaxHeight)
-        // Content may crossfade; never spring the panel/body height (popover bounce).
-        .animation(MenuBarMotion.contentCrossfade, value: contentIdentity)
         .onPreferenceChange(ChromeHeightPreferenceKey.self) { height in
             if abs(height - chromeHeight) > 0.5 {
                 chromeHeight = height
@@ -191,17 +181,15 @@ public struct MenuPanelView: View {
 
     /// Snap body height + notify AppKit popover (coalesced there). No height spring.
     private func syncBodyHeightAndPublish() {
-        if let target = targetBodyHeight, abs(target - animatedBodyHeight) > 0.5 {
-            // Instant height — springing this reflowed the whole NSPopover and felt like shake.
-            animatedBodyHeight = target
+        if let target = targetBodyHeight, abs(target - bodyViewportHeight) > 0.5 {
+            bodyViewportHeight = target
         }
 
         let chrome = chromeHeight > 0 ? chromeHeight : 140
-        let body = targetBodyHeight ?? (store.report == nil ? 0 : animatedBodyHeight)
+        let body = targetBodyHeight ?? (store.report == nil ? 0 : bodyViewportHeight)
         let ideal = min(chrome + body, panelMaxHeight)
         let height = max(ideal, 120)
         onIdealSizeChange?(CGSize(width: MenuBarLayout.panelWidth, height: height))
-        hasPublishedSize = true
     }
 
     // MARK: - Header
@@ -228,31 +216,28 @@ public struct MenuPanelView: View {
     private var periodTabs: some View {
         HStack(spacing: 0) {
             ForEach(UsagePeriod.allCases) { period in
-                Button {
-                    // Content crossfade + height spring; underline tracks period immediately.
-                    withAnimation(MenuBarMotion.contentCrossfade) {
+                // Use onTapGesture (not Button) so the first click in an NSPopover
+                // is not eaten by button activation / animation transaction.
+                Text(period.monoTitle)
+                    .font(.system(size: 11, design: .monospaced))
+                    .tracking(0.4)
+                    .foregroundStyle(store.period == period ? Color.primary : Color.secondary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+                    .contentShape(Rectangle())
+                    .overlay(alignment: .bottom) {
+                        Rectangle()
+                            .fill(store.period == period ? Color.primary : Color.clear)
+                            .frame(height: 2)
+                    }
+                    .onTapGesture {
                         store.setPeriod(period)
                     }
-                } label: {
-                    Text(period.monoTitle)
-                        .font(.system(size: 11, design: .monospaced))
-                        .tracking(0.4)
-                        .foregroundStyle(store.period == period ? Color.primary : Color.secondary)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 6)
-                        .overlay(alignment: .bottom) {
-                            Rectangle()
-                                .fill(store.period == period ? Color.primary : Color.clear)
-                                .frame(height: 2)
-                                // Underline snaps — no lag behind the click.
-                                .animation(Animation?.none, value: store.period)
-                        }
-                }
-                .buttonStyle(.plain)
+                    .accessibilityAddTraits(.isButton)
+                    .accessibilityAddTraits(store.period == period ? .isSelected : [])
+                    .accessibilityLabel(period.monoTitle)
             }
         }
-        // Tab label color can ease lightly; height/body use their own animations.
-        .animation(MenuBarMotion.contentCrossfade, value: store.period)
     }
 
     // MARK: - TOTAL
