@@ -1,6 +1,9 @@
 import Foundation
 
 public struct UsageService {
+    private static let probeLock = NSLock()
+    private static var probeCache: [String: Bool] = [:]
+
     /// Resolve a tokens binary that supports `tokens usage --period`.
     ///
     /// Homebrew still ships an older `tokens usage` (provider quota TUI) that only
@@ -59,6 +62,13 @@ public struct UsageService {
 
     /// True when `tokens usage --help` advertises `--period` (Menu Bar schema).
     public static func supportsMenuBarUsage(at path: String) -> Bool {
+        probeLock.lock()
+        if let cached = probeCache[path] {
+            probeLock.unlock()
+            return cached
+        }
+        probeLock.unlock()
+
         let process = Process()
         process.executableURL = URL(fileURLWithPath: path)
         process.arguments = ["usage", "--help"]
@@ -75,7 +85,11 @@ public struct UsageService {
         let out = String(data: stdout.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
         let err = String(data: stderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
         let help = out + err
-        return help.contains("--period")
+        let ok = help.contains("--period")
+        probeLock.lock()
+        probeCache[path] = ok
+        probeLock.unlock()
+        return ok
     }
 
     private static func whichAllTokens() -> [String] {

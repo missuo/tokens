@@ -14,8 +14,10 @@ public final class UsageStore: ObservableObject {
 
     public let settings: AppSettings
     private var timer: Timer?
-    private var inFlight = false
     private var statusItem: NSStatusItem?
+    /// Monotonic token so only the latest refresh may clear loading / write report.
+    private var refreshGeneration = 0
+    private var refreshTask: Task<Void, Never>?
 
     public init(settings: AppSettings? = nil) {
         let settings = settings ?? AppSettings()
@@ -31,7 +33,8 @@ public final class UsageStore: ObservableObject {
 
     public func bootstrap() {
         resolveBinary()
-        Task { await refresh(forceRescan: false, useSnapshot: false) }
+        // Warm snapshot path first if possible is still a real scan on first launch.
+        startRefresh(forceRescan: false, useSnapshot: false, showSpinner: true)
         restartTimer()
     }
 
@@ -45,17 +48,20 @@ public final class UsageStore: ObservableObject {
     }
 
     public func setPeriod(_ newPeriod: UsagePeriod) {
+        guard newPeriod != period || report?.period != newPeriod.cliValue else { return }
         period = newPeriod
         settings.lastPeriod = newPeriod
-        Task { await refresh(forceRescan: false, useSnapshot: true) }
+        // Period switches should hit Layer B snapshot (ms). Always allow replacing
+        // an in-flight scan so the spinner cannot stick on a superseded request.
+        startRefresh(forceRescan: false, useSnapshot: true, showSpinner: report == nil)
     }
 
     public func manualRefresh() {
-        Task { await refresh(forceRescan: false, useSnapshot: false) }
+        startRefresh(forceRescan: false, useSnapshot: false, showSpinner: true)
     }
 
     public func fullRescan() {
-        Task { await refresh(forceRescan: true, useSnapshot: false) }
+        startRefresh(forceRescan: true, useSnapshot: false, showSpinner: true)
     }
 
     public func restartTimer() {
@@ -66,7 +72,7 @@ public final class UsageStore: ObservableObject {
         }
         timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                await self?.refresh(forceRescan: false, useSnapshot: false)
+                self?.startRefresh(forceRescan: false, useSnapshot: false, showSpinner: false)
             }
         }
     }
@@ -81,39 +87,73 @@ public final class UsageStore: ObservableObject {
         statusItem?.button?.title = " \(title)"
     }
 
-    private func refresh(forceRescan: Bool, useSnapshot: Bool) async {
-        if inFlight { return }
-        inFlight = true
-        isLoading = true
-        defer {
-            isLoading = false
-            inFlight = false
-        }
+    private func startRefresh(forceRescan: Bool, useSnapshot: Bool, showSpinner: Bool) {
+        refreshTask?.cancel()
+        refreshGeneration += 1
+        let generation = refreshGeneration
 
-        resolveBinary()
-        guard let binaryPath, !binaryMissing else {
-            lastError = UsageServiceError.binaryNotFound.localizedDescription
-            updateStatusTitle()
-            return
+        if showSpinner {
+            isLoading = true
         }
 
         let period = self.period
         let refreshFlag = !useSnapshot && !forceRescan
-        do {
-            let report = try await Task.detached(priority: .userInitiated) {
-                try UsageService().fetch(
-                    period: period,
-                    refresh: refreshFlag,
-                    forceRescan: forceRescan,
-                    binaryPath: binaryPath
-                )
-            }.value
-            self.report = report
-            self.lastError = nil
-            updateStatusTitle()
-        } catch {
-            self.lastError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-            updateStatusTitle()
+
+        refreshTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                Task { @MainActor in
+                    // Only the latest generation clears the spinner.
+                    if self.refreshGeneration == generation {
+                        self.isLoading = false
+                    }
+                }
+            }
+
+            await MainActor.run { self.resolveBinary() }
+
+            let binaryPath = await MainActor.run { self.binaryPath }
+            let missing = await MainActor.run { self.binaryMissing }
+
+            guard let binaryPath, !missing else {
+                await MainActor.run {
+                    guard self.refreshGeneration == generation else { return }
+                    self.lastError = UsageServiceError.binaryNotFound.localizedDescription
+                    self.updateStatusTitle()
+                }
+                return
+            }
+
+            if Task.isCancelled { return }
+
+            do {
+                let report = try await Task.detached(priority: .userInitiated) {
+                    try UsageService().fetch(
+                        period: period,
+                        refresh: refreshFlag,
+                        forceRescan: forceRescan,
+                        binaryPath: binaryPath
+                    )
+                }.value
+
+                if Task.isCancelled { return }
+                await MainActor.run {
+                    guard self.refreshGeneration == generation else { return }
+                    self.report = report
+                    self.lastError = nil
+                    self.updateStatusTitle()
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                if Task.isCancelled { return }
+                await MainActor.run {
+                    guard self.refreshGeneration == generation else { return }
+                    self.lastError =
+                        (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                    self.updateStatusTitle()
+                }
+            }
         }
     }
 
@@ -124,6 +164,7 @@ public final class UsageStore: ObservableObject {
     }
 
     public func quit() {
+        refreshTask?.cancel()
         NSApp.terminate(nil)
     }
 }
