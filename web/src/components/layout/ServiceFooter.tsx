@@ -67,14 +67,26 @@ export function ServiceFooter() {
           </a>
           <span aria-hidden="true" className="opacity-50">·</span>
           <a
-            href="https://neon.com"
+            href="https://aiven.io"
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-1 transition-colors hover:text-foreground"
           >
+            {/* Aiven ships its mark white-on-dark rather than as a coloured
+                glyph on transparent, so unlike the other two this one carries
+                its own background. That is what makes it legible in both
+                themes — an `<img>`-loaded SVG cannot inherit `currentColor`.
+                The asset is unmodified; the rounding is CSS so the square
+                reads as an icon rather than a block. */}
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/icons/neon.svg" alt="" width={13} height={13} className="size-3.5" />
-            Neon
+            <img
+              src="/icons/aiven.svg"
+              alt=""
+              width={13}
+              height={13}
+              className="size-3.5 rounded-[3px]"
+            />
+            Aiven
           </a>
         </span>
       </div>

@@ -432,7 +432,7 @@ export default function DocsPage() {
                 <CardTitle className="text-sm">The database</CardTitle>
               </CardHeader>
               <CardContent className="text-sm leading-relaxed text-muted-foreground">
-                Neon (Postgres), reached through Cloudflare Hyperdrive, which
+                Aiven (Postgres), reached through Cloudflare Hyperdrive, which
                 keeps warm pooled connections beside the database so a page
                 issuing several queries does not pay a fresh handshake for each.
                 The Worker is pinned to the same region: a request crosses the
