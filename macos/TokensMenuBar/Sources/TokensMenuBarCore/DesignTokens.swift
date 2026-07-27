@@ -7,10 +7,8 @@ public enum MenuBarLayout {
     public static let panelMaxHeightScreenFraction: CGFloat = 0.80
     public static let horizontalPadding: CGFloat = 18
     public static let sectionSpacing: CGFloat = 22
-    public static let nestedListMaxHeight: CGFloat = 168
-    public static let nestedListThreshold = 8
-    /// CLIENT list: collapsed page size; chevron loads another page.
-    public static let clientPageSize = 5
+    /// CLIENT / MODEL lists: collapsed page size; chevron loads another page.
+    public static let listPageSize = 5
     public static let shareBarHeight: CGFloat = 2
     public static let chartHeight: CGFloat = 128
     /// Fallback when content has not been measured yet (loading / first paint).

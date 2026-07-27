@@ -13,8 +13,9 @@ public struct MenuPanelView: View {
     @State private var chromeHeight: CGFloat = 0
     /// Body viewport height (snaps; no spring).
     @State private var bodyViewportHeight: CGFloat = MenuBarLayout.fallbackContentHeight
-    /// CLIENT list: how many rows are visible (chevron loads more).
-    @State private var clientVisibleCount: Int = MenuBarLayout.clientPageSize
+    /// CLIENT / MODEL lists: how many rows are visible (chevron loads more).
+    @State private var clientVisibleCount: Int = MenuBarLayout.listPageSize
+    @State private var modelVisibleCount: Int = MenuBarLayout.listPageSize
 
     public init(
         store: UsageStore,
@@ -121,14 +122,17 @@ public struct MenuPanelView: View {
         .onAppear { syncBodyHeightAndPublish() }
         .onChange(of: store.report?.generatedAt) { _ in syncBodyHeightAndPublish() }
         .onChange(of: store.period) { _ in
-            // Reset CLIENT expand page; keep prior panel height until new report lands.
-            clientVisibleCount = MenuBarLayout.clientPageSize
+            // Reset expand pages; keep prior panel height until new report lands.
+            clientVisibleCount = MenuBarLayout.listPageSize
+            modelVisibleCount = MenuBarLayout.listPageSize
         }
         .onChange(of: store.isLoading) { _ in syncBodyHeightAndPublish() }
         .onChange(of: store.binaryMissing) { _ in syncBodyHeightAndPublish() }
         .onChange(of: store.lastError) { _ in syncBodyHeightAndPublish() }
         .onChange(of: clientVisibleCount) { _ in
-            // Expanding clients grows content; remeasure after next layout pass.
+            DispatchQueue.main.async { syncBodyHeightAndPublish() }
+        }
+        .onChange(of: modelVisibleCount) { _ in
             DispatchQueue.main.async { syncBodyHeightAndPublish() }
         }
     }
@@ -304,16 +308,13 @@ public struct MenuPanelView: View {
         ]
         let accents: [Double] = [1, 0.72, 0.48, 0.28]
 
-        return VStack(alignment: .leading, spacing: 12) {
-            sectionLabel("BREAKDOWN")
-            HStack(spacing: 6) {
-                ForEach(Array(items.enumerated()), id: \.offset) { index, item in
-                    breakdownCard(
-                        label: item.0,
-                        value: item.1,
-                        topAccent: Color.primary.opacity(accents[index])
-                    )
-                }
+        return HStack(spacing: 6) {
+            ForEach(Array(items.enumerated()), id: \.offset) { index, item in
+                breakdownCard(
+                    label: item.0,
+                    value: item.1,
+                    topAccent: Color.primary.opacity(accents[index])
+                )
             }
         }
     }
@@ -363,13 +364,17 @@ public struct MenuPanelView: View {
         let hasMore = all.count > visible.count
 
         return VStack(alignment: .leading, spacing: 12) {
-            sectionLabel("CLIENT")
             if all.isEmpty {
                 emptyHint("No client data")
             } else {
                 clientRows(visible)
                 if hasMore {
-                    clientExpandChevron(remaining: all.count - visible.count)
+                    expandChevron(remaining: all.count - visible.count, accessibilityNoun: "clients") {
+                        clientVisibleCount = min(
+                            clientVisibleCount + MenuBarLayout.listPageSize,
+                            clientVisibleCount + (all.count - visible.count)
+                        )
+                    }
                 }
             }
         }
@@ -383,14 +388,13 @@ public struct MenuPanelView: View {
         }
     }
 
-    /// Centered down-chevron: load another page of clients (no nested scrollbar).
-    private func clientExpandChevron(remaining: Int) -> some View {
-        Button {
-            clientVisibleCount = min(
-                clientVisibleCount + MenuBarLayout.clientPageSize,
-                clientVisibleCount + remaining
-            )
-        } label: {
+    /// Centered down-chevron: load another page (no nested scrollbar).
+    private func expandChevron(
+        remaining: Int,
+        accessibilityNoun: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
             Image(systemName: "chevron.down")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.secondary)
@@ -399,7 +403,7 @@ public struct MenuPanelView: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Show more clients")
+        .accessibilityLabel("Show more \(accessibilityNoun)")
         .accessibilityHint("\(remaining) more")
     }
 
@@ -424,16 +428,23 @@ public struct MenuPanelView: View {
     // MARK: - MODEL
 
     private func modelSection(_ report: UsageReport) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            sectionLabel("MODEL")
-            if report.byModel.isEmpty {
+        let all = report.byModel
+        let visible = Array(all.prefix(max(modelVisibleCount, 0)))
+        let hasMore = all.count > visible.count
+
+        return VStack(alignment: .leading, spacing: 10) {
+            if all.isEmpty {
                 emptyHint("No model data")
-            } else if report.byModel.count > MenuBarLayout.nestedListThreshold {
-                nestedListScroll {
-                    modelRows(report.byModel)
-                }
             } else {
-                modelRows(report.byModel)
+                modelRows(visible)
+                if hasMore {
+                    expandChevron(remaining: all.count - visible.count, accessibilityNoun: "models") {
+                        modelVisibleCount = min(
+                            modelVisibleCount + MenuBarLayout.listPageSize,
+                            modelVisibleCount + (all.count - visible.count)
+                        )
+                    }
+                }
             }
         }
     }
@@ -530,35 +541,6 @@ public struct MenuPanelView: View {
     }
 
     // MARK: - Shared
-
-    /// Nested CLIENT/MODEL list with top/bottom edge fades (IX-B).
-    private func nestedListScroll<Content: View>(
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        let fade = Color(nsColor: .windowBackgroundColor)
-        return ScrollView {
-            content()
-        }
-        .frame(maxHeight: MenuBarLayout.nestedListMaxHeight)
-        .overlay(alignment: .top) {
-            LinearGradient(
-                colors: [fade, fade.opacity(0)],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .frame(height: 16)
-            .allowsHitTesting(false)
-        }
-        .overlay(alignment: .bottom) {
-            LinearGradient(
-                colors: [fade.opacity(0), fade],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .frame(height: 16)
-            .allowsHitTesting(false)
-        }
-    }
 
     private func sectionLabel(_ text: String) -> some View {
         Text(text)
