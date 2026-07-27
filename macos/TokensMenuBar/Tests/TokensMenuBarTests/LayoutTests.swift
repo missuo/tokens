@@ -14,4 +14,11 @@ final class LayoutTests: XCTestCase {
     func testPanelMaxHeightFallsBackWithoutScreen() {
         XCTAssertEqual(MenuBarLayout.panelMaxHeight(screen: nil), floor(900 * 0.80))
     }
+
+    func testMotionTokensMatchSpec() {
+        XCTAssertEqual(MenuBarMotion.popoverSizeDuration, 0.34, accuracy: 0.001)
+        // Ensure motion tokens exist for height spring + content crossfade (values are Animation).
+        _ = MenuBarMotion.heightSpring
+        _ = MenuBarMotion.contentCrossfade
+    }
 }

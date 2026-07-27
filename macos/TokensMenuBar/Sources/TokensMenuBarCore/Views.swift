@@ -11,6 +11,10 @@ public struct MenuPanelView: View {
     @State private var bodyContentHeight: CGFloat = 0
     /// Intrinsic height of header + tabs + footer (+ error shells).
     @State private var chromeHeight: CGFloat = 0
+    /// Animated body viewport height (explicit so period switches can spring).
+    @State private var animatedBodyHeight: CGFloat = MenuBarLayout.fallbackContentHeight
+    /// Skip spring on first layout so open isn’t a grow-in.
+    @State private var hasPublishedSize = false
 
     public init(
         store: UsageStore,
@@ -33,12 +37,18 @@ public struct MenuPanelView: View {
         bodyContentHeight > maxBodyHeight + 1
     }
 
-    private var bodyViewportHeight: CGFloat? {
+    /// Target body height for the current measurement (nil when no report body).
+    private var targetBodyHeight: CGFloat? {
         guard store.report != nil, !store.binaryMissing else { return nil }
         if bodyContentHeight <= 0 {
             return MenuBarLayout.fallbackContentHeight
         }
         return min(bodyContentHeight, maxBodyHeight)
+    }
+
+    /// Identity for content crossfade — period of the displayed report.
+    private var contentIdentity: String {
+        store.report?.period ?? store.period.rawValue
     }
 
     public var body: some View {
@@ -70,7 +80,12 @@ public struct MenuPanelView: View {
                         .padding(.bottom, 6)
                 }
 
+                // Explicit height + clip so spring and content fade stay in sync.
                 reportBody(report)
+                    .frame(height: animatedBodyHeight, alignment: .top)
+                    .clipped()
+                    .id(contentIdentity)
+                    .transition(.opacity)
 
                 measuredChrome {
                     footer(report)
@@ -95,24 +110,29 @@ public struct MenuPanelView: View {
         }
         .frame(width: MenuBarLayout.panelWidth)
         .frame(maxHeight: panelMaxHeight)
+        .animation(MenuBarMotion.contentCrossfade, value: contentIdentity)
+        .animation(MenuBarMotion.heightSpring, value: animatedBodyHeight)
         .onPreferenceChange(ChromeHeightPreferenceKey.self) { height in
             if abs(height - chromeHeight) > 0.5 {
                 chromeHeight = height
             }
-            publishIdealSize()
+            syncBodyHeightAndPublish()
         }
         .onPreferenceChange(BodyHeightPreferenceKey.self) { height in
             if height > 0, abs(height - bodyContentHeight) > 0.5 {
                 bodyContentHeight = height
             }
-            publishIdealSize()
+            syncBodyHeightAndPublish()
         }
-        .onAppear { publishIdealSize() }
-        .onChange(of: store.report?.generatedAt) { _ in publishIdealSize() }
-        .onChange(of: store.period) { _ in publishIdealSize() }
-        .onChange(of: store.isLoading) { _ in publishIdealSize() }
-        .onChange(of: store.binaryMissing) { _ in publishIdealSize() }
-        .onChange(of: store.lastError) { _ in publishIdealSize() }
+        .onAppear { syncBodyHeightAndPublish() }
+        .onChange(of: store.report?.generatedAt) { _ in syncBodyHeightAndPublish() }
+        .onChange(of: store.period) { _ in
+            // Keep prior body height until the new period remeasures — avoids collapse flash.
+            syncBodyHeightAndPublish()
+        }
+        .onChange(of: store.isLoading) { _ in syncBodyHeightAndPublish() }
+        .onChange(of: store.binaryMissing) { _ in syncBodyHeightAndPublish() }
+        .onChange(of: store.lastError) { _ in syncBodyHeightAndPublish() }
     }
 
     @ViewBuilder
@@ -135,10 +155,10 @@ public struct MenuPanelView: View {
             ScrollView(.vertical, showsIndicators: true) {
                 sections
             }
-            .frame(height: maxBodyHeight)
         } else {
-            // Intrinsic height — no ScrollView so GeometryReader measures true content size.
+            // Top-aligned intrinsic content inside the animated viewport frame.
             sections
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
     }
 
@@ -169,12 +189,26 @@ public struct MenuPanelView: View {
             )
     }
 
-    private func publishIdealSize() {
+    /// Push animated body height + notify AppKit popover (coalesced there).
+    private func syncBodyHeightAndPublish() {
+        if let target = targetBodyHeight {
+            if abs(target - animatedBodyHeight) > 0.5 {
+                if hasPublishedSize {
+                    withAnimation(MenuBarMotion.heightSpring) {
+                        animatedBodyHeight = target
+                    }
+                } else {
+                    animatedBodyHeight = target
+                }
+            }
+        }
+
         let chrome = chromeHeight > 0 ? chromeHeight : 140
-        let body = bodyViewportHeight ?? 0
+        let body = targetBodyHeight ?? (store.report == nil ? 0 : animatedBodyHeight)
         let ideal = min(chrome + body, panelMaxHeight)
         let height = max(ideal, 120)
         onIdealSizeChange?(CGSize(width: MenuBarLayout.panelWidth, height: height))
+        hasPublishedSize = true
     }
 
     // MARK: - Header
@@ -202,7 +236,10 @@ public struct MenuPanelView: View {
         HStack(spacing: 0) {
             ForEach(UsagePeriod.allCases) { period in
                 Button {
-                    store.setPeriod(period)
+                    // Content crossfade + height spring; underline tracks period immediately.
+                    withAnimation(MenuBarMotion.contentCrossfade) {
+                        store.setPeriod(period)
+                    }
                 } label: {
                     Text(period.monoTitle)
                         .font(.system(size: 11, design: .monospaced))
@@ -214,11 +251,15 @@ public struct MenuPanelView: View {
                             Rectangle()
                                 .fill(store.period == period ? Color.primary : Color.clear)
                                 .frame(height: 2)
+                                // Underline snaps — no lag behind the click.
+                                .animation(Animation?.none, value: store.period)
                         }
                 }
                 .buttonStyle(.plain)
             }
         }
+        // Tab label color can ease lightly; height/body use their own animations.
+        .animation(MenuBarMotion.contentCrossfade, value: store.period)
     }
 
     // MARK: - TOTAL

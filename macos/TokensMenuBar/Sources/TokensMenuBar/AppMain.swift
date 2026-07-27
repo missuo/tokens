@@ -22,6 +22,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var settingsWindow: NSWindow?
     private var cancellables = Set<AnyCancellable>()
 
+    /// Coalesce preference-driven size thrash into one apply per turn.
+    private var pendingPopoverSize: CGSize?
+    private var sizeApplyScheduled = false
+    /// Bumps to cancel an in-flight height interpolation when a newer size arrives.
+    private var sizeAnimGeneration = 0
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         store = UsageStore()
 
@@ -34,7 +40,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         store.attachStatusItem(statusItem)
 
         let root = MenuPanelView(store: store, settings: store.settings) { [weak self] size in
-            self?.updatePopoverSize(size)
+            self?.queuePopoverSize(size)
         }
         let hosting = NSHostingController(rootView: root)
 
@@ -63,6 +69,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if popover.isShown {
             popover.performClose(sender)
         } else {
+            // Snap to latest measured size before show — no open animation from a stale height.
+            if let pending = pendingPopoverSize {
+                applyPopoverSize(pending, animated: false)
+                pendingPopoverSize = nil
+            }
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             popover.contentViewController?.view.window?.makeKey()
         }
@@ -83,15 +94,63 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settingsWindow = window
     }
 
+    /// Preference keys can fire several times per layout; merge into one apply.
+    private func queuePopoverSize(_ size: CGSize) {
+        pendingPopoverSize = size
+        guard !sizeApplyScheduled else { return }
+        sizeApplyScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.sizeApplyScheduled = false
+            guard let pending = self.pendingPopoverSize else { return }
+            self.pendingPopoverSize = nil
+            self.applyPopoverSize(pending, animated: self.popover.isShown)
+        }
+    }
+
     /// Fit popover to content height, never taller than 80% of the screen.
-    private func updatePopoverSize(_ size: CGSize) {
+    /// When visible, ease height so period switches don’t hard-cut.
+    private func applyPopoverSize(_ size: CGSize, animated: Bool) {
         let width = max(size.width, MenuBarLayout.panelWidth)
         let maxH = MenuBarLayout.panelMaxHeight()
         let height = min(max(size.height, 120), maxH)
         let next = NSSize(width: width, height: height)
-        guard abs(popover.contentSize.height - next.height) > 0.5
-            || abs(popover.contentSize.width - next.width) > 0.5
+        let current = popover.contentSize
+        guard abs(current.height - next.height) > 0.5
+            || abs(current.width - next.width) > 0.5
         else { return }
-        popover.contentSize = next
+
+        sizeAnimGeneration += 1
+        let generation = sizeAnimGeneration
+
+        guard animated else {
+            popover.contentSize = next
+            return
+        }
+
+        let fromH = current.height
+        let toH = next.height
+        let fromW = current.width
+        let toW = next.width
+        let duration = MenuBarMotion.popoverSizeDuration
+        let start = CACurrentMediaTime()
+
+        func tick() {
+            guard sizeAnimGeneration == generation else { return }
+            let t = min(1, (CACurrentMediaTime() - start) / duration)
+            // Smooth stop: 1 - (1-t)^3 — pairs with SwiftUI height spring feel.
+            let eased = 1 - pow(1 - t, 3)
+            let h = fromH + (toH - fromH) * CGFloat(eased)
+            let w = fromW + (toW - fromW) * CGFloat(eased)
+            popover.contentSize = NSSize(width: w, height: h)
+            if t < 1 {
+                DispatchQueue.main.async {
+                    tick()
+                }
+            } else {
+                popover.contentSize = next
+            }
+        }
+        tick()
     }
 }
