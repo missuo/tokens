@@ -208,7 +208,6 @@ function buildPeriodLeaderboardData(
   sortBy: SortBy = "tokens",
   search: string = ""
 ): LeaderboardData {
-  const offset = (page - 1) * limit;
   const parsed = parseSearchDirectives(search);
 
   let filteredRows = rows;
@@ -239,13 +238,38 @@ function buildPeriodLeaderboardData(
     });
   }
 
-  const aggregatedUsers = aggregatePeriodRows(filteredRows, sortBy);
+  return pageRanking(
+    aggregatePeriodRows(filteredRows, sortBy),
+    page,
+    limit,
+    period,
+    sortBy,
+    parsed.text
+  );
+}
+
+/**
+ * Rank, text-filter and slice an already-aggregated ranking.
+ *
+ * Pure, so it can run per request against a shared cached ranking rather than
+ * being baked into a per-page cache entry of its own. Ranks are assigned before
+ * the text filter so a search shows each user's real position on the board.
+ */
+function pageRanking(
+  aggregatedUsers: Array<Omit<LeaderboardUser, "rank">>,
+  page: number,
+  limit: number,
+  period: Period,
+  sortBy: SortBy,
+  searchText: string
+): LeaderboardData {
+  const offset = (page - 1) * limit;
   const rankedUsers = aggregatedUsers.map((user, index) => ({
     ...user,
     rank: index + 1,
   }));
   const textFilteredUsers = rankedUsers.filter((user) =>
-    matchesLeaderboardSearch(user, parsed.text)
+    matchesLeaderboardSearch(user, searchText)
   );
   const pagedUsers = textFilteredUsers.slice(offset, offset + limit);
 
@@ -269,12 +293,16 @@ function buildPeriodLeaderboardData(
   };
 }
 
-function buildPeriodUserRank(
-  rows: LeaderboardPeriodRow[],
-  username: string,
-  sortBy: SortBy = "tokens"
+/**
+ * Locate one user in an already-ranked list, carrying their position with them.
+ *
+ * Pure and shared, so the number beside "Your position" is by construction the
+ * same number the table shows for that row.
+ */
+function findInRanking(
+  aggregatedUsers: Array<Omit<LeaderboardUser, "rank">>,
+  username: string
 ): LeaderboardUser | null {
-  const aggregatedUsers = aggregatePeriodRows(rows, sortBy);
   const usernameCacheKey = normalizeUsernameCacheKey(username);
   const matchingUsers = aggregatedUsers.filter(
     (user) => normalizeUsernameCacheKey(user.username) === usernameCacheKey
@@ -561,6 +589,55 @@ async function fetchLeaderboardData(
 const MAX_SEARCH_LENGTH = 120;
 const MAX_PAGE = 500;
 
+function periodCacheKey(
+  period: Exclude<Period, "all">,
+  customFrom?: string,
+  customTo?: string
+): string {
+  return period === "custom"
+    ? `custom:${customFrom}:${customTo}`
+    : period === "today"
+    ? `today:${customFrom ?? ""}`
+    : period;
+}
+
+/**
+ * The period's whole ranking, aggregated once and shared by every reader.
+ *
+ * The viewer's own row used to be a second query under its own cache key,
+ * rendered beside a table built from a different entry. Nothing made the two
+ * agree: after an invalidation each is refilled whenever it happens to be
+ * requested next, and `today` climbs all day as submissions land — so any gap
+ * between those moments showed the same person two different totals on one
+ * screen. Reading both from a single entry makes disagreement impossible
+ * rather than merely unlikely, and costs one query instead of two.
+ *
+ * Deliberately independent of page, viewer and search: paging and text
+ * filtering are pure functions applied per request. `withBreakdown: false`
+ * because aggregation never reads that column — a `client:`/`model:` directive
+ * does, and that path keeps its own fetch since it aggregates a filtered
+ * subset and cannot share this result.
+ */
+function getPeriodRanking(
+  period: Exclude<Period, "all">,
+  sortBy: SortBy,
+  customFrom?: string,
+  customTo?: string
+): Promise<Array<Omit<LeaderboardUser, "rank">>> {
+  return unstable_cache(
+    async () =>
+      aggregatePeriodRows(
+        await fetchPeriodLeaderboardRows(period, customFrom, customTo, false),
+        sortBy
+      ),
+    [`period-ranking:${periodCacheKey(period, customFrom, customTo)}:${sortBy}`],
+    {
+      tags: ["leaderboard", `leaderboard:${period}`, "user-rank"],
+      revalidate: 60,
+    }
+  )();
+}
+
 export function getLeaderboardData(
   period: Period = "all",
   requestedPage: number = 1,
@@ -574,6 +651,16 @@ export function getLeaderboardData(
     ? Math.min(MAX_PAGE, Math.max(1, Math.floor(requestedPage)))
     : 1;
   const search = requestedSearch.slice(0, MAX_SEARCH_LENGTH);
+
+  // A plain listing over a bounded period is a slice of the same ranking the
+  // viewer's row comes from, so it reads that shared entry instead of caching
+  // its own copy. Caching the slice was what let the two drift apart.
+  const parsedSearch = parseSearchDirectives(search);
+  if (period !== "all" && !hasDirectives(parsedSearch)) {
+    return getPeriodRanking(period, sortBy, customFrom, customTo).then((ranking) =>
+      pageRanking(ranking, page, limit, period, sortBy, parsedSearch.text)
+    );
+  }
 
   const cacheKey = period === "custom"
     ? `leaderboard:custom:${customFrom}:${customTo}:${page}:${limit}:${sortBy}:${search}`
@@ -595,19 +682,14 @@ export function getLeaderboardData(
 // USER RANK
 // ============================================================================
 
-async function fetchUserRank(
+/**
+ * All-time standing only. Bounded periods are served from the shared ranking
+ * in `getPeriodRanking`, which is what keeps them identical to the table.
+ */
+async function fetchAllTimeUserRank(
   username: string,
-  period: Period,
-  sortBy: SortBy,
-  customFrom?: string,
-  customTo?: string
+  sortBy: SortBy
 ): Promise<LeaderboardUser | null> {
-  if (period !== "all") {
-    // Rank is a position in the full ordering; it never inspects the breakdown.
-    const rows = await fetchPeriodLeaderboardRows(period, customFrom, customTo, false);
-    return buildPeriodUserRank(rows, username, sortBy);
-  }
-
   const userResult = await db
     .select({ id: users.id, username: users.username, displayName: users.displayName, avatarUrl: users.avatarUrl, verified: verifiedExpr() })
     .from(users)
@@ -682,16 +764,25 @@ export function getUserRank(
   customFrom?: string,
   customTo?: string
 ): Promise<LeaderboardUser | null> {
+  // No cache entry of its own for a bounded period: the shared ranking is
+  // already cached, and wrapping it again would snapshot that result under a
+  // second key — which is precisely the drift this change removes. Looking the
+  // viewer up in the array is pure and cheap.
+  if (period !== "all") {
+    return getPeriodRanking(period, sortBy, customFrom, customTo).then((ranking) =>
+      findInRanking(ranking, username)
+    );
+  }
+
+  // All-time is a different shape: the table is a paginated SQL query the
+  // viewer may not appear in, so their standing genuinely needs its own
+  // lookup. Both sides sum the same submissions column, and an all-time total
+  // moves slowly enough that a minute of skew is invisible.
   const usernameCacheKey = normalizeUsernameCacheKey(username);
-  const periodKey = period === "custom"
-    ? `custom:${customFrom}:${customTo}`
-    : period === "today"
-    ? `today:${customFrom ?? ""}`
-    : period;
 
   return unstable_cache(
-    () => fetchUserRank(username, period, sortBy, customFrom, customTo),
-    [`user-rank:${usernameCacheKey}:${periodKey}:${sortBy}`],
+    () => fetchAllTimeUserRank(username, sortBy),
+    [`user-rank:${usernameCacheKey}:all:${sortBy}`],
     {
       tags: ["leaderboard", "user-rank", `user-rank:${usernameCacheKey}`],
       revalidate: 60,
