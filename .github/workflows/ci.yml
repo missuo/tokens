@@ -17,11 +17,13 @@ on:
   pull_request:
     paths:
       - "cli/**"
+      - "web/**"
       - ".github/workflows/ci.yml"
   push:
     branches: [main]
     paths:
       - "cli/**"
+      - "web/**"
       - ".github/workflows/ci.yml"
 
 # A PR that gets three pushes in a minute should not tie up nine runners
@@ -100,3 +102,46 @@ jobs:
       - name: Test
         shell: bash
         run: cargo test --manifest-path cli/Cargo.toml
+
+  # One runner: nothing here is platform-specific, unlike the CLI.
+  #
+  # This job runs even for a CLI-only change, and the CLI matrix runs even for a
+  # web-only change. Filtering per job would need either a third-party
+  # paths-filter action or a hand-rolled changes job, and both make the skipped
+  # jobs report as such — which quietly blocks a merge the day one of these is
+  # made a required check. A few spare runner-minutes buys a check status that
+  # always means what it says.
+  web:
+    name: Web
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: oven-sh/setup-bun@v2
+
+      # --frozen-lockfile, unlike the release workflow, which deliberately does
+      # not use it. Here a lockfile that disagrees with package.json is exactly
+      # the kind of thing a PR should fail on: the styled-components removal
+      # changed both, and a stale lock would have installed the packages it had
+      # just dropped.
+      - name: Install
+        run: cd web && bun install --frozen-lockfile
+
+      # No --max-warnings 0. The tree carries a handful of long-standing
+      # warnings that have nothing to do with any given PR, and failing on them
+      # would make this job permanently red for reasons its author cannot fix.
+      # Errors still fail the run.
+      - name: Lint
+        run: cd web && bun run lint
+
+      - name: Typecheck
+        run: cd web && bunx tsc --noEmit
+
+      # The build needs no secrets — verified by building with no .env present
+      # and no DATABASE_URL set. Every page that touches the database is
+      # server-rendered on demand, and the leaderboard explicitly tolerates a
+      # missing DATABASE_URL. If that ever changes, this step is where it will
+      # surface first.
+      - name: Build
+        run: cd web && bun run build
