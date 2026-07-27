@@ -1,0 +1,102 @@
+name: CI
+
+# Does the Rust workspace compile, link, run, and stay lint-clean — on every
+# platform family it ships to. Nothing here publishes anything.
+#
+# Three runners rather than one because the workspace carries 61 `cfg(unix)` /
+# `cfg(windows)` / `cfg(target_os)` branches across 12 files, 20 of them in
+# antigravity.rs and 8 in auth.rs. Code behind a `cfg` the host does not match
+# is never compiled at all, so a Linux-only job would give a green tick to a PR
+# that does not build on Windows — which is where the credential-writing
+# fallback in auth.rs lives.
+#
+# The publish workflow builds eight targets, but only on demand for a release.
+# This is the gate that runs before a PR merges.
+
+on:
+  pull_request:
+    paths:
+      - "cli/**"
+      - ".github/workflows/ci.yml"
+  push:
+    branches: [main]
+    paths:
+      - "cli/**"
+      - ".github/workflows/ci.yml"
+
+# A PR that gets three pushes in a minute should not tie up nine runners
+# answering a question about the first one.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # Not fail-fast: "builds on Linux, breaks on Windows" is the single most
+      # useful thing this workflow can tell you, and cancelling the other legs
+      # the moment one fails is what hides it.
+      fail-fast: false
+      matrix:
+        include:
+          - { name: Linux, os: ubuntu-latest, bin: tokens }
+          - { name: macOS, os: macos-latest, bin: tokens }
+          - { name: Windows, os: windows-latest, bin: tokens.exe }
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            cli/target/
+          key: ci-${{ matrix.os }}-${{ hashFiles('cli/Cargo.lock') }}
+          restore-keys: ci-${{ matrix.os }}-
+
+      # tokens-core already carries `#![deny(clippy::all)]`, but tokens-cli does
+      # not, so `-D warnings` is what actually holds the line there. The
+      # workspace is at zero warnings today; this keeps it that way instead of
+      # letting them accumulate until nobody reads the output.
+      #
+      # `--all-targets` reaches tests and benches too, so a PR cannot leave a
+      # test file that no longer compiles.
+      - name: Clippy
+        shell: bash
+        run: cargo clippy --manifest-path cli/Cargo.toml --all-targets -- -D warnings
+
+      # Clippy type-checks but stops short of codegen and linking, so it would
+      # not notice a missing system library or a bad `#[link]` — a real risk
+      # with rusqlite, zstd and libc in the tree. Build the release profile that
+      # actually ships, and link a real binary.
+      - name: Build
+        shell: bash
+        run: cargo build --release --manifest-path cli/Cargo.toml -p tokens-cli
+
+      # A binary that links but dies on startup still fails every user. Running
+      # `--version` is the cheapest proof that it does not.
+      - name: Smoke test
+        shell: bash
+        run: cli/target/release/${{ matrix.bin }} --version
+
+      # Currently a no-op: neither crate has a test module or a tests/ dir. It
+      # is here so that the first test anyone writes is run by CI rather than
+      # silently ignored until someone notices.
+      - name: Test
+        shell: bash
+        run: cargo test --manifest-path cli/Cargo.toml
