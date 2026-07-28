@@ -179,20 +179,19 @@ bunx tokens-cli@latest login      # or: npx tokens-cli@latest login
 bunx tokens-cli@latest submit
 ```
 
-## Sponsored by
+## Who pays for this
 
-<a href="https://neon.com">
-  <img src="web/public/icons/neon.svg" width="20" height="20" alt="" />
-</a>
+<div align="center">
+  <a href="https://neon.com">
+    <img src="web/public/icons/neon.svg" width="64" height="64" alt="Neon" />
+  </a>
+  <p><strong><a href="https://neon.com">Neon</a></strong> sponsor the Postgres behind <a href="https://tokens.ci">tokens.ci</a>.</p>
+</div>
 
-**[Neon](https://neon.com)** sponsor the Postgres database behind
-[tokens.ci](https://tokens.ci).
-
-Tokens is free to use and free to self-host. The leaderboard reads each page
-from Postgres rather than from a cache of a cache, which is what keeps the
-numbers honest and is also the expensive way to do it — Neon cover that cost, so
-nobody has to put the board behind a paywall or thin the data out to fit a
-budget.
+Tokens is free to use and free to self-host, and the leaderboard reads each page
+from Postgres rather than from a cache of a cache. That is what keeps the numbers
+honest, and it is also the expensive way to do it. Neon cover that cost, so the
+board does not have to go behind a paywall or get thinner to fit a budget.
 
 ## License
 
