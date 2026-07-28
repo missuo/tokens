@@ -19,13 +19,6 @@
   // our own routes go through the public internet rather than looping in-process.
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
 
-  // MUST BE REVISITED AFTER THE AIVEN MIGRATION. This region was chosen to sit
-  // next to Neon in us-west-2. The database now lives on Aiven, whose free plan
-  // does not let you pick a region, so if it did not land in us-west-2 this pin
-  // is now working against itself — forcing every request through a region the
-  // database is no longer in. Read the actual region off the Aiven console and
-  // set it here, or drop the pin entirely.
-  //
   // Pin the Worker to the region the database runs in rather than serving from
   // the edge nearest the reader. A page here issues several sequential queries —
   // leaderboard rows, the session, the viewer's own rank — and measured against
@@ -87,13 +80,14 @@
 
   // Pooled Postgres. Hyperdrive keeps warm pooled connections next to the
   // database, so a page issuing several queries pays one WAN round trip instead
-  // of one per query. Points at Aiven since the 2026-07-27 migration off Neon,
-  // whose 5GB monthly transfer allowance ran out. Caching is enabled (max-age
-  // 60, swr 30) and origin_connection_limit is 8 — Aiven's plan caps
-  // max_connections at 20, of which its own agents and the superuser reserve
-  // take roughly eight. Both are set on the Hyperdrive config, not here:
+  // of one per query. Points at Neon's *direct* endpoint, not the `-pooler`
+  // one: Hyperdrive already pools, and stacking it on PgBouncer adds a hop for
+  // nothing. Query caching is on (max-age 60, swr 30) — it was off until
+  // 2026-07-27, which is most of why an ordinary page view used to reach the
+  // database at all. Caching and origin_connection_limit live on the Hyperdrive
+  // config rather than in this file:
   //   wrangler hyperdrive update <id> --connection-string=... \
-  //     --origin-connection-limit 8 --max-age 60 --swr 30
+  //     --origin-connection-limit 40 --max-age 60 --swr 30
   "hyperdrive": [
     {
       "binding": "HYPERDRIVE",

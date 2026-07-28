@@ -65,28 +65,21 @@ export function ServiceFooter() {
             <img src="/icons/cloudflare.svg" alt="" width={13} height={13} className="size-3.5" />
             Workers
           </a>
+          {/* Neon is named once, under "sponsored by" rather than alongside
+              Workers: they donate the database this runs on, which is a
+              different kind of credit from naming what the stack is built
+              with. Repeating the mark in both rows would dilute both. */}
           <span aria-hidden="true" className="opacity-50">·</span>
+          Database sponsored by
           <a
-            href="https://aiven.io"
+            href="https://neon.com"
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-1 transition-colors hover:text-foreground"
           >
-            {/* Aiven ships its mark white-on-dark rather than as a coloured
-                glyph on transparent, so unlike the other two this one carries
-                its own background. That is what makes it legible in both
-                themes — an `<img>`-loaded SVG cannot inherit `currentColor`.
-                The asset is unmodified; the rounding is CSS so the square
-                reads as an icon rather than a block. */}
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src="/icons/aiven.svg"
-              alt=""
-              width={13}
-              height={13}
-              className="size-3.5 rounded-[3px]"
-            />
-            Aiven
+            <img src="/icons/neon.svg" alt="" width={13} height={13} className="size-3.5" />
+            Neon
           </a>
         </span>
       </div>

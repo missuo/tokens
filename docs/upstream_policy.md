@@ -16,7 +16,7 @@ The refactor is finished. Its shape decides most of the rules below.
 |---|---|---|
 | CLI | Full TUI dashboard plus report commands (`models`, `monthly`, `hourly`, `graph`, `wrapped`, `pricing`, …) | Submit only — `login`, `submit`, `serve`, `status`, plus per-provider sync. The TUI and every report command are gone, ~11k lines and fifteen dependencies with them |
 | Reporting | In the terminal | On the web, where it can be linked and compared |
-| Hosting | Self-hosted Docker, Postgres in a container on the same host | Cloudflare Workers via OpenNext; Aiven Postgres behind Hyperdrive, Worker pinned to the database's region |
+| Hosting | Self-hosted Docker, Postgres in a container on the same host | Cloudflare Workers via OpenNext; Neon Postgres behind Hyperdrive, Worker pinned to the database's region |
 | Caching | — | R2 for rendered pages, Durable Objects for tag invalidation, explicit edge caching for image endpoints |
 | Frontend | Upstream's components | Rebuilt on shadcn/ui with its own brand marks and per-page Open Graph cards |
 | Anti-cheat | — | Cross-device duplicate guard, resubmit monotonicity checks, account bans, public Hall of Shame |

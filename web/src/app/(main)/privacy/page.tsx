@@ -167,7 +167,7 @@ export default function PrivacyPage() {
               API.
             </>,
             <>
-              <strong className="font-medium text-foreground">Aiven</strong> —
+              <strong className="font-medium text-foreground">Neon</strong> —
               the managed PostgreSQL database where the records above are
               stored.
             </>,

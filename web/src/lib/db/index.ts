@@ -30,7 +30,7 @@ function getConnectionString(): string {
   return connectionString;
 }
 
-// Decide whether to require TLS to Postgres. Aiven needs it; a local development
+// Decide whether to require TLS to Postgres. Neon needs it; a local development
 // Postgres usually has no TLS configured at all, and forcing "require" there
 // fails the connection outright. `DATABASE_SSL` opts in/out explicitly.
 //

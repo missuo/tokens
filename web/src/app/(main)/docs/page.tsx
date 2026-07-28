@@ -432,12 +432,26 @@ export default function DocsPage() {
                 <CardTitle className="text-sm">The database</CardTitle>
               </CardHeader>
               <CardContent className="text-sm leading-relaxed text-muted-foreground">
-                Aiven (Postgres), reached through Cloudflare Hyperdrive, which
-                keeps warm pooled connections beside the database so a page
-                issuing several queries does not pay a fresh handshake for each.
-                The Worker is pinned to the same region: a request crosses the
-                ocean once, and every query after that is a local hop. Schema
-                changes go through Drizzle migrations applied at build time.
+                <a
+                  href="https://neon.com"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-medium text-foreground underline underline-offset-4"
+                >
+                  Neon
+                </a>{" "}
+                (Postgres), reached through Cloudflare Hyperdrive, which keeps
+                warm pooled connections beside the database so a page issuing
+                several queries does not pay a fresh handshake for each. The
+                Worker is pinned to the same region: a request crosses the ocean
+                once, and every query after that is a local hop. Schema changes
+                go through Drizzle migrations applied at build time.
+                <br />
+                <br />
+                Neon sponsor the database this site runs on. Tokens is free to
+                use and free to self-host, and the leaderboard reads every page
+                straight from Postgres rather than a cache of a cache — that is
+                only affordable because someone is paying for it, and they are.
               </CardContent>
             </Card>
 

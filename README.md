@@ -179,6 +179,21 @@ bunx tokens-cli@latest login      # or: npx tokens-cli@latest login
 bunx tokens-cli@latest submit
 ```
 
+## Sponsored by
+
+<a href="https://neon.com">
+  <img src="web/public/icons/neon.svg" width="20" height="20" alt="" />
+</a>
+
+**[Neon](https://neon.com)** sponsor the Postgres database behind
+[tokens.ci](https://tokens.ci).
+
+Tokens is free to use and free to self-host. The leaderboard reads each page
+from Postgres rather than from a cache of a cache, which is what keeps the
+numbers honest and is also the expensive way to do it — Neon cover that cost, so
+nobody has to put the board behind a paywall or thin the data out to fit a
+budget.
+
 ## License
 
 MIT — see [LICENSE](./LICENSE).
