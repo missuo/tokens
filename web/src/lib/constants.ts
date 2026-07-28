@@ -37,8 +37,12 @@ export const SOURCE_DISPLAY_NAMES: Record<ClientType, string> = {
   kimi: "Kimi",
   qwen: "Qwen",
   roocode: "Roo Code",
+  // Two different products from two different orgs, not one client with an
+  // alias: `kilocode` is Kilo-Org's VS Code extension, `kilo` is nicepkg's CLI.
+  // Both rendered as "Kilo" with the same mark, so the supported-clients grid
+  // showed the same entry twice and neither was identifiable.
   kilocode: "Kilo",
-  kilo: "Kilo",
+  kilo: "Kilo CLI",
   mux: "Mux",
   kiro: "Kiro",
   crush: "Crush",
@@ -89,7 +93,10 @@ export const SOURCE_LOGOS: Record<ClientType, string> = {
   qwen: `${GITHUB_CDN_BASE}/client-qwen.png`,
   roocode: `${GITHUB_CDN_BASE}/client-roocode.png`,
   kilocode: `${GITHUB_CDN_BASE}/client-kilocode.png`,
-  kilo: `${GITHUB_CDN_BASE}/client-kilocode.png`,
+  // Generic rather than Kilo-Org's mark: nicepkg's CLI is a different project,
+  // and borrowing the other one's logo attributes it to the wrong people.
+  // Swap in a real asset if one turns up.
+  kilo: `${GITHUB_CDN_BASE}/client-generic.svg`,
   mux: `${GITHUB_CDN_BASE}/client-mux.png`,
   kiro: `${GITHUB_CDN_BASE}/client-kiro.jpg`,
   crush: `${GITHUB_CDN_BASE}/client-crush.png`,

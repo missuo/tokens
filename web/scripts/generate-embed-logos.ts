@@ -41,7 +41,9 @@ const CLIENT_ICON_SLUGS: Record<string, string> = {
   qwen: "qwen-color",
   roocode: "roocode",
   kilocode: "kilocode",
-  kilo: "kilocode",
+  // `kilo` (nicepkg's CLI) is deliberately absent: it is a different project
+  // from Kilo-Org's extension above and has no lobehub icon of its own, so it
+  // takes the colored-dot fallback rather than wearing someone else's mark.
   kiro: "kiro-color",
   goose: "goose",
   antigravity: "antigravity-color",
