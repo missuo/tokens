@@ -61,12 +61,19 @@ function createDb() {
       url: hyperdriveUrl ?? getConnectionString(),
       ssl: resolveSsl(usingHyperdrive),
 
-      // Serverless-optimized pool settings:
-      // Each isolate gets its own pool. Behind Hyperdrive the real pooling
-      // happens remotely and one socket per isolate is enough; without it,
-      // dozens of concurrent cold-starts at max:5 would exceed the database's
-      // max_connections (error 53300).
-      max: 1,
+      // Behind Hyperdrive these sockets terminate at Hyperdrive, not at
+      // Postgres — it owns the real pool and its own origin_connection_limit
+      // caps what the database ever sees. So the only thing `max` decides here
+      // is whether the queries a single request issues in parallel actually run
+      // in parallel: `/u/[username]` fires three at once and the leaderboard
+      // two, and at max:1 they queued behind each other for no reason. Three
+      // covers the widest page; Cloudflare advises staying at or below five
+      // concurrent external connections per request.
+      //
+      // Without Hyperdrive the sockets are Postgres connections and the old
+      // reasoning stands: dozens of concurrent cold-starts would exhaust
+      // max_connections (error 53300), so that path stays at one.
+      max: usingHyperdrive ? 3 : 1,
 
       // Close idle connections after 20 s so they don't linger between
       // infrequent invocations.
