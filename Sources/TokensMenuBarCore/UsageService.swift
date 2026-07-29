@@ -16,13 +16,23 @@ public struct UsageService {
             }
         }
 
-        var candidates: [String] = [
+        // Prefer an explicit env override from make/scripts (`TOKENS_CLI=...`).
+        if let env = ProcessInfo.processInfo.environment["TOKENS_CLI"],
+           !env.isEmpty,
+           FileManager.default.isExecutableFile(atPath: env),
+           supportsMenuBarUsage(at: env) {
+            return (env as NSString).standardizingPath
+        }
+
+        var candidates: [String] = []
+        candidates.append(contentsOf: repoLocalCLICandidates())
+        candidates.append(contentsOf: [
             NSHomeDirectory() + "/.local/bin/tokens",
             // Common monorepo release layout when developing from this checkout.
             NSHomeDirectory() + "/Documents/Codebase/tokens/cli/target/release/tokens",
             "/opt/homebrew/bin/tokens",
             "/usr/local/bin/tokens",
-        ]
+        ])
 
         // PATH lookup via a login-like path order (user local first).
         if let pathEnv = ProcessInfo.processInfo.environment["PATH"] {
@@ -58,6 +68,33 @@ public struct UsageService {
         // this helper is reserved if we later want force-use. Keep false.
         _ = path
         return false
+    }
+
+    /// Discover `cli/target/release/tokens` relative to the running app / cwd.
+    private static func repoLocalCLICandidates() -> [String] {
+        var roots: [String] = []
+        // Current working directory (swift run / make from repo root).
+        roots.append(FileManager.default.currentDirectoryPath)
+        // Walk up from the executable path (`.build/debug/TokensMenuBar`).
+        if let exe = Bundle.main.executablePath {
+            roots.append((exe as NSString).deletingLastPathComponent)
+        }
+        var out: [String] = []
+        var seen = Set<String>()
+        for root in roots {
+            var dir = URL(fileURLWithPath: root, isDirectory: true)
+            for _ in 0..<8 {
+                let candidate = dir.appendingPathComponent("cli/target/release/tokens").path
+                let normalized = (candidate as NSString).standardizingPath
+                if seen.insert(normalized).inserted {
+                    out.append(normalized)
+                }
+                let parent = dir.deletingLastPathComponent()
+                if parent.path == dir.path { break }
+                dir = parent
+            }
+        }
+        return out
     }
 
     /// True when `tokens usage --help` advertises `--period` (Menu Bar schema).
@@ -138,9 +175,9 @@ public struct UsageService {
                 code: 2,
                 message: """
                 Found tokens at \(binary), but it is too old for the Menu Bar report \
-                (missing `usage --period`). Build this repo's CLI and put it first on PATH, e.g.:
-                  cargo build --release --manifest-path cli/Cargo.toml -p tokens-cli
-                  ln -sfn "$(pwd)/cli/target/release/tokens" ~/.local/bin/tokens
+                (missing `usage --period`). Build this repo's CLI + app together, e.g.:
+                  make build
+                  make restart
                 """
             )
         }
