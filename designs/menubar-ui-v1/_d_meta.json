@@ -1,0 +1,18 @@
+{
+  "type": "design",
+  "designSystems": [],
+  "primaryDesignSystem": null,
+  "assets": {
+    "Menu Bar UI v1": {
+      "versions": [
+        {
+          "path": "index.html",
+          "createdAt": "2026-07-27T04:27:47.178Z",
+          "status": "needs-review"
+        }
+      ]
+    }
+  },
+  "createdAt": "2026-07-27T04:27:47.178Z",
+  "updatedAt": "2026-07-27T04:27:47.178Z"
+}

@@ -1,7 +1,5 @@
 # Tokens Menu Bar — UI designs v1
 
-**Status:** Implemented (Minimal Mono UI landed in Tasks 1–5)
-
 ## Final visual language
 
 **FINAL · 06 Minimal Mono v2** is locked for this version:

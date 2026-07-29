@@ -1,1 +1,0 @@
-ALTER TABLE "submissions" ADD COLUMN "reasoning_tokens" bigint DEFAULT 0 NOT NULL;
