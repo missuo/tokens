@@ -43,19 +43,27 @@ swift run TokensMenuBar
 
 ## Dev restart
 
-During development, use these helpers to kill any running Menu Bar instance and relaunch a fresh build:
+During development, use Make targets (or the underlying scripts) to kill any running Menu Bar instance and relaunch a fresh build:
 
 ```bash
-# Rebuild (debug) + stop old process + start new one
+# Preferred
+make restart            # rebuild debug + stop old + start new
+make restart-release    # same with release build
+make stop               # stop only
+make start              # start existing debug binary
+make start-release      # start existing release binary
+make run                # foreground debug run
+make test
+make cli                # build tokens CLI
+make help
+```
+
+Equivalent scripts:
+
+```bash
 ./scripts/dev-restart.sh
-
-# Same, but with a release build
 ./scripts/dev-restart.sh release
-
-# Stop only
 ./scripts/dev-stop.sh
-
-# Start an already-built binary without rebuilding
 ./scripts/dev-start.sh
 ./scripts/dev-start.sh release
 ```
