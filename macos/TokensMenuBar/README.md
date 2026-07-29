@@ -2,6 +2,12 @@
 
 macOS menu bar app that shows local AI coding token usage by calling the `tokens` CLI.
 
+## UI: Minimal Mono v2
+
+Popover + Settings follow **FINAL · 06 Minimal Mono v2** (monospaced Swiss receipt type, spacing-only sections, 4-up breakdown cards, 14-day cost chart with hover, nested list edge fades). Design source and interaction frames:
+
+- `designs/menubar-ui-v1/` (see that folder’s README; shots `full-final.png`, `full-ix-*.png`)
+
 ## Requirements
 
 - macOS 13+
@@ -34,5 +40,6 @@ swift test
 - Default auto-refresh every 12 hours (configurable)
 - Period switches reuse the CLI Layer B snapshot when possible
 - Settings → **Full Rescan Now** runs `tokens usage --force-rescan`
+- Popover height shrink-wraps to content, capped at **80% of the screen** visible frame
 
 See `docs/superpowers/specs/2026-07-26-macos-menubar-usage-design.md`.

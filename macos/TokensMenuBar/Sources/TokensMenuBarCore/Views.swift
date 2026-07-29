@@ -1,492 +1,976 @@
+import AppKit
 import SwiftUI
-
-private let categoryPreviewLimit = 5
 
 public struct MenuPanelView: View {
     @ObservedObject public var store: UsageStore
     @ObservedObject public var settings: AppSettings
+    @ObservedObject public var layout: PanelLayoutState
+    /// Called whenever the panel’s ideal size changes so `NSPopover.contentSize` can shrink-wrap.
+    public var onIdealSizeChange: ((CGSize) -> Void)?
 
-    @State private var clientsExpanded = false
-    @State private var modelsExpanded = false
-    @State private var daysExpanded = false
-    /// Client ids whose nested model lists are fully expanded.
-    @State private var expandedClientModels: Set<String> = []
+    /// Intrinsic height of the scrollable body (sections only).
+    @State private var bodyContentHeight: CGFloat = 0
+    /// Intrinsic height of header + tabs + footer (+ error shells).
+    @State private var chromeHeight: CGFloat = 0
+    /// Body viewport height — tracks measured content (CLIENT/MODEL lists push this open).
+    @State private var bodyViewportHeight: CGFloat = MenuBarLayout.fallbackContentHeight
+    /// CLIENT / MODEL lists: how many rows are visible (chevron loads more).
+    @State private var clientVisibleCount: Int = MenuBarLayout.listPageSize
+    @State private var modelVisibleCount: Int = MenuBarLayout.listPageSize
 
-    public init(store: UsageStore, settings: AppSettings) {
+    public init(
+        store: UsageStore,
+        settings: AppSettings,
+        layout: PanelLayoutState,
+        onIdealSizeChange: ((CGSize) -> Void)? = nil
+    ) {
         self.store = store
         self.settings = settings
+        self.layout = layout
+        self.onIdealSizeChange = onIdealSizeChange
+    }
+
+    /// Cap from the presentation display (refreshed by AppDelegate from status-item screen).
+    private var panelMaxHeight: CGFloat { layout.maxHeight }
+
+    private var maxBodyHeight: CGFloat {
+        let chrome = chromeHeight > 0 ? chromeHeight : 140
+        return max(160, panelMaxHeight - chrome)
+    }
+
+    /// Target body height for the current measurement (nil when no report body).
+    private var targetBodyHeight: CGFloat? {
+        guard store.report != nil, !store.binaryMissing else { return nil }
+        if bodyContentHeight <= 0 {
+            return MenuBarLayout.fallbackContentHeight
+        }
+        return min(bodyContentHeight, maxBodyHeight)
+    }
+
+    /// True when selected period and loaded report agree (safe to resize).
+    private var reportMatchesPeriod: Bool {
+        guard let report = store.report else { return false }
+        return report.period == store.period.cliValue
     }
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            header
-                .padding(.horizontal, 16)
-                .padding(.top, 14)
-                .padding(.bottom, 10)
-
-            Divider()
-
             if store.binaryMissing {
-                missingCLI
-                    .padding(16)
+                measuredChrome {
+                    missingCLI
+                        .padding(.horizontal, MenuBarLayout.horizontalPadding)
+                        .padding(.vertical, 18)
+                }
             } else if let error = store.lastError, store.report == nil {
-                errorBanner(error)
-                    .padding(16)
+                measuredChrome {
+                    errorBanner(error)
+                        .padding(.horizontal, MenuBarLayout.horizontalPadding)
+                        .padding(.vertical, 18)
+                }
             } else if let report = store.report {
-                periodPicker
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
-
-                ScrollView(.vertical, showsIndicators: true) {
-                    VStack(alignment: .leading, spacing: 16) {
-                        summaryCard(report)
-                        breakdownCard(report)
-                        clientSection(report)
-                        modelSection(report)
-                        daySection(report)
-                        if let error = store.lastError {
-                            errorBanner(error)
-                        }
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 12)
+                measuredChrome {
+                    periodTabs
+                        .padding(.horizontal, MenuBarLayout.horizontalPadding)
+                        .padding(.top, 14)
+                        .padding(.bottom, 6)
                 }
-                .frame(maxHeight: 420)
 
-                Divider()
-                footer(report)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
+                // Always ScrollView (even when short) so TODAY vs 30D does not
+                // flip layout structure and remeasure thrash the popover height.
+                reportBody(report)
+                    .frame(height: bodyViewportHeight, alignment: .top)
+                    .clipped()
+
+                measuredChrome {
+                    footer(report)
+                        .padding(.horizontal, MenuBarLayout.horizontalPadding)
+                        .padding(.top, 4)
+                        .padding(.bottom, 14)
+                }
             } else {
-                VStack(spacing: 12) {
-                    ProgressView()
-                        .controlSize(.regular)
-                    Text(store.isLoading ? "Scanning local usage…" : "No data yet")
-                        .font(.body)
-                        .foregroundStyle(.secondary)
+                measuredChrome {
+                    VStack(spacing: 12) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text(store.isLoading ? "SCANNING LOCAL USAGE…" : "NO DATA YET")
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .tracking(0.8)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 160)
+                    .padding(MenuBarLayout.horizontalPadding)
                 }
-                .frame(maxWidth: .infinity, minHeight: 160)
-                .padding(16)
             }
         }
-        .frame(width: 400)
-        // Period changes: collapse expanded lists so defaults stay at 5.
+        .frame(width: MenuBarLayout.panelWidth)
+        .frame(maxHeight: panelMaxHeight)
+        .onPreferenceChange(ChromeHeightPreferenceKey.self) { height in
+            if abs(height - chromeHeight) > 0.5 {
+                chromeHeight = height
+            }
+            syncBodyHeightAndPublish()
+        }
+        .onPreferenceChange(BodyHeightPreferenceKey.self) { height in
+            if height > 0, abs(height - bodyContentHeight) > 0.5 {
+                bodyContentHeight = height
+            }
+            syncBodyHeightAndPublish()
+        }
+        .onAppear { syncBodyHeightAndPublish() }
+        .onChange(of: store.report?.generatedAt) { _ in syncBodyHeightAndPublish() }
         .onChange(of: store.period) { _ in
-            clientsExpanded = false
-            modelsExpanded = false
-            daysExpanded = false
-            expandedClientModels.removeAll()
+            // Reset expand pages; keep prior panel height until new report lands.
+            clientVisibleCount = MenuBarLayout.listPageSize
+            modelVisibleCount = MenuBarLayout.listPageSize
+        }
+        .onChange(of: store.isLoading) { _ in syncBodyHeightAndPublish() }
+        .onChange(of: store.binaryMissing) { _ in syncBodyHeightAndPublish() }
+        .onChange(of: store.lastError) { _ in syncBodyHeightAndPublish() }
+        .onChange(of: clientVisibleCount) { _ in
+            DispatchQueue.main.async { syncBodyHeightAndPublish() }
+        }
+        .onChange(of: modelVisibleCount) { _ in
+            DispatchQueue.main.async { syncBodyHeightAndPublish() }
+        }
+        .onChange(of: layout.maxHeight) { _ in
+            // Multi-monitor: opening on a smaller display must reclamp body + popover.
+            syncBodyHeightAndPublish()
         }
     }
 
-    private var header: some View {
-        HStack(spacing: 10) {
-            Text("Tokens")
-                .font(.title3.weight(.semibold))
-            Spacer()
+    @ViewBuilder
+    private func reportBody(_ report: UsageReport) -> some View {
+        // Hide scrollbar chrome; wheel/trackpad scroll still works.
+        ScrollView(.vertical, showsIndicators: false) {
+            bodySections(report)
+                .padding(.horizontal, MenuBarLayout.horizontalPadding)
+                .padding(.top, 18)
+                .padding(.bottom, 12)
+                .fixedSize(horizontal: false, vertical: true)
+                .background(
+                    GeometryReader { geo in
+                        Color.clear.preference(
+                            key: BodyHeightPreferenceKey.self,
+                            value: geo.size.height
+                        )
+                    }
+                )
+        }
+    }
+
+    @ViewBuilder
+    private func bodySections(_ report: UsageReport) -> some View {
+        VStack(alignment: .leading, spacing: MenuBarLayout.sectionSpacing) {
+            totalSection(report)
+            breakdownSection(report)
+            clientSection(report)
+            modelSection(report)
+            costChartSection(report)
+            if let error = store.lastError {
+                errorBanner(error)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func measuredChrome<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        content()
+            .background(
+                GeometryReader { geo in
+                    Color.clear.preference(
+                        key: ChromeHeightPreferenceKey.self,
+                        value: geo.size.height
+                    )
+                }
+            )
+    }
+
+    /// Size body viewport to measured content and notify AppKit popover (coalesced there).
+    /// Height is content-driven: CLIENT/MODEL list length sets the body, no forced tween.
+    /// Skip resize while the tab is ahead of the loaded report (TODAY short vs 30D tall).
+    private func syncBodyHeightAndPublish() {
+        // Hold previous height until report matches selected period — prevents
+        // intermediate collapse/expand when switching into TODAY.
+        if store.report != nil, !reportMatchesPeriod {
+            return
+        }
+
+        // Snap to content height. List rows appearing (period data / chevron) is
+        // what “opens” the panel — not a parallel height animation.
+        if let target = targetBodyHeight, abs(target - bodyViewportHeight) > 0.5 {
+            bodyViewportHeight = target
+        }
+
+        let chrome = chromeHeight > 0 ? chromeHeight : 140
+        let body = targetBodyHeight ?? (store.report == nil ? 0 : bodyViewportHeight)
+        let ideal = min(chrome + body, panelMaxHeight)
+        let height = max(ideal, 120)
+        onIdealSizeChange?(CGSize(width: MenuBarLayout.panelWidth, height: height))
+    }
+
+    // MARK: - Period tabs
+
+    private var periodTabs: some View {
+        HStack(spacing: 0) {
+            ForEach(UsagePeriod.allCases) { period in
+                // Use onTapGesture (not Button) so the first click in an NSPopover
+                // is not eaten by button activation / animation transaction.
+                Text(period.monoTitle)
+                    .font(.system(size: 11, design: .monospaced))
+                    .tracking(0.4)
+                    .foregroundStyle(store.period == period ? Color.primary : Color.secondary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+                    .contentShape(Rectangle())
+                    .overlay(alignment: .bottom) {
+                        Rectangle()
+                            .fill(store.period == period ? Color.primary : Color.clear)
+                            .frame(height: 2)
+                    }
+                    .onTapGesture {
+                        store.setPeriod(period)
+                    }
+                    .accessibilityAddTraits(.isButton)
+                    .accessibilityAddTraits(store.period == period ? .isSelected : [])
+                    .accessibilityLabel(period.monoTitle)
+            }
+
             if store.isLoading {
                 ProgressView()
-                    .controlSize(.small)
+                    .controlSize(.mini)
+                    .padding(.leading, 4)
             }
         }
     }
 
-    private var periodPicker: some View {
-        Picker("Period", selection: Binding(
-            get: { store.period },
-            set: { store.setPeriod($0) }
-        )) {
-            ForEach(UsagePeriod.allCases) { period in
-                Text(period.title).tag(period)
+    // MARK: - TOTAL
+
+    private func totalSection(_ report: UsageReport) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            sectionLabel("TOTAL")
+            Text(Formatting.compactTokens(report.summary.totalTokens))
+                .font(.system(size: 36, weight: .medium, design: .monospaced))
+                .tracking(-1.4)
+                .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+                .padding(.top, 4)
+
+            HStack(alignment: .top, spacing: 16) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("COST")
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .tracking(0.8)
+                    Text(Formatting.cost(report.summary.totalCost))
+                        .font(.system(size: 18, design: .monospaced))
+                        .monospacedDigit()
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("MESSAGES")
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .tracking(0.8)
+                    Text("\(report.summary.messages)")
+                        .font(.system(size: 18, design: .monospaced))
+                        .monospacedDigit()
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .padding(.top, 16)
         }
-        .pickerStyle(.segmented)
-        .labelsHidden()
-        .controlSize(.large)
     }
 
-    private func summaryCard(_ report: UsageReport) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .top) {
-                metric("Tokens", Formatting.compactTokens(report.summary.totalTokens))
-                Spacer(minLength: 8)
-                metric("Cost", Formatting.cost(report.summary.totalCost))
-                Spacer(minLength: 8)
-                metric("Msgs", "\(report.summary.messages)")
-            }
-            Text("\(report.dateRange.start) → \(report.dateRange.end)")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: .controlBackgroundColor)))
-    }
+    // MARK: - BREAKDOWN
 
-    private func breakdownCard(_ report: UsageReport) -> some View {
+    private func breakdownSection(_ report: UsageReport) -> some View {
         let b = report.tokenBreakdown
-        return VStack(alignment: .leading, spacing: 8) {
-            sectionTitle("Token breakdown")
-            HStack(spacing: 12) {
-                chip("in", b.input)
-                chip("out", b.output)
-                chip("cache", b.cacheRead)
-                chip("reason", b.reasoning)
+        // Input cache % = cache-read hit rate (cacheRead / (input + cacheRead)).
+        // No “output cache” in the schema — only show rate on the input card.
+        let inputCache = Formatting.inputCacheRate(input: b.input, cacheRead: b.cacheRead)
+        let items: [(String, Int64, Double?)] = [
+            ("input", b.input, inputCache),
+            ("output", b.output, nil),
+            ("cache", b.cacheRead, nil),
+            ("reason", b.reasoning, nil),
+        ]
+        let accents: [Double] = [1, 0.72, 0.48, 0.28]
+
+        return HStack(spacing: 6) {
+            ForEach(Array(items.enumerated()), id: \.offset) { index, item in
+                breakdownCard(
+                    label: item.0,
+                    value: item.1,
+                    cachePercent: item.2,
+                    topAccent: Color.primary.opacity(accents[index])
+                )
             }
         }
     }
+
+    private func breakdownCard(
+        label: String,
+        value: Int64,
+        cachePercent: Double?,
+        topAccent: Color
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label)
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            HStack(alignment: .firstTextBaseline, spacing: 0) {
+                Text(Formatting.compactTokens(value))
+                    .font(.system(size: 12, weight: .bold, design: .monospaced))
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                if let cachePercent {
+                    Text(" · ")
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                    Text(Formatting.percent(cachePercent))
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                        .lineLimit(1)
+                        .layoutPriority(1)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.primary.opacity(0.04))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
+        )
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(topAccent)
+                .frame(height: 2)
+                .clipShape(
+                    UnevenRoundedRectangle(
+                        topLeadingRadius: 8,
+                        bottomLeadingRadius: 0,
+                        bottomTrailingRadius: 0,
+                        topTrailingRadius: 8
+                    )
+                )
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(breakdownAccessibilityLabel(
+            label: label,
+            value: value,
+            cachePercent: cachePercent
+        ))
+    }
+
+    private func breakdownAccessibilityLabel(
+        label: String,
+        value: Int64,
+        cachePercent: Double?
+    ) -> String {
+        var parts = ["\(label) \(Formatting.compactTokens(value))"]
+        if let cachePercent {
+            parts.append("input cache \(Formatting.percent(cachePercent))")
+        }
+        return parts.joined(separator: ", ")
+    }
+
+    // MARK: - CLIENT
 
     private func clientSection(_ report: UsageReport) -> some View {
         let all = report.byClient
-        let visible = clientsExpanded ? Array(all) : Array(all.prefix(categoryPreviewLimit))
+        let visible = Array(all.prefix(max(clientVisibleCount, 0)))
+        let hasMore = all.count > visible.count
 
-        return VStack(alignment: .leading, spacing: 10) {
-            sectionTitle("By client")
+        return VStack(alignment: .leading, spacing: 12) {
             if all.isEmpty {
-                Text("No client data")
-                    .font(.body)
-                    .foregroundStyle(.secondary)
+                emptyHint("No client data")
             } else {
-                ForEach(visible) { client in
-                    clientRow(client)
-                }
-                expandToggle(
-                    total: all.count,
-                    expanded: clientsExpanded
-                ) {
-                    clientsExpanded.toggle()
+                clientRows(visible)
+                if hasMore {
+                    expandChevron(remaining: all.count - visible.count, accessibilityNoun: "clients") {
+                        // Content grows first; panel height follows measurement.
+                        clientVisibleCount = min(
+                            clientVisibleCount + MenuBarLayout.listPageSize,
+                            all.count
+                        )
+                    }
                 }
             }
         }
+    }
+
+    private func clientRows(_ clients: [ClientUsage]) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ForEach(clients) { client in
+                clientRow(client)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        // Chevron page-in only. Period switches remeasure content and snap height —
+        // the lists push the panel open; no forced height tween.
+        .animation(.easeOut(duration: 0.18), value: clientVisibleCount)
+    }
+
+    /// Centered "More" control: load another page (no nested scrollbar).
+    private func expandChevron(
+        remaining: Int,
+        accessibilityNoun: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Text("More")
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .tracking(0.4)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 6)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Show more \(accessibilityNoun)")
+        .accessibilityHint("\(remaining) more")
     }
 
     private func clientRow(_ client: ClientUsage) -> some View {
-        let modelsExpandedForClient = expandedClientModels.contains(client.client)
-        let allModels = client.models
-        let visibleModels = modelsExpandedForClient
-            ? Array(allModels)
-            : Array(allModels.prefix(categoryPreviewLimit))
-
-        return DisclosureGroup {
-            VStack(alignment: .leading, spacing: 10) {
-                ForEach(visibleModels) { model in
-                    row(
-                        title: model.modelId,
-                        subtitle: model.providerId,
-                        tokens: model.tokens,
-                        cost: model.cost,
-                        share: model.share
-                    )
-                }
-                expandToggle(
-                    total: allModels.count,
-                    expanded: modelsExpandedForClient
-                ) {
-                    if modelsExpandedForClient {
-                        expandedClientModels.remove(client.client)
-                    } else {
-                        expandedClientModels.insert(client.client)
-                    }
-                }
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(client.client)
+                    .font(.system(size: 12, design: .monospaced))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+                Text("\(Formatting.compactTokens(client.tokens)) · \(Formatting.percent(client.share))")
+                    .font(.system(size: 12, design: .monospaced))
+                    .monospacedDigit()
+                    .foregroundStyle(.primary)
+                    .layoutPriority(1)
             }
-            .padding(.leading, 18)
-            .padding(.top, 6)
-            .padding(.bottom, 4)
-        } label: {
-            row(
-                title: client.client,
-                subtitle: Formatting.percent(client.share),
-                tokens: client.tokens,
-                cost: client.cost,
-                share: client.share
-            )
-            .padding(.vertical, 2)
+            shareBar(share: client.share)
         }
-        .padding(.vertical, 2)
     }
+
+    // MARK: - MODEL
 
     private func modelSection(_ report: UsageReport) -> some View {
         let all = report.byModel
-        let visible = modelsExpanded ? Array(all) : Array(all.prefix(categoryPreviewLimit))
+        let visible = Array(all.prefix(max(modelVisibleCount, 0)))
+        let hasMore = all.count > visible.count
 
         return VStack(alignment: .leading, spacing: 10) {
-            sectionTitle("By model")
             if all.isEmpty {
-                Text("No model data")
-                    .font(.body)
-                    .foregroundStyle(.secondary)
+                emptyHint("No model data")
             } else {
-                ForEach(visible) { model in
-                    row(
-                        title: model.modelId,
-                        subtitle: model.providerId,
-                        tokens: model.tokens,
-                        cost: model.cost,
-                        share: model.share
-                    )
-                }
-                expandToggle(
-                    total: all.count,
-                    expanded: modelsExpanded
-                ) {
-                    modelsExpanded.toggle()
-                }
-            }
-        }
-    }
-
-    private func daySection(_ report: UsageReport) -> some View {
-        // Newest first.
-        let all = Array(report.byDay.reversed())
-        let visible = daysExpanded ? all : Array(all.prefix(categoryPreviewLimit))
-
-        return VStack(alignment: .leading, spacing: 10) {
-            sectionTitle("By day")
-            if all.isEmpty {
-                Text("No daily data")
-                    .font(.body)
-                    .foregroundStyle(.secondary)
-            } else {
-                ForEach(visible) { day in
-                    HStack(spacing: 10) {
-                        Text(day.date)
-                            .font(.body.monospacedDigit())
-                            .frame(width: 100, alignment: .leading)
-                        GeometryReader { geo in
-                            let width = max(
-                                6,
-                                geo.size.width * CGFloat(min(max(day.shareProxy(in: report), 0.02), 1))
-                            )
-                            RoundedRectangle(cornerRadius: 3)
-                                .fill(Color.accentColor.opacity(0.35 + 0.1 * Double(day.intensity)))
-                                .frame(width: width, height: 10)
-                                .frame(maxHeight: .infinity, alignment: .center)
-                        }
-                        .frame(height: 14)
-                        Text(Formatting.compactTokens(day.tokens))
-                            .font(.body.monospacedDigit())
-                            .frame(width: 64, alignment: .trailing)
+                modelRows(visible)
+                if hasMore {
+                    expandChevron(remaining: all.count - visible.count, accessibilityNoun: "models") {
+                        modelVisibleCount = min(
+                            modelVisibleCount + MenuBarLayout.listPageSize,
+                            all.count
+                        )
                     }
                 }
-                expandToggle(
-                    total: all.count,
-                    expanded: daysExpanded
-                ) {
-                    daysExpanded.toggle()
-                }
             }
         }
     }
 
-    /// Down-chevron to expand past the default 5 rows; up-chevron collapses.
-    @ViewBuilder
-    private func expandToggle(total: Int, expanded: Bool, action: @escaping () -> Void) -> some View {
-        if total > categoryPreviewLimit {
-            Button(action: action) {
-                HStack(spacing: 6) {
-                    Image(systemName: expanded ? "chevron.up" : "chevron.down")
-                        .font(.body.weight(.semibold))
-                    Text(expanded ? "Show less" : "Show all \(total)")
-                        .font(.subheadline)
-                }
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 8)
-                .contentShape(Rectangle())
+    private func modelRows(_ models: [ModelUsage]) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ForEach(models) { model in
+                modelRow(model)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
             }
-            .buttonStyle(.plain)
-            .help(expanded ? "Collapse to \(categoryPreviewLimit)" : "Show all \(total) items")
+        }
+        .animation(.easeOut(duration: 0.18), value: modelVisibleCount)
+    }
+
+    private func modelRow(_ model: ModelUsage) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            HStack(spacing: 4) {
+                Text(model.modelId)
+                    .font(.system(size: 12, design: .monospaced))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Text("/")
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                Text(model.providerId)
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .layoutPriority(1)
+            }
+            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+
+            Text(Formatting.compactTokens(model.tokens))
+                .font(.system(size: 12, design: .monospaced))
+                .monospacedDigit()
+                .layoutPriority(2)
         }
     }
+
+    // MARK: - COST chart
+
+    private func costChartSection(_ report: UsageReport) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            sectionLabel("COST")
+            CostChartView(days: report.byDay, periodRawValue: store.period.rawValue)
+        }
+    }
+
+    // MARK: - Footer
 
     private func footer(_ report: UsageReport) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Updated \(Formatting.relativeTime(fromISO8601: report.generatedAt)) · \(report.scan.mode)")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-            HStack(spacing: 14) {
-                Button("Refresh") { store.manualRefresh() }
-                    .disabled(store.isLoading)
-                Button("Settings…") { store.showSettings = true }
-                Spacer()
-                Button("tokens.ci") { store.openTokensSite() }
-                Button("Quit") { store.quit() }
+        HStack(spacing: 10) {
+            Text(
+                "UPDATED \(Formatting.relativeTime(fromISO8601: report.generatedAt).uppercased())"
+            )
+            .font(.system(size: 11, design: .monospaced))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .minimumScaleFactor(0.65)
+            .truncationMode(.tail)
+            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+
+            footerButton("REFRESH", disabled: store.isLoading) {
+                store.manualRefresh()
             }
-            .buttonStyle(.borderless)
-            .controlSize(.regular)
-            .font(.body)
+            footerButton("SETTINGS") {
+                store.showSettings = true
+            }
+            footerButton("QUIT") {
+                store.quit()
+            }
         }
+        .font(.system(size: 11, design: .monospaced))
+        .tracking(0.4)
+    }
+
+    private func footerButton(
+        _ title: String,
+        disabled: Bool = false,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Text(title)
+                .foregroundStyle(disabled ? Color.secondary.opacity(0.5) : Color.primary)
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled)
+    }
+
+    // MARK: - Shared
+
+    private func sectionLabel(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 10, design: .monospaced))
+            .foregroundStyle(.secondary)
+            .tracking(1.0)
+            .textCase(.uppercase)
+    }
+
+    private func shareBar(share: Double) -> some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Rectangle().fill(Color.secondary.opacity(0.15))
+                Rectangle()
+                    .fill(Color.primary)
+                    .frame(width: max(2, geo.size.width * CGFloat(min(max(share, 0), 1))))
+            }
+        }
+        .frame(height: MenuBarLayout.shareBarHeight)
+    }
+
+    private func emptyHint(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 11, design: .monospaced))
+            .foregroundStyle(.secondary)
     }
 
     private var missingCLI: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("tokens CLI not found")
-                .font(.headline)
+            Text("TOKENS CLI NOT FOUND")
+                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                .tracking(0.6)
             Text("Install or build the Menu Bar-capable CLI, then Recheck.\n\nbrew install owo-network/brew/tokens\n# or build this repo and link ~/.local/bin/tokens")
-                .font(.body)
+                .font(.system(size: 11, design: .monospaced))
                 .foregroundStyle(.secondary)
                 .textSelection(.enabled)
             HStack(spacing: 14) {
-                Button("Recheck") { store.resolveBinary(); store.manualRefresh() }
-                Button("Settings…") { store.showSettings = true }
+                footerButton("RECHECK") {
+                    store.resolveBinary()
+                    store.manualRefresh()
+                }
+                footerButton("SETTINGS") {
+                    store.showSettings = true
+                }
                 Spacer()
-                Button("Quit") { store.quit() }
+                footerButton("QUIT") {
+                    store.quit()
+                }
             }
-            .buttonStyle(.borderless)
-            .font(.body)
+            .font(.system(size: 11, design: .monospaced))
+            .tracking(0.4)
         }
         .padding(.vertical, 8)
     }
 
     private func errorBanner(_ message: String) -> some View {
         Text(message)
-            .font(.body)
+            .font(.system(size: 11, design: .monospaced))
             .foregroundStyle(.red)
             .fixedSize(horizontal: false, vertical: true)
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
-                RoundedRectangle(cornerRadius: 8)
+                RoundedRectangle(cornerRadius: 4)
                     .fill(Color.red.opacity(0.08))
             )
     }
+}
 
-    private func sectionTitle(_ text: String) -> some View {
-        Text(text)
-            .font(.subheadline.weight(.semibold))
-            .foregroundStyle(.secondary)
-    }
-
-    private func metric(_ label: String, _ value: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(label)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-            Text(value)
-                .font(.title2.monospacedDigit().weight(.semibold))
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-        }
-    }
-
-    private func chip(_ label: String, _ value: Int64) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(label)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-            Text(Formatting.compactTokens(value))
-                .font(.body.monospacedDigit().weight(.medium))
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private func row(
-        title: String,
-        subtitle: String,
-        tokens: Int64,
-        cost: Double,
-        share: Double
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(title)
-                    .font(.body.weight(.medium))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Spacer(minLength: 8)
-                Text(Formatting.compactTokens(tokens))
-                    .font(.body.monospacedDigit())
-                Text(Formatting.cost(cost))
-                    .font(.subheadline.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                    .frame(width: 64, alignment: .trailing)
-            }
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(Color.secondary.opacity(0.15))
-                    Capsule()
-                        .fill(Color.accentColor.opacity(0.75))
-                        .frame(width: max(6, geo.size.width * CGFloat(min(max(share, 0), 1))))
-                }
-            }
-            .frame(height: 5)
-            Text(subtitle)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-        }
-        .padding(.vertical, 4)
+/// Additive height of non-scroll chrome pieces (header, tabs, footer, error shells).
+private struct ChromeHeightPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value += nextValue()
     }
 }
 
-private extension DayUsage {
-    func shareProxy(in report: UsageReport) -> Double {
-        let maxTokens = report.byDay.map(\.tokens).max() ?? 1
-        guard maxTokens > 0 else { return 0 }
-        return Double(tokens) / Double(maxTokens)
+/// Natural height of the report body sections (uncapped).
+private struct BodyHeightPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
     }
 }
+
+// MARK: - Settings (IX-C Minimal Mono)
 
 public struct SettingsView: View {
     @ObservedObject public var store: UsageStore
     @ObservedObject public var settings: AppSettings
-    @Environment(\.dismiss) private var dismiss
+    /// Custom row unit toggle (MIN / HR); derived when entering custom.
+    @State private var customUnit: ScanIntervalCustomUnit = .minutes
 
     public init(store: UsageStore, settings: AppSettings) {
         self.store = store
         self.settings = settings
+        let minutes = settings.scanInterval.customMinutesOrDefault
+        _customUnit = State(initialValue: ScanIntervalCustomUnit.preferred(forMinutes: minutes))
     }
 
     public var body: some View {
-        Form {
-            Section("Menu Bar") {
-                Picker("Display", selection: $settings.displayMode) {
-                    ForEach(MenuBarDisplayMode.allCases) { mode in
-                        Text(mode.title).tag(mode)
-                    }
-                }
-                .onChange(of: settings.displayMode) { _ in store.updateStatusTitle() }
-            }
-
-            Section("Scanning") {
-                Picker("Interval", selection: $settings.scanInterval) {
-                    ForEach(ScanIntervalOption.allCases) { option in
-                        Text(option.title).tag(option)
-                    }
-                }
-                .onChange(of: settings.scanInterval) { _ in store.restartTimer() }
-
-                Button("Full Rescan Now") {
-                    store.fullRescan()
-                    dismiss()
-                }
-                .disabled(store.isLoading || store.binaryMissing)
-            }
-
-            Section("CLI") {
-                LabeledContent("Resolved path") {
-                    Text(store.binaryPath ?? "not found")
-                        .font(.body)
-                        .textSelection(.enabled)
-                        .foregroundStyle(store.binaryMissing ? .red : .secondary)
-                }
-                if let error = store.lastError {
-                    Text(error)
-                        .font(.body)
-                        .foregroundStyle(.red)
-                }
-                Button("Recheck CLI") {
-                    store.resolveBinary()
-                }
+        ScrollView(.vertical, showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 32) {
+                menuBarSection
+                scanningSection
             }
         }
-        .formStyle(.grouped)
-        .frame(width: 420, height: 360)
-        .padding()
-        .toolbar {
-            ToolbarItem(placement: .cancellationAction) {
-                Button("Done") { dismiss() }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 18)
+        .frame(width: 420)
+        .frame(minHeight: 320, maxHeight: 420)
+        .onAppear {
+            if settings.scanInterval.isCustom {
+                customUnit = ScanIntervalCustomUnit.preferred(
+                    forMinutes: settings.scanInterval.customMinutesOrDefault
+                )
             }
         }
+    }
+
+    // MARK: Status title (menu bar display mode)
+
+    private var menuBarSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            settingsSectionLabel("STATUS TITLE")
+            displaySegmentedControl
+        }
+    }
+
+    private var displaySegmentedControl: some View {
+        HStack(spacing: 0) {
+            ForEach(MenuBarDisplayMode.allCases) { mode in
+                Button {
+                    settings.displayMode = mode
+                    store.updateStatusTitle()
+                } label: {
+                    Text(mode.title.uppercased())
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .tracking(0.4)
+                        .foregroundStyle(settings.displayMode == mode ? Color(nsColor: .windowBackgroundColor) : Color.primary)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(
+                            Rectangle()
+                                .fill(settings.displayMode == mode ? Color.primary : Color.clear)
+                        )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .overlay(
+            Rectangle()
+                .strokeBorder(Color.primary.opacity(0.35), lineWidth: 1)
+        )
+    }
+
+    // MARK: Scanning
+
+    private var scanningSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            settingsSectionLabel("SCANNING")
+
+            Text("INTERVAL")
+                .font(.system(size: 11, design: .monospaced))
+                .tracking(0.4)
+
+            intervalChipRow
+
+            if settings.scanInterval.isCustom {
+                customIntervalRow
+                Text("5 MIN – 24 H · STEPS ON LADDER")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(.secondary)
+            } else {
+                Text(
+                    settings.scanInterval.isManual
+                        ? "BACKGROUND LOCAL RESCAN OFF · MANUAL ONLY"
+                        : "BACKGROUND LOCAL RESCAN CADENCE"
+                )
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundStyle(.secondary)
+            }
+
+            Button {
+                store.fullRescan()
+            } label: {
+                HStack(alignment: .center, spacing: 12) {
+                    Text("FULL RESCAN NOW")
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .tracking(0.4)
+                        .foregroundStyle(.primary)
+                    Spacer(minLength: 8)
+                    Text("RUN")
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .tracking(0.6)
+                        .foregroundStyle(store.isLoading || store.binaryMissing ? Color.secondary.opacity(0.5) : Color.secondary)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(Color.primary.opacity(0.04))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4)
+                        .strokeBorder(Color.primary.opacity(0.18), lineWidth: 1)
+                )
+            }
+            .buttonStyle(.plain)
+            .disabled(store.isLoading || store.binaryMissing)
+
+            Text(
+                "We cache local session scans so historical data is not re-read on every refresh. Use Full Rescan if numbers look wrong — it clears caches and rebuilds from all session files."
+            )
+            .font(.system(size: 10, design: .monospaced))
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .lineSpacing(2)
+        }
+    }
+
+    private var intervalChipRow: some View {
+        HStack(spacing: 6) {
+            ForEach(ScanIntervalOption.chips) { chip in
+                let selected = chip.matches(settings.scanInterval)
+                Button {
+                    selectIntervalChip(chip)
+                } label: {
+                    Text(chip.monoTitle)
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .tracking(0.5)
+                        .foregroundStyle(
+                            selected
+                                ? Color(nsColor: .windowBackgroundColor)
+                                : Color.secondary
+                        )
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 7)
+                        .background(
+                            RoundedRectangle(cornerRadius: 3)
+                                .fill(selected ? Color.primary : Color.clear)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 3)
+                                .strokeBorder(
+                                    selected ? Color.primary : Color.primary.opacity(0.18),
+                                    lineWidth: 1
+                                )
+                        )
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(selected ? .isSelected : [])
+                .accessibilityLabel(chip.monoTitle)
+            }
+        }
+    }
+
+    private var customIntervalRow: some View {
+        let minutes = settings.scanInterval.customMinutesOrDefault
+        let displayValue: Int = {
+            switch customUnit {
+            case .minutes: return minutes
+            case .hours: return max(1, minutes / 60)
+            }
+        }()
+
+        return HStack(spacing: 10) {
+            Text("EVERY")
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .tracking(0.8)
+
+            HStack(spacing: 0) {
+                stepButton("−") { stepCustom(direction: -1) }
+                Text("\(displayValue)")
+                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                    .monospacedDigit()
+                    .frame(minWidth: 36)
+                    .padding(.vertical, 6)
+                    .overlay(alignment: .leading) {
+                        Rectangle().fill(Color.primary.opacity(0.12)).frame(width: 1)
+                    }
+                    .overlay(alignment: .trailing) {
+                        Rectangle().fill(Color.primary.opacity(0.12)).frame(width: 1)
+                    }
+                stepButton("+") { stepCustom(direction: 1) }
+            }
+            .overlay(
+                RoundedRectangle(cornerRadius: 3)
+                    .strokeBorder(Color.primary.opacity(0.18), lineWidth: 1)
+            )
+
+            HStack(spacing: 0) {
+                unitButton("MIN", unit: .minutes)
+                unitButton("HR", unit: .hours)
+            }
+            .overlay(
+                RoundedRectangle(cornerRadius: 3)
+                    .strokeBorder(Color.primary.opacity(0.18), lineWidth: 1)
+            )
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 4)
+                .fill(Color.primary.opacity(0.04))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 4)
+                .strokeBorder(Color.primary.opacity(0.18), lineWidth: 1)
+        )
+    }
+
+    private func stepButton(_ title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                .frame(width: 28, height: 26)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func unitButton(_ title: String, unit: ScanIntervalCustomUnit) -> some View {
+        let on = customUnit == unit
+        return Button {
+            setCustomUnit(unit)
+        } label: {
+            Text(title)
+                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .tracking(0.5)
+                .foregroundStyle(on ? Color(nsColor: .windowBackgroundColor) : Color.secondary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 7)
+                .background(on ? Color.primary : Color.clear)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func selectIntervalChip(_ chip: ScanIntervalChip) {
+        switch chip {
+        case .fifteenMinutes:
+            settings.scanInterval = .fifteenMinutes
+        case .oneHour:
+            settings.scanInterval = .oneHour
+        case .sixHours:
+            settings.scanInterval = .sixHours
+        case .twelveHours:
+            settings.scanInterval = .twelveHours
+        case .off:
+            settings.scanInterval = .manual
+        case .custom:
+            let minutes = settings.lastCustomMinutes
+            customUnit = ScanIntervalCustomUnit.preferred(forMinutes: minutes)
+            settings.scanInterval = .custom(minutes: minutes)
+        }
+        store.restartTimer()
+    }
+
+    private func stepCustom(direction: Int) {
+        let current = settings.scanInterval.customMinutesOrDefault
+        let next = ScanIntervalOption.steppedCustomMinutes(
+            from: current,
+            unit: customUnit,
+            direction: direction
+        )
+        settings.scanInterval = .custom(minutes: next)
+        // Keep unit coherent when stepping across the hour boundary.
+        if customUnit == .minutes, next >= 60, next % 60 == 0 {
+            customUnit = .hours
+        } else if customUnit == .hours, next < 60 {
+            customUnit = .minutes
+        }
+        store.restartTimer()
+    }
+
+    private func setCustomUnit(_ unit: ScanIntervalCustomUnit) {
+        guard customUnit != unit else { return }
+        let current = settings.scanInterval.customMinutesOrDefault
+        let converted: Int
+        switch unit {
+        case .minutes:
+            // Show minute ladder; if currently multi-hour, land on 60.
+            converted = current >= 60 ? 60 : ScanIntervalOption.clampMinutes(current)
+        case .hours:
+            let hours = max(1, Int((Double(current) / 60.0).rounded()))
+            converted = ScanIntervalOption.clampMinutes(hours * 60)
+        }
+        customUnit = unit
+        settings.scanInterval = .custom(minutes: converted)
+        store.restartTimer()
+    }
+
+    private func settingsSectionLabel(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 10, design: .monospaced))
+            .foregroundStyle(.secondary)
+            .tracking(1.0)
+            .textCase(.uppercase)
     }
 }

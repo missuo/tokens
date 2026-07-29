@@ -40,6 +40,22 @@ final class FormattingTests: XCTestCase {
         XCTAssertEqual(Formatting.cost(1_200_000, locale: zh), "$120万")
     }
 
+    func testChartDayLabel() {
+        XCTAssertEqual(Formatting.chartDayLabel(isoDate: "2026-07-24"), "24")
+        XCTAssertEqual(Formatting.chartDayLabel(isoDate: "2026-07-01"), "01")
+        XCTAssertEqual(Formatting.chartDayLabel(isoDate: "short"), "short")
+    }
+
+    func testInputCacheRate() {
+        XCTAssertEqual(Formatting.inputCacheRate(input: 0, cacheRead: 0), 0, accuracy: 0.0001)
+        // 100 cache-read of 100+100 prompt-ish input path → 50%
+        XCTAssertEqual(Formatting.inputCacheRate(input: 100, cacheRead: 100), 0.5, accuracy: 0.0001)
+        // All cached
+        XCTAssertEqual(Formatting.inputCacheRate(input: 0, cacheRead: 200), 1.0, accuracy: 0.0001)
+        // No cache
+        XCTAssertEqual(Formatting.inputCacheRate(input: 200, cacheRead: 0), 0, accuracy: 0.0001)
+    }
+
     func testMenuBarTitleModes() {
         let report = UsageReport(
             schemaVersion: 1,

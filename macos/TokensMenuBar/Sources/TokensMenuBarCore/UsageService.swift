@@ -152,9 +152,6 @@ public struct UsageService {
             args.append("--refresh")
         }
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: binary)
-        process.arguments = args
         // Inherit a sane PATH for nested tools some scanners may call.
         var env = ProcessInfo.processInfo.environment
         let extras = [
@@ -164,34 +161,21 @@ public struct UsageService {
         ]
         let path = env["PATH"] ?? ""
         env["PATH"] = (extras + [path]).joined(separator: ":")
-        process.environment = env
 
-        let stdout = Pipe()
-        let stderr = Pipe()
-        process.standardOutput = stdout
-        process.standardError = stderr
+        let result = try Self.runProcess(
+            executable: binary,
+            arguments: args,
+            environment: env,
+            timeoutSeconds: timeoutSeconds
+        )
 
-        try process.run()
-
-        let group = DispatchGroup()
-        group.enter()
-        DispatchQueue.global(qos: .userInitiated).async {
-            process.waitUntilExit()
-            group.leave()
-        }
-        let waitResult = group.wait(timeout: .now() + timeoutSeconds)
-        if waitResult == .timedOut {
-            process.terminate()
-            throw UsageServiceError.timeout
-        }
-
-        let outData = stdout.fileHandleForReading.readDataToEndOfFile()
-        let errData = stderr.fileHandleForReading.readDataToEndOfFile()
+        let outData = result.stdout
+        let errData = result.stderr
         let outText = String(data: outData, encoding: .utf8) ?? ""
         let errText = String(data: errData, encoding: .utf8) ?? ""
 
         let decoder = JSONDecoder()
-        if process.terminationStatus == 0 {
+        if result.status == 0 {
             do {
                 return try decoder.decode(UsageReport.self, from: outData)
             } catch {
@@ -201,7 +185,7 @@ public struct UsageService {
 
         if let errReport = try? decoder.decode(UsageErrorReport.self, from: outData) {
             throw UsageServiceError.commandFailed(
-                code: process.terminationStatus,
+                code: result.status,
                 message: errReport.error.message
             )
         }
@@ -211,8 +195,80 @@ public struct UsageService {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .first { !$0.isEmpty } ?? "tokens usage failed"
         throw UsageServiceError.commandFailed(
-            code: process.terminationStatus,
+            code: result.status,
             message: message
         )
+    }
+
+    /// Run a process while **concurrently** draining stdout/stderr.
+    ///
+    /// Waiting for exit before reading pipes deadlocks once the OS pipe buffer
+    /// (~64KB) fills — `tokens usage --json` pretty output already exceeds that
+    /// for period `all`, which surfaced as `UsageServiceError.timeout`.
+    static func runProcess(
+        executable: String,
+        arguments: [String],
+        environment: [String: String]? = nil,
+        timeoutSeconds: TimeInterval
+    ) throws -> (status: Int32, stdout: Data, stderr: Data) {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = arguments
+        if let environment {
+            process.environment = environment
+        }
+
+        let stdout = Pipe()
+        let stderr = Pipe()
+        process.standardOutput = stdout
+        process.standardError = stderr
+
+        try process.run()
+
+        let box = ProcessOutputBox()
+        let group = DispatchGroup()
+
+        group.enter()
+        DispatchQueue.global(qos: .userInitiated).async {
+            box.stdout = stdout.fileHandleForReading.readDataToEndOfFile()
+            group.leave()
+        }
+        group.enter()
+        DispatchQueue.global(qos: .userInitiated).async {
+            box.stderr = stderr.fileHandleForReading.readDataToEndOfFile()
+            group.leave()
+        }
+        group.enter()
+        DispatchQueue.global(qos: .userInitiated).async {
+            process.waitUntilExit()
+            group.leave()
+        }
+
+        let waitResult = group.wait(timeout: .now() + timeoutSeconds)
+        if waitResult == .timedOut {
+            process.terminate()
+            // Give readers a moment to unblock after terminate closes pipes.
+            _ = group.wait(timeout: .now() + 1)
+            throw UsageServiceError.timeout
+        }
+
+        return (process.terminationStatus, box.stdout, box.stderr)
+    }
+}
+
+/// Thread-safe bag for concurrent pipe drains.
+private final class ProcessOutputBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _stdout = Data()
+    private var _stderr = Data()
+
+    var stdout: Data {
+        get { lock.lock(); defer { lock.unlock() }; return _stdout }
+        set { lock.lock(); _stdout = newValue; lock.unlock() }
+    }
+
+    var stderr: Data {
+        get { lock.lock(); defer { lock.unlock() }; return _stderr }
+        set { lock.lock(); _stderr = newValue; lock.unlock() }
     }
 }

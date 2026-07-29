@@ -19,11 +19,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var popover: NSPopover!
     private var store: UsageStore!
+    private var layoutState: PanelLayoutState!
     private var settingsWindow: NSWindow?
     private var cancellables = Set<AnyCancellable>()
 
+    /// Coalesce preference-driven size thrash into one apply per turn.
+    private var pendingPopoverSize: CGSize?
+    private var sizeApplyScheduled = false
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         store = UsageStore()
+        layoutState = PanelLayoutState()
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem.button {
@@ -33,13 +39,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         store.attachStatusItem(statusItem)
 
-        let root = MenuPanelView(store: store, settings: store.settings)
+        // Size against the status-item’s current display (not always main).
+        layoutState.refresh(anchor: statusItem.button)
+
+        let root = MenuPanelView(
+            store: store,
+            settings: store.settings,
+            layout: layoutState
+        ) { [weak self] size in
+            self?.queuePopoverSize(size)
+        }
         let hosting = NSHostingController(rootView: root)
 
         popover = NSPopover()
-        popover.contentSize = NSSize(width: 400, height: 640)
+        // Initial size; shrink-wraps to content up to 80% of presentation screen.
+        let initialHeight = min(680, layoutState.maxHeight)
+        popover.contentSize = NSSize(width: MenuBarLayout.panelWidth, height: initialHeight)
         popover.behavior = .transient
-        popover.animates = true
+        // Never animate frame changes — forced height tweens felt laggy; size follows content.
+        popover.animates = false
         popover.contentViewController = hosting
 
         store.$showSettings
@@ -51,6 +69,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             .store(in: &cancellables)
 
+        // Display arrangement / resolution changes — reclamp to the active screen.
+        NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.refreshPresentationHeight()
+            }
+            .store(in: &cancellables)
+
         store.bootstrap()
     }
 
@@ -59,8 +85,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if popover.isShown {
             popover.performClose(sender)
         } else {
+            // Resolve 80% max against the display that owns this status item click.
+            refreshPresentationHeight()
+            // Snap to latest measured size before show — no open animation from a stale height.
+            if let pending = pendingPopoverSize {
+                applyPopoverSize(pending)
+                pendingPopoverSize = nil
+            }
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             popover.contentViewController?.view.window?.makeKey()
+            // After show, window.screen is definitive — refresh once more if needed.
+            DispatchQueue.main.async { [weak self] in
+                self?.refreshPresentationHeight()
+            }
+        }
+    }
+
+    /// Update layout max height from the status-item’s screen (multi-monitor safe).
+    private func refreshPresentationHeight() {
+        _ = layoutState.refresh(anchor: statusItem.button)
+        // Re-clamp any pending/applied popover size to the new cap.
+        if let pending = pendingPopoverSize {
+            applyPopoverSize(pending)
+        } else {
+            applyPopoverSize(popover.contentSize)
         }
     }
 
@@ -70,12 +118,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let hosting = NSHostingController(rootView: view)
         let window = settingsWindow ?? NSWindow(contentViewController: hosting)
         window.contentViewController = hosting
-        window.title = "Tokens Settings"
+        window.title = "Settings"
         window.styleMask = [.titled, .closable]
-        window.setContentSize(NSSize(width: 400, height: 340))
+        // Tall enough for INTERVAL chips + Custom stepper row.
+        window.setContentSize(NSSize(width: 420, height: 380))
         window.center()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         settingsWindow = window
+    }
+
+    /// Preference keys can fire several times per layout; merge into one apply.
+    private func queuePopoverSize(_ size: CGSize) {
+        pendingPopoverSize = size
+        guard !sizeApplyScheduled else { return }
+        sizeApplyScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.sizeApplyScheduled = false
+            guard let pending = self.pendingPopoverSize else { return }
+            self.pendingPopoverSize = nil
+            self.applyPopoverSize(pending)
+        }
+    }
+
+    /// Fit popover to content height, never taller than 80% of the *presentation* screen.
+    /// Snap only — panel height is driven by measured CLIENT/MODEL content, not a tween.
+    private func applyPopoverSize(_ size: CGSize) {
+        let width = max(size.width, MenuBarLayout.panelWidth)
+        // Prefer live layoutState (status-item screen); fall back to anchor resolve.
+        let maxH = layoutState?.maxHeight
+            ?? MenuBarLayout.panelMaxHeight(anchor: statusItem?.button)
+        let height = min(max(size.height, 120), maxH)
+        let next = NSSize(width: width, height: height)
+        let current = popover.contentSize
+        guard abs(current.height - next.height) > 0.5
+            || abs(current.width - next.width) > 0.5
+        else { return }
+        popover.contentSize = next
     }
 }

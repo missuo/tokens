@@ -48,11 +48,17 @@ public final class UsageStore: ObservableObject {
     }
 
     public func setPeriod(_ newPeriod: UsagePeriod) {
-        guard newPeriod != period || report?.period != newPeriod.cliValue else { return }
+        // Same tab + report already matches → no-op.
+        // Same tab + stale report → still refresh (retry).
+        if newPeriod == period, report?.period == newPeriod.cliValue {
+            return
+        }
         period = newPeriod
         settings.lastPeriod = newPeriod
         // Period switches should hit Layer B snapshot (ms). Always allow replacing
         // an in-flight scan so the spinner cannot stick on a superseded request.
+        // Never show spinner on period change when we already have data — spinner
+        // + body remount was eating the first click’s visual feedback.
         startRefresh(forceRescan: false, useSnapshot: true, showSpinner: report == nil)
     }
 

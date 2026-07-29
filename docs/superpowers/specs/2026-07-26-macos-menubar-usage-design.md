@@ -239,6 +239,13 @@ Period changes: call CLI with new `--period` (Layer B should make this cheap aft
 
 Settings storage: app `UserDefaults` (interval, display mode). Scan caches live under tokens config/cache dirs owned by CLI.
 
+### UI visual language (2026-07-26)
+
+Locked design: **Minimal Mono v2** (`designs/menubar-ui-v1/`, FINAL 06).
+Implementation plan: `docs/superpowers/plans/2026-07-26-menubar-minimal-mono-ui.md`.
+
+Overrides earlier generic “system appearance only” chrome: mono typography, spacing-only sections, breakdown cards, cost chart (≤14 days), chart hover, nested long-list scroll, restyled settings.
+
 ## 5. App project layout
 
 Monorepo addition:

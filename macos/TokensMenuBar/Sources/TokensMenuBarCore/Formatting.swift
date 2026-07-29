@@ -67,6 +67,14 @@ public enum Formatting {
         String(format: "%.0f%%", share * 100)
     }
 
+    /// Input cache hit rate: cache-read / (input + cache-read). Returns 0…1.
+    public static func inputCacheRate(input: Int64, cacheRead: Int64) -> Double {
+        let denominator = input + cacheRead
+        guard denominator > 0 else { return 0 }
+        let n = max(0, Double(cacheRead))
+        return min(1, n / Double(denominator))
+    }
+
     public static func relativeTime(fromISO8601 value: String) -> String {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -79,5 +87,13 @@ public enum Formatting {
         let rel = RelativeDateTimeFormatter()
         rel.unitsStyle = .short
         return rel.localizedString(for: date, relativeTo: Date())
+    }
+
+    /// Dense chart axis label: `"2026-07-24"` → `"24"`. Tooltip should use full ISO date.
+    public static func chartDayLabel(isoDate: String) -> String {
+        if isoDate.count >= 10 {
+            return String(isoDate.suffix(2))
+        }
+        return isoDate
     }
 }
