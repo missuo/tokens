@@ -35,9 +35,32 @@ Common install locations:
 
 ## Run the Menu Bar app
 
+One-off foreground run:
+
 ```bash
 swift run TokensMenuBar
 ```
+
+## Dev restart
+
+During development, use these helpers to kill any running Menu Bar instance and relaunch a fresh build:
+
+```bash
+# Rebuild (debug) + stop old process + start new one
+./scripts/dev-restart.sh
+
+# Same, but with a release build
+./scripts/dev-restart.sh release
+
+# Stop only
+./scripts/dev-stop.sh
+
+# Start an already-built binary without rebuilding
+./scripts/dev-start.sh
+./scripts/dev-start.sh release
+```
+
+Logs go to `/tmp/TokensMenuBar.log`.
 
 ## Tests
 
@@ -56,3 +79,9 @@ swift test
 
 This tree was cleaned and restructured from the original Tokens monorepo fork.
 The web leaderboard, npm packaging, and unrelated monorepo tooling were removed.
+
+## Acknowledgments
+
+This project is based on a fork of [missuo/tokens](https://github.com/missuo/tokens).
+
+Thanks to the original Tokens project and its maintainers for the CLI, usage scanning, and open-source foundation that this Menu Bar app builds on.
