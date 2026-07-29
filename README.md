@@ -18,6 +18,12 @@ This repository is organized around the app first:
 ## Build the CLI
 
 ```bash
+make cli
+```
+
+Equivalent direct command:
+
+```bash
 cargo build --release --manifest-path cli/Cargo.toml -p tokens-cli
 ```
 
@@ -35,30 +41,37 @@ Common install locations:
 
 ## Run the Menu Bar app
 
-One-off foreground run:
+Foreground one-off run:
 
 ```bash
-swift run TokensMenuBar
+make run
 ```
 
-## Dev restart
+## Dev workflow
 
-During development, use Make targets (or the underlying scripts) to kill any running Menu Bar instance and relaunch a fresh build:
+Day-to-day development is intended to go through `make`.
+
+`Makefile` is the stable command entrypoint.
+Shell scripts under `scripts/` implement the process control details
+(`build` / `stop old process` / `start new process`) so the Makefile stays thin.
+This is a common setup: Make for targets, shell scripts for multi-step logic.
 
 ```bash
-# Preferred
 make restart            # rebuild debug + stop old + start new
 make restart-release    # same with release build
 make stop               # stop only
 make start              # start existing debug binary
 make start-release      # start existing release binary
-make run                # foreground debug run
+make build              # build debug app only
+make build-release      # build release app only
 make test
-make cli                # build tokens CLI
+make cli
 make help
 ```
 
-Equivalent scripts:
+Logs go to `/tmp/TokensMenuBar.log`.
+
+If you need to call the helpers directly:
 
 ```bash
 ./scripts/dev-restart.sh
@@ -68,12 +81,10 @@ Equivalent scripts:
 ./scripts/dev-start.sh release
 ```
 
-Logs go to `/tmp/TokensMenuBar.log`.
-
 ## Tests
 
 ```bash
-swift test
+make test
 ```
 
 ## Docs and design
