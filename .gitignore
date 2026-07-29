@@ -26,3 +26,6 @@ DerivedData/
 *.zip
 *.tgz
 *.swp
+
+# Generated app bundle for local launches
+dist/

@@ -58,13 +58,25 @@ make build-app-release  # only Menu Bar (release)
 
 Logs go to `/tmp/TokensMenuBar.log`.
 
-When launching via `make restart` / `make start` / `make run`, the app is pointed at this repo’s freshly built CLI:
+When launching via `make restart` / `make start` / `make run`:
+
+- both CLI and Menu Bar are built
+- the app binary is started directly from SwiftPM output:
+
+```text
+.build/debug/TokensMenuBar
+```
+
+- the app is pinned to this repo’s CLI:
 
 ```text
 cli/target/release/tokens
 ```
 
 That avoids accidentally using an older Homebrew `tokens` that does not support `usage --period`.
+
+After `make restart`, look for the Menu Bar status item in the **top menu bar**
+(not a Dock icon). Logs are at `/tmp/TokensMenuBar.log`.
 
 ## Manual commands
 
@@ -88,7 +100,7 @@ Or the raw toolchains:
 ```bash
 cargo build --release --manifest-path cli/Cargo.toml -p tokens-cli
 swift build --product TokensMenuBar
-TOKENS_CLI="$PWD/cli/target/release/tokens" swift run TokensMenuBar
+TOKENS_CLI="$PWD/cli/target/release/tokens" .build/debug/TokensMenuBar
 ```
 
 The app looks for a `tokens` binary that supports:

@@ -5,7 +5,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/_dev_common.sh"
 
 CONFIG="$(resolve_config "${1:-debug}")"
-APP="$(app_binary "$CONFIG")"
 
 build_all "$CONFIG"
 
@@ -22,5 +21,5 @@ else
   echo "Warning: could not fully stop previous instance." >&2
 fi
 
-echo "Starting $APP"
-launch_app "$APP"
+echo "Starting $APP_NAME ($CONFIG)"
+launch_app "$CONFIG"
