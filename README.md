@@ -2,11 +2,12 @@
 
 macOS menu bar app for local AI coding token usage.
 
-This repository keeps only:
+This repository is organized around the app first:
 
-- `macos/TokensMenuBar` — Swift menu bar app
-- `cli/` — `tokens-cli` + `tokens-core` used by the app
-- menubar-related docs and design references
+- Swift package at the repo root (`Package.swift`, `Sources/`, `Tests/`)
+- `cli/` — `tokens-cli` + `tokens-core` runtime dependency
+- `docs/` — product design and implementation notes
+- `design/` — UI references and prototypes
 
 ## Requirements
 
@@ -35,25 +36,23 @@ Common install locations:
 ## Run the Menu Bar app
 
 ```bash
-cd macos/TokensMenuBar
 swift run TokensMenuBar
 ```
 
 ## Tests
 
 ```bash
-cd macos/TokensMenuBar
 swift test
 ```
 
-## Docs and designs
+## Docs and design
 
-- Design/spec: `docs/superpowers/specs/2026-07-26-macos-menubar-usage-design.md`
-- Implementation plan: `docs/superpowers/plans/2026-07-26-menubar-minimal-mono-ui.md`
-- UI references: `designs/menubar-ui-v1/`
-- Package-local design notes: `macos/TokensMenuBar/designs/`
+- Design/spec: `docs/design-spec.md`
+- Implementation plan: `docs/implementation-plan.md`
+- UI references: `design/menubar-ui-v1/`
+- Settings scan-interval prototype: `design/settings-scan-interval/`
 
 ## Notes
 
-This tree was cleaned down from the original Tokens monorepo fork.
+This tree was cleaned and restructured from the original Tokens monorepo fork.
 The web leaderboard, npm packaging, and unrelated monorepo tooling were removed.

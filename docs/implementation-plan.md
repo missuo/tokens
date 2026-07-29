@@ -6,12 +6,12 @@
 
 **Architecture:** Keep the existing data path (`UsageStore` → `tokens usage --json`). Replace presentation only: extract design tokens + small pure views (`CostChartView`, share bars, section chrome), rewrite `MenuPanelView` layout, restyle `SettingsView`, and tighten popover sizing in `AppMain`. No CLI schema change; chart uses existing `byDay[].cost` / `byDay[].tokens` / `byDay[].date`.
 
-**Tech Stack:** SwiftUI, AppKit `NSPopover` / `NSWindow`, SwiftPM package `macos/TokensMenuBar`, XCTest.
+**Tech Stack:** SwiftUI, AppKit `NSPopover` / `NSWindow`, SwiftPM package `.`, XCTest.
 
 **Design source (canonical):**
-- Preview: `designs/menubar-ui-v1/` (tab **Final** + **Interactions**)
+- Preview: `design/menubar-ui-v1/` (tab **Final** + **Interactions**)
 - Shots: `full-final.png`, `full-ix-hover.png`, `full-ix-scroll.png`, `full-ix-settings.png`, `full-ix-settings-ctx.png`
-- Notes: `designs/menubar-ui-v1/README.md`
+- Notes: `design/menubar-ui-v1/README.md`
 
 ## Global Constraints
 
@@ -83,26 +83,26 @@
 
 | File | Role |
 |------|------|
-| `macos/TokensMenuBar/Sources/TokensMenuBarCore/DesignTokens.swift` | **Create** — colors, spacing, type helpers for light/dark mono UI |
-| `macos/TokensMenuBar/Sources/TokensMenuBarCore/CostChartView.swift` | **Create** — 14-day cost bar chart + hover tooltip |
-| `macos/TokensMenuBar/Sources/TokensMenuBarCore/Views.swift` | **Rewrite** — `MenuPanelView` layout to FINAL 06; keep `SettingsView` in same file **or** move if file exceeds ~400 lines |
-| `macos/TokensMenuBar/Sources/TokensMenuBarCore/Formatting.swift` | **Extend** — short day labels for chart X axis if needed |
-| `macos/TokensMenuBar/Sources/TokensMenuBar/AppMain.swift` | **Tweak** — popover content size, settings window size/title if needed |
-| `macos/TokensMenuBar/Tests/TokensMenuBarTests/FormattingTests.swift` | **Keep** + add chart window helper tests |
-| `macos/TokensMenuBar/Tests/TokensMenuBarTests/CostChartTests.swift` | **Create** — pure functions for day window + yMax |
-| `designs/menubar-ui-v1/README.md` | Reference only (already documents final) |
-| `docs/superpowers/specs/2026-07-26-macos-menubar-usage-design.md` | Optional follow-up doc note: UI visual = Minimal Mono v2 (do not block implementation) |
+| `Sources/TokensMenuBarCore/DesignTokens.swift` | **Create** — colors, spacing, type helpers for light/dark mono UI |
+| `Sources/TokensMenuBarCore/CostChartView.swift` | **Create** — 14-day cost bar chart + hover tooltip |
+| `Sources/TokensMenuBarCore/Views.swift` | **Rewrite** — `MenuPanelView` layout to FINAL 06; keep `SettingsView` in same file **or** move if file exceeds ~400 lines |
+| `Sources/TokensMenuBarCore/Formatting.swift` | **Extend** — short day labels for chart X axis if needed |
+| `Sources/TokensMenuBar/AppMain.swift` | **Tweak** — popover content size, settings window size/title if needed |
+| `Tests/TokensMenuBarTests/FormattingTests.swift` | **Keep** + add chart window helper tests |
+| `Tests/TokensMenuBarTests/CostChartTests.swift` | **Create** — pure functions for day window + yMax |
+| `design/menubar-ui-v1/README.md` | Reference only (already documents final) |
+| `docs/design-spec.md` | Optional follow-up doc note: UI visual = Minimal Mono v2 (do not block implementation) |
 
 ---
 
 ### Task 1: Design tokens + chart pure helpers (test-first)
 
 **Files:**
-- Create: `macos/TokensMenuBar/Sources/TokensMenuBarCore/DesignTokens.swift`
-- Create: `macos/TokensMenuBar/Sources/TokensMenuBarCore/CostChartMath.swift`
-- Create: `macos/TokensMenuBar/Tests/TokensMenuBarTests/CostChartTests.swift`
-- Modify: `macos/TokensMenuBar/Sources/TokensMenuBarCore/Formatting.swift` (add `chartDayLabel`)
-- Modify: `macos/TokensMenuBar/Tests/TokensMenuBarTests/FormattingTests.swift`
+- Create: `Sources/TokensMenuBarCore/DesignTokens.swift`
+- Create: `Sources/TokensMenuBarCore/CostChartMath.swift`
+- Create: `Tests/TokensMenuBarTests/CostChartTests.swift`
+- Modify: `Sources/TokensMenuBarCore/Formatting.swift` (add `chartDayLabel`)
+- Modify: `Tests/TokensMenuBarTests/FormattingTests.swift`
 
 **Interfaces:**
 - Produces:
@@ -157,7 +157,7 @@ final class CostChartTests: XCTestCase {
 - [ ] **Step 2: Run tests — expect FAIL**
 
 ```bash
-cd macos/TokensMenuBar && swift test --filter CostChartTests
+cd . && swift test --filter CostChartTests
 ```
 
 Expected: compile error `CostChartMath` not found.
@@ -213,18 +213,18 @@ public enum MenuBarLayout {
 - [ ] **Step 4: Run tests — expect PASS**
 
 ```bash
-cd macos/TokensMenuBar && swift test --filter CostChartTests
-cd macos/TokensMenuBar && swift test --filter FormattingTests
+cd . && swift test --filter CostChartTests
+cd . && swift test --filter FormattingTests
 ```
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add macos/TokensMenuBar/Sources/TokensMenuBarCore/CostChartMath.swift \
-        macos/TokensMenuBar/Sources/TokensMenuBarCore/DesignTokens.swift \
-        macos/TokensMenuBar/Sources/TokensMenuBarCore/Formatting.swift \
-        macos/TokensMenuBar/Tests/TokensMenuBarTests/CostChartTests.swift \
-        macos/TokensMenuBar/Tests/TokensMenuBarTests/FormattingTests.swift
+git add Sources/TokensMenuBarCore/CostChartMath.swift \
+        Sources/TokensMenuBarCore/DesignTokens.swift \
+        Sources/TokensMenuBarCore/Formatting.swift \
+        Tests/TokensMenuBarTests/CostChartTests.swift \
+        Tests/TokensMenuBarTests/FormattingTests.swift
 git commit -m "$(cat <<'EOF'
 feat(macos): add Minimal Mono chart math and layout tokens
 
@@ -237,7 +237,7 @@ EOF
 ### Task 2: `CostChartView` (bars + hover tooltip)
 
 **Files:**
-- Create: `macos/TokensMenuBar/Sources/TokensMenuBarCore/CostChartView.swift`
+- Create: `Sources/TokensMenuBarCore/CostChartView.swift`
 - Test: reuse `CostChartTests` (no View snapshot tests required)
 
 **Interfaces:**
@@ -284,7 +284,7 @@ public struct CostChartView: View {
 - [ ] **Step 2: Build package**
 
 ```bash
-cd macos/TokensMenuBar && swift build
+cd . && swift build
 ```
 
 Expected: success.
@@ -295,7 +295,7 @@ Expected: success.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add macos/TokensMenuBar/Sources/TokensMenuBarCore/CostChartView.swift
+git add Sources/TokensMenuBarCore/CostChartView.swift
 git commit -m "$(cat <<'EOF'
 feat(macos): add CostChartView with hover tooltip
 
@@ -308,7 +308,7 @@ EOF
 ### Task 3: Rewrite `MenuPanelView` to FINAL Minimal Mono
 
 **Files:**
-- Modify: `macos/TokensMenuBar/Sources/TokensMenuBarCore/Views.swift` (`MenuPanelView` and private helpers)
+- Modify: `Sources/TokensMenuBarCore/Views.swift` (`MenuPanelView` and private helpers)
 - Optionally split large pieces into `MenuPanelComponents.swift` if `Views.swift` becomes hard to edit
 
 **Interfaces:**
@@ -425,7 +425,7 @@ Wire to existing `store.manualRefresh()`, `store.showSettings = true`, `store.op
 - [ ] **Step 3: Build + unit tests**
 
 ```bash
-cd macos/TokensMenuBar && swift test
+cd . && swift test
 ```
 
 Expected: all pass.
@@ -433,7 +433,7 @@ Expected: all pass.
 - [ ] **Step 4: Run app and visual-check against `full-final.png`**
 
 ```bash
-cd macos/TokensMenuBar && swift run TokensMenuBar
+cd . && swift run TokensMenuBar
 ```
 
 Checklist:
@@ -448,8 +448,8 @@ Checklist:
 - [ ] **Step 5: Commit**
 
 ```bash
-git add macos/TokensMenuBar/Sources/TokensMenuBarCore/Models.swift \
-        macos/TokensMenuBar/Sources/TokensMenuBarCore/Views.swift
+git add Sources/TokensMenuBarCore/Models.swift \
+        Sources/TokensMenuBarCore/Views.swift
 git commit -m "$(cat <<'EOF'
 feat(macos): restyle MenuPanelView to Minimal Mono final design
 
@@ -462,8 +462,8 @@ EOF
 ### Task 4: Restyle Settings (IX-C)
 
 **Files:**
-- Modify: `macos/TokensMenuBar/Sources/TokensMenuBarCore/Views.swift` (`SettingsView`)
-- Modify: `macos/TokensMenuBar/Sources/TokensMenuBar/AppMain.swift` (`presentSettings` size/title)
+- Modify: `Sources/TokensMenuBarCore/Views.swift` (`SettingsView`)
+- Modify: `Sources/TokensMenuBar/AppMain.swift` (`presentSettings` size/title)
 
 **Behavior (unchanged):**
 - Display mode picker → `settings.displayMode` → `store.updateStatusTitle()`
@@ -496,7 +496,7 @@ popover.contentSize = NSSize(width: 400, height: 680)
 - [ ] **Step 3: Build + run; open Settings from footer**
 
 ```bash
-cd macos/TokensMenuBar && swift build && swift run TokensMenuBar
+cd . && swift build && swift run TokensMenuBar
 ```
 
 Verify: change Display to Both updates status item; Full Rescan triggers load; Done closes window.
@@ -504,8 +504,8 @@ Verify: change Display to Both updates status item; Full Rescan triggers load; D
 - [ ] **Step 4: Commit**
 
 ```bash
-git add macos/TokensMenuBar/Sources/TokensMenuBarCore/Views.swift \
-        macos/TokensMenuBar/Sources/TokensMenuBar/AppMain.swift
+git add Sources/TokensMenuBarCore/Views.swift \
+        Sources/TokensMenuBar/AppMain.swift
 git commit -m "$(cat <<'EOF'
 feat(macos): restyle Settings to Minimal Mono language
 
@@ -520,7 +520,7 @@ EOF
 **Files:**
 - Modify: `Views.swift` (fade overlays on nested lists)
 - Modify: `CostChartView.swift` if tooltip clamping bugs appear
-- Update: `macos/TokensMenuBar/README.md` — one short “UI: Minimal Mono v2” note + link to design folder
+- Update: `README.md` — one short “UI: Minimal Mono v2” note + link to design folder
 
 **Fade overlay pattern:**
 
@@ -546,7 +546,7 @@ Use `Color(nsColor: .windowBackgroundColor)` or solid approximate for popover ma
 - [ ] **Step 2: Full test suite**
 
 ```bash
-cd macos/TokensMenuBar && swift test
+cd . && swift test
 ```
 
 - [ ] **Step 3: Manual QA script**
@@ -560,9 +560,9 @@ cd macos/TokensMenuBar && swift test
 - [ ] **Step 4: Commit**
 
 ```bash
-git add macos/TokensMenuBar/Sources/TokensMenuBarCore \
-        macos/TokensMenuBar/Sources/TokensMenuBar/AppMain.swift \
-        macos/TokensMenuBar/README.md
+git add Sources/TokensMenuBarCore \
+        Sources/TokensMenuBar/AppMain.swift \
+        README.md
 git commit -m "$(cat <<'EOF'
 feat(macos): polish Minimal Mono scroll fades and QA fixes
 
@@ -575,16 +575,16 @@ EOF
 ### Task 6: Spec cross-link (docs only)
 
 **Files:**
-- Modify: `docs/superpowers/specs/2026-07-26-macos-menubar-usage-design.md` — add a short “UI visual language” subsection under §4 pointing at FINAL 06 + this plan
-- Modify: `designs/menubar-ui-v1/README.md` — mark “Implemented in progress / done” only if code landed (set status when Task 5 merges)
+- Modify: `docs/design-spec.md` — add a short “UI visual language” subsection under §4 pointing at FINAL 06 + this plan
+- Modify: `design/menubar-ui-v1/README.md` — mark “Implemented in progress / done” only if code landed (set status when Task 5 merges)
 
 - [ ] **Step 1: Add spec pointer**
 
 ```markdown
 ### UI visual language (2026-07-26)
 
-Locked design: **Minimal Mono v2** (`designs/menubar-ui-v1/`, FINAL 06).
-Implementation plan: `docs/superpowers/plans/2026-07-26-menubar-minimal-mono-ui.md`.
+Locked design: **Minimal Mono v2** (`design/menubar-ui-v1/`, FINAL 06).
+Implementation plan: `docs/implementation-plan.md`.
 
 Overrides earlier generic “system appearance only” chrome: mono typography, spacing-only sections, breakdown cards, cost chart (≤14 days), chart hover, nested long-list scroll, restyled settings.
 ```
@@ -592,8 +592,8 @@ Overrides earlier generic “system appearance only” chrome: mono typography, 
 - [ ] **Step 2: Commit**
 
 ```bash
-git add docs/superpowers/specs/2026-07-26-macos-menubar-usage-design.md \
-        designs/menubar-ui-v1/README.md
+git add docs/design-spec.md \
+        design/menubar-ui-v1/README.md
 git commit -m "$(cat <<'EOF'
 docs: link Menu Bar Minimal Mono UI plan to product spec
 
@@ -632,7 +632,7 @@ EOF
 
 ## Execution handoff
 
-Plan saved to `docs/superpowers/plans/2026-07-26-menubar-minimal-mono-ui.md`.
+Plan saved to `docs/implementation-plan.md`.
 
 **Two execution options:**
 

@@ -241,8 +241,8 @@ Settings storage: app `UserDefaults` (interval, display mode). Scan caches live 
 
 ### UI visual language (2026-07-26)
 
-Locked design: **Minimal Mono v2** (`designs/menubar-ui-v1/`, FINAL 06).
-Implementation plan: `docs/superpowers/plans/2026-07-26-menubar-minimal-mono-ui.md`.
+Locked design: **Minimal Mono v2** (`design/menubar-ui-v1/`, FINAL 06).
+Implementation plan: `docs/implementation-plan.md`.
 
 Overrides earlier generic “system appearance only” chrome: mono typography, spacing-only sections, breakdown cards, cost chart (≤14 days), chart hover, nested long-list scroll, restyled settings.
 
@@ -251,7 +251,7 @@ Overrides earlier generic “system appearance only” chrome: mono typography, 
 Monorepo addition:
 
 ```
-macos/TokensMenuBar/
+
   Package.swift                 # or Xcode project
   Sources/TokensMenuBar/
     AppMain.swift

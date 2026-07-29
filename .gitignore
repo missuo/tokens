@@ -5,9 +5,11 @@
 cli/target/
 
 # SwiftPM
-macos/**/.build/
+.build/
 .swiftpm/
 Package.resolved
+DerivedData/
+*.xcodeproj
 
 # Local tool / editor residue
 .claude/
