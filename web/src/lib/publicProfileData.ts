@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { unstable_cache } from "next/cache";
-import { db, users, submissions, dailyBreakdown } from "@/lib/db";
+import { db, users, submissions, dailyBreakdown, archivedBreakdown } from "@/lib/db";
 import { eq, desc, sql, and, gte, lte } from "drizzle-orm";
 import {
   AmbiguousUsernameError,
@@ -157,8 +157,13 @@ export async function getPublicProfileResponse(
         )
       : eq(submissions.userId, user.id);
 
-    const [statsResult, latestSubmissionResult, rankResult, dailyData] =
-      await Promise.all([
+    const [
+      statsResult,
+      latestSubmissionResult,
+      rankResult,
+      dailyData,
+      archivedResult,
+    ] = await Promise.all([
         db
           .select({
             totalTokens: sql<number>`COALESCE(SUM(${submissions.totalTokens}), 0)`,
@@ -184,7 +189,6 @@ export async function getPublicProfileResponse(
             cliVersion: submissions.cliVersion,
             schemaVersion: submissions.schemaVersion,
             mcpServers: submissions.mcpServers,
-            hasBackfill: submissions.hasBackfill,
           })
           .from(submissions)
           .where(eq(submissions.userId, user.id))
@@ -226,10 +230,20 @@ export async function getPublicProfileResponse(
           )
           .where(dailyBreakdownFilter)
           .orderBy(dailyBreakdown.date),
+
+        // Presence check only. Reconstructed usage never joins the totals or
+        // the graph above — it is a separate table precisely so it cannot —
+        // but the profile still has to disclose that some history was
+        // imported rather than scanned.
+        db
+          .select({ days: sql<number>`COUNT(*)` })
+          .from(archivedBreakdown)
+          .where(eq(archivedBreakdown.userId, user.id)),
       ]);
 
     const [stats] = statsResult;
     const [latestSubmission] = latestSubmissionResult;
+    const archivedDayCount = Number(archivedResult[0]?.days ?? 0);
     const rank = (rankResult as unknown as { rank: number }[])[0]?.rank || null;
 
     type ModelData = {
@@ -646,9 +660,11 @@ export async function getPublicProfileResponse(
         ? periodModels
         : latestSubmission?.modelsUsed || [],
       mcpServers: latestSubmission?.mcpServers || [],
-      // Sticky per-user flag: true once any accepted submission carried a
-      // backfill provenance tag (badge-only; ranking is unaffected).
-      hasBackfill: latestSubmission?.hasBackfill ?? false,
+      // Drives the "Includes imported history" badge. Read from the archive
+      // table rather than a flag on the submission: presence of a
+      // reconstructed row is the fact being disclosed, and it stays accurate
+      // if those rows are ever removed. Ranking never sees them either way.
+      hasBackfill: archivedDayCount > 0,
       modelUsage,
       contributions: graphContributions,
     });

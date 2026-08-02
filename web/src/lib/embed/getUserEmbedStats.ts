@@ -82,7 +82,10 @@ async function fetchUserEmbedStats(
       totalCost: sql<number>`COALESCE(CAST(${submissions.totalCost} AS DECIMAL(18,4)), 0)`,
       submissionCount: sql<number>`COALESCE(${submissions.submitCount}, 0)`,
       updatedAt: submissions.updatedAt,
-      hasBackfill: sql<boolean>`COALESCE(${submissions.hasBackfill}, false)`,
+      // EXISTS against the archive table rather than a flag on the submission:
+      // the fact being disclosed is that some of this history was reconstructed
+      // rather than scanned, and that lives in archived_breakdown now.
+      hasBackfill: sql<boolean>`EXISTS (SELECT 1 FROM archived_breakdown ab WHERE ab.user_id = ${users.id})`,
     })
     .from(users)
     .leftJoin(submissions, eq(submissions.userId, users.id))

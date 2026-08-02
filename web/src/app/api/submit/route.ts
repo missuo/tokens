@@ -249,11 +249,15 @@ export async function POST(request: Request) {
     const data = validation.data;
     const warnings = [...validation.warnings];
 
-    // Phase 1 backfill-provenance persistence (issue #888): a submission
-    // tagged `provenance.origin === "backfill"` (from `tokens import`)
-    // sets the sticky submissions.has_backfill flag and stamps a per-client
-    // origin tag into daily_breakdown.source_breakdown. The tag is excluded
-    // from generateSubmissionHash, so it never affects idempotency.
+    // A submission tagged `provenance.origin === "backfill"` still stamps a
+    // per-client origin tag into daily_breakdown.source_breakdown, excluded
+    // from generateSubmissionHash so it never affects idempotency.
+    //
+    // It no longer sets an account-level flag. Reconstructed usage now lives in
+    // `archived_breakdown`, keyed per day and per source, which the leaderboard
+    // does not query at all — the account-level flag could not express "rank
+    // this user's scanned days, exclude their reconstructed ones", which is the
+    // only distinction that matters.
     const isBackfill = data.provenance?.origin === "backfill";
 
     if (data.contributions.length === 0) {
@@ -331,7 +335,6 @@ export async function POST(request: Request) {
                 modelsUsed: [],
                 cliVersion: data.meta.version,
                 submissionHash: generateSubmissionHash(hashData),
-                hasBackfill: isBackfill,
               })
               .returning({ id: submissions.id })
           );
@@ -927,10 +930,6 @@ export async function POST(request: Request) {
            modelsUsed: Array.from(allModels),
           cliVersion: data.meta.version,
           submissionHash: generateSubmissionHash(hashData),
-          // Sticky: only ever set to true. A later live CLI submit omits the
-          // key entirely, so it can never reset an account's backfill flag —
-          // the merged totals still include the imported history.
-          ...(isBackfill ? { hasBackfill: true } : {}),
           submitCount: sql`COALESCE(submit_count, 0) + 1`,
           schemaVersion: sql`GREATEST(COALESCE(${submissions.schemaVersion}, 0), ${submitDevice.schemaVersion})`,
           totalActiveTimeMs: aggregates.totalActiveTimeMs,

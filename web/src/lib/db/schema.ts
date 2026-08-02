@@ -3,7 +3,6 @@ import {
   uuid,
   varchar,
   text,
-  boolean,
   timestamp,
   bigint,
   decimal,
@@ -184,14 +183,6 @@ export const submissions = pgTable(
     submitCount: integer("submit_count").notNull().default(1),
     /** 0=legacy (no timestamps), 1=timestamp-aware CLI */
     schemaVersion: integer("schema_version").notNull().default(0),
-    /**
-     * True once ANY accepted submission for this user carried a
-     * submission-level `provenance.origin === "backfill"` tag (e.g. from
-     * `tokens import`). Sticky: later live CLI submits never reset it,
-     * because the merged totals still include the imported history.
-     */
-    hasBackfill: boolean("has_backfill").notNull().default(false),
-
     totalActiveTimeMs: bigint("total_active_time_ms", { mode: "number" }),
     longestContinuousMs: bigint("longest_continuous_ms", { mode: "number" }),
     maxConcurrentSessions: integer("max_concurrent_sessions"),
@@ -312,6 +303,94 @@ export const dailyBreakdown = pgTable(
       table.submissionId,
       table.submittedDeviceId,
       table.date
+    ),
+  ]
+);
+
+/**
+ * Usage that predates the CLI install, reconstructed from a provider's own
+ * aggregate file rather than scanned from session transcripts.
+ *
+ * Claude Code deletes transcripts after `cleanupPeriodDays` (30 by default), so
+ * installing the CLI with existing history silently loses everything older than
+ * that window. The totals survive in `~/.claude/stats-cache.json`, but they are
+ * aggregates — there is no per-message record to check them against, which is
+ * why `tokens import` has always refused to upload them.
+ *
+ * This lives outside `dailyBreakdown` deliberately. **The leaderboard never
+ * queries this table**, so reconstructed usage cannot reach a ranking by
+ * construction rather than by every future query remembering a filter. The
+ * previous attempt at this was `submissions.has_backfill`, which was designed,
+ * written, and never read by anything.
+ *
+ * Keyed by `(userId, date, origin)` rather than by submission: an import is not
+ * part of a submission cycle, and keeping `origin` in the key stops a second
+ * import source from silently merging into the first. Re-importing the same
+ * source replaces it.
+ *
+ * There is no `timestampMs` here on purpose. These rows have no intra-day
+ * resolution — it died with the transcripts — and inventing one to satisfy a
+ * finer schema would be fabricating data.
+ */
+export const archivedBreakdown = pgTable(
+  "archived_breakdown",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+
+    date: date("date").notNull(),
+    /** What the numbers were reconstructed from, e.g. `claude-stats-cache`. */
+    origin: varchar("origin", { length: 64 }).notNull(),
+
+    tokens: bigint("tokens", { mode: "number" }).notNull(),
+    cost: decimal("cost", { precision: 14, scale: 4 }).notNull(),
+    inputTokens: bigint("input_tokens", { mode: "number" }).notNull(),
+    outputTokens: bigint("output_tokens", { mode: "number" }).notNull(),
+
+    /** Same per-client shape as `dailyBreakdown.sourceBreakdown`, so one
+     *  component can render both. Cache and reasoning splits are whatever the
+     *  source file could supply; absent fields stay 0 rather than being
+     *  guessed. */
+    sourceBreakdown: jsonb("source_breakdown").$type<
+      Record<
+        string,
+        {
+          tokens: number;
+          cost: number;
+          input: number;
+          output: number;
+          cacheRead: number;
+          cacheWrite: number;
+          reasoning: number;
+          messages: number;
+          models: Record<
+            string,
+            {
+              tokens: number;
+              cost: number;
+              input: number;
+              output: number;
+              cacheRead: number;
+              cacheWrite: number;
+              reasoning: number;
+              messages: number;
+            }
+          >;
+        }
+      >
+    >(),
+
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("idx_archived_breakdown_user_date").on(table.userId, table.date),
+    unique("archived_breakdown_user_date_origin_unique").on(
+      table.userId,
+      table.date,
+      table.origin
     ),
   ]
 );
