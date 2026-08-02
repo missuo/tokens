@@ -12,10 +12,11 @@ public struct MenuPanelView: View {
     @State private var bodyContentHeight: CGFloat = 0
     /// Intrinsic height of header + tabs + footer (+ error shells).
     @State private var chromeHeight: CGFloat = 0
-    /// Body viewport height — tracks measured content (CLIENT/MODEL lists push this open).
+    /// Body viewport height — tracks measured content (CLIENT/PROJECT/MODEL lists push this open).
     @State private var bodyViewportHeight: CGFloat = MenuBarLayout.fallbackContentHeight
-    /// CLIENT / MODEL lists: how many rows are visible (chevron loads more).
+    /// CLIENT / PROJECT / MODEL lists: how many rows are visible (chevron loads more).
     @State private var clientVisibleCount: Int = MenuBarLayout.listPageSize
+    @State private var projectVisibleCount: Int = MenuBarLayout.listPageSize
     @State private var modelVisibleCount: Int = MenuBarLayout.listPageSize
 
     public init(
@@ -121,12 +122,16 @@ public struct MenuPanelView: View {
         .onChange(of: store.period) { _ in
             // Reset expand pages; keep prior panel height until new report lands.
             clientVisibleCount = MenuBarLayout.listPageSize
+            projectVisibleCount = MenuBarLayout.listPageSize
             modelVisibleCount = MenuBarLayout.listPageSize
         }
         .onChange(of: store.isLoading) { _ in syncBodyHeightAndPublish() }
         .onChange(of: store.binaryMissing) { _ in syncBodyHeightAndPublish() }
         .onChange(of: store.lastError) { _ in syncBodyHeightAndPublish() }
         .onChange(of: clientVisibleCount) { _ in
+            DispatchQueue.main.async { syncBodyHeightAndPublish() }
+        }
+        .onChange(of: projectVisibleCount) { _ in
             DispatchQueue.main.async { syncBodyHeightAndPublish() }
         }
         .onChange(of: modelVisibleCount) { _ in
@@ -164,6 +169,7 @@ public struct MenuPanelView: View {
             totalSection(report)
             breakdownSection(report)
             clientSection(report)
+            projectSection(report)
             modelSection(report)
             costChartSection(report)
             if let error = store.lastError {
@@ -459,6 +465,96 @@ public struct MenuPanelView: View {
         }
     }
 
+    // MARK: - PROJECT
+
+    private func projectSection(_ report: UsageReport) -> some View {
+        let all = report.byProject
+        let visible = Array(all.prefix(max(projectVisibleCount, 0)))
+        let hasMore = all.count > visible.count
+
+        return VStack(alignment: .leading, spacing: 12) {
+            sectionLabel("PROJECT")
+            if all.isEmpty {
+                emptyHint("No project data")
+            } else {
+                projectRows(visible)
+                if hasMore {
+                    expandChevron(remaining: all.count - visible.count, accessibilityNoun: "projects") {
+                        projectVisibleCount = min(
+                            projectVisibleCount + MenuBarLayout.listPageSize,
+                            all.count
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    private func projectRows(_ projects: [ProjectUsage]) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            ForEach(projects) { project in
+                projectRow(project)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .animation(.easeOut(duration: 0.18), value: projectVisibleCount)
+    }
+
+    private func projectRow(_ project: ProjectUsage) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(project.displayName)
+                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+                Text("\(Formatting.cost(project.cost)) · \(Formatting.compactTokens(project.tokens))")
+                    .font(.system(size: 12, design: .monospaced))
+                    .monospacedDigit()
+                    .layoutPriority(2)
+            }
+
+            HStack(alignment: .top, spacing: 9) {
+                Rectangle()
+                    .fill(Color.primary.opacity(0.16))
+                    .frame(width: 1)
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(project.models) { model in
+                        projectModelRow(model)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(.leading, 3)
+        }
+        .accessibilityElement(children: .contain)
+    }
+
+    private func projectModelRow(_ model: ProjectModelUsage) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            HStack(spacing: 4) {
+                Text(model.modelId)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Text("/")
+                    .foregroundStyle(.tertiary)
+                Text(model.providerId)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            .font(.system(size: 11, design: .monospaced))
+            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+
+            Text("\(Formatting.cost(model.cost)) · \(Formatting.compactTokens(model.tokens))")
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+                .layoutPriority(2)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
     // MARK: - MODEL
 
     private func modelSection(_ report: UsageReport) -> some View {
@@ -577,6 +673,7 @@ public struct MenuPanelView: View {
             .foregroundStyle(.secondary)
             .tracking(1.0)
             .textCase(.uppercase)
+            .accessibilityAddTraits(.isHeader)
     }
 
     private func shareBar(share: Double) -> some View {

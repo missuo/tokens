@@ -10,17 +10,22 @@ use serde::Serialize;
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use tokens_core::{
-    bucket_timezone, clear_source_message_cache, generate_local_graph_report, BucketTimezone,
-    ClientContribution, DailyContribution, DailyTotals, GraphResult, ReportOptions, TokenBreakdown,
+    bucket_timezone, clear_source_message_cache, generate_local_usage_scan, BucketTimezone,
+    ClientContribution, DailyContribution, DailyTotals, GraphResult, LocalUsageScan,
+    ProjectContribution, ProjectModelContribution, ReportOptions, TokenBreakdown,
 };
 
+use crate::commands::unattributed_diagnostics::{update_diagnostics, DIAGNOSTIC_FILENAME};
 use crate::settings;
 
-const SNAPSHOT_SCHEMA_VERSION: u32 = 1;
-const SNAPSHOT_FILENAME: &str = "usage-snapshot-v1.json";
+const SNAPSHOT_SCHEMA_VERSION: u32 = 2;
+const SNAPSHOT_FILENAME: &str = "usage-snapshot-v2.json";
+const LEGACY_SNAPSHOT_FILENAME: &str = "usage-snapshot-v1.json";
+static SNAPSHOT_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 #[clap(rename_all = "lower")]
@@ -55,6 +60,7 @@ struct UsageReport {
     summary: UsageSummary,
     token_breakdown: TokenBreakdownDto,
     by_client: Vec<ClientUsage>,
+    by_project: Vec<ProjectUsage>,
     by_model: Vec<ModelUsageRow>,
     by_day: Vec<DayUsage>,
     meta: UsageMeta,
@@ -130,6 +136,27 @@ struct ClientModelUsage {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+struct ProjectUsage {
+    project_key: Option<String>,
+    display_name: String,
+    tokens: i64,
+    cost: f64,
+    messages: i32,
+    models: Vec<ProjectModelUsage>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectModelUsage {
+    model_id: String,
+    provider_id: String,
+    tokens: i64,
+    cost: f64,
+    messages: i32,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct ModelUsageRow {
     model_id: String,
     provider_id: String,
@@ -196,6 +223,7 @@ struct SnapshotDay {
     intensity: u8,
     token_breakdown: TokenBreakdownDtoSerde,
     clients: Vec<SnapshotClientRow>,
+    projects: Vec<SnapshotProject>,
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -219,13 +247,39 @@ struct SnapshotClientRow {
     messages: i32,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SnapshotProject {
+    project_key: Option<String>,
+    project_label: String,
+    tokens: i64,
+    cost: f64,
+    messages: i32,
+    models: Vec<SnapshotProjectModel>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SnapshotProjectModel {
+    model_id: String,
+    provider_id: String,
+    tokens: i64,
+    cost: f64,
+    messages: i32,
+}
+
 /// Run `tokens usage`.
 ///
 /// * `refresh` — incremental rescan (uses Layer A); Menu Bar timer / Refresh button.
 /// * `force_rescan` — clear Layer A + B, then full rescan.
 /// * neither — serve from Layer B snapshot when it is still same bucket-day
 ///   (fast period switches); otherwise scan.
-pub(crate) fn run(json: bool, period: UsagePeriod, refresh: bool, force_rescan: bool) -> Result<()> {
+pub(crate) fn run(
+    json: bool,
+    period: UsagePeriod,
+    refresh: bool,
+    force_rescan: bool,
+) -> Result<()> {
     match build_report(period, refresh, force_rescan) {
         Ok(report) => {
             if json {
@@ -238,7 +292,7 @@ pub(crate) fn run(json: bool, period: UsagePeriod, refresh: bool, force_rescan: 
         Err(err) => {
             if json {
                 let payload = UsageErrorReport {
-                    schema_version: 1,
+                    schema_version: SNAPSHOT_SCHEMA_VERSION,
                     error: UsageErrorBody {
                         code: "scan_failed".to_string(),
                         message: format!("{err:#}"),
@@ -263,6 +317,7 @@ fn build_report(period: UsagePeriod, refresh: bool, force_rescan: bool) -> Resul
     if force_rescan {
         clear_source_message_cache().map_err(|e| anyhow::anyhow!(e))?;
         let _ = fs::remove_file(snapshot_path());
+        let _ = fs::remove_file(legacy_snapshot_path());
     } else if !refresh {
         if let Some(report) =
             try_report_from_snapshot(period, today, since.as_deref(), until.as_deref())
@@ -271,8 +326,18 @@ fn build_report(period: UsagePeriod, refresh: bool, force_rescan: bool) -> Resul
         }
     }
 
-    let graph = scan_all_local()?;
-    write_snapshot_from_graph(&graph)?;
+    let scan = scan_all_local()?;
+    write_snapshot_from_graph(&scan.graph)?;
+    let diagnostics_path = tokens_core::paths::get_cache_dir().join(DIAGNOSTIC_FILENAME);
+    if let Err(error) = update_diagnostics(
+        &diagnostics_path,
+        &scan.graph.meta.generated_at,
+        &timezone_label(),
+        &scan.unattributed_sessions,
+    ) {
+        eprintln!("tokens: warning: {error:#}");
+    }
+    let graph = scan.graph;
 
     // Keep full history for the always-14-day cost chart; filter only for
     // summary / client / model rolls (period-scoped).
@@ -281,11 +346,7 @@ fn build_report(period: UsagePeriod, refresh: bool, force_rescan: bool) -> Resul
     filter_contributions(&mut contributions, since.as_deref(), until.as_deref());
 
     let duration_ms = started.elapsed().as_millis() as u32;
-    let mode = if force_rescan {
-        "full"
-    } else {
-        "incremental"
-    };
+    let mode = if force_rescan { "full" } else { "incremental" };
 
     Ok(report_from_contributions(
         period,
@@ -302,7 +363,7 @@ fn build_report(period: UsagePeriod, refresh: bool, force_rescan: bool) -> Resul
     ))
 }
 
-fn scan_all_local() -> Result<GraphResult> {
+fn scan_all_local() -> Result<LocalUsageScan> {
     let options = ReportOptions {
         scanner_settings: settings::load_scanner_settings(),
         ..ReportOptions::default()
@@ -313,7 +374,7 @@ fn scan_all_local() -> Result<GraphResult> {
         .build()
         .context("failed to start async runtime for usage scan")?;
 
-    rt.block_on(generate_local_graph_report(options))
+    rt.block_on(generate_local_usage_scan(options))
         .map_err(|e| anyhow::anyhow!(e))
 }
 
@@ -341,7 +402,11 @@ fn period_bounds(period: UsagePeriod, today: NaiveDate) -> (Option<String>, Opti
     }
 }
 
-fn filter_contributions(days: &mut Vec<DailyContribution>, since: Option<&str>, until: Option<&str>) {
+fn filter_contributions(
+    days: &mut Vec<DailyContribution>,
+    since: Option<&str>,
+    until: Option<&str>,
+) {
     if let Some(since) = since {
         days.retain(|d| d.date.as_str() >= since);
     }
@@ -354,13 +419,16 @@ fn snapshot_path() -> PathBuf {
     tokens_core::paths::get_cache_dir().join(SNAPSHOT_FILENAME)
 }
 
+fn legacy_snapshot_path() -> PathBuf {
+    tokens_core::paths::get_cache_dir().join(LEGACY_SNAPSHOT_FILENAME)
+}
+
 fn timezone_label() -> String {
     match bucket_timezone() {
         BucketTimezone::Local => iana_time_zone::get_timezone().unwrap_or_else(|_| "local".into()),
         BucketTimezone::Named(tz) => tz.name().to_string(),
     }
 }
-
 
 /// Resolve the bucket-local calendar day this snapshot belongs to.
 fn snapshot_bucket_day(snapshot: &UsageSnapshotFile) -> Option<String> {
@@ -389,6 +457,62 @@ fn bucket_day_from_generated_at(generated_at: &str) -> Option<String> {
     Some(day.format("%Y-%m-%d").to_string())
 }
 
+fn snapshot_day_from_contribution(c: &DailyContribution) -> SnapshotDay {
+    SnapshotDay {
+        date: c.date.clone(),
+        tokens: c.totals.tokens,
+        cost: c.totals.cost,
+        messages: c.totals.messages,
+        intensity: c.intensity,
+        token_breakdown: TokenBreakdownDtoSerde {
+            input: c.token_breakdown.input,
+            output: c.token_breakdown.output,
+            cache_read: c.token_breakdown.cache_read,
+            cache_write: c.token_breakdown.cache_write,
+            reasoning: c.token_breakdown.reasoning,
+        },
+        clients: c
+            .clients
+            .iter()
+            .map(|row| SnapshotClientRow {
+                client: row.client.clone(),
+                model_id: row.model_id.clone(),
+                provider_id: row.provider_id.clone(),
+                tokens: TokenBreakdownDtoSerde {
+                    input: row.tokens.input,
+                    output: row.tokens.output,
+                    cache_read: row.tokens.cache_read,
+                    cache_write: row.tokens.cache_write,
+                    reasoning: row.tokens.reasoning,
+                },
+                cost: row.cost,
+                messages: row.messages,
+            })
+            .collect(),
+        projects: c
+            .projects
+            .iter()
+            .map(|project| SnapshotProject {
+                project_key: project.project_key.clone(),
+                project_label: project.project_label.clone(),
+                tokens: project.totals.tokens,
+                cost: project.totals.cost,
+                messages: project.totals.messages,
+                models: project
+                    .models
+                    .iter()
+                    .map(|model| SnapshotProjectModel {
+                        model_id: model.model_id.clone(),
+                        provider_id: model.provider_id.clone(),
+                        tokens: model.tokens,
+                        cost: model.cost,
+                        messages: model.messages,
+                    })
+                    .collect(),
+            })
+            .collect(),
+    }
+}
 
 fn write_snapshot_from_graph(graph: &GraphResult) -> Result<()> {
     let snapshot = UsageSnapshotFile {
@@ -399,38 +523,7 @@ fn write_snapshot_from_graph(graph: &GraphResult) -> Result<()> {
         contributions: graph
             .contributions
             .iter()
-            .map(|c| SnapshotDay {
-                date: c.date.clone(),
-                tokens: c.totals.tokens,
-                cost: c.totals.cost,
-                messages: c.totals.messages,
-                intensity: c.intensity,
-                token_breakdown: TokenBreakdownDtoSerde {
-                    input: c.token_breakdown.input,
-                    output: c.token_breakdown.output,
-                    cache_read: c.token_breakdown.cache_read,
-                    cache_write: c.token_breakdown.cache_write,
-                    reasoning: c.token_breakdown.reasoning,
-                },
-                clients: c
-                    .clients
-                    .iter()
-                    .map(|row| SnapshotClientRow {
-                        client: row.client.clone(),
-                        model_id: row.model_id.clone(),
-                        provider_id: row.provider_id.clone(),
-                        tokens: TokenBreakdownDtoSerde {
-                            input: row.tokens.input,
-                            output: row.tokens.output,
-                            cache_read: row.tokens.cache_read,
-                            cache_write: row.tokens.cache_write,
-                            reasoning: row.tokens.reasoning,
-                        },
-                        cost: row.cost,
-                        messages: row.messages,
-                    })
-                    .collect(),
-            })
+            .map(snapshot_day_from_contribution)
             .collect(),
     };
 
@@ -439,10 +532,47 @@ fn write_snapshot_from_graph(graph: &GraphResult) -> Result<()> {
         fs::create_dir_all(parent)?;
     }
     let body = serde_json::to_vec_pretty(&snapshot)?;
-    let tmp = path.with_extension("json.tmp");
-    fs::write(&tmp, body)?;
-    fs::rename(&tmp, &path)?;
+    write_private_snapshot(&path, &body)?;
+    let _ = fs::remove_file(legacy_snapshot_path());
     Ok(())
+}
+
+/// Persist a snapshot through a process-unique temporary file. Concurrent
+/// refreshes may race to publish, but each published snapshot is complete and
+/// workspace keys remain owner-only on Unix.
+fn write_private_snapshot(path: &Path, body: &[u8]) -> Result<()> {
+    let sequence = SNAPSHOT_TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let tmp = path.with_extension(format!("json.{}.{}.tmp", std::process::id(), sequence));
+    let result = (|| -> Result<()> {
+        #[cfg(unix)]
+        let mut output = {
+            use std::os::unix::fs::OpenOptionsExt;
+            fs::OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .mode(0o600)
+                .open(&tmp)?
+        };
+        #[cfg(not(unix))]
+        let mut output = fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&tmp)?;
+
+        output.write_all(body)?;
+        output.sync_all()?;
+        tokens_core::fs_atomic::replace_file(&tmp, path)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+        }
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    result.with_context(|| format!("write usage snapshot {}", path.display()))
 }
 
 fn try_report_from_snapshot(
@@ -529,6 +659,30 @@ fn snapshot_days_to_contributions(days: &[SnapshotDay]) -> Vec<DailyContribution
                     messages: c.messages,
                 })
                 .collect(),
+            projects: d
+                .projects
+                .iter()
+                .map(|project| ProjectContribution {
+                    project_key: project.project_key.clone(),
+                    project_label: project.project_label.clone(),
+                    totals: DailyTotals {
+                        tokens: project.tokens,
+                        cost: project.cost,
+                        messages: project.messages,
+                    },
+                    models: project
+                        .models
+                        .iter()
+                        .map(|model| ProjectModelContribution {
+                            model_id: model.model_id.clone(),
+                            provider_id: model.provider_id.clone(),
+                            tokens: model.tokens,
+                            cost: model.cost,
+                            messages: model.messages,
+                        })
+                        .collect(),
+                })
+                .collect(),
             active_time_ms: None,
         })
         .collect()
@@ -564,10 +718,19 @@ fn report_from_contributions(
         messages: i32,
     }
 
+    #[derive(Default)]
+    struct ProjectAgg {
+        totals: Agg,
+        display_name: String,
+        label_date: String,
+    }
+
     let mut by_client: BTreeMap<String, Agg> = BTreeMap::new();
     let mut by_client_model: BTreeMap<(String, String, String), Agg> = BTreeMap::new();
     let mut by_model: BTreeMap<(String, String), Agg> = BTreeMap::new();
     let mut model_clients: BTreeMap<(String, String), BTreeMap<String, ()>> = BTreeMap::new();
+    let mut by_project: BTreeMap<Option<String>, ProjectAgg> = BTreeMap::new();
+    let mut by_project_model: BTreeMap<(Option<String>, String, String), Agg> = BTreeMap::new();
     let mut client_set: BTreeMap<String, ()> = BTreeMap::new();
     let mut model_set: BTreeMap<String, ()> = BTreeMap::new();
 
@@ -589,6 +752,37 @@ fn report_from_contributions(
 
         if day.totals.tokens > 0 || day.totals.cost > 0.0 || day.totals.messages > 0 {
             active_days += 1;
+        }
+
+        for project in &day.projects {
+            let project_entry = by_project.entry(project.project_key.clone()).or_default();
+            project_entry.totals.tokens = project_entry
+                .totals
+                .tokens
+                .saturating_add(project.totals.tokens);
+            project_entry.totals.cost += project.totals.cost;
+            project_entry.totals.messages = project_entry
+                .totals
+                .messages
+                .saturating_add(project.totals.messages);
+            if !project.project_label.trim().is_empty()
+                && (project_entry.display_name.is_empty() || day.date >= project_entry.label_date)
+            {
+                project_entry.display_name = project.project_label.clone();
+                project_entry.label_date = day.date.clone();
+            }
+            for model in &project.models {
+                let model_entry = by_project_model
+                    .entry((
+                        project.project_key.clone(),
+                        model.model_id.clone(),
+                        model.provider_id.clone(),
+                    ))
+                    .or_default();
+                model_entry.tokens = model_entry.tokens.saturating_add(model.tokens);
+                model_entry.cost += model.cost;
+                model_entry.messages = model_entry.messages.saturating_add(model.messages);
+            }
         }
 
         for row in &day.clients {
@@ -660,6 +854,49 @@ fn report_from_contributions(
         .collect();
     by_client_out.sort_by(|a, b| b.tokens.cmp(&a.tokens));
 
+    let mut by_project_out: Vec<ProjectUsage> = by_project
+        .into_iter()
+        .map(|(project_key, project)| {
+            let mut models: Vec<ProjectModelUsage> = by_project_model
+                .iter()
+                .filter(|((key, _, _), _)| key == &project_key)
+                .map(|((_, model_id, provider_id), model)| ProjectModelUsage {
+                    model_id: model_id.clone(),
+                    provider_id: provider_id.clone(),
+                    tokens: model.tokens,
+                    cost: model.cost,
+                    messages: model.messages,
+                })
+                .collect();
+            models.sort_by(|a, b| {
+                b.cost
+                    .total_cmp(&a.cost)
+                    .then_with(|| b.tokens.cmp(&a.tokens))
+                    .then_with(|| a.model_id.cmp(&b.model_id))
+                    .then_with(|| a.provider_id.cmp(&b.provider_id))
+            });
+            ProjectUsage {
+                project_key,
+                display_name: if project.display_name.is_empty() {
+                    "Unattributed".to_string()
+                } else {
+                    project.display_name
+                },
+                tokens: project.totals.tokens,
+                cost: project.totals.cost,
+                messages: project.totals.messages,
+                models,
+            }
+        })
+        .collect();
+    by_project_out.sort_by(|a, b| {
+        b.cost
+            .total_cmp(&a.cost)
+            .then_with(|| b.tokens.cmp(&a.tokens))
+            .then_with(|| a.display_name.cmp(&b.display_name))
+            .then_with(|| a.project_key.cmp(&b.project_key))
+    });
+
     let mut by_model_out: Vec<ModelUsageRow> = by_model
         .into_iter()
         .map(|(key, agg)| {
@@ -686,7 +923,7 @@ fn report_from_contributions(
     let by_day = chart_by_day(chart_contributions, today, 14);
 
     UsageReport {
-        schema_version: 1,
+        schema_version: SNAPSHOT_SCHEMA_VERSION,
         generated_at: generated_at.to_string(),
         period: period.as_str().to_string(),
         date_range: DateRange {
@@ -719,6 +956,7 @@ fn report_from_contributions(
             reasoning: breakdown.reasoning,
         },
         by_client: by_client_out,
+        by_project: by_project_out,
         by_model: by_model_out,
         by_day,
         meta: UsageMeta {
@@ -786,18 +1024,12 @@ fn print_human(report: &UsageReport) {
     );
     println!(
         "  range: {} → {}  mode: {}  ({} ms)",
-        report.date_range.start,
-        report.date_range.end,
-        report.scan.mode,
-        report.scan.duration_ms
+        report.date_range.start, report.date_range.end, report.scan.mode, report.scan.duration_ms
     );
     if !report.by_client.is_empty() {
         println!("  by client:");
         for c in report.by_client.iter().take(10) {
-            println!(
-                "    {:<16} {:>10}  ${:>8.2}",
-                c.client, c.tokens, c.cost
-            );
+            println!("    {:<16} {:>10}  ${:>8.2}", c.client, c.tokens, c.cost);
         }
     }
 }
@@ -836,6 +1068,22 @@ mod tests {
                 cost: 1.5,
                 messages: 3,
             }],
+            projects: vec![ProjectContribution {
+                project_key: Some("/work/example".into()),
+                project_label: "example".into(),
+                totals: DailyTotals {
+                    tokens: 1000,
+                    cost: 1.5,
+                    messages: 3,
+                },
+                models: vec![ProjectModelContribution {
+                    model_id: "claude-opus".into(),
+                    provider_id: "anthropic".into(),
+                    tokens: 1000,
+                    cost: 1.5,
+                    messages: 3,
+                }],
+            }],
             active_time_ms: None,
         }
     }
@@ -863,7 +1111,291 @@ mod tests {
         assert_eq!(report.by_client[0].models.len(), 1);
         assert_eq!(report.by_model[0].model_id, "claude-opus");
         assert_eq!(report.by_model[0].clients, vec!["claude-code".to_string()]);
+        assert_eq!(report.by_project.len(), 1);
+        assert_eq!(report.by_project[0].display_name, "example");
+        assert_eq!(report.by_project[0].models[0].model_id, "claude-opus");
         assert!((report.by_client[0].share - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn project_report_sorts_cost_and_keeps_keys_and_unattributed_distinct() {
+        let mut day = sample_day();
+        day.projects = vec![
+            ProjectContribution {
+                project_key: Some("/one/app".into()),
+                project_label: "app".into(),
+                totals: DailyTotals {
+                    tokens: 200,
+                    cost: 2.0,
+                    messages: 1,
+                },
+                models: vec![
+                    ProjectModelContribution {
+                        model_id: "cheap".into(),
+                        provider_id: "p".into(),
+                        tokens: 150,
+                        cost: 0.5,
+                        messages: 1,
+                    },
+                    ProjectModelContribution {
+                        model_id: "expensive".into(),
+                        provider_id: "p".into(),
+                        tokens: 50,
+                        cost: 1.5,
+                        messages: 1,
+                    },
+                ],
+            },
+            ProjectContribution {
+                project_key: Some("/two/app".into()),
+                project_label: "app".into(),
+                totals: DailyTotals {
+                    tokens: 300,
+                    cost: 3.0,
+                    messages: 1,
+                },
+                models: vec![],
+            },
+            ProjectContribution {
+                project_key: None,
+                project_label: "Unattributed".into(),
+                totals: DailyTotals {
+                    tokens: 100,
+                    cost: 1.0,
+                    messages: 1,
+                },
+                models: vec![],
+            },
+        ];
+        let today = NaiveDate::from_ymd_opt(2026, 7, 26).unwrap();
+        let report = report_from_contributions(
+            UsagePeriod::Today,
+            false,
+            "incremental",
+            0,
+            true,
+            0,
+            0,
+            &[day.clone()],
+            &[day],
+            today,
+            "2026-07-26T00:00:00Z",
+        );
+        assert_eq!(report.by_project.len(), 3);
+        assert_eq!(
+            report.by_project[0].project_key.as_deref(),
+            Some("/two/app")
+        );
+        assert_eq!(
+            report.by_project[1].project_key.as_deref(),
+            Some("/one/app")
+        );
+        assert_eq!(report.by_project[1].models[0].model_id, "expensive");
+        assert_eq!(report.by_project[2].project_key, None);
+    }
+
+    #[test]
+    fn live_project_contributions_match_after_snapshot_dto_round_trip() {
+        fn live_message(
+            date: &str,
+            timestamp: i64,
+            session: &str,
+            model: &str,
+            cost: f64,
+            project_key: Option<&str>,
+            project_label: Option<&str>,
+        ) -> tokens_core::UnifiedMessage {
+            let mut message = tokens_core::UnifiedMessage::new_with_dedup(
+                "client",
+                model,
+                "provider",
+                session,
+                timestamp,
+                TokenBreakdown {
+                    input: 17,
+                    output: 5,
+                    cache_read: 2,
+                    cache_write: 1,
+                    reasoning: 0,
+                },
+                cost,
+                Some(format!("{date}:{session}:{model}")),
+            );
+            message.date = date.to_string();
+            message.message_count = 2;
+            message.set_workspace(
+                project_key.map(str::to_string),
+                project_label.map(str::to_string),
+            );
+            message
+        }
+
+        let live = tokens_core::aggregate_by_date(vec![
+            live_message(
+                "2026-07-25",
+                1_700_000_000_000,
+                "one",
+                "model-a",
+                1.25,
+                Some("/work/example"),
+                Some("Old label"),
+            ),
+            live_message(
+                "2026-07-25",
+                1_700_000_001_000,
+                "unattributed-one",
+                "model-u",
+                0.75,
+                None,
+                None,
+            ),
+            live_message(
+                "2026-07-26",
+                1_700_000_002_000,
+                "two",
+                "model-b",
+                2.5,
+                Some("/work/example"),
+                Some("Latest label"),
+            ),
+            live_message(
+                "2026-07-26",
+                1_700_000_003_000,
+                "unattributed-two",
+                "model-v",
+                1.125,
+                None,
+                None,
+            ),
+        ]);
+        let today = NaiveDate::from_ymd_opt(2026, 7, 26).unwrap();
+        let live_report = report_from_contributions(
+            UsagePeriod::All,
+            false,
+            "incremental",
+            1,
+            true,
+            0,
+            0,
+            &live,
+            &live,
+            today,
+            "2026-07-26T00:00:00Z",
+        );
+
+        let snapshot_days: Vec<SnapshotDay> =
+            live.iter().map(snapshot_day_from_contribution).collect();
+        let encoded = serde_json::to_vec(&snapshot_days).unwrap();
+        let decoded: Vec<SnapshotDay> = serde_json::from_slice(&encoded).unwrap();
+        let restored = snapshot_days_to_contributions(&decoded);
+        let snapshot_report = report_from_contributions(
+            UsagePeriod::All,
+            false,
+            "snapshot",
+            0,
+            false,
+            0,
+            0,
+            &restored,
+            &restored,
+            today,
+            "2026-07-26T00:00:00Z",
+        );
+
+        assert_eq!(live_report.by_project.len(), 2);
+        assert_eq!(
+            live_report.by_project[0].project_key.as_deref(),
+            Some("/work/example")
+        );
+        assert_eq!(live_report.by_project[0].display_name, "Latest label");
+        assert_eq!(live_report.by_project[1].project_key, None);
+        assert_eq!(live_report.by_project[1].display_name, "Unattributed");
+
+        for (live_project, snapshot_project) in live_report
+            .by_project
+            .iter()
+            .zip(&snapshot_report.by_project)
+        {
+            assert_eq!(live_project.project_key, snapshot_project.project_key);
+            assert_eq!(live_project.display_name, snapshot_project.display_name);
+            assert_eq!(live_project.tokens, snapshot_project.tokens);
+            assert_eq!(live_project.messages, snapshot_project.messages);
+            assert!((live_project.cost - snapshot_project.cost).abs() <= 1e-10);
+            assert_eq!(live_project.models.len(), snapshot_project.models.len());
+            for (live_model, snapshot_model) in
+                live_project.models.iter().zip(&snapshot_project.models)
+            {
+                assert_eq!(live_model.model_id, snapshot_model.model_id);
+                assert_eq!(live_model.provider_id, snapshot_model.provider_id);
+                assert_eq!(live_model.tokens, snapshot_model.tokens);
+                assert_eq!(live_model.messages, snapshot_model.messages);
+                assert!((live_model.cost - snapshot_model.cost).abs() <= 1e-10);
+            }
+        }
+    }
+
+    #[test]
+    fn snapshot_project_round_trip_restores_daily_projects() {
+        let project = SnapshotProject {
+            project_key: Some("/work/example".into()),
+            project_label: "example".into(),
+            tokens: 10,
+            cost: 2.0,
+            messages: 1,
+            models: vec![SnapshotProjectModel {
+                model_id: "model".into(),
+                provider_id: "provider".into(),
+                tokens: 10,
+                cost: 2.0,
+                messages: 1,
+            }],
+        };
+        let day = SnapshotDay {
+            date: "2026-07-26".into(),
+            tokens: 10,
+            cost: 2.0,
+            messages: 1,
+            intensity: 4,
+            token_breakdown: TokenBreakdownDtoSerde::default(),
+            clients: vec![],
+            projects: vec![project],
+        };
+        let encoded = serde_json::to_vec(&day).unwrap();
+        let decoded: SnapshotDay = serde_json::from_slice(&encoded).unwrap();
+        let contributions = snapshot_days_to_contributions(&[decoded]);
+        assert_eq!(contributions[0].projects[0].project_label, "example");
+        assert_eq!(contributions[0].projects[0].models[0].cost, 2.0);
+    }
+
+    #[test]
+    fn concurrent_snapshot_writers_publish_valid_private_files() {
+        use std::sync::Arc;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = Arc::new(dir.path().join(SNAPSHOT_FILENAME));
+        let body = br#"{"schemaVersion":2,"projects":["/private/workspace"]}"#.to_vec();
+        let writers: Vec<_> = (0..20)
+            .map(|_| {
+                let path = Arc::clone(&path);
+                let body = body.clone();
+                std::thread::spawn(move || write_private_snapshot(&path, &body))
+            })
+            .collect();
+
+        for writer in writers {
+            writer.join().unwrap().unwrap();
+        }
+        let published = fs::read(&*path).unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&published).unwrap();
+        assert_eq!(value["schemaVersion"], SNAPSHOT_SCHEMA_VERSION);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(&*path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
     }
 
     #[test]
@@ -938,6 +1470,7 @@ mod tests {
                 intensity: 0,
                 token_breakdown: TokenBreakdown::default(),
                 clients: vec![],
+                projects: vec![],
                 active_time_ms: None,
             },
             sample_day(),
@@ -950,7 +1483,9 @@ mod tests {
     #[test]
     fn bucket_day_from_utc_generated_at_uses_local_bucket() {
         // 2026-07-27 03:33 UTC is still 2026-07-26 evening in America/Los_Angeles.
-        tokens_core::set_bucket_timezone(tokens_core::parse_bucket_timezone("America/Los_Angeles").unwrap());
+        tokens_core::set_bucket_timezone(
+            tokens_core::parse_bucket_timezone("America/Los_Angeles").unwrap(),
+        );
         let day = bucket_day_from_generated_at("2026-07-27T03:33:08.153036+00:00");
         assert_eq!(day.as_deref(), Some("2026-07-26"));
     }
@@ -958,7 +1493,7 @@ mod tests {
     #[test]
     fn snapshot_bucket_date_field_wins() {
         let snap = UsageSnapshotFile {
-            schema_version: 1,
+            schema_version: SNAPSHOT_SCHEMA_VERSION,
             generated_at: "2026-07-27T03:33:08.153036+00:00".into(),
             bucket_date: "2026-07-26".into(),
             timezone: "America/Los_Angeles".into(),

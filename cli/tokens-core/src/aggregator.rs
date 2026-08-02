@@ -5,10 +5,12 @@
 use crate::sessions::UnifiedMessage;
 use crate::{
     ClientContribution, DailyContribution, DailyTotals, DataSummary, GraphMeta, GraphResult,
-    SessionContribution, TokenBreakdown, YearSummary,
+    ProjectContribution, ProjectModelContribution, SessionContribution, TokenBreakdown,
+    UnattributedModelDiagnostic, UnattributedSessionDiagnostic, YearSummary,
 };
 use rayon::prelude::*;
-use std::collections::HashMap;
+use sha2::{Digest, Sha256};
+use std::collections::{BTreeSet, HashMap};
 
 /// Aggregate messages into daily contributions
 pub fn aggregate_by_date(messages: Vec<UnifiedMessage>) -> Vec<DailyContribution> {
@@ -63,6 +65,144 @@ pub fn aggregate_by_date(messages: Vec<UnifiedMessage>) -> Vec<DailyContribution
 /// single session and exposes the same client/model breakdown shape as
 /// [`aggregate_by_date`].  Sessions are sorted by `last_seen` descending so the
 /// most recently active sessions appear first.
+pub const UNATTRIBUTED_SOURCE_IDENTIFIER_LIMIT: usize = 20;
+
+/// Aggregate workspace-less messages into session-level diagnostics without
+/// retaining prompts, responses, or message bodies.
+pub fn aggregate_unattributed_sessions(
+    messages: &[UnifiedMessage],
+) -> Vec<UnattributedSessionDiagnostic> {
+    #[derive(Default)]
+    struct DiagnosticAccumulator {
+        first_seen: i64,
+        last_seen: i64,
+        tokens: i64,
+        cost: f64,
+        messages: i32,
+        models: HashMap<(String, String), UnattributedModelDiagnostic>,
+        source_identifiers: BTreeSet<String>,
+        initialized: bool,
+    }
+
+    let mut sessions: HashMap<(String, String), DiagnosticAccumulator> = HashMap::new();
+    for message in messages
+        .iter()
+        .filter(|message| message.workspace_key.is_none())
+    {
+        let key = (message.client.clone(), message.session_id.clone());
+        let session = sessions.entry(key).or_default();
+        let timestamp = timestamp_seconds(message.timestamp);
+        if !session.initialized {
+            session.first_seen = timestamp;
+            session.last_seen = timestamp;
+            session.initialized = true;
+        } else {
+            session.first_seen = session.first_seen.min(timestamp);
+            session.last_seen = session.last_seen.max(timestamp);
+        }
+
+        let tokens = message.tokens.total();
+        let cost = finite_nonnegative_cost(message.cost);
+        session.tokens = session.tokens.saturating_add(tokens);
+        session.cost += cost;
+        session.messages = session
+            .messages
+            .saturating_add(message.message_count.max(0));
+
+        let model_key = (
+            crate::canonical_model_id(&message.model_id),
+            message.provider_id.clone(),
+        );
+        let model = session.models.entry(model_key.clone()).or_insert_with(|| {
+            UnattributedModelDiagnostic {
+                model_id: model_key.0,
+                provider_id: model_key.1,
+                tokens: 0,
+                cost: 0.0,
+                messages: 0,
+            }
+        });
+        model.tokens = model.tokens.saturating_add(tokens);
+        model.cost += cost;
+        model.messages = model.messages.saturating_add(message.message_count.max(0));
+
+        if let Some(identifier) = message
+            .dedup_key
+            .as_ref()
+            .map(|identifier| identifier.trim())
+            .filter(|identifier| !identifier.is_empty())
+        {
+            let digest = Sha256::digest(identifier.as_bytes());
+            session
+                .source_identifiers
+                .insert(format!("sha256:{digest:x}"));
+        }
+    }
+
+    let mut output: Vec<UnattributedSessionDiagnostic> = sessions
+        .into_iter()
+        .map(|((client, session_id), session)| {
+            let source_identifier_count = session.source_identifiers.len() as u64;
+            let source_identifiers: Vec<String> = session
+                .source_identifiers
+                .into_iter()
+                .take(UNATTRIBUTED_SOURCE_IDENTIFIER_LIMIT)
+                .collect();
+            let mut models: Vec<UnattributedModelDiagnostic> = session
+                .models
+                .into_values()
+                .map(|mut model| {
+                    model.cost = finite_nonnegative_cost(model.cost);
+                    model
+                })
+                .collect();
+            models.sort_by(|a, b| {
+                b.cost
+                    .total_cmp(&a.cost)
+                    .then_with(|| b.tokens.cmp(&a.tokens))
+                    .then_with(|| a.model_id.cmp(&b.model_id))
+                    .then_with(|| a.provider_id.cmp(&b.provider_id))
+            });
+            UnattributedSessionDiagnostic {
+                client,
+                session_id,
+                first_seen: session.first_seen,
+                last_seen: session.last_seen,
+                tokens: session.tokens.max(0),
+                cost: finite_nonnegative_cost(session.cost),
+                messages: session.messages.max(0),
+                models,
+                source_identifiers_truncated: source_identifier_count
+                    > UNATTRIBUTED_SOURCE_IDENTIFIER_LIMIT as u64,
+                source_identifier_count,
+                source_identifiers,
+            }
+        })
+        .collect();
+    output.sort_by(|a, b| {
+        a.client
+            .cmp(&b.client)
+            .then_with(|| a.session_id.cmp(&b.session_id))
+    });
+    output
+}
+
+fn finite_nonnegative_cost(cost: f64) -> f64 {
+    if cost.is_finite() {
+        cost.max(0.0)
+    } else {
+        0.0
+    }
+}
+
+fn timestamp_seconds(timestamp: i64) -> i64 {
+    if timestamp.unsigned_abs() >= 1_000_000_000_000 {
+        timestamp / 1000
+    } else {
+        timestamp
+    }
+}
+
 pub fn aggregate_by_session(messages: Vec<UnifiedMessage>) -> Vec<SessionContribution> {
     if messages.is_empty() {
         return Vec::new();
@@ -231,6 +371,7 @@ struct DayAccumulator {
     totals: DailyTotals,
     token_breakdown: TokenBreakdown,
     clients: HashMap<String, ClientContribution>,
+    projects: HashMap<Option<String>, ProjectAccumulator>,
 }
 
 impl Default for DayAccumulator {
@@ -239,8 +380,18 @@ impl Default for DayAccumulator {
             totals: DailyTotals::default(),
             token_breakdown: TokenBreakdown::default(),
             clients: HashMap::with_capacity(8),
+            projects: HashMap::with_capacity(8),
         }
     }
+}
+
+#[derive(Default)]
+struct ProjectAccumulator {
+    /// Timestamp + label lets parallel reductions choose the latest label
+    /// deterministically when a workspace was renamed.
+    latest_label: Option<(i64, String)>,
+    totals: DailyTotals,
+    models: HashMap<(String, String), ProjectModelContribution>,
 }
 
 impl DayAccumulator {
@@ -252,9 +403,10 @@ impl DayAccumulator {
             .saturating_add(msg.tokens.cache_read)
             .saturating_add(msg.tokens.cache_write)
             .saturating_add(msg.tokens.reasoning);
+        let cost = finite_nonnegative_cost(msg.cost);
 
         self.totals.tokens = self.totals.tokens.saturating_add(total_tokens);
-        self.totals.cost += msg.cost;
+        self.totals.cost += cost;
         self.totals.messages = self
             .totals
             .messages
@@ -322,7 +474,7 @@ impl DayAccumulator {
             .tokens
             .reasoning
             .saturating_add(msg.tokens.reasoning);
-        client_entry.cost += msg.cost;
+        client_entry.cost += cost;
         client_entry.messages = client_entry
             .messages
             .saturating_add(msg.message_count.max(0));
@@ -332,6 +484,48 @@ impl DayAccumulator {
         providers.sort_unstable();
         providers.dedup();
         client_entry.provider_id = providers.join(", ");
+
+        let project_key = msg.workspace_key.clone();
+        let project = self.projects.entry(project_key).or_default();
+        if let Some(label) = msg
+            .workspace_label
+            .as_ref()
+            .map(|label| label.trim())
+            .filter(|label| !label.is_empty())
+        {
+            let candidate = (msg.timestamp, label.to_string());
+            if project.latest_label.as_ref().is_none_or(|current| {
+                candidate.0 > current.0 || (candidate.0 == current.0 && candidate.1 > current.1)
+            }) {
+                project.latest_label = Some(candidate);
+            }
+        }
+        project.totals.tokens = project.totals.tokens.saturating_add(total_tokens);
+        project.totals.cost += cost;
+        project.totals.messages = project
+            .totals
+            .messages
+            .saturating_add(msg.message_count.max(0));
+
+        let project_model_key = (
+            crate::canonical_model_id(&msg.model_id),
+            msg.provider_id.clone(),
+        );
+        let project_model = project
+            .models
+            .entry(project_model_key.clone())
+            .or_insert_with(|| ProjectModelContribution {
+                model_id: project_model_key.0,
+                provider_id: project_model_key.1,
+                tokens: 0,
+                cost: 0.0,
+                messages: 0,
+            });
+        project_model.tokens = project_model.tokens.saturating_add(total_tokens);
+        project_model.cost += cost;
+        project_model.messages = project_model
+            .messages
+            .saturating_add(msg.message_count.max(0));
     }
 
     fn merge(&mut self, other: DayAccumulator) {
@@ -411,6 +605,42 @@ impl DayAccumulator {
             providers.dedup();
             entry.provider_id = providers.join(", ");
         }
+
+        for (project_key, other_project) in other.projects {
+            let project = self.projects.entry(project_key).or_default();
+            if let Some(candidate) = other_project.latest_label {
+                if project.latest_label.as_ref().is_none_or(|current| {
+                    candidate.0 > current.0 || (candidate.0 == current.0 && candidate.1 > current.1)
+                }) {
+                    project.latest_label = Some(candidate);
+                }
+            }
+            project.totals.tokens = project
+                .totals
+                .tokens
+                .saturating_add(other_project.totals.tokens);
+            project.totals.cost += finite_nonnegative_cost(other_project.totals.cost);
+            project.totals.messages = project
+                .totals
+                .messages
+                .saturating_add(other_project.totals.messages);
+            for (model_key, other_model) in other_project.models {
+                let model =
+                    project
+                        .models
+                        .entry(model_key)
+                        .or_insert_with(|| ProjectModelContribution {
+                            model_id: other_model.model_id.clone(),
+                            provider_id: other_model.provider_id.clone(),
+                            tokens: 0,
+                            cost: 0.0,
+                            messages: 0,
+                        });
+                model.tokens = model.tokens.saturating_add(other_model.tokens);
+                model.cost += finite_nonnegative_cost(other_model.cost);
+                model.messages = model.messages.saturating_add(other_model.messages);
+            }
+        }
     }
 
     fn into_contribution(self, date: String) -> DailyContribution {
@@ -436,6 +666,57 @@ impl DayAccumulator {
             })
             .collect();
 
+        let mut projects: Vec<ProjectContribution> = self
+            .projects
+            .into_iter()
+            .map(|(project_key, project)| {
+                let project_label = project
+                    .latest_label
+                    .map(|(_, label)| label)
+                    .or_else(|| {
+                        project_key
+                            .as_deref()
+                            .and_then(crate::sessions::workspace_label_from_key)
+                    })
+                    .unwrap_or_else(|| "Unattributed".to_string());
+                let mut models: Vec<ProjectModelContribution> = project
+                    .models
+                    .into_values()
+                    .map(|mut model| {
+                        model.tokens = model.tokens.max(0);
+                        model.cost = finite_nonnegative_cost(model.cost);
+                        model.messages = model.messages.max(0);
+                        model
+                    })
+                    .collect();
+                models.sort_by(|a, b| {
+                    b.cost
+                        .total_cmp(&a.cost)
+                        .then_with(|| b.tokens.cmp(&a.tokens))
+                        .then_with(|| a.model_id.cmp(&b.model_id))
+                        .then_with(|| a.provider_id.cmp(&b.provider_id))
+                });
+                ProjectContribution {
+                    project_key,
+                    project_label,
+                    totals: DailyTotals {
+                        tokens: project.totals.tokens.max(0),
+                        cost: finite_nonnegative_cost(project.totals.cost),
+                        messages: project.totals.messages.max(0),
+                    },
+                    models,
+                }
+            })
+            .collect();
+        projects.sort_by(|a, b| {
+            b.totals
+                .cost
+                .total_cmp(&a.totals.cost)
+                .then_with(|| b.totals.tokens.cmp(&a.totals.tokens))
+                .then_with(|| a.project_label.cmp(&b.project_label))
+                .then_with(|| a.project_key.cmp(&b.project_key))
+        });
+
         DailyContribution {
             date,
             totals: DailyTotals {
@@ -446,6 +727,7 @@ impl DayAccumulator {
             intensity: 0,
             token_breakdown,
             clients,
+            projects,
             active_time_ms: None,
         }
     }
@@ -560,11 +842,7 @@ impl SessionAccumulator {
 
         // Timestamps in UnifiedMessage are stored in milliseconds in most
         // parsers; normalize to seconds for the contribution wire format.
-        let secs = if msg.timestamp.abs() > 1_000_000_000_000 {
-            msg.timestamp / 1000
-        } else {
-            msg.timestamp
-        };
+        let secs = timestamp_seconds(msg.timestamp);
         if secs < self.first_seen {
             self.first_seen = secs;
         }
@@ -739,3 +1017,203 @@ pub fn calculate_intensities(contributions: &mut [DailyContribution]) {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn message(
+        client: &str,
+        session: &str,
+        model: &str,
+        cost: f64,
+        workspace_key: Option<&str>,
+        workspace_label: Option<&str>,
+    ) -> UnifiedMessage {
+        let mut message = UnifiedMessage::new_with_dedup(
+            client,
+            model,
+            "provider",
+            session,
+            1_700_000_000_000,
+            TokenBreakdown {
+                input: 10,
+                output: 5,
+                cache_read: 2,
+                cache_write: 1,
+                reasoning: 0,
+            },
+            cost,
+            Some(format!("{client}:{session}:{model}")),
+        );
+        message.message_count = 2;
+        message.set_workspace(
+            workspace_key.map(str::to_string),
+            workspace_label.map(str::to_string),
+        );
+        message
+    }
+
+    #[test]
+    fn projects_conserve_daily_totals_and_keep_distinct_keys() {
+        let messages = vec![
+            message("a", "1", "expensive", 4.0, Some("/one/app"), Some("app")),
+            message("b", "2", "cheap", 1.0, Some("/two/app"), Some("app")),
+            message("c", "3", "unknown", 2.0, None, None),
+        ];
+        let days = aggregate_by_date(messages);
+        assert_eq!(days.len(), 1);
+        let day = &days[0];
+        assert_eq!(day.projects.len(), 3);
+        assert_eq!(day.projects[0].totals.cost, 4.0);
+        assert_eq!(day.projects[1].project_key, None);
+        assert_eq!(day.projects[1].project_label, "Unattributed");
+        assert_eq!(day.projects[2].project_key.as_deref(), Some("/two/app"));
+        assert_eq!(
+            day.projects
+                .iter()
+                .map(|project| project.totals.tokens)
+                .sum::<i64>(),
+            day.totals.tokens
+        );
+        assert_eq!(
+            day.projects
+                .iter()
+                .map(|project| project.totals.messages)
+                .sum::<i32>(),
+            day.totals.messages
+        );
+        assert!(
+            (day.projects
+                .iter()
+                .map(|project| project.totals.cost)
+                .sum::<f64>()
+                - day.totals.cost)
+                .abs()
+                < f64::EPSILON
+        );
+
+        let graph_json = serde_json::to_value(generate_graph_result(days, 0)).unwrap();
+        assert!(graph_json["contributions"][0].get("projects").is_none());
+    }
+
+    #[test]
+    fn project_and_unattributed_costs_are_finite_and_nonnegative() {
+        let messages = vec![
+            message("client", "nan", "model-nan", f64::NAN, None, None),
+            message(
+                "client",
+                "negative",
+                "model-negative",
+                -3.0,
+                Some("/workspace"),
+                Some("workspace"),
+            ),
+            message(
+                "client",
+                "infinite",
+                "model-infinite",
+                f64::INFINITY,
+                Some("/workspace"),
+                Some("workspace"),
+            ),
+            message(
+                "client",
+                "valid",
+                "model-valid",
+                2.5,
+                Some("/workspace"),
+                Some("workspace"),
+            ),
+        ];
+
+        let days = aggregate_by_date(messages.clone());
+        assert!(days[0].totals.cost.is_finite() && days[0].totals.cost >= 0.0);
+        assert!(days[0]
+            .clients
+            .iter()
+            .all(|client| client.cost.is_finite() && client.cost >= 0.0));
+        for project in &days[0].projects {
+            assert!(project.totals.cost.is_finite());
+            assert!(project.totals.cost >= 0.0);
+            assert!(project
+                .models
+                .iter()
+                .all(|model| model.cost.is_finite() && model.cost >= 0.0));
+        }
+        let workspace = days[0]
+            .projects
+            .iter()
+            .find(|project| project.project_key.as_deref() == Some("/workspace"))
+            .unwrap();
+        assert_eq!(workspace.totals.cost, 2.5);
+        assert_eq!(workspace.models[0].model_id, "model-valid");
+        let graph_json = serde_json::to_value(generate_graph_result(days, 0)).unwrap();
+        assert!(graph_json["contributions"][0]["totals"]["cost"].is_number());
+
+        let diagnostics = aggregate_unattributed_sessions(&messages);
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].cost, 0.0);
+        assert!(diagnostics[0]
+            .models
+            .iter()
+            .all(|model| model.cost.is_finite() && model.cost >= 0.0));
+        let encoded = serde_json::to_vec(&diagnostics).unwrap();
+        let decoded: Vec<UnattributedSessionDiagnostic> = serde_json::from_slice(&encoded).unwrap();
+        assert_eq!(decoded, diagnostics);
+    }
+
+    #[test]
+    fn timestamp_seconds_handles_extremes_and_millisecond_boundary() {
+        assert_eq!(timestamp_seconds(999_999_999_999), 999_999_999_999);
+        assert_eq!(timestamp_seconds(-999_999_999_999), -999_999_999_999);
+        assert_eq!(timestamp_seconds(1_000_000_000_000), 1_000_000_000);
+        assert_eq!(timestamp_seconds(-1_000_000_000_000), -1_000_000_000);
+        assert_eq!(timestamp_seconds(i64::MIN), i64::MIN / 1000);
+        assert_eq!(timestamp_seconds(i64::MAX), i64::MAX / 1000);
+    }
+
+    #[test]
+    fn unattributed_diagnostics_preserve_models_and_bound_source_samples() {
+        let mut messages = Vec::new();
+        for index in 0..(UNATTRIBUTED_SOURCE_IDENTIFIER_LIMIT + 3) {
+            let mut item = message(
+                "client",
+                "session",
+                if index % 2 == 0 { "model-a" } else { "model-b" },
+                1.0,
+                None,
+                None,
+            );
+            item.timestamp += index as i64 * 1_000;
+            item.dedup_key = Some(format!("source-{index:02}"));
+            messages.push(item);
+        }
+        messages.push(message(
+            "client",
+            "attributed",
+            "model-c",
+            10.0,
+            Some("/workspace"),
+            Some("workspace"),
+        ));
+
+        let diagnostics = aggregate_unattributed_sessions(&messages);
+        assert_eq!(diagnostics.len(), 1);
+        let diagnostic = &diagnostics[0];
+        assert_eq!(diagnostic.models.len(), 2);
+        assert_eq!(
+            diagnostic.source_identifiers.len(),
+            UNATTRIBUTED_SOURCE_IDENTIFIER_LIMIT
+        );
+        assert_eq!(
+            diagnostic.source_identifier_count,
+            (UNATTRIBUTED_SOURCE_IDENTIFIER_LIMIT + 3) as u64
+        );
+        assert!(diagnostic.source_identifiers_truncated);
+        assert_eq!(diagnostic.first_seen, 1_700_000_000);
+        assert_eq!(
+            diagnostic.last_seen,
+            1_700_000_000 + (UNATTRIBUTED_SOURCE_IDENTIFIER_LIMIT + 2) as i64
+        );
+    }
+}

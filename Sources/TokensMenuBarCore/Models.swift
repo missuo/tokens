@@ -238,9 +238,43 @@ public struct UsageReport: Codable, Equatable {
     public let summary: UsageSummary
     public let tokenBreakdown: TokenBreakdown
     public let byClient: [ClientUsage]
+    public let byProject: [ProjectUsage]
     public let byModel: [ModelUsage]
     public let byDay: [DayUsage]
     public let meta: UsageMeta
+}
+
+extension UsageReport {
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion
+        case generatedAt
+        case period
+        case dateRange
+        case scan
+        case summary
+        case tokenBreakdown
+        case byClient
+        case byProject
+        case byModel
+        case byDay
+        case meta
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try values.decode(Int.self, forKey: .schemaVersion)
+        generatedAt = try values.decode(String.self, forKey: .generatedAt)
+        period = try values.decode(String.self, forKey: .period)
+        dateRange = try values.decode(DateRange.self, forKey: .dateRange)
+        scan = try values.decode(ScanInfo.self, forKey: .scan)
+        summary = try values.decode(UsageSummary.self, forKey: .summary)
+        tokenBreakdown = try values.decode(TokenBreakdown.self, forKey: .tokenBreakdown)
+        byClient = try values.decode([ClientUsage].self, forKey: .byClient)
+        byProject = try values.decodeIfPresent([ProjectUsage].self, forKey: .byProject) ?? []
+        byModel = try values.decode([ModelUsage].self, forKey: .byModel)
+        byDay = try values.decode([DayUsage].self, forKey: .byDay)
+        meta = try values.decode(UsageMeta.self, forKey: .meta)
+    }
 }
 
 public struct DateRange: Codable, Equatable {
@@ -296,6 +330,25 @@ public struct ClientModelUsage: Codable, Equatable, Identifiable {
     public let cost: Double
     public let messages: Int32
     public let share: Double
+}
+
+public struct ProjectUsage: Codable, Equatable, Identifiable {
+    public var id: String { projectKey ?? "__unattributed__" }
+    public let projectKey: String?
+    public let displayName: String
+    public let tokens: Int64
+    public let cost: Double
+    public let messages: Int32
+    public let models: [ProjectModelUsage]
+}
+
+public struct ProjectModelUsage: Codable, Equatable, Identifiable {
+    public var id: String { "\(providerId)/\(modelId)" }
+    public let modelId: String
+    public let providerId: String
+    public let tokens: Int64
+    public let cost: Double
+    public let messages: Int32
 }
 
 public struct ModelUsage: Codable, Equatable, Identifiable {
