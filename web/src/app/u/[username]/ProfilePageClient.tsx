@@ -32,6 +32,7 @@ import {
 } from "@/components/profile";
 import type { DailyContribution } from "@/lib/types";
 import { isVerifiedBySocialLinks } from "@/lib/socialVerification";
+import { toLocalDateString } from "@/lib/leaderboard/dateRange";
 import { useSettings } from "@/lib/useSettings";
 
 type ProfilePeriod = "all" | "week" | "month";
@@ -195,14 +196,21 @@ export default function ProfilePageClient({
     [data.contributions, selectedContributionDate],
   );
 
+  // The viewer's own calendar date, not UTC. `toISOString()` would answer in
+  // UTC, so anywhere west of it the current local day stops being called Today
+  // as soon as UTC rolls over — 8pm in New York, with four hours of the local
+  // day still to go. Contribution days are calendar dates in each submitter's
+  // pinned bucketing timezone, so the comparison that means anything here is
+  // against another calendar date, not against an instant.
+  //
   // Read after mount rather than during render: the clock gives the server and
   // the browser different answers across a timezone boundary, which would be a
   // hydration mismatch. Until it lands the day card just does not claim to be
   // today, which is the safe direction to be wrong in.
-  const [currentUtcDate, setCurrentUtcDate] = useState<string | null>(null);
+  const [viewerLocalDate, setViewerLocalDate] = useState<string | null>(null);
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setCurrentUtcDate(new Date().toISOString().slice(0, 10));
+    setViewerLocalDate(toLocalDateString(new Date()));
   }, []);
 
   const user: ProfileUser = useMemo(
@@ -319,11 +327,11 @@ export default function ProfilePageClient({
         today={
           <ProfileToday
             day={selectedContributionDay}
-            // Compared against the actual current UTC date, not against the
-            // default selection. "Nothing was picked" is not the same as
+            // Compared against the viewer's actual current date, not against
+            // the default selection. "Nothing was picked" is not the same as
             // "today": inside a historical range the default is that range's
             // last day, and heading a 2024-12-31 card "Today" is simply wrong.
-            isToday={selectedContributionDate === currentUtcDate}
+            isToday={selectedContributionDate === viewerLocalDate}
           />
         }
         usageChart={
