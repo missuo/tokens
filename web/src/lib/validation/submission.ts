@@ -488,8 +488,12 @@ export function validateSubmission(data: unknown): ValidationResult {
   const submission = parseResult.data;
 
   // Step 2: No future dates
-  // CLI generates dates using local timezone (chrono::Local), server validates
-  // against UTC. A 2-day buffer handles:
+  // The CLI dates each day in the account's pinned bucketing timezone — one
+  // IANA zone detected once and persisted, so travel and a second machine do
+  // not move the boundary (cli/tokens-core/src/bucket_tz.rs, issue #15). It is
+  // not `chrono::Local`, which is what this comment used to claim. The server
+  // has no idea which zone that is, so it validates against UTC and allows a
+  // 2-day buffer for:
   //   1. Max timezone offset (UTC+14 = ~14 hours ahead)
   //   2. Date boundary edge cases from session aggregation
   //   3. Clock skew between client and server
