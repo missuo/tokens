@@ -243,9 +243,10 @@ export default {
     // returns its first await.
     ctx.waitUntil(
       refreshAllSocialLinks()
-        .then(({ users, verified }) => {
+        .then(({ users, verified, skipped }) => {
           console.log(
-            `[cron] refresh-social-links: synced ${users} users, ${verified} verified`,
+            `[cron] refresh-social-links: ${users} users, ${verified} verified, ` +
+          `${skipped} skipped (GitHub did not answer)`,
           );
         })
         .catch((error: unknown) => {

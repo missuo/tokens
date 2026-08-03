@@ -73,9 +73,23 @@ function isHttpUrl(value: string): boolean {
   }
 }
 
+/**
+ * What GitHub said, and whether it said anything at all.
+ *
+ * `complete` is false when either call failed — rate limited, timed out, 5xx.
+ * The distinction is the whole point: a successful fetch returning no links
+ * means this person has none, and a failed one means we do not know. Writing
+ * the second down as the first is how every verified badge on the site
+ * disappears at once.
+ */
+interface GitHubSocialLinksResult {
+  links: ProfileSocialLink[];
+  complete: boolean;
+}
+
 async function fetchGitHubSocialLinks(
   username: string,
-): Promise<ProfileSocialLink[]> {
+): Promise<GitHubSocialLinksResult> {
   const headers = buildHeaders();
   const encoded = encodeURIComponent(username);
 
@@ -93,6 +107,14 @@ async function fetchGitHubSocialLinks(
   ]);
 
   const links: ProfileSocialLink[] = [];
+  // Both, not either. The website comes from one call and the accounts from the
+  // other, so a half-successful pair is a partial answer — persisting it would
+  // drop whichever half failed.
+  const complete =
+    profileResult.status === "fulfilled" &&
+    profileResult.value.ok &&
+    socialResult.status === "fulfilled" &&
+    socialResult.value.ok;
 
   if (profileResult.status === "fulfilled" && profileResult.value.ok) {
     const profile: unknown = await profileResult.value.json();
@@ -134,7 +156,7 @@ async function fetchGitHubSocialLinks(
     }
   }
 
-  return links;
+  return { links, complete };
 }
 
 async function persistSocialLinks(
@@ -159,12 +181,36 @@ async function persistSocialLinks(
 export async function syncGitHubSocialLinks(
   username: string,
 ): Promise<ProfileSocialLink[]> {
+  return (await syncGitHubSocialLinksDetailed(username)).links;
+}
+
+/**
+ * As above, but reports whether the snapshot was actually refreshed.
+ *
+ * The scheduled job needs the distinction: a run where every request was rate
+ * limited returns the same empty lists as a run where nobody has any links, and
+ * without this it logged "synced 360 users, 1 verified" for a run that refreshed
+ * nothing at all. A failure that reports itself as success is worse than one
+ * that reports nothing.
+ */
+export async function syncGitHubSocialLinksDetailed(
+  username: string,
+): Promise<GitHubSocialLinksResult> {
   try {
-    const links = await fetchGitHubSocialLinks(username);
-    await persistSocialLinks(username, links);
-    return links;
+    const { links, complete } = await fetchGitHubSocialLinks(username);
+
+    // A partial or failed read leaves the stored snapshot alone. GitHub rate
+    // limits this project at 60 requests an hour without OAuth credentials and
+    // 5000 with them; a refresh over every user that runs into either — or into
+    // an outage — used to overwrite each row with an empty list and take the
+    // badge with it. Observed: 66 verified users became 1 in a single run.
+    if (complete) {
+      await persistSocialLinks(username, links);
+    }
+
+    return { links, complete };
   } catch {
-    return [];
+    return { links: [], complete: false };
   }
 }
 
