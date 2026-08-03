@@ -12,10 +12,8 @@ import {
 import type { DailyContribution, TokenBreakdown } from "@/lib/types";
 
 export interface ProfileTodayProps {
-  /** The day to summarise. Defaults to the most recent day in the data. */
+  /** Today for the viewer, or null when they have submitted nothing today. */
   day: DailyContribution | null | undefined;
-  /** True when `day` is today; the heading is otherwise just the date. */
-  isToday?: boolean;
   className?: string;
 }
 
@@ -51,7 +49,7 @@ function Figure({ label, value }: { label: string; value: string }) {
  * reasoning, and which clients and models produced them. Nothing inside
  * scrolls — a summary you have to scroll is not a summary.
  */
-export function ProfileToday({ day, isToday, className }: ProfileTodayProps) {
+export function ProfileToday({ day, className }: ProfileTodayProps) {
   const clients = useMemo(
     () => (day ? createContributionClientDetails(day) : []),
     [day]
@@ -61,9 +59,12 @@ export function ProfileToday({ day, isToday, className }: ProfileTodayProps) {
     [day, clients]
   );
 
-  // Naming a day the reader deliberately picked adds nothing — the date is
-  // already there. Only today earns a word.
-  const heading = isToday ? "Today" : day?.date ?? "Day";
+  // Always today. This card used to render whichever day the contribution
+  // graph had selected, which put the same tokens, cost and message count on
+  // the page twice — once here and once in the graph's own breakdown, for the
+  // same day. The graph keeps the day you picked; this keeps the one you came
+  // to check.
+  const heading = "Today";
   const tokens = day?.totals.tokens ?? 0;
   const cost = day?.totals.cost ?? 0;
 
@@ -98,7 +99,7 @@ export function ProfileToday({ day, isToday, className }: ProfileTodayProps) {
       <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-2 border-b px-4 py-3 sm:px-5">
         <div className="flex items-baseline gap-3">
           <h2 className="text-sm font-semibold tracking-tight">{heading}</h2>
-          {isToday && day?.date && (
+          {day?.date && (
             <span className="font-mono text-xs text-muted-foreground">{day.date}</span>
           )}
         </div>

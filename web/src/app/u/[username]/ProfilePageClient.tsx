@@ -213,6 +213,24 @@ export default function ProfilePageClient({
     setViewerLocalDate(toLocalDateString(new Date()));
   }, []);
 
+  /**
+   * The card at the top is about today and nothing else.
+   *
+   * It used to render `selectedContributionDay` — the same day the graph's
+   * breakdown renders — so clicking a cell updated two cards with the same
+   * three figures, one of them scrolled far out of view above the graph. Total
+   * tokens, cost and message count appeared twice on the page for the same day.
+   *
+   * `viewerLocalDate` is only known after mount, so the server render falls
+   * back to the range's end. For the default range that *is* today, which keeps
+   * the first paint from showing zeros and then filling in.
+   */
+  const todayContributionDate = viewerLocalDate ?? defaultContributionDate;
+  const todayContributionDay = useMemo(
+    () => getContributionDayForDate(data.contributions, todayContributionDate),
+    [data.contributions, todayContributionDate],
+  );
+
   const user: ProfileUser = useMemo(
     () => ({
       username: data.user.username,
@@ -324,16 +342,7 @@ export default function ProfilePageClient({
             </p>
           )
         }
-        today={
-          <ProfileToday
-            day={selectedContributionDay}
-            // Compared against the viewer's actual current date, not against
-            // the default selection. "Nothing was picked" is not the same as
-            // "today": inside a historical range the default is that range's
-            // last day, and heading a 2024-12-31 card "Today" is simply wrong.
-            isToday={selectedContributionDate === viewerLocalDate}
-          />
-        }
+        today={<ProfileToday day={todayContributionDay} />}
         usageChart={
           data.contributions.length > 0 ? (
             <ProfileUsageChart
