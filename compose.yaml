@@ -131,6 +131,32 @@ services:
       retries: 3
       start_period: 20s
 
+  # Replaces the Worker cron trigger that fired the daily verified-badge
+  # refresh. Same image as the app, so it ships with every deploy and cannot
+  # drift from the endpoint it calls — and unlike a systemd unit on the host,
+  # it is in the repository where it can be read.
+  #
+  # Depends on the app being *healthy*, not merely started: a scheduler that
+  # came up first would spend its life pointed at a container that was still
+  # migrating.
+  cron:
+    image: ${APP_IMAGE:-ghcr.io/missuo/tokens:latest}
+    command: ["node", "cron.mjs"]
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    environment:
+      CRON_SECRET: ${CRON_SECRET:-}
+      # Over the internal network, so the job never leaves the host and needs
+      # no WAF exception for it — which is most of why it moved off GitHub
+      # Actions in the first place.
+      CRON_TARGET_URL: http://app:3000/api/cron/refresh-social-links
+      CRON_UTC_HOUR: ${CRON_UTC_HOUR:-3}
+      CRON_UTC_MINUTE: ${CRON_UTC_MINUTE:-20}
+    networks:
+      - internal
+
 networks:
   internal:
     driver: bridge

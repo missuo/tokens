@@ -73,6 +73,7 @@ COPY --from=builder --chown=nextjs:nextjs /repo/node_modules/drizzle-orm ./node_
 COPY --from=builder --chown=nextjs:nextjs /repo/node_modules/postgres ./node_modules/postgres
 COPY --from=builder --chown=nextjs:nextjs /repo/web/src/lib/db/migrations ./migrations
 COPY --from=builder --chown=nextjs:nextjs /repo/web/scripts/migrate.mjs ./migrate.mjs
+COPY --from=builder --chown=nextjs:nextjs /repo/web/scripts/cron.mjs ./cron.mjs
 
 USER nextjs
 EXPOSE 3000
