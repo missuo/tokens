@@ -491,7 +491,19 @@ export default function DocsPage() {
           <div className="flex flex-col gap-4">
             <Card size="sm">
               <CardHeader>
-                <CardTitle className="text-sm">
+                <CardTitle className="flex items-center gap-2 text-sm">
+                  {/* Both marks are checked in rather than hotlinked, so a
+                      brand site reorganising cannot break this page. V.PS
+                      publishes its mark white-on-dark with the corner radius
+                      baked in, so it carries its own background. */}
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src="/icons/vps.svg"
+                    alt=""
+                    width={18}
+                    height={18}
+                    className="size-[18px] shrink-0"
+                  />
                   <a
                     href="https://v.ps"
                     target="_blank"
@@ -516,20 +528,39 @@ export default function DocsPage() {
                 , provide the Tokyo server this site runs on.
                 <br />
                 <br />
-                Location is the whole point of it. A large share of the people
-                reading this leaderboard are in mainland China, where routes to
-                the rest of the internet are frequently slow and occasionally
-                worse — and no amount of caching fixes a slow path to the cache.
-                What fixes it is a machine on the near side of it. Tokyo is
-                about as close as a server can get while still being somewhere
-                the whole project can be operated from, and that is a thing you
-                have to be given rather than something a free tier provides.
+                The routing is the point of it rather than the hardware. A large
+                share of the people reading this leaderboard are in mainland
+                China, where the path out matters more than anything waiting at
+                the far end — and no amount of caching fixes a slow path to the
+                cache. In their own words: every plan takes the best route each
+                carrier offers, so connections from mainland China stay fast
+                around the clock.
+                <br />
+                <br />
+                If you want the same thing, they sell it at{" "}
+                <a
+                  href="https://vps.hosting/?affid=2147"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-medium text-foreground underline underline-offset-4"
+                >
+                  vps.hosting
+                </a>
+                .
               </CardContent>
             </Card>
 
             <Card size="sm">
               <CardHeader>
-                <CardTitle className="text-sm">
+                <CardTitle className="flex items-center gap-2 text-sm">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src="/icons/neon.svg"
+                    alt=""
+                    width={18}
+                    height={18}
+                    className="size-[18px] shrink-0"
+                  />
                   <a
                     href="https://neon.com"
                     target="_blank"
@@ -542,7 +573,7 @@ export default function DocsPage() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="text-sm leading-relaxed text-muted-foreground">
-                Neon provide the Postgres database that holds every submission
+                Neon provide the serverless Postgres that holds every submission
                 on this site.
                 <br />
                 <br />
