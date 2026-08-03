@@ -1,0 +1,130 @@
+name: tokens
+
+# Self-hosted stack: Postgres and the Next.js server on one box, with Caddy
+# installed on the host (not here) terminating TLS in front of it.
+#
+# Nothing is built here. The image is produced by GitHub Actions and pulled by
+# tag — the server has 2 vCPU and would be unusable for the minutes a build
+# takes. `docker compose up -d` on this file is the entire deploy.
+
+x-app-env: &app-env
+  NODE_ENV: production
+  DATABASE_URL: postgres://${POSTGRES_USER:-tokens}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-tokens}?sslmode=disable
+  # The hop is a container-network socket that never leaves the host.
+  DATABASE_SSL: disable
+  NEXT_PUBLIC_URL: ${NEXT_PUBLIC_URL}
+  GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID}
+  GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET}
+  CSRF_ALLOWED_ORIGINS: ${CSRF_ALLOWED_ORIGINS}
+  CRON_SECRET: ${CRON_SECRET:-}
+  SUBMISSION_FRESHNESS_DAYS: ${SUBMISSION_FRESHNESS_DAYS:-}
+
+services:
+  db:
+    # bookworm rather than alpine, deliberately. The production data comes from
+    # Neon, which runs glibc; musl orders text differently under the same
+    # collation, which would silently give every text index a different sort
+    # order after a dump/restore. Major version 18 matches Neon 18.4 so that
+    # pg_dump output and, later, logical replication line up.
+    image: postgres:18-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-tokens}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-tokens}
+      # Pin the collation provider so a future base-image bump cannot reindex
+      # the world underneath us.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C.UTF-8"
+    command:
+      - postgres
+      # 3.8 GB total, shared with the app and the OS. The database itself is
+      # 49 MB, so 512 MB already holds every page many times over — spending
+      # more would buy nothing and take it from the Node process.
+      - -c
+      - shared_buffers=512MB
+      - -c
+      - effective_cache_size=1536MB
+      - -c
+      - work_mem=16MB
+      - -c
+      - maintenance_work_mem=128MB
+      # One app process with a bounded pool, one migration container, and room
+      # for a psql session. The default 100 would let a runaway pool exhaust
+      # memory before it exhausted connections.
+      - -c
+      - max_connections=50
+      # NVMe: measured 772 MB/s write, 2.7 GB/s read. The default cost model
+      # assumes a spinning disk and will refuse index scans it should take.
+      - -c
+      - random_page_cost=1.1
+      - -c
+      - effective_io_concurrency=200
+      # Ready to publish to Neon as a subscriber without a restart later.
+      # Enabling it costs a little extra WAL volume and nothing else.
+      - -c
+      - wal_level=logical
+      # The one setting that can take the site down. If a replication slot
+      # stalls — Neon suspends, the subscription breaks, nobody notices — the
+      # WAL it is holding accumulates on a 30 GB disk until Postgres cannot
+      # write. Past this bound the slot is invalidated instead, which is a
+      # rebuild rather than an outage.
+      - -c
+      - max_slot_wal_keep_size=4GB
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - internal
+    # No `ports`. The database is reachable on the internal network only —
+    # never on the host interface, never from outside.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-tokens} -d ${POSTGRES_DB:-tokens}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  # Runs to completion before the app is allowed to start. Same image, so the
+  # migrations applied are exactly the ones the incoming code was built against.
+  migrate:
+    image: ${APP_IMAGE:-ghcr.io/missuo/tokens:latest}
+    command: ["node", "migrate.mjs"]
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment: *app-env
+    networks:
+      - internal
+
+  app:
+    image: ${APP_IMAGE:-ghcr.io/missuo/tokens:latest}
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      <<: *app-env
+      # Loopback to Postgres in the next container over. A single long-running
+      # process serving concurrent requests must not funnel them through one
+      # connection — see resolvePoolMax in src/lib/db/index.ts.
+      DB_POOL_MAX: ${DB_POOL_MAX:-12}
+    # Published to loopback only; Caddy on the host is the only thing that
+    # reaches it, and it is what holds the certificate.
+    ports:
+      - "127.0.0.1:${APP_PORT:-3000}:3000"
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+networks:
+  internal:
+    driver: bridge
+
+volumes:
+  pgdata:

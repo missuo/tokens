@@ -20,14 +20,24 @@ function safeEqual(a: string, b: string): boolean {
  * floating promise settles on its own.
  */
 function runInBackground(work: Promise<unknown>): void {
+  // Nothing downstream awaits this promise, so it has to carry its own handler.
+  // Under Workers an unhandled rejection ends the isolate and little else; on
+  // the self-hosted server it is fatal to the *process* — Node treats unhandled
+  // rejections as fatal by default, so one failing GitHub call during the daily
+  // refresh would take the whole site down.
+  const guarded = work.catch((error: unknown) => {
+    console.error("[cron] refresh-social-links failed", error);
+  });
+
   try {
-    getCloudflareContext().ctx.waitUntil(work);
+    getCloudflareContext().ctx.waitUntil(guarded);
     return;
   } catch {
-    // Not on Workers.
+    // Not on Workers: no isolate to keep alive, and the process outlives the
+    // response on its own.
   }
 
-  void work;
+  void guarded;
 }
 
 /**

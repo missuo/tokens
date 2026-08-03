@@ -52,9 +52,43 @@ function resolveSsl(usingHyperdrive: boolean): "require" | false {
 // Passing a `postgres` Sql instance directly causes type errors in the monorepo
 // due to duplicate package resolution (two copies of postgres with incompatible
 // branded types).
+/**
+ * How many sockets one client may open.
+ *
+ * Three shapes, and the wrong one is expensive in each direction:
+ *
+ * - Hyperdrive: these sockets end at Hyperdrive, which owns the real pool. The
+ *   only thing this decides is whether a page's parallel queries actually run
+ *   in parallel — `/u/[username]` fires three at once.
+ * - Serverless without Hyperdrive: every socket is a real Postgres connection
+ *   and dozens of concurrent cold starts exhaust `max_connections` (53300), so
+ *   one apiece is the safe answer.
+ * - Long-running server (the self-hosted image): there is exactly one process,
+ *   it lives for the life of the container, and Postgres is on the other end of
+ *   a loopback socket. Here `1` is actively wrong — it serialises every
+ *   concurrent request in the whole application behind a single connection.
+ *
+ * `DB_POOL_MAX` selects the third case explicitly rather than inferring it, so
+ * nothing silently changes shape when an environment variable goes missing.
+ */
+function resolvePoolMax(usingHyperdrive: boolean): number {
+  const configured = Number(process.env.DB_POOL_MAX);
+  if (Number.isInteger(configured) && configured > 0) return configured;
+  return usingHyperdrive ? 3 : 1;
+}
+
 function createDb() {
   const hyperdriveUrl = getHyperdriveConnectionString();
   const usingHyperdrive = hyperdriveUrl !== null;
+  const poolMax = resolvePoolMax(usingHyperdrive);
+
+  // Prepared statements are connection-scoped, which makes them a liability
+  // wherever the connection under a request is not stable: a serverless
+  // invocation may lose the connection that prepared one, and Hyperdrive
+  // multiplexes across connections — both surface as "prepared statement does
+  // not exist". A dedicated pool in a long-running process has neither problem,
+  // and the leaderboard runs the same few shapes over and over.
+  const stableConnections = !usingHyperdrive && poolMax > 1;
 
   return drizzle({
     connection: {
@@ -72,25 +106,25 @@ function createDb() {
       //
       // Without Hyperdrive the sockets are Postgres connections and the old
       // reasoning stands: dozens of concurrent cold-starts would exhaust
-      // max_connections (error 53300), so that path stays at one.
-      max: usingHyperdrive ? 3 : 1,
+      // max_connections (error 53300), so that path stays at one. See
+      // resolvePoolMax for why the self-hosted server is a third case.
+      max: poolMax,
 
-      // Close idle connections after 20 s so they don't linger between
-      // infrequent invocations.
-      idle_timeout: 20,
+      // Idle sockets are waste in a serverless invocation and an asset in a
+      // long-running server: reconnecting to loopback is cheap but not free,
+      // and holding a warm pool is the entire point of having a process.
+      idle_timeout: stableConnections ? 0 : 20,
 
       // Hard cap: recycle every connection after 5 minutes regardless of
       // activity. Prevents stale connections after deploys / DB restarts.
+      // Left in place for the pooled case too — Postgres restarts under it
+      // during migrations, and a recycled socket is how that heals itself.
       max_lifetime: 60 * 5,
 
       // Fail fast when the DB is unreachable instead of hanging the request.
       connect_timeout: 10,
 
-      // Prepared statements are connection-scoped. In serverless the connection
-      // that prepared a statement may be gone by the next invocation, and
-      // Hyperdrive multiplexes requests across connections — both surface as
-      // "prepared statement does not exist".
-      prepare: false,
+      prepare: stableConnections,
     },
     schema,
   });

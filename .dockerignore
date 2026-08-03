@@ -1,0 +1,42 @@
+# Build context for the self-hosted image. The context is the repository root
+# rather than web/, because `web`'s build script reaches outside its own
+# directory: it copies ../install.sh and ../.github/assets/client-* into public/.
+#
+# The single most important line here is cli/target. It holds 6.4 GB of Rust
+# build artifacts, and without excluding it every `docker build` would upload
+# that to the daemon before reading a single instruction.
+cli/target
+cli/**/target
+
+# Dependencies are installed inside the image from the lockfile. Copying the
+# host's tree in would both bloat the context and risk platform-specific
+# binaries (the local one carries sharp-darwin-arm64) leaking into a linux image.
+node_modules
+**/node_modules
+
+# Build output — regenerated in the builder stage.
+web/.next
+web/.open-next
+web/.wrangler
+**/dist
+
+# Nothing here affects the build, and .git in particular is large.
+.git
+.github/workflows
+.claude
+docs
+*.md
+!README.md
+
+# Local configuration and anything that could carry a secret. The image takes
+# its configuration from the environment at run time, never from a baked file.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Editor / OS noise
+.DS_Store
+.vscode
+.idea

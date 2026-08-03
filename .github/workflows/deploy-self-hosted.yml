@@ -1,0 +1,160 @@
+name: Deploy (self-hosted)
+
+# Builds the image here and ships only the tag to the server.
+#
+# The box is 2 vCPU / 3.8 GB with a 256 MB swapfile. `next build` on it would
+# either be OOM-killed or spend its whole duration competing with Postgres and
+# live traffic for the same two cores — which is exactly what the previous
+# self-hosted setup did, and why deploys used to blank the site for about a
+# minute. Here the server's entire job is `docker compose up -d`.
+
+on:
+  push:
+    branches:
+      - deploy/self-hosted
+    # Docs and the CLI cannot change what this image contains.
+    paths-ignore:
+      - "docs/**"
+      - "cli/**"
+      - "**/*.md"
+  workflow_dispatch:
+    inputs:
+      skip_deploy:
+        description: "Build and push the image without deploying it"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: deploy-self-hosted
+  # Deploys are not interchangeable — cancelling one mid-`compose up` could
+  # leave the migration container applied and the app still on the old image.
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  build:
+    name: Build and push image
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve tags
+        id: meta
+        run: |
+          set -euo pipefail
+          # Lowercase: GHCR rejects uppercase in a repository name, and
+          # github.repository preserves whatever case the owner used.
+          repo="$(echo "${IMAGE}" | tr '[:upper:]' '[:lower:]')"
+          echo "image=${repo}:sha-${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+          echo "tags=${repo}:sha-${GITHUB_SHA::12},${repo}:latest" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          build-args: |
+            NEXT_PUBLIC_URL=${{ vars.SELF_HOSTED_PUBLIC_URL || 'https://dev.tokens.ci' }}
+          # Registry-backed cache rather than the 10 GB GHA cache, which this
+          # would evict itself out of within a few builds.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: false
+
+  deploy:
+    name: Deploy to server
+    needs: build
+    if: ${{ !inputs.skip_deploy }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Configure SSH
+        env:
+          DEPLOY_HOST: ${{ secrets.TOKENS_DEPLOY_HOST }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.TOKENS_DEPLOY_KNOWN_HOSTS }}
+          DEPLOY_SSH_KEY: ${{ secrets.TOKENS_DEPLOY_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "${DEPLOY_SSH_KEY}" || { echo "TOKENS_DEPLOY_SSH_KEY is required" >&2; exit 1; }
+          test -n "${DEPLOY_HOST}"    || { echo "TOKENS_DEPLOY_HOST is required" >&2; exit 1; }
+
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "${DEPLOY_SSH_KEY}" | tr -d '\r' > ~/.ssh/deploy
+          chmod 600 ~/.ssh/deploy
+
+          # Pinned rather than scanned. ssh-keyscan at deploy time trusts
+          # whatever answers, which defeats the point of checking at all.
+          if [ -n "${DEPLOY_KNOWN_HOSTS}" ]; then
+            printf '%s\n' "${DEPLOY_KNOWN_HOSTS}" | tr -d '\r' > ~/.ssh/known_hosts
+          else
+            echo "TOKENS_DEPLOY_KNOWN_HOSTS is required" >&2; exit 1
+          fi
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Ship compose file
+        env:
+          DEPLOY_HOST: ${{ secrets.TOKENS_DEPLOY_HOST }}
+        run: |
+          set -euo pipefail
+          # The server holds no checkout. compose.yaml is the only repository
+          # file it needs, so it is copied on every deploy and is therefore
+          # never out of step with the image it is about to run.
+          scp -i ~/.ssh/deploy -o IdentitiesOnly=yes \
+            compose.yaml "root@${DEPLOY_HOST}:/opt/tokens/compose.yaml"
+
+      - name: Deploy
+        env:
+          DEPLOY_HOST: ${{ secrets.TOKENS_DEPLOY_HOST }}
+          APP_IMAGE: ${{ needs.build.outputs.image }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy -o IdentitiesOnly=yes "root@${DEPLOY_HOST}" \
+            "APP_IMAGE='${APP_IMAGE}' bash -s" <<'REMOTE'
+          set -euo pipefail
+          cd /opt/tokens
+
+          # Pinned by digest-bearing tag, not :latest. A deploy that says which
+          # build it installed is one you can roll back by editing a line.
+          grep -q '^APP_IMAGE=' .env && sed -i "s|^APP_IMAGE=.*|APP_IMAGE=${APP_IMAGE}|" .env \
+                                     || echo "APP_IMAGE=${APP_IMAGE}" >> .env
+
+          docker compose pull --quiet
+          # `migrate` runs to completion first; compose gates `app` on it
+          # exiting 0, so the new code never starts against an old schema.
+          docker compose up -d --remove-orphans --wait --wait-timeout 180
+
+          docker image prune -f --filter "until=168h" >/dev/null 2>&1 || true
+          echo "--- running ---"
+          docker compose ps --format 'table {{.Service}}\t{{.Status}}\t{{.Image}}'
+          REMOTE
+
+      - name: Verify
+        env:
+          DEPLOY_HOST: ${{ secrets.TOKENS_DEPLOY_HOST }}
+        run: |
+          set -euo pipefail
+          # Checked from the server side against the app's own port, so the
+          # result reflects the deploy rather than DNS, Caddy or Cloudflare.
+          ssh -i ~/.ssh/deploy -o IdentitiesOnly=yes "root@${DEPLOY_HOST}" \
+            'curl -fsS --max-time 10 http://127.0.0.1:3000/api/health' | tee /dev/stderr | grep -q '"ok":true'
