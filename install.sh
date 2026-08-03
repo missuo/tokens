@@ -20,8 +20,15 @@ REPO="missuo/tokens"
 BIN="tokens"
 
 # --- pretty output --------------------------------------------------------
+# Built with printf rather than $'\033[1m'. ANSI-C quoting is a bashism, and
+# README and the docs page both tell people to run this with `| sh` — which on
+# Debian, Ubuntu and WSL is dash, where $'...' is a literal `$` followed by the
+# string. That printed `$\033[0;34m==>` down the whole install instead of
+# colouring it. The shebang does not save it: piping to an interpreter skips
+# the shebang entirely.
 if [ -t 1 ]; then
-  BOLD=$'\033[1m'; GREEN=$'\033[0;32m'; YELLOW=$'\033[1;33m'; BLUE=$'\033[0;34m'; RED=$'\033[0;31m'; NC=$'\033[0m'
+  ESC=$(printf '\033')
+  BOLD="${ESC}[1m"; GREEN="${ESC}[0;32m"; YELLOW="${ESC}[1;33m"; BLUE="${ESC}[0;34m"; RED="${ESC}[0;31m"; NC="${ESC}[0m"
 else
   BOLD=""; GREEN=""; YELLOW=""; BLUE=""; RED=""; NC=""
 fi
