@@ -13,7 +13,7 @@ export const metadata: Metadata = {
   robots: { index: true, follow: true },
 };
 
-const UPDATED = "25 July 2026";
+const UPDATED = "3 August 2026";
 
 export default function PrivacyPage() {
   return (
@@ -160,16 +160,25 @@ export default function PrivacyPage() {
         <Bullets
           items={[
             <>
+              <strong className="font-medium text-foreground">V.PS</strong> —
+              the server the site, the API and the database run on. This is
+              where the records above actually live.
+            </>,
+            <>
               <strong className="font-medium text-foreground">
                 Cloudflare
               </strong>{" "}
-              — hosting, edge caching and network protection for the site and
-              API.
+              — the CDN and network protection in front of that server. It
+              routes traffic and keeps copies of pages that are public anyway;
+              it no longer runs the application or holds a copy of the database,
+              as it did while this site was deployed on Workers. It does still
+              terminate TLS, so like any reverse proxy it can see requests as
+              they pass through.
             </>,
             <>
               <strong className="font-medium text-foreground">Neon</strong> —
-              the managed PostgreSQL database where the records above are
-              stored.
+              the managed PostgreSQL that held these records until the move, and
+              which keeps a copy for recovery.
             </>,
             <>
               <strong className="font-medium text-foreground">GitHub</strong> —
