@@ -6,6 +6,7 @@
 
 use anyhow::{Context, Result};
 use chrono::{Duration, NaiveDate};
+use fs2::FileExt;
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::fs;
@@ -537,10 +538,15 @@ fn write_snapshot_from_graph(graph: &GraphResult) -> Result<()> {
     Ok(())
 }
 
-/// Persist a snapshot through a process-unique temporary file. Concurrent
-/// refreshes may race to publish, but each published snapshot is complete and
-/// workspace keys remain owner-only on Unix.
+/// Persist a snapshot through an exclusive lock + process-unique temporary file.
+/// Concurrent refreshes queue on the lock; each published snapshot is complete
+/// and workspace keys remain owner-only on Unix.
 fn write_private_snapshot(path: &Path, body: &[u8]) -> Result<()> {
+    let lock_path = snapshot_lock_path(path);
+    let lock = open_private_snapshot_lock(&lock_path)?;
+    lock.lock_exclusive()
+        .with_context(|| format!("lock usage snapshot {}", lock_path.display()))?;
+
     let sequence = SNAPSHOT_TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
     let tmp = path.with_extension(format!("json.{}.{}.tmp", std::process::id(), sequence));
     let result = (|| -> Result<()> {
@@ -573,6 +579,37 @@ fn write_private_snapshot(path: &Path, body: &[u8]) -> Result<()> {
         let _ = fs::remove_file(&tmp);
     }
     result.with_context(|| format!("write usage snapshot {}", path.display()))
+}
+
+fn snapshot_lock_path(path: &Path) -> PathBuf {
+    path.with_extension("json.lock")
+}
+
+fn open_private_snapshot_lock(path: &Path) -> Result<fs::File> {
+    #[cfg(unix)]
+    let lock = {
+        use std::os::unix::fs::OpenOptionsExt;
+        fs::OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .mode(0o600)
+            .open(path)
+    };
+    #[cfg(not(unix))]
+    let lock = fs::OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .open(path);
+
+    let lock = lock.with_context(|| format!("open usage snapshot lock {}", path.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(lock)
 }
 
 fn try_report_from_snapshot(
@@ -854,20 +891,26 @@ fn report_from_contributions(
         .collect();
     by_client_out.sort_by(|a, b| b.tokens.cmp(&a.tokens));
 
+    // Group project-model rows once so project assembly stays O(project-models)
+    // instead of rescanning the full map for every project.
+    let mut models_by_project: BTreeMap<Option<String>, Vec<ProjectModelUsage>> = BTreeMap::new();
+    for ((project_key, model_id, provider_id), model) in by_project_model {
+        models_by_project
+            .entry(project_key)
+            .or_default()
+            .push(ProjectModelUsage {
+                model_id,
+                provider_id,
+                tokens: model.tokens,
+                cost: model.cost,
+                messages: model.messages,
+            });
+    }
+
     let mut by_project_out: Vec<ProjectUsage> = by_project
         .into_iter()
         .map(|(project_key, project)| {
-            let mut models: Vec<ProjectModelUsage> = by_project_model
-                .iter()
-                .filter(|((key, _, _), _)| key == &project_key)
-                .map(|((_, model_id, provider_id), model)| ProjectModelUsage {
-                    model_id: model_id.clone(),
-                    provider_id: provider_id.clone(),
-                    tokens: model.tokens,
-                    cost: model.cost,
-                    messages: model.messages,
-                })
-                .collect();
+            let mut models = models_by_project.remove(&project_key).unwrap_or_default();
             models.sort_by(|a, b| {
                 b.cost
                     .total_cmp(&a.cost)
@@ -1393,6 +1436,14 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             assert_eq!(
                 fs::metadata(&*path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+            assert_eq!(
+                fs::metadata(snapshot_lock_path(&path))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
                 0o600
             );
         }

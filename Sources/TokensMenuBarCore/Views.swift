@@ -18,6 +18,8 @@ public struct MenuPanelView: View {
     @State private var clientVisibleCount: Int = MenuBarLayout.listPageSize
     @State private var projectVisibleCount: Int = MenuBarLayout.listPageSize
     @State private var modelVisibleCount: Int = MenuBarLayout.listPageSize
+    /// Per-project nested model page counts keyed by `ProjectUsage.id`.
+    @State private var projectModelVisibleCounts: [String: Int] = [:]
 
     public init(
         store: UsageStore,
@@ -124,6 +126,7 @@ public struct MenuPanelView: View {
             clientVisibleCount = MenuBarLayout.listPageSize
             projectVisibleCount = MenuBarLayout.listPageSize
             modelVisibleCount = MenuBarLayout.listPageSize
+            projectModelVisibleCounts = [:]
         }
         .onChange(of: store.isLoading) { _ in syncBodyHeightAndPublish() }
         .onChange(of: store.binaryMissing) { _ in syncBodyHeightAndPublish() }
@@ -135,6 +138,9 @@ public struct MenuPanelView: View {
             DispatchQueue.main.async { syncBodyHeightAndPublish() }
         }
         .onChange(of: modelVisibleCount) { _ in
+            DispatchQueue.main.async { syncBodyHeightAndPublish() }
+        }
+        .onChange(of: projectModelVisibleCounts) { _ in
             DispatchQueue.main.async { syncBodyHeightAndPublish() }
         }
         .onChange(of: layout.maxHeight) { _ in
@@ -501,7 +507,12 @@ public struct MenuPanelView: View {
     }
 
     private func projectRow(_ project: ProjectUsage) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
+        let visibleModelCount = projectModelVisibleCounts[project.id]
+            ?? MenuBarLayout.projectModelPageSize
+        let visibleModels = Array(project.models.prefix(max(visibleModelCount, 0)))
+        let hasMoreModels = project.models.count > visibleModels.count
+
+        return VStack(alignment: .leading, spacing: 7) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(project.displayName)
                     .font(.system(size: 12, weight: .medium, design: .monospaced))
@@ -514,18 +525,31 @@ public struct MenuPanelView: View {
                     .layoutPriority(2)
             }
 
-            HStack(alignment: .top, spacing: 9) {
-                Rectangle()
-                    .fill(Color.primary.opacity(0.16))
-                    .frame(width: 1)
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(project.models) { model in
-                        projectModelRow(model)
+            if !project.models.isEmpty {
+                HStack(alignment: .top, spacing: 9) {
+                    Rectangle()
+                        .fill(Color.primary.opacity(0.16))
+                        .frame(width: 1)
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(visibleModels) { model in
+                            projectModelRow(model)
+                        }
+                        if hasMoreModels {
+                            expandChevron(
+                                remaining: project.models.count - visibleModels.count,
+                                accessibilityNoun: "models for \(project.displayName)"
+                            ) {
+                                projectModelVisibleCounts[project.id] = min(
+                                    visibleModelCount + MenuBarLayout.projectModelPageSize,
+                                    project.models.count
+                                )
+                            }
+                        }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.leading, 3)
             }
-            .padding(.leading, 3)
         }
         .accessibilityElement(children: .contain)
     }
