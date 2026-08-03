@@ -56,3 +56,30 @@ export function parseSearchDirectives(raw: string): ParsedSearchDirectives {
 export function hasDirectives(parsed: ParsedSearchDirectives): boolean {
   return parsed.clients.length > 0 || parsed.models.length > 0;
 }
+
+/**
+ * Whether a row survives the plain-text part of a search box.
+ *
+ * Lives here rather than beside the queries because the board is now filtered
+ * on the client, over rows it already holds — and `getLeaderboard` pulls in the
+ * database, so importing it from a component would drag the driver into the
+ * browser bundle. Both sides call this one function so a search cannot mean
+ * something different depending on where it ran.
+ */
+export function matchesLeaderboardSearch(
+  user: { username: string; displayName: string | null },
+  textSearch: string
+): boolean {
+  if (!textSearch) {
+    return true;
+  }
+
+  const lowerSearch = textSearch.toLowerCase();
+  if (user.username.toLowerCase().includes(lowerSearch)) {
+    return true;
+  }
+  if (user.displayName && user.displayName.toLowerCase().includes(lowerSearch)) {
+    return true;
+  }
+  return false;
+}

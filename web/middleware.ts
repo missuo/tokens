@@ -9,18 +9,18 @@ const PROTECTED_ROUTES = ["/settings"];
  * that actually change what each one renders.
  *
  * These are safe in a shared cache because none of them reads a cookie or a
- * session on the server — the only identity that appears in a public profile's
- * HTML belongs to the profile's owner. Several render dynamically anyway, and
- * Next marks *every* dynamic response `private, no-store`. That default is
- * right in general and wrong here: it costs a full render and several queries
- * on every view of pages nobody needs a private copy of.
+ * session on the server. Several render dynamically anyway, and Next marks
+ * *every* dynamic response `private, no-store`. That default is right in
+ * general and wrong here: it costs a full render and several queries on every
+ * view of pages nobody needs a private copy of.
  *
- * `/leaderboard` is deliberately absent. It renders "Your position" from the
- * session, so its HTML genuinely differs per reader, and Cloudflare keys its
- * cache on URL alone — no response header can make it vary on a cookie, so an
- * anonymous copy would be served to signed-in readers. Making that page
- * cacheable means taking the personalisation out of the server render, not
- * relabelling the response.
+ * `/leaderboard` earned its place rather than being relabelled into it. It used
+ * to render "Your position" from the session, which genuinely made its HTML
+ * differ per reader — and Cloudflare keys on URL alone, so no response header
+ * could have made it vary on a cookie. It now ships the whole ranking and the
+ * client finds the viewer's own row in it, which removes the personalisation
+ * instead of hiding it, and has the better property besides: the card and the
+ * table are read from one array, so they cannot disagree.
  */
 const SHARED_CACHE_ROUTES: ReadonlyArray<{
   pattern: RegExp;
@@ -33,6 +33,19 @@ const SHARED_CACHE_ROUTES: ReadonlyArray<{
   // Renders a notice when a banned account is turned away at sign-in.
   { pattern: /^\/shame$/, query: new Set(["error"]) },
   { pattern: /^\/u\/[^/]+$/, query: new Set(["period"]) },
+  // The board no longer reads a cookie or a session: it ships the whole
+  // ranking and the client finds the viewer's own row in it, so the document
+  // is the same for everyone. Of the parameters kept here only `period`,
+  // `from`/`to` and a `client:`/`model:` search change what the server
+  // computes — `sortBy`, `page` and plain text are applied to rows the client
+  // already holds. They stay in the allowlist anyway because these links get
+  // shared, and they cost nothing: the client writes them with `replaceState`,
+  // which is not a navigation, so ordinary use never mints a cache entry for
+  // them. Only somebody opening a shared link does.
+  {
+    pattern: /^\/leaderboard$/,
+    query: new Set(["period", "from", "to", "sortBy", "page", "search"]),
+  },
 ];
 
 /** 60s at the edge, matching the `revalidate` on the data these pages read, so
@@ -137,6 +150,7 @@ export const config = {
     "/terms",
     "/privacy",
     "/shame",
+    "/leaderboard",
     "/u/:username",
   ],
 };

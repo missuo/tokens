@@ -80,16 +80,16 @@ function SkeletonRow() {
   );
 }
 
-export function LeaderboardSkeleton({
-  /**
-   * Whether the loaded page will render its "Your position" block — it does for
-   * anyone signed in. Omitting it here was worth ~70px of shift on every
-   * logged-in load, which is exactly what this file exists to prevent.
-   */
-  showUserRank = false,
-}: {
-  showUserRank?: boolean;
-}) {
+/**
+ * No "Your position" placeholder any more.
+ *
+ * It used to be reserved by sniffing the session cookie during the render,
+ * which is the one thing this page no longer does — it is a single cached
+ * document for every reader. The block now appears after the client has
+ * resolved who is looking, so its space is the client's to manage; reserving
+ * it here would leave a permanent gap above every signed-out reader's board.
+ */
+export function LeaderboardSkeleton() {
   return (
     <div className={cn(CONTAINER, "pb-24 pt-10 sm:pt-14")}>
       {/* PageHeader. The title and description are known before the data is,
@@ -137,22 +137,6 @@ export function LeaderboardSkeleton({
         </div>
       </div>
 
-      {showUserRank && (
-        <div className="mt-4">
-          {/* The label is a permanent string in the loaded page, so it renders
-              as itself — same reasoning as the column headings below. */}
-          <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-            Your position
-          </span>
-          <div className="mt-1.5 overflow-hidden rounded-lg border">
-            <Table>
-              <TableBody>
-                <SkeletonRow />
-              </TableBody>
-            </Table>
-          </div>
-        </div>
-      )}
 
       <div className="mt-4 overflow-hidden rounded-lg border">
         <Table>

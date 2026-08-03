@@ -11,6 +11,7 @@ import type { LeaderboardData, LeaderboardUser, Period, SortBy } from "@/lib/lea
 import {
   escapeLikePattern,
   hasDirectives,
+  matchesLeaderboardSearch,
   parseSearchDirectives,
 } from "@/lib/leaderboard/searchDirectives";
 import { SOCIAL_VERIFIED_THRESHOLD } from "@/lib/socialVerification";
@@ -180,24 +181,6 @@ function aggregatePeriodRows(
   return Array.from(usersById.values()).sort((left, right) =>
     compareLeaderboardUsers(left, right, sortBy)
   );
-}
-
-function matchesLeaderboardSearch(
-  user: Pick<LeaderboardUser, "username" | "displayName">,
-  textSearch: string
-): boolean {
-  if (!textSearch) {
-    return true;
-  }
-
-  const lowerSearch = textSearch.toLowerCase();
-  if (user.username.toLowerCase().includes(lowerSearch)) {
-    return true;
-  }
-  if (user.displayName && user.displayName.toLowerCase().includes(lowerSearch)) {
-    return true;
-  }
-  return false;
 }
 
 function buildPeriodLeaderboardData(
