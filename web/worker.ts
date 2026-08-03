@@ -131,6 +131,16 @@ function profileCacheKey(url: URL): Request {
  * URL does not.
  */
 function sharedCacheKey(request: Request, url: URL): Request | null {
+  // Next fetches the RSC payload for a client-side navigation from the same
+  // path, distinguished only by an `_rsc` query parameter and an `RSC` header.
+  // The Cache API keys on URL alone and this profile key drops unknown query
+  // parameters, so an RSC response would be stored under the HTML key and then
+  // served to a browser asking for a page — which is exactly what happened.
+  // These are navigations, already fast, and not worth the class of bug.
+  if (request.headers.has("RSC") || url.searchParams.has("_rsc")) {
+    return null;
+  }
+
   if (PROFILE_CACHEABLE.test(url.pathname)) {
     return profileCacheKey(url);
   }
