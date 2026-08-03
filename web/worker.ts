@@ -68,6 +68,25 @@ function readCookie(request: Request, name: string): string | null {
  * them from being served each other's page — the Cache API keys on URL alone,
  * and a cookie it cannot see is a cookie it cannot vary on.
  */
+/**
+ * Strip the shared-cache header off a hit before it reaches the browser.
+ *
+ * The stored copy has to advertise itself as cacheable or the edge will not
+ * keep it, but that header must not survive to the client. Cloudflare rewrites
+ * an origin `max-age=0` to the zone's Browser Cache TTL — 4 hours here — so a
+ * signed-out reader's browser would hold this page across a login and keep
+ * serving the version rendered without a session, silently dropping "Your
+ * position" until it expired.
+ *
+ * The client gets the same `no-store` it would have received from the origin.
+ * Only the copy inside `caches.default` is marked cacheable.
+ */
+function withPrivateHeaders(response: Response): Response {
+  const out = new Response(response.body, response);
+  out.headers.set("Cache-Control", "private, no-cache, no-store, max-age=0, must-revalidate");
+  return out;
+}
+
 function pageCacheKey(request: Request, url: URL): Request {
   const sort = readCookie(request, SORT_BY_COOKIE);
   const keyUrl = new URL(url.toString());
@@ -141,7 +160,7 @@ export default {
 
     const key = pageCacheKey(request, url);
     const pageHit = await cache.match(key);
-    if (pageHit) return pageHit;
+    if (pageHit) return withPrivateHeaders(pageHit);
 
     const response = await handler.fetch(request, env, ctx);
     if (response.status !== 200) return response;
