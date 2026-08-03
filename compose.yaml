@@ -32,9 +32,13 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-tokens}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB:-tokens}
-      # Pin the collation provider so a future base-image bump cannot reindex
-      # the world underneath us.
-      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C.UTF-8"
+      # Matched to Neon, which reports encoding UTF8, collate and ctype
+      # C.UTF-8, and locale provider `b` (builtin). Collation is not cosmetic
+      # here: the production data arrives by pg_dump, and restoring it under a
+      # different text ordering would give every index on a text column a
+      # different sort order than the one it was built with. Pinning the
+      # provider also stops a future base-image bump from reindexing the world.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale-provider=builtin --builtin-locale=C.UTF-8"
     command:
       - postgres
       # 3.8 GB total, shared with the app and the OS. The database itself is
@@ -71,7 +75,12 @@ services:
       - -c
       - max_slot_wal_keep_size=4GB
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      # /var/lib/postgresql, not /var/lib/postgresql/data. Postgres 18 images
+      # changed the convention: the mount goes one level up and the server puts
+      # its cluster in a major-version subdirectory beneath it, so that a later
+      # `pg_upgrade --link` is not fighting a mount-point boundary. Pointing the
+      # volume at the old path makes the image refuse to start.
+      - pgdata:/var/lib/postgresql
     networks:
       - internal
     # No `ports`. The database is reachable on the internal network only —

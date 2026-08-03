@@ -62,11 +62,15 @@ COPY --from=builder --chown=nextjs:nextjs /repo/web/.next/standalone ./
 COPY --from=builder --chown=nextjs:nextjs /repo/web/.next/static ./web/.next/static
 COPY --from=builder --chown=nextjs:nextjs /repo/web/public ./web/public
 
-# Migrations run from this same image (see compose), and the tracer only keeps
-# the drizzle entry points the application itself imports — the migrator is not
-# one of them. Restoring the full package is ~5 MB and avoids maintaining a
+# Migrations run from this same image (see compose), which keeps the schema and
+# the code that assumes it on exactly the same versions. What the trace leaves
+# behind is not enough for them on its own: it keeps only the module graph the
+# *application* imports, so `drizzle-orm/postgres-js/migrator` is absent, and
+# `postgres` is inlined into the server chunks rather than left resolvable under
+# node_modules. Both are restored whole here — a few MB, against maintaining a
 # second image whose dependency versions could drift from the app's.
 COPY --from=builder --chown=nextjs:nextjs /repo/node_modules/drizzle-orm ./node_modules/drizzle-orm
+COPY --from=builder --chown=nextjs:nextjs /repo/node_modules/postgres ./node_modules/postgres
 COPY --from=builder --chown=nextjs:nextjs /repo/web/src/lib/db/migrations ./migrations
 COPY --from=builder --chown=nextjs:nextjs /repo/web/scripts/migrate.mjs ./migrate.mjs
 
