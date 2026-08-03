@@ -48,12 +48,24 @@ const SHARED_CACHE_ROUTES: ReadonlyArray<{
   },
 ];
 
-/** 60s at the edge, matching the `revalidate` on the data these pages read, so
- *  a cached copy is never staler than what the origin would have produced. The
- *  stale window lets the edge keep answering while it refreshes behind the
- *  reader instead of making someone wait for the regeneration. */
+/**
+ * How long the edge may answer without asking.
+ *
+ * Half the 60s `revalidate` on the data underneath, so the edge is never the
+ * thing deciding how old a page gets — at worst it repeats one data-cache
+ * generation, rather than adding a second window on top of it.
+ *
+ * The short stale window is the part that matters. A submission invalidates the
+ * origin's data cache immediately by tag, but nothing purges Cloudflare, so
+ * whatever is set here *is* how long a new number takes to appear. At
+ * `stale-while-revalidate=300` a rarely-visited profile could answer from a
+ * copy six minutes old; 60s bounds that to two. What it costs is that some
+ * requests wait for a regeneration instead of getting a stale copy instantly —
+ * and that regeneration is 40ms against a database 2ms away, which is not worth
+ * five minutes of staleness to avoid.
+ */
 const SHARED_CACHE_CONTROL =
-  "public, max-age=0, s-maxage=60, stale-while-revalidate=300";
+  "public, max-age=0, s-maxage=30, stale-while-revalidate=60";
 
 /**
  * Next fetches the RSC payload for a client-side navigation from the same path,
