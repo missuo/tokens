@@ -710,6 +710,20 @@ export async function loadPublicProfileForPage(
         };
       }
 
+      // Thrown rather than returned, and thrown from *inside* the cached
+      // function on purpose. `unstable_cache` stores whatever this resolves
+      // with, so returning a 5xx here would pin the failure for the full
+      // revalidate window — the database could come back and the profile would
+      // keep reporting itself broken for another minute. A throw is not stored,
+      // so the next request retries.
+      //
+      // 4xx still returns: "no such user" is an answer, and a stable one.
+      if (!response.ok && response.status >= 500) {
+        throw new Error(
+          `Profile lookup for ${username} failed with ${response.status}`,
+        );
+      }
+
       if (!response.ok) {
         return { kind: "error", status: response.status };
       }

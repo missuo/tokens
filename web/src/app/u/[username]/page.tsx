@@ -39,6 +39,21 @@ async function getProfileData(
     }
   }
 
+  // "We could not find out" is not "this person does not exist", and collapsing
+  // both into null made every failure a 404. That was survivable while this
+  // page was `no-store` and a bad render reached one reader. It is not now: a
+  // 404 carrying `s-maxage` is stored by the edge and handed to everyone in
+  // that colo for the life of the entry, so a few seconds of database trouble
+  // would delete a real person's profile for a minute and a half.
+  //
+  // Throwing puts a 5xx on the wire instead, which Caddy strips the shareable
+  // cache-control from — the failure stays a failure and nothing keeps it.
+  if (result.kind === "error" && result.status >= 500) {
+    throw new Error(
+      `Profile lookup for ${username} failed upstream with ${result.status}`,
+    );
+  }
+
   if (result.kind !== "data") {
     return null;
   }
