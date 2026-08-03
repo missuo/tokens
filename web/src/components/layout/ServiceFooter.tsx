@@ -51,26 +51,12 @@ export function ServiceFooter() {
           </a>
         </span>
 
-        {/* Both marks are checked in rather than hotlinked, so a brand site
-            reorganising cannot break the footer. */}
-        <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          Powered by
-          <a
-            href="https://workers.cloudflare.com"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 transition-colors hover:text-foreground"
-          >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/icons/cloudflare.svg" alt="" width={13} height={13} className="size-3.5" />
-            Workers
-          </a>
-        </span>
-
-        {/* Sponsors sit in their own row rather than beside Workers. Donating
-            the infrastructure this runs on is a different kind of credit from
-            naming what the stack is built with, and mixing the two dilutes
-            both. Each mark appears once. */}
+        {/* Only the sponsors. Naming every piece of the stack down here was
+            noise — the parts that matter are documented on /docs, where there
+            is room to say what they do. What belongs in a footer is the credit
+            that is owed: two companies pay for infrastructure this project
+            does not. Both marks are checked in rather than hotlinked, so a
+            brand site reorganising cannot break the footer. */}
         <span className="flex flex-wrap items-center justify-center gap-x-1.5 gap-y-1 text-xs text-muted-foreground">
           Server sponsored by
           <a

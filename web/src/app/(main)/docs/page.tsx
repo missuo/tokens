@@ -424,21 +424,6 @@ export default function DocsPage() {
                 behind it. Static assets, the share cards, and the pages a
                 signed-out reader sees are cached at the edge, so most requests
                 are answered without running any code at all.
-                <br />
-                <br />
-                <a
-                  href="https://v.ps"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="font-medium text-foreground underline underline-offset-4"
-                >
-                  V.PS
-                </a>{" "}
-                sponsor a server for this project. Readers in mainland China
-                reach Cloudflare over routes that are often slow, and the fix
-                for that is a machine close to them rather than a cleverer
-                cache — which is a thing you have to be given, not something a
-                free tier provides.
               </CardContent>
             </Card>
 
@@ -461,12 +446,6 @@ export default function DocsPage() {
                 Worker is pinned to the same region: a request crosses the ocean
                 once, and every query after that is a local hop. Schema changes
                 go through Drizzle migrations applied at build time.
-                <br />
-                <br />
-                Neon sponsor the database this site runs on. Tokens is free to
-                use and free to self-host, and the leaderboard reads every page
-                straight from Postgres rather than a cache of a cache — that is
-                only affordable because someone is paying for it, and they are.
               </CardContent>
             </Card>
 
@@ -495,6 +474,86 @@ export default function DocsPage() {
                 moment you submit rather than on a timer. The daily badge
                 refresh runs as a Worker cron trigger, in-process, with no
                 external scheduler holding a key.
+              </CardContent>
+            </Card>
+          </div>
+        </Section>
+
+        {/* Its own section rather than a paragraph tacked onto whichever
+            architecture card happened to mention the vendor. Sponsorship is not
+            an implementation detail, and burying it under "Architecture" made
+            it read as one. */}
+        <Section
+          id="sponsors"
+          title="Sponsors"
+          description="Two companies pay for infrastructure this project does not. Neither asked for anything in return, and neither has any say in what the leaderboard reports."
+        >
+          <div className="flex flex-col gap-4">
+            <Card size="sm">
+              <CardHeader>
+                <CardTitle className="text-sm">
+                  <a
+                    href="https://v.ps"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline underline-offset-4"
+                  >
+                    V.PS
+                  </a>{" "}
+                  — the server
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="text-sm leading-relaxed text-muted-foreground">
+                V.PS, run by{" "}
+                <a
+                  href="https://xtom.com"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-medium text-foreground underline underline-offset-4"
+                >
+                  xTom
+                </a>
+                , provide the Tokyo server this site runs on.
+                <br />
+                <br />
+                Location is the whole point of it. A large share of the people
+                reading this leaderboard are in mainland China, where routes to
+                the rest of the internet are frequently slow and occasionally
+                worse — and no amount of caching fixes a slow path to the cache.
+                What fixes it is a machine on the near side of it. Tokyo is
+                about as close as a server can get while still being somewhere
+                the whole project can be operated from, and that is a thing you
+                have to be given rather than something a free tier provides.
+              </CardContent>
+            </Card>
+
+            <Card size="sm">
+              <CardHeader>
+                <CardTitle className="text-sm">
+                  <a
+                    href="https://neon.com"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline underline-offset-4"
+                  >
+                    Neon
+                  </a>{" "}
+                  — the database
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="text-sm leading-relaxed text-muted-foreground">
+                Neon provide the Postgres database that holds every submission
+                on this site.
+                <br />
+                <br />
+                What that pays for is the decision not to approximate. The
+                leaderboard is computed from the actual daily rows on every
+                read, not from a nightly rollup that would be cheaper and
+                slightly wrong; a submission changes your position within the
+                minute; and every figure on a profile can be traced back to a
+                row rather than to a counter someone remembered to increment.
+                Tokens is free to use and free to self-host, so none of that is
+                funded by the people using it.
               </CardContent>
             </Card>
           </div>
