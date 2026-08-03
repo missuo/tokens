@@ -65,10 +65,27 @@ export function ServiceFooter() {
             <img src="/icons/cloudflare.svg" alt="" width={13} height={13} className="size-3.5" />
             Workers
           </a>
-          {/* Neon is named once, under "sponsored by" rather than alongside
-              Workers: they donate the database this runs on, which is a
-              different kind of credit from naming what the stack is built
-              with. Repeating the mark in both rows would dilute both. */}
+        </span>
+
+        {/* Sponsors sit in their own row rather than beside Workers. Donating
+            the infrastructure this runs on is a different kind of credit from
+            naming what the stack is built with, and mixing the two dilutes
+            both. Each mark appears once. */}
+        <span className="flex flex-wrap items-center justify-center gap-x-1.5 gap-y-1 text-xs text-muted-foreground">
+          Server sponsored by
+          <a
+            href="https://v.ps"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 transition-colors hover:text-foreground"
+          >
+            {/* V.PS publishes its mark white-on-dark with the corner radius
+                baked into the SVG, so unlike the other two it carries its own
+                background and needs no CSS rounding. Unmodified. */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/icons/vps.svg" alt="" width={13} height={13} className="size-3.5" />
+            V.PS
+          </a>
           <span aria-hidden="true" className="opacity-50">·</span>
           Database sponsored by
           <a

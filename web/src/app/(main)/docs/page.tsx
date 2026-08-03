@@ -421,9 +421,24 @@ export default function DocsPage() {
               <CardContent className="text-sm leading-relaxed text-muted-foreground">
                 Next.js, deployed to Cloudflare Workers through OpenNext — one
                 Worker serves both the pages and the API, with no origin server
-                behind it. Static assets and the share cards are cached at the
-                edge, so most requests are answered without running any code at
-                all.
+                behind it. Static assets, the share cards, and the pages a
+                signed-out reader sees are cached at the edge, so most requests
+                are answered without running any code at all.
+                <br />
+                <br />
+                <a
+                  href="https://v.ps"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-medium text-foreground underline underline-offset-4"
+                >
+                  V.PS
+                </a>{" "}
+                sponsor a server for this project. Readers in mainland China
+                reach Cloudflare over routes that are often slow, and the fix
+                for that is a machine close to them rather than a cleverer
+                cache — which is a thing you have to be given, not something a
+                free tier provides.
               </CardContent>
             </Card>
 
