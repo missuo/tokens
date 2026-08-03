@@ -1,0 +1,73 @@
+# Caddy runs on the host rather than in compose: it owns ports 80/443 and the
+# certificate store, and neither should be torn down and recreated every time
+# the application stack is redeployed.
+{
+	# The admin API stays on. It binds to localhost:2019 only, and it is what
+	# `systemctl reload` posts to — turning it off means every config change
+	# needs a restart, which drops in-flight connections where a reload does
+	# not. That trade is not worth it for an endpoint nothing outside this host
+	# can reach.
+	admin localhost:2019
+}
+
+(app) {
+	encode zstd gzip
+
+	reverse_proxy 127.0.0.1:3000 {
+		# Cloudflare already sets these; passing the real client through means
+		# rate limiting and logs see the visitor rather than the edge.
+		header_up X-Real-IP {http.request.header.CF-Connecting-IP}
+
+		# The application decides what is shareable and marks it `public` in
+		# middleware — but middleware runs before the response exists, so it
+		# cannot see that a render failed. A 5xx carrying `s-maxage=30` would
+		# turn a momentary database blip into half a minute of every reader in
+		# a colo being served the failure. 4xx are left alone: a 404 for a
+		# username nobody has is a fact about that URL, and the 308 that
+		# canonicalises username case is one too.
+		@server_error status 5xx
+		handle_response @server_error {
+			# Cache-Control is excluded from the copy rather than overwritten
+			# after it. `copy_response_headers` brings the upstream set across
+			# wholesale, so setting the header first left two of them on the
+			# response — one forbidding storage and one permitting it — and how
+			# that pair resolves is a question no cache should be asked.
+			copy_response
+			# `>` defers the set until the response is being written, which is
+			# the only way it wins. Applied before copy_response it lost to the
+			# upstream header, leaving two Cache-Controls on the reply — one
+			# forbidding storage and one permitting it — and how that pair
+			# resolves is a question no cache should be asked.
+			header >Cache-Control "private, no-cache, no-store, max-age=0, must-revalidate"
+		}
+	}
+}
+
+# Direct-to-origin over plain HTTP. This is how the stack gets verified
+# independently of DNS, Cloudflare and certificates — curl the IP with a Host
+# header and the answer is about the server and nothing else.
+:80 {
+	import app
+}
+
+dev.tokens.ci {
+	# `internal` rather than Let's Encrypt, deliberately. This name is proxied
+	# by Cloudflare, so an ACME HTTP-01 challenge only reaches this box if the
+	# zone happens to fetch the origin over port 80, and TLS-ALPN-01 can never
+	# reach it at all — Cloudflare terminates that handshake itself. Failing
+	# those in a loop earns a Let's Encrypt rate limit and no certificate.
+	#
+	# Cloudflare re-encrypts to the origin, so this needs the zone on SSL mode
+	# "Full". "Full (strict)" rejects a self-signed origin certificate and wants
+	# a Cloudflare Origin Certificate here instead.
+	tls internal
+	import app
+}
+
+# Deployed by hand to /etc/caddy/Caddyfile on the host, not by the workflow:
+# Caddy owns ports 80/443 and the certificate store, and neither should be torn
+# down every time the application stack is redeployed. This copy is the record —
+# a config that exists only on one machine is a config nobody can review.
+#
+#   scp deploy/Caddyfile root@<host>:/etc/caddy/Caddyfile
+#   ssh root@<host> 'caddy validate --config /etc/caddy/Caddyfile && systemctl reload caddy'
