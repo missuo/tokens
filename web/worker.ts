@@ -43,6 +43,26 @@ const CACHEABLE = /^\/api\/(og|embed\/[^/]+\/svg|badge\/[^/]+\/svg)/;
  */
 const PAGE_CACHEABLE = /^\/(leaderboard|shame)?$/;
 
+/**
+ * Public profiles, cacheable for *every* reader rather than signed-out ones.
+ *
+ * Unlike the leaderboard, this page renders nothing that depends on who is
+ * looking: it reads no cookie and no session server-side, and the only
+ * identity in the HTML belongs to the profile's owner. Restricting it to
+ * anonymous requests the way the leaderboard is restricted would halve the
+ * benefit for no gain in safety.
+ *
+ * The 308 that canonicalises username case passes straight through — only 200s
+ * are stored — so a mixed-case URL keeps redirecting rather than caching a
+ * redirect under the wrong key.
+ */
+const PROFILE_CACHEABLE = /^\/u\/[^/]+$/;
+
+/** Query parameters that change what a profile renders. Anything else — a
+ *  utm tag, a cache-buster someone pasted — is dropped from the cache key so
+ *  it cannot split one page into unlimited entries. */
+const PROFILE_QUERY_ALLOWLIST = new Set(["period"]);
+
 const SESSION_COOKIE = "tt_session";
 const SORT_BY_COOKIE = "leaderboard-sort-by";
 
@@ -92,6 +112,35 @@ function pageCacheKey(request: Request, url: URL): Request {
   const keyUrl = new URL(url.toString());
   if (sort) keyUrl.searchParams.set("__sort", sort);
   return new Request(keyUrl.toString(), { method: "GET" });
+}
+
+function profileCacheKey(url: URL): Request {
+  const keyUrl = new URL(url.origin + url.pathname);
+  for (const [name, value] of [...url.searchParams].sort()) {
+    if (PROFILE_QUERY_ALLOWLIST.has(name)) keyUrl.searchParams.set(name, value);
+  }
+  return new Request(keyUrl.toString(), { method: "GET" });
+}
+
+/**
+ * The cache key for this request, or null when it must not be shared.
+ *
+ * Two different rules on purpose: a profile is the same page for everyone, so
+ * it is keyed on its URL alone; the leaderboard personalises, so it is cached
+ * only when no session is present and its key carries the sort cookie that the
+ * URL does not.
+ */
+function sharedCacheKey(request: Request, url: URL): Request | null {
+  if (PROFILE_CACHEABLE.test(url.pathname)) {
+    return profileCacheKey(url);
+  }
+  if (
+    PAGE_CACHEABLE.test(url.pathname) &&
+    readCookie(request, SESSION_COOKIE) === null
+  ) {
+    return pageCacheKey(request, url);
+  }
+  return null;
 }
 
 interface CacheStorageLike {
@@ -149,16 +198,11 @@ export default {
       return response;
     }
 
-    const cacheablePage =
-      isGet &&
-      PAGE_CACHEABLE.test(url.pathname) &&
-      readCookie(request, SESSION_COOKIE) === null;
-
-    if (!cacheablePage) {
+    const key = isGet ? sharedCacheKey(request, url) : null;
+    if (!key) {
       return handler.fetch(request, env, ctx);
     }
 
-    const key = pageCacheKey(request, url);
     const pageHit = await cache.match(key);
     if (pageHit) return withPrivateHeaders(pageHit);
 
