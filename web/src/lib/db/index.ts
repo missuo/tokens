@@ -14,7 +14,17 @@ import * as schema from "./schema";
  */
 function getHyperdriveConnectionString(): string | null {
   try {
-    return getCloudflareContext().env.HYPERDRIVE?.connectionString ?? null;
+    // Narrowed locally rather than read off `CloudflareEnv`. That global is
+    // written by `wrangler types` into a generated, gitignored file, so it
+    // carries the Hyperdrive binding on a developer's machine and an empty
+    // interface anywhere the Cloudflare toolchain has not run — which is every
+    // clean checkout, including the one that builds the self-hosted image.
+    // Typing the single property this needs keeps the Node build from
+    // depending on an artifact of the other target's build.
+    const env = getCloudflareContext().env as unknown as {
+      HYPERDRIVE?: { connectionString?: string };
+    };
+    return env.HYPERDRIVE?.connectionString ?? null;
   } catch {
     return null;
   }
