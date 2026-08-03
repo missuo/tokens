@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { and, eq, notInArray, sql } from "drizzle-orm";
 import { z } from "zod";
-import { db, archivedBreakdown } from "@/lib/db";
+import { db, archivedBreakdown, archivedWindowTotals } from "@/lib/db";
 import { getSessionFromRequest } from "@/lib/auth/requestSession";
 import { revalidateUsernamePaths, normalizeUsernameCacheKey } from "@/lib/db/usernameLookup";
 
@@ -92,6 +92,29 @@ const BodySchema = z.object({
    */
   scannedFrom: DateSchema,
   days: z.array(DaySchema).min(1).max(MAX_DAYS),
+  /**
+   * Exact per-model aggregates for the same window, for the fields that exist
+   * only as lifetime totals in the source file.
+   *
+   * Cache read is ~97.5% of every token this service counts, so omitting it
+   * would leave the archive reporting a fraction of the magnitude of the
+   * scanned data beside it. The total is exactly known even though its
+   * distribution across days is not, so it is accepted here and stored apart
+   * from `days` — never distributed into them, never summed into a daily row.
+   *
+   * Restricted to cacheRead/cacheWrite deliberately: input and output already
+   * arrive per day, and accepting them again here would make double counting
+   * expressible.
+   */
+  windowTotals: z
+    .record(
+      z.string().min(1).max(64),
+      z.record(
+        z.string().min(1).max(200),
+        z.object({ cacheRead: NonNegativeInt, cacheWrite: NonNegativeInt }),
+      ),
+    )
+    .optional(),
 });
 
 export async function POST(request: Request) {
@@ -120,7 +143,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const { origin, scannedFrom, days } = parsed.data;
+  const { origin, scannedFrom, days, windowTotals } = parsed.data;
 
   const overlapping = days.filter((day) => day.date >= scannedFrom);
   if (overlapping.length > 0) {
@@ -158,6 +181,9 @@ export async function POST(request: Request) {
     sourceBreakdown: day.clients,
   }));
 
+  const earliest = days.reduce((a, b) => (a.date < b.date ? a : b)).date;
+  const latest = days.reduce((a, b) => (a.date > b.date ? a : b)).date;
+
   // Replace rather than accumulate. An import describes a fixed historical
   // window, so running it twice must leave the same rows behind — adding to
   // them would double the history, which is the failure this whole separation
@@ -184,6 +210,42 @@ export async function POST(request: Request) {
         });
     }
 
+    // Window totals live in their own table because they have no day
+    // resolution — a table with no date column cannot be made to claim one.
+    // Replaced wholesale for the same reason the days are: an import describes
+    // a fixed window, so running it twice must not accumulate.
+    if (windowTotals) {
+      await tx
+        .insert(archivedWindowTotals)
+        .values({
+          userId: session.id,
+          origin,
+          windowStart: earliest,
+          windowEnd: scannedFrom,
+          totals: windowTotals,
+        })
+        .onConflictDoUpdate({
+          target: [archivedWindowTotals.userId, archivedWindowTotals.origin],
+          set: {
+            windowStart: sql`EXCLUDED.window_start`,
+            windowEnd: sql`EXCLUDED.window_end`,
+            totals: sql`EXCLUDED.totals`,
+            updatedAt: new Date(),
+          },
+        });
+    } else {
+      // An import that no longer sends totals should not leave the previous
+      // ones attached to it.
+      await tx
+        .delete(archivedWindowTotals)
+        .where(
+          and(
+            eq(archivedWindowTotals.userId, session.id),
+            eq(archivedWindowTotals.origin, origin),
+          ),
+        );
+    }
+
     // Days this origin covered on a previous import but no longer claims. The
     // source file shrank, or the cutoff moved because more transcripts aged
     // out — either way the stale rows would otherwise linger forever.
@@ -205,8 +267,9 @@ export async function POST(request: Request) {
     success: true,
     origin,
     days: rows.length,
-    earliest: days.reduce((a, b) => (a.date < b.date ? a : b)).date,
-    latest: days.reduce((a, b) => (a.date > b.date ? a : b)).date,
+    earliest,
+    latest,
+    windowTotals: windowTotals ? Object.keys(windowTotals).length : 0,
     ranked: false,
     note: "Archived usage is shown on the profile and never counted toward leaderboard rank.",
   });

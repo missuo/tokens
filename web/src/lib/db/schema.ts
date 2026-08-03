@@ -395,6 +395,53 @@ export const archivedBreakdown = pgTable(
   ]
 );
 
+/**
+ * Exact per-model aggregates for an imported window, with no day resolution.
+ *
+ * `archivedBreakdown` carries what a provider's aggregate file knows per day —
+ * input and output — and refuses cache read/write, because those exist only as
+ * lifetime totals and splitting them across days would invent precision.
+ *
+ * That was right about the split and wrong about the total. Cache read is 97.5%
+ * of every token this database counts; dropping it left the archive showing
+ * roughly 1.5% of the magnitude of the scanned figures next to it. The
+ * aggregate is exactly known — lifetime per-model totals minus the surviving
+ * transcripts — so it is kept, in a table with **no date column**, which is
+ * what stops a figure with no day resolution from ever claiming one.
+ *
+ * Never summed into a daily row, and never read by the leaderboard.
+ */
+export const archivedWindowTotals = pgTable(
+  "archived_window_totals",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** Matches `archivedBreakdown.origin`, so one import owns both. */
+    origin: varchar("origin", { length: 64 }).notNull(),
+
+    /** Inclusive start, exclusive end. A label for the reader, not a
+     *  distribution. */
+    windowStart: date("window_start").notNull(),
+    windowEnd: date("window_end").notNull(),
+
+    /** client → model → the fields that have no per-day form. Input and output
+     *  are excluded on purpose: they already exist in `archivedBreakdown` with
+     *  day resolution, and repeating them here would make double counting
+     *  expressible. */
+    totals: jsonb("totals")
+      .$type<Record<string, Record<string, { cacheRead: number; cacheWrite: number }>>>()
+      .notNull(),
+
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    unique("archived_window_totals_user_origin_unique").on(table.userId, table.origin),
+  ]
+);
+
 // ============================================================================
 // TYPE EXPORTS
 // ============================================================================

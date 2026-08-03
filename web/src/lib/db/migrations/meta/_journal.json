@@ -162,6 +162,13 @@
       "when": 1784918833531,
       "tag": "0022_archived_breakdown",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1784918833532,
+      "tag": "0023_archived_window_totals",
+      "breakpoints": true
     }
   ]
 }
