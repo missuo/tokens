@@ -22,6 +22,59 @@ import { refreshAllSocialLinks } from "./src/lib/cron/refreshSocialLinks";
  */
 const CACHEABLE = /^\/api\/(og|embed\/[^/]+\/svg|badge\/[^/]+\/svg)/;
 
+/**
+ * HTML pages worth putting in the edge cache for signed-out readers.
+ *
+ * The Worker is pinned to `aws:us-west-2` so it sits beside the database, which
+ * means every request — cache hit or not — crosses to Oregon before anything
+ * is decided. `unstable_cache` saves the queries but never the flight. For a
+ * reader in Asia that flight *is* the page load, and no amount of data caching
+ * touches it.
+ *
+ * Putting the rendered HTML in `caches.default` is what removes it: the colo
+ * nearest the reader answers, and Oregon is only involved when the entry is
+ * cold. Same mechanism the SVG routes above already use, applied to the pages
+ * that actually carry the traffic.
+ *
+ * Deliberately limited to signed-out requests. These pages personalise — the
+ * leaderboard renders "Your position" from the session — and a shared cache is
+ * exactly the wrong place for that. Anyone carrying a session cookie takes the
+ * normal path and sees precisely what they see today.
+ */
+const PAGE_CACHEABLE = /^\/(leaderboard|shame)?$/;
+
+const SESSION_COOKIE = "tt_session";
+const SORT_BY_COOKIE = "leaderboard-sort-by";
+
+/** 60s, matching the `revalidate` on the data these pages read: the edge copy
+ *  is never staler than what the origin would have served anyway. */
+const PAGE_EDGE_TTL = "public, max-age=0, s-maxage=60";
+
+function readCookie(request: Request, name: string): string | null {
+  const header = request.headers.get("cookie");
+  if (!header) return null;
+  for (const part of header.split(";")) {
+    const [key, ...rest] = part.trim().split("=");
+    if (key === name) return rest.join("=");
+  }
+  return null;
+}
+
+/**
+ * The cache key for a page request.
+ *
+ * `sortBy` lives in a cookie rather than the URL, so two readers on the same
+ * path can be looking at different orderings. Folding it into the key keeps
+ * them from being served each other's page — the Cache API keys on URL alone,
+ * and a cookie it cannot see is a cookie it cannot vary on.
+ */
+function pageCacheKey(request: Request, url: URL): Request {
+  const sort = readCookie(request, SORT_BY_COOKIE);
+  const keyUrl = new URL(url.toString());
+  if (sort) keyUrl.searchParams.set("__sort", sort);
+  return new Request(keyUrl.toString(), { method: "GET" });
+}
+
 interface CacheStorageLike {
   default: {
     match(request: Request): Promise<Response | undefined>;
@@ -57,26 +110,53 @@ export default {
     ctx: FetchExecutionContext,
   ): Promise<Response> {
     const url = new URL(request.url);
-    const cacheable = request.method === "GET" && CACHEABLE.test(url.pathname);
+    const isGet = request.method === "GET";
+    const cache = (caches as unknown as CacheStorageLike).default;
 
-    if (!cacheable) {
+    if (isGet && CACHEABLE.test(url.pathname)) {
+      const hit = await cache.match(request);
+      if (hit) return hit;
+
+      const response = await handler.fetch(request, env, ctx);
+
+      // Only success is worth storing; an error page cached for a year would
+      // outlive whatever caused it.
+      if (response.status === 200) {
+        // The body can only be read once, so the copy goes to the cache and the
+        // original goes to the client. `waitUntil` keeps the write from delaying
+        // the response.
+        ctx.waitUntil(cache.put(request, response.clone()));
+      }
+      return response;
+    }
+
+    const cacheablePage =
+      isGet &&
+      PAGE_CACHEABLE.test(url.pathname) &&
+      readCookie(request, SESSION_COOKIE) === null;
+
+    if (!cacheablePage) {
       return handler.fetch(request, env, ctx);
     }
 
-    const cache = (caches as unknown as CacheStorageLike).default;
-    const hit = await cache.match(request);
-    if (hit) return hit;
+    const key = pageCacheKey(request, url);
+    const pageHit = await cache.match(key);
+    if (pageHit) return pageHit;
 
     const response = await handler.fetch(request, env, ctx);
+    if (response.status !== 200) return response;
 
-    // Only success is worth storing; an error page cached for a year would
-    // outlive whatever caused it.
-    if (response.status === 200) {
-      // The body can only be read once, so the copy goes to the cache and the
-      // original goes to the client. `waitUntil` keeps the write from delaying
-      // the response.
-      ctx.waitUntil(cache.put(request, response.clone()));
-    }
+    // Next marks these responses `private, no-store` because they are rendered
+    // per request, and the Cache API refuses to store that — correctly, for a
+    // browser. Here the decision has already been made one layer up: this
+    // request carries no session, so the render is not personal to anyone. The
+    // stored copy gets a header that says so; the client keeps the original,
+    // so nothing lands in a *browser* cache that was not meant to.
+    const stored = new Response(response.clone().body, response);
+    stored.headers.set("Cache-Control", PAGE_EDGE_TTL);
+    stored.headers.delete("Set-Cookie");
+    ctx.waitUntil(cache.put(key, stored));
+
     return response;
   },
 
