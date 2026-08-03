@@ -1,5 +1,3 @@
-import { Suspense } from "react";
-import { LeaderboardSkeleton } from "@/components/leaderboard/LeaderboardSkeleton";
 import { getLeaderboardData } from "@/lib/leaderboard/getLeaderboard";
 import type { LeaderboardData, Period, SortBy } from "@/lib/leaderboard/types";
 import { hasDirectives, parseSearchDirectives } from "@/lib/leaderboard/searchDirectives";
@@ -54,19 +52,30 @@ interface PageProps {
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }
 
+/**
+ * Deliberately not streamed.
+ *
+ * This used to render a skeleton inside a Suspense boundary while the board
+ * resolved. That is free on a healthy request and wrong on a failing one:
+ * streaming commits the status line as soon as the shell is flushed, so an
+ * async child that throws afterwards cannot turn the response into a 5xx. With
+ * the database unreachable this page answered `200` with an empty board and the
+ * shareable cache-control middleware had already attached — an empty
+ * leaderboard, stored by the edge, served to everyone in the colo for a minute
+ * and a half after the database came back.
+ *
+ * Awaiting here puts the failure before the first byte, where it can still be a
+ * 500 that Caddy strips the cache-control from. The cost is the shell no longer
+ * appears first, and that cost is small: this render is ~40ms, and almost every
+ * reader is answered by the edge without reaching it at all.
+ */
 export default async function LeaderboardPage({ searchParams }: PageProps) {
   return (
     // The board component owns the page container; wrapping it in
     // .main-container again stacked a second set of paddings and made this
     // route sit lower than the others.
     <main id="main-content">
-      {/* The skeleton no longer guesses whether to reserve room for the rank
-          card by sniffing the session cookie. Nothing here reads a cookie: the
-          rank card is filled in after hydration, so its space is the client's
-          to manage and the server has no reason to know a viewer exists. */}
-      <Suspense fallback={<LeaderboardSkeleton />}>
-        <Board searchParams={searchParams} />
-      </Suspense>
+      <Board searchParams={searchParams} />
     </main>
   );
 }
