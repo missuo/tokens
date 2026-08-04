@@ -21,6 +21,7 @@
   - Summary: total tokens, cost, messages
   - Token breakdown (input / output / cache read / cache write / reasoning)
   - By client (APP / CLI)
+  - By project/workspace (nested models; Unattributed for workspace-less usage)
   - By model (with provider), nested under client where useful
   - By day history + cost/token share bars
   - Optional link out to https://tokens.ci
@@ -306,7 +307,7 @@ Minimum macOS: **13.0** (Ventura) unless packaging constraints force 14.
 
 ### CLI
 
-- Unit tests for period filtering and JSON shape (fixture contributions → expected `byClient` / `byModel` / `byDay`).
+- Unit tests for period filtering and JSON shape (fixture contributions → expected `byClient` / `byProject` / `byModel` / `byDay`).
 - Test `--force-rescan` clears snapshot (temp HOME / config dir).
 - Snapshot schema version mismatch rebuilds cleanly.
 
@@ -325,7 +326,7 @@ Minimum macOS: **13.0** (Ventura) unless packaging constraints force 14.
 
 1. **CLI `tokens usage --json`** with periods + force-rescan + Layer B snapshot  
 2. **Swift Menu Bar MVP**: status title, summary, period, refresh, settings shell, missing-CLI state  
-3. **Panel completeness**: byClient (+ nested models), byModel, byDay, share bars, tokens.ci link  
+3. **Panel completeness**: byClient (+ nested models), byProject / PROJECT (+ nested models), byModel, byDay, share bars, tokens.ci link
 4. **Polish**: interval timer, stale-while-revalidate, formatting edge cases, README  
 
 ## 9. Security and privacy
