@@ -317,8 +317,7 @@ fn build_report(period: UsagePeriod, refresh: bool, force_rescan: bool) -> Resul
 
     if force_rescan {
         clear_source_message_cache().map_err(|e| anyhow::anyhow!(e))?;
-        let _ = fs::remove_file(snapshot_path());
-        let _ = fs::remove_file(legacy_snapshot_path());
+        clear_usage_snapshots();
     } else if !refresh {
         if let Some(report) =
             try_report_from_snapshot(period, today, since.as_deref(), until.as_deref())
@@ -422,6 +421,15 @@ fn snapshot_path() -> PathBuf {
 
 fn legacy_snapshot_path() -> PathBuf {
     tokens_core::paths::get_cache_dir().join(LEGACY_SNAPSHOT_FILENAME)
+}
+
+/// Remove current (v2) and legacy (v1) Layer B usage snapshots.
+///
+/// Called by `--force-rescan` before a full rebuild so period filters cannot
+/// reuse stale aggregated rollups after the source-message cache is cleared.
+fn clear_usage_snapshots() {
+    let _ = fs::remove_file(snapshot_path());
+    let _ = fs::remove_file(legacy_snapshot_path());
 }
 
 fn timezone_label() -> String {
@@ -1551,5 +1559,117 @@ mod tests {
             contributions: vec![],
         };
         assert_eq!(snapshot_bucket_day(&snap).as_deref(), Some("2026-07-26"));
+    }
+
+    /// Isolate snapshot path resolution under a temporary `TOKENS_CONFIG_DIR`.
+    /// Restores the previous env value even if the test panics.
+    struct TempTokensConfig {
+        previous: Option<std::ffi::OsString>,
+        _dir: tempfile::TempDir,
+    }
+
+    impl TempTokensConfig {
+        fn new() -> Self {
+            let dir = tempfile::tempdir().unwrap();
+            let previous = std::env::var_os("TOKENS_CONFIG_DIR");
+            std::env::set_var("TOKENS_CONFIG_DIR", dir.path());
+            Self {
+                previous,
+                _dir: dir,
+            }
+        }
+
+        fn cache_dir(&self) -> PathBuf {
+            tokens_core::paths::get_cache_dir()
+        }
+    }
+
+    impl Drop for TempTokensConfig {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(value) => std::env::set_var("TOKENS_CONFIG_DIR", value),
+                None => std::env::remove_var("TOKENS_CONFIG_DIR"),
+            }
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn force_rescan_clears_current_and_legacy_usage_snapshots() {
+        // design-spec §7: `--force-rescan` clears the Layer B snapshot
+        // (current + legacy filenames) so the next report rebuilds from scan.
+        let env = TempTokensConfig::new();
+        let cache = env.cache_dir();
+        fs::create_dir_all(&cache).unwrap();
+
+        let current = snapshot_path();
+        let legacy = legacy_snapshot_path();
+        assert_eq!(current.parent(), Some(cache.as_path()));
+        fs::write(&current, br#"{"schemaVersion":2,"stale":true}"#).unwrap();
+        fs::write(&legacy, br#"{"schemaVersion":1,"stale":true}"#).unwrap();
+        assert!(current.is_file());
+        assert!(legacy.is_file());
+
+        clear_usage_snapshots();
+
+        assert!(
+            !current.exists(),
+            "current usage snapshot should be removed on force-rescan"
+        );
+        assert!(
+            !legacy.exists(),
+            "legacy usage snapshot should be removed on force-rescan"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn mismatched_snapshot_schema_version_is_rejected() {
+        // design-spec §7: schema mismatch must not serve the snapshot; caller
+        // rebuilds from a fresh scan (`try_report_from_snapshot` → None).
+        let env = TempTokensConfig::new();
+        let cache = env.cache_dir();
+        fs::create_dir_all(&cache).unwrap();
+
+        let today = bucket_timezone().today();
+        let today_s = today.format("%Y-%m-%d").to_string();
+        let tz = timezone_label();
+
+        let matching = UsageSnapshotFile {
+            schema_version: SNAPSHOT_SCHEMA_VERSION,
+            generated_at: format!("{today_s}T12:00:00Z"),
+            bucket_date: today_s.clone(),
+            timezone: tz.clone(),
+            contributions: vec![],
+        };
+        fs::write(
+            snapshot_path(),
+            serde_json::to_vec_pretty(&matching).unwrap(),
+        )
+        .unwrap();
+        assert!(
+            try_report_from_snapshot(UsagePeriod::Today, today, Some(&today_s), Some(&today_s))
+                .is_some(),
+            "control: matching schema version should load from snapshot"
+        );
+
+        let mismatched = UsageSnapshotFile {
+            schema_version: SNAPSHOT_SCHEMA_VERSION + 1,
+            generated_at: matching.generated_at,
+            bucket_date: matching.bucket_date,
+            timezone: matching.timezone,
+            contributions: matching.contributions,
+        };
+        fs::write(
+            snapshot_path(),
+            serde_json::to_vec_pretty(&mismatched).unwrap(),
+        )
+        .unwrap();
+
+        assert!(
+            try_report_from_snapshot(UsagePeriod::Today, today, Some(&today_s), Some(&today_s))
+                .is_none(),
+            "mismatched schema version must reject the snapshot so the caller rebuilds from scan"
+        );
     }
 }

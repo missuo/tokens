@@ -404,6 +404,7 @@ public struct MenuPanelView: View {
         let hasMore = all.count > visible.count
 
         return VStack(alignment: .leading, spacing: 12) {
+            sectionLabel("CLIENT")
             if all.isEmpty {
                 emptyHint("No client data")
             } else {
@@ -587,6 +588,7 @@ public struct MenuPanelView: View {
         let hasMore = all.count > visible.count
 
         return VStack(alignment: .leading, spacing: 10) {
+            sectionLabel("MODEL")
             if all.isEmpty {
                 emptyHint("No model data")
             } else {
