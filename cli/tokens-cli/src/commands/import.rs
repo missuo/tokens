@@ -470,6 +470,7 @@ fn finalize_day(date: String, builder: DayBuilder) -> DailyContribution {
         intensity: 0,
         token_breakdown,
         clients,
+        projects: vec![],
         active_time_ms: None,
     }
 }
@@ -484,4 +485,3 @@ fn is_iso_date(s: &str) -> bool {
         && b[5..7].iter().all(u8::is_ascii_digit)
         && b[8..10].iter().all(u8::is_ascii_digit)
 }
-

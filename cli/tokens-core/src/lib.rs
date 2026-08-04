@@ -429,6 +429,23 @@ pub struct ClientContribution {
     pub messages: i32,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProjectModelContribution {
+    pub model_id: String,
+    pub provider_id: String,
+    pub tokens: i64,
+    pub cost: f64,
+    pub messages: i32,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProjectContribution {
+    pub project_key: Option<String>,
+    pub project_label: String,
+    pub totals: DailyTotals,
+    pub models: Vec<ProjectModelContribution>,
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct DailyContribution {
     pub date: String,
@@ -436,8 +453,44 @@ pub struct DailyContribution {
     pub intensity: u8,
     pub token_breakdown: TokenBreakdown,
     pub clients: Vec<ClientContribution>,
+    /// Local-only project rollup. GraphResult's established serialized payload
+    /// intentionally remains unchanged; the Menu Bar snapshot has its own schema.
+    #[serde(skip_serializing)]
+    pub projects: Vec<ProjectContribution>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub active_time_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnattributedModelDiagnostic {
+    pub model_id: String,
+    pub provider_id: String,
+    pub tokens: i64,
+    pub cost: f64,
+    pub messages: i32,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnattributedSessionDiagnostic {
+    pub client: String,
+    pub session_id: String,
+    pub first_seen: i64,
+    pub last_seen: i64,
+    pub tokens: i64,
+    pub cost: f64,
+    pub messages: i32,
+    pub models: Vec<UnattributedModelDiagnostic>,
+    pub source_identifiers: Vec<String>,
+    pub source_identifier_count: u64,
+    pub source_identifiers_truncated: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct LocalUsageScan {
+    pub graph: GraphResult,
+    pub unattributed_sessions: Vec<UnattributedSessionDiagnostic>,
 }
 
 /// Per-session aggregate of token usage, cost, and timing — keyed on
@@ -2628,10 +2681,10 @@ pub async fn get_hourly_report(options: ReportOptions) -> Result<HourlyReport, S
     })
 }
 
-async fn generate_graph_with_loaded_pricing(
+async fn generate_usage_scan_with_loaded_pricing(
     options: ReportOptions,
     pricing: Option<&pricing::PricingService>,
-) -> Result<GraphResult, String> {
+) -> Result<LocalUsageScan, String> {
     let start = Instant::now();
 
     let home_dir = get_home_dir_string(&options.home_dir)?;
@@ -2661,6 +2714,7 @@ async fn generate_graph_with_loaded_pricing(
         sessionize::compute_time_metrics(&intervals, sessionize::DEFAULT_IDLE_GAP_MS);
 
     let daily_active_time = sessionize::compute_daily_active_time(&intervals);
+    let unattributed_sessions = aggregator::aggregate_unattributed_sessions(&filtered);
     let contributions = aggregator::aggregate_by_date(filtered);
 
     let processing_time_ms = start.elapsed().as_millis() as u32;
@@ -2673,7 +2727,10 @@ async fn generate_graph_with_loaded_pricing(
         }
     }
 
-    Ok(result)
+    Ok(LocalUsageScan {
+        graph: result,
+        unattributed_sessions,
+    })
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -2718,12 +2775,20 @@ pub async fn get_time_metrics_report(options: ReportOptions) -> Result<TimeMetri
 
 pub async fn generate_graph(options: ReportOptions) -> Result<GraphResult, String> {
     let pricing = pricing::PricingService::get_or_init().await?;
-    generate_graph_with_loaded_pricing(options, Some(&pricing)).await
+    generate_usage_scan_with_loaded_pricing(options, Some(&pricing))
+        .await
+        .map(|scan| scan.graph)
 }
 
 pub async fn generate_local_graph_report(options: ReportOptions) -> Result<GraphResult, String> {
+    generate_local_usage_scan(options)
+        .await
+        .map(|scan| scan.graph)
+}
+
+pub async fn generate_local_usage_scan(options: ReportOptions) -> Result<LocalUsageScan, String> {
     let pricing = load_pricing_for_local_parse().await;
-    generate_graph_with_loaded_pricing(options, pricing.as_deref()).await
+    generate_usage_scan_with_loaded_pricing(options, pricing.as_deref()).await
 }
 
 fn filter_messages_for_report(
@@ -3753,4 +3818,3 @@ pub fn parsed_to_unified(msg: &ParsedMessage, cost: f64) -> UnifiedMessage {
         is_turn_start: false,
     }
 }
-

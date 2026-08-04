@@ -21,6 +21,7 @@
   - Summary: total tokens, cost, messages
   - Token breakdown (input / output / cache read / cache write / reasoning)
   - By client (APP / CLI)
+  - By project/workspace (nested models; Unattributed for workspace-less usage)
   - By model (with provider), nested under client where useful
   - By day history + cost/token share bars
   - Optional link out to https://tokens.ci
@@ -67,7 +68,7 @@ tokens-core scan + aggregate
 | Layer | Store | Role | Invalidate |
 |-------|--------|------|------------|
 | **A. Source messages** | Existing `source-message-cache-v2` under tokens cache dir | Skip re-parse of unchanged session files | File fingerprint change; `--force-rescan` |
-| **B. Usage snapshot** | New file under tokens cache dir, e.g. `usage-snapshot-v1.bin` or `.json` | Aggregated daily/client/model rollups for fast period filter | Successful rebuild after scan; `--force-rescan`; schema version bump |
+| **B. Usage snapshot** | `usage-snapshot-v2.json` under tokens cache dir | Aggregated daily/client/project/model rollups for fast period filter | Successful rebuild after scan; `--force-rescan`; schema version bump |
 | **C. App UI last response** | App `UserDefaults` / memory | Show stale numbers while a scan runs | Replaced on next successful CLI JSON |
 
 **Default scan path:** incremental Layer A → rebuild Layer B → filter by period → JSON.  
@@ -91,13 +92,13 @@ tokens usage [OPTIONS]
 
 Human-readable non-JSON mode is optional nicety for terminal users; App only needs JSON.
 
-### JSON schema (`schemaVersion: 1`)
+### JSON schema (`schemaVersion: 2`)
 
 Success (exit 0):
 
 ```json
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "generatedAt": "ISO-8601",
   "period": "today",
   "dateRange": { "start": "YYYY-MM-DD", "end": "YYYY-MM-DD" },
@@ -145,6 +146,24 @@ Success (exit 0):
       ]
     }
   ],
+  "byProject": [
+    {
+      "projectKey": "/stable/workspace/key",
+      "displayName": "workspace-name",
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0,
+      "models": [
+        {
+          "modelId": "...",
+          "providerId": "...",
+          "tokens": 0,
+          "cost": 0.0,
+          "messages": 0
+        }
+      ]
+    }
+  ],
   "byModel": [
     {
       "modelId": "...",
@@ -172,13 +191,13 @@ Success (exit 0):
 }
 ```
 
-**Decision:** `byClient[].models[]` **is** included in v1 so the panel can expand client → models without client-side joins.
+**Decision:** `byClient[].models[]` remains available. v2 adds `byProject[]`, keyed by workspace key and sorted by cost descending; each project includes cost-sorted model details. Workspace-less usage is represented once as `projectKey: null`, `displayName: "Unattributed"`.
 
 Error (non-zero exit preferred):
 
 ```json
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "error": {
     "code": "invalid_args" | "scan_failed" | "internal",
     "message": "human readable"
@@ -197,7 +216,8 @@ Error (non-zero exit preferred):
 
 - Reuse `tokens-core` scan + `aggregate_by_date` / summary helpers already used by submit path.
 - Prefer extending core with a focused `build_usage_report(...)` rather than scraping submit payloads.
-- Layer B snapshot: store post-aggregate daily contributions (enough to derive summary, byClient, byModel, byDay for any period). Invalidate when scan produces new messages or force rescan.
+- Layer B snapshot: store post-aggregate daily contributions (enough to derive summary, byClient, byProject, byModel, byDay for any period). Invalidate when scan produces new messages or force rescan.
+- Each successful real scan also updates local-only `unattributed-sessions-v1.json` in the tokens cache. It upserts by client + session ID and stores session/model token-cost totals, first/last timestamps, and bounded, hashed source identifier samples. It never stores prompts or responses, is owner-readable/writable on Unix, is not returned by `tokens usage --json`, and a diagnostic write failure does not fail usage reporting. The unreleased ledger intentionally remains cumulative for now so diagnostic samples can accumulate. **TODO before release:** define a bounded retention/deletion policy. Residual risks accepted for this iteration: empty/unknown session IDs may collide, and Windows ACL hardening is not yet implemented.
 - `--force-rescan`: expose or call a clear/rebuild path on `SourceMessageCache` (add API if missing) plus delete Layer B file.
 - Do not upload anything; read-only local command.
 
@@ -222,10 +242,11 @@ Number formatting:
 
 1. **Period control** — segmented: Today | 7d | 30d | All  
 2. **Summary** — tokens, cost, messages; optional mini token-breakdown  
-3. **By client** — sorted by tokens desc; progress share bar; disclosure for nested models  
-4. **By model** — flat list with provider label (or grouped by provider); share bar  
-5. **By day** — list or compact bars for the selected period  
-6. **Footer** — Last updated (`generatedAt`); **Refresh**; **Settings…**; **Open tokens.ci**; **Quit**
+3. **By client** — sorted by tokens desc; progress share bar
+4. **By project** — sorted by cost desc; each workspace row shows cost + tokens and its models sorted by cost desc. `Unattributed` never exposes workspace keys or diagnostic session details
+5. **By model** — flat list with provider label; share bar
+6. **By day / cost** — compact cost bars
+7. **Footer** — Last updated (`generatedAt`); **Refresh**; **Settings…**; **Open tokens.ci**; **Quit**
 
 Period changes: call CLI with new `--period` (Layer B should make this cheap after one warm scan). Prefer not blocking UI: show spinner in panel, keep prior period data until new JSON arrives.
 
@@ -286,7 +307,7 @@ Minimum macOS: **13.0** (Ventura) unless packaging constraints force 14.
 
 ### CLI
 
-- Unit tests for period filtering and JSON shape (fixture contributions → expected `byClient` / `byModel` / `byDay`).
+- Unit tests for period filtering and JSON shape (fixture contributions → expected `byClient` / `byProject` / `byModel` / `byDay`).
 - Test `--force-rescan` clears snapshot (temp HOME / config dir).
 - Snapshot schema version mismatch rebuilds cleanly.
 
@@ -305,7 +326,7 @@ Minimum macOS: **13.0** (Ventura) unless packaging constraints force 14.
 
 1. **CLI `tokens usage --json`** with periods + force-rescan + Layer B snapshot  
 2. **Swift Menu Bar MVP**: status title, summary, period, refresh, settings shell, missing-CLI state  
-3. **Panel completeness**: byClient (+ nested models), byModel, byDay, share bars, tokens.ci link  
+3. **Panel completeness**: byClient (+ nested models), byProject / PROJECT (+ nested models), byModel, byDay, share bars, tokens.ci link
 4. **Polish**: interval timer, stale-while-revalidate, formatting edge cases, README  
 
 ## 9. Security and privacy

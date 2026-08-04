@@ -66,6 +66,7 @@ final class FormattingTests: XCTestCase {
             summary: UsageSummary(totalTokens: 1_200_000, totalCost: 4.2, messages: 3, activeDays: 1, clients: [], models: []),
             tokenBreakdown: TokenBreakdown(input: 1, output: 1, cacheRead: 0, cacheWrite: 0, reasoning: 0),
             byClient: [],
+            byProject: [],
             byModel: [],
             byDay: [],
             meta: UsageMeta(cliVersion: "1", timezone: "UTC")
@@ -79,7 +80,7 @@ final class FormattingTests: XCTestCase {
     func testDecodeUsageReportFixture() throws {
         let json = """
         {
-          "schemaVersion": 1,
+          "schemaVersion": 2,
           "generatedAt": "2026-07-26T00:00:00Z",
           "period": "today",
           "dateRange": {"start": "2026-07-26", "end": "2026-07-26"},
@@ -87,6 +88,7 @@ final class FormattingTests: XCTestCase {
           "summary": {"totalTokens": 1000, "totalCost": 1.5, "messages": 3, "activeDays": 1, "clients": ["claude"], "models": ["opus"]},
           "tokenBreakdown": {"input": 600, "output": 400, "cacheRead": 0, "cacheWrite": 0, "reasoning": 0},
           "byClient": [{"client": "claude", "tokens": 1000, "cost": 1.5, "messages": 3, "share": 1.0, "models": [{"modelId": "opus", "providerId": "anthropic", "tokens": 1000, "cost": 1.5, "messages": 3, "share": 1.0}]}],
+          "byProject": [{"projectKey": "/work/example", "displayName": "example", "tokens": 1000, "cost": 1.5, "messages": 3, "models": [{"modelId": "opus", "providerId": "anthropic", "tokens": 1000, "cost": 1.5, "messages": 3}]}, {"projectKey": null, "displayName": "Unattributed", "tokens": 50, "cost": 0.1, "messages": 1, "models": [{"modelId": "sonnet", "providerId": "anthropic", "tokens": 50, "cost": 0.1, "messages": 1}]}],
           "byModel": [{"modelId": "opus", "providerId": "anthropic", "tokens": 1000, "cost": 1.5, "messages": 3, "share": 1.0, "clients": ["claude"]}],
           "byDay": [{"date": "2026-07-26", "tokens": 1000, "cost": 1.5, "messages": 3, "intensity": 2}],
           "meta": {"cliVersion": "27.0.1", "timezone": "UTC"}
@@ -95,5 +97,30 @@ final class FormattingTests: XCTestCase {
         let report = try JSONDecoder().decode(UsageReport.self, from: json)
         XCTAssertEqual(report.summary.totalTokens, 1000)
         XCTAssertEqual(report.byClient.first?.models.first?.modelId, "opus")
+        XCTAssertEqual(report.byProject.first?.displayName, "example")
+        XCTAssertEqual(report.byProject.first?.models.first?.cost, 1.5)
+        XCTAssertNil(report.byProject.last?.projectKey)
+        XCTAssertEqual(report.byProject.last?.displayName, "Unattributed")
+        XCTAssertEqual(report.byProject.last?.models.first?.modelId, "sonnet")
+    }
+
+    func testDecodeLegacyUsageReportWithoutProjects() throws {
+        let json = """
+        {
+          "schemaVersion": 1,
+          "generatedAt": "2026-07-26T00:00:00Z",
+          "period": "today",
+          "dateRange": {"start": "2026-07-26", "end": "2026-07-26"},
+          "scan": {"mode": "snapshot", "forceRescan": false, "durationMs": 0, "cache": {"sourceHits": 0, "sourceMisses": 0, "snapshotRebuilt": false}},
+          "summary": {"totalTokens": 0, "totalCost": 0, "messages": 0, "activeDays": 0, "clients": [], "models": []},
+          "tokenBreakdown": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "reasoning": 0},
+          "byClient": [],
+          "byModel": [],
+          "byDay": [],
+          "meta": {"cliVersion": "1", "timezone": "UTC"}
+        }
+        """.data(using: .utf8)!
+        let report = try JSONDecoder().decode(UsageReport.self, from: json)
+        XCTAssertTrue(report.byProject.isEmpty)
     }
 }
