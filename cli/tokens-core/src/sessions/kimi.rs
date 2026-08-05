@@ -10,6 +10,7 @@
 
 use super::utils::file_modified_timestamp_ms;
 use super::UnifiedMessage;
+use crate::provider_identity;
 use crate::TokenBreakdown;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -80,7 +81,8 @@ impl TokenUsage {
 
 /// Default model name when config.json is not available
 const DEFAULT_MODEL: &str = "kimi-for-coding";
-const DEFAULT_PROVIDER: &str = "moonshot";
+const DEFAULT_PROVIDER: &str = "moonshotai";
+const UNKNOWN_PROVIDER: &str = "unknown";
 
 /// Locate the legacy Kimi CLI config consumed by `parse_kimi_file`. Kimi Code
 /// embeds model information in each wire record and does not use this file.
@@ -151,15 +153,90 @@ fn normalize_kimi_code_model(model: &str) -> String {
 }
 
 /// Kimi Code wire.jsonl line structure.
+///
+/// `llm.request` supplies protocol, concrete model, and runtime alias.
+/// `usage.record` supplies the alias/model, token usage, scope, and time.
 #[derive(Debug, Deserialize)]
 struct KimiCodeWireLine {
     #[serde(rename = "type")]
     line_type: String,
     model: Option<String>,
+    #[serde(rename = "modelAlias")]
+    model_alias: Option<String>,
+    provider: Option<String>,
     usage: Option<TokenUsage>,
     #[serde(rename = "usageScope")]
     usage_scope: Option<String>,
     time: Option<i64>,
+}
+
+#[derive(Debug)]
+struct PendingKimiRequest {
+    model_alias: String,
+    model: String,
+    provider: Option<String>,
+}
+
+impl PendingKimiRequest {
+    fn from_wire_line(wire_line: &KimiCodeWireLine) -> Option<Self> {
+        let model_alias = wire_line.model_alias.as_deref()?;
+        let model = normalize_kimi_code_model(wire_line.model.as_deref()?.trim());
+        if model_alias.trim().is_empty() || model.is_empty() {
+            return None;
+        }
+
+        let provider = wire_line
+            .provider
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+
+        Some(Self {
+            model_alias: model_alias.to_string(),
+            model,
+            provider,
+        })
+    }
+}
+
+/// Select the nearest preceding same-alias request and retire the completed
+/// request together with every older pending request. Newer requests remain.
+fn consume_matching_kimi_request(
+    pending_requests: &mut Vec<PendingKimiRequest>,
+    usage_model: &str,
+) -> Option<PendingKimiRequest> {
+    let matched_index = pending_requests
+        .iter()
+        .rposition(|request| request.model_alias == usage_model)?;
+
+    pending_requests.drain(..=matched_index).next_back()
+}
+
+fn resolve_kimi_code_provider(model_id: &str, provider_hint: Option<&str>) -> String {
+    if let Some(provider) = provider_identity::inferred_provider_from_model(model_id) {
+        return provider.to_string();
+    }
+
+    provider_hint
+        .and_then(provider_identity::canonical_provider)
+        // Kimi can log `openai` as a compatibility protocol for other owners.
+        .filter(|provider| provider != "openai")
+        .unwrap_or_else(|| UNKNOWN_PROVIDER.to_string())
+}
+
+fn resolve_kimi_code_usage_identity(
+    recorded_model: &str,
+    matched_request: Option<&PendingKimiRequest>,
+) -> (String, String) {
+    let normalized_recorded_model = normalize_kimi_code_model(recorded_model);
+    let model_id = matched_request
+        .map(|request| request.model.clone())
+        .unwrap_or(normalized_recorded_model);
+    let provider_hint = matched_request.and_then(|request| request.provider.as_deref());
+    let provider_id = resolve_kimi_code_provider(&model_id, provider_hint);
+
+    (model_id, provider_id)
 }
 
 /// Parse a Kimi Code wire.jsonl file.
@@ -174,6 +251,7 @@ pub fn parse_kimi_code_file(path: &Path) -> Vec<UnifiedMessage> {
 
     let reader = BufReader::new(file);
     let mut messages: Vec<UnifiedMessage> = Vec::new();
+    let mut pending_requests: Vec<PendingKimiRequest> = Vec::new();
 
     for line in reader.lines() {
         let line = match line {
@@ -192,39 +270,51 @@ pub fn parse_kimi_code_file(path: &Path) -> Vec<UnifiedMessage> {
             Err(_) => continue,
         };
 
-        // Only process usage.record lines.
-        // step.end also carries usage, but it duplicates the same usage.record
-        // that was emitted in the same turn, so we ignore it to avoid double counting.
+        if wire_line.line_type == "llm.request" {
+            let model_alias = wire_line
+                .model_alias
+                .as_deref()
+                .filter(|value| !value.trim().is_empty());
+            if let Some(request) = PendingKimiRequest::from_wire_line(&wire_line) {
+                pending_requests.push(request);
+            } else if let Some(model_alias) = model_alias {
+                // A newer unusable request supersedes older candidates for its
+                // alias so later usage cannot revive a failed request.
+                pending_requests.retain(|request| request.model_alias != model_alias);
+            }
+            continue;
+        }
+
+        // Top-level usage.record remains authoritative. Nested step.end usage
+        // is intentionally ignored to avoid double counting.
         if wire_line.line_type != "usage.record" {
             continue;
         }
 
-        // Only count turn-scoped usage. kimi-code tags every usage.record with
-        // usageScope: "turn" for per-step LLM calls made inside a user turn and
-        // "session" for non-turn bookkeeping (e.g. context compaction), and its
-        // own tooling treats a missing usageScope as session-scoped, so require
-        // an explicit "turn" to avoid counting aggregate records.
+        // Correlation and retirement occur before scope and zero-token filters,
+        // but only a model actually present on the wire can identify an alias.
+        let recorded_model = wire_line.model.as_deref();
+        let matched_request = recorded_model
+            .and_then(|model| consume_matching_kimi_request(&mut pending_requests, model));
+        let (model_id, provider_id) = resolve_kimi_code_usage_identity(
+            recorded_model.unwrap_or(DEFAULT_MODEL),
+            matched_request.as_ref(),
+        );
+
         if wire_line.usage_scope.as_deref() != Some("turn") {
             continue;
         }
 
-        // Skip entries with zero tokens
         let Some(tokens) = wire_line.usage.as_ref().and_then(TokenUsage::to_breakdown) else {
             continue;
         };
-
-        let model = wire_line
-            .model
-            .as_deref()
-            .map(normalize_kimi_code_model)
-            .unwrap_or_else(|| DEFAULT_MODEL.to_string());
 
         let timestamp_ms = wire_line.time.unwrap_or(fallback_timestamp);
 
         messages.push(UnifiedMessage::new(
             "kimi",
-            model,
-            DEFAULT_PROVIDER,
+            model_id,
+            provider_id,
             session_id.clone(),
             timestamp_ms,
             tokens,
@@ -364,3 +454,534 @@ fn push_or_replace_status_update(
     keyed_indices.insert(dedup_key, index);
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::fs;
+    use tempfile::TempDir;
+
+    fn write_kimi_code_wire(temp_dir: &TempDir, agent: &str, lines: &[String]) -> PathBuf {
+        let path = temp_dir
+            .path()
+            .join("sessions")
+            .join("workspace_123")
+            .join("session_abc")
+            .join("agents")
+            .join(agent)
+            .join("wire.jsonl");
+
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let mut contents = lines.join("\n");
+        contents.push('\n');
+        fs::write(&path, contents).unwrap();
+        path
+    }
+
+    fn request(alias: &str, model: &str, provider: &str, time: i64) -> String {
+        json!({
+            "type": "llm.request",
+            "provider": provider,
+            "model": model,
+            "modelAlias": alias,
+            "time": time
+        })
+        .to_string()
+    }
+
+    fn usage(
+        model: &str,
+        scope: &str,
+        input: i64,
+        output: i64,
+        cache_read: i64,
+        cache_write: i64,
+        time: i64,
+    ) -> String {
+        json!({
+            "type": "usage.record",
+            "model": model,
+            "usage": {
+                "inputOther": input,
+                "output": output,
+                "inputCacheRead": cache_read,
+                "inputCacheCreation": cache_write
+            },
+            "usageScope": scope,
+            "time": time
+        })
+        .to_string()
+    }
+
+    fn usage_without_model(
+        scope: &str,
+        input: i64,
+        output: i64,
+        cache_read: i64,
+        cache_write: i64,
+        time: i64,
+    ) -> String {
+        json!({
+            "type": "usage.record",
+            "usage": {
+                "inputOther": input,
+                "output": output,
+                "inputCacheRead": cache_read,
+                "inputCacheCreation": cache_write
+            },
+            "usageScope": scope,
+            "time": time
+        })
+        .to_string()
+    }
+
+    fn step_end_with_usage(time: i64) -> String {
+        json!({
+            "type": "context.append_loop_event",
+            "event": {
+                "type": "step.end",
+                "usage": {
+                    "inputOther": 10,
+                    "output": 5,
+                    "inputCacheRead": 2,
+                    "inputCacheCreation": 1
+                }
+            },
+            "time": time
+        })
+        .to_string()
+    }
+
+    fn assert_identity(message: &UnifiedMessage, model: &str, provider: &str) {
+        assert_eq!(message.model_id, model);
+        assert_eq!(message.provider_id, provider);
+    }
+
+    #[test]
+    fn kimi_code_secondary_alias_restores_grok_xai() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = write_kimi_code_wire(
+            &temp_dir,
+            "agent-1",
+            &[
+                request("__secondary__", "grok-4.5", "openai", 1_000),
+                usage("__secondary__", "turn", 10, 5, 2, 1, 2_000),
+            ],
+        );
+
+        let messages = parse_kimi_code_file(&path);
+
+        assert_eq!(messages.len(), 1);
+        assert_identity(&messages[0], "grok-4.5", "xai");
+        assert_eq!(messages[0].session_id, "session_abc");
+        assert_eq!(messages[0].timestamp, 2_000);
+        assert_eq!(messages[0].tokens.input, 10);
+        assert_eq!(messages[0].tokens.output, 5);
+        assert_eq!(messages[0].tokens.cache_read, 2);
+        assert_eq!(messages[0].tokens.cache_write, 1);
+    }
+
+    #[test]
+    fn kimi_code_arbitrary_alias_restores_differing_concrete_model() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = write_kimi_code_wire(
+            &temp_dir,
+            "agent-1",
+            &[
+                request("cheap", "grok-4.5", "openai", 1_000),
+                usage("cheap", "turn", 6, 3, 0, 0, 2_000),
+            ],
+        );
+
+        let messages = parse_kimi_code_file(&path);
+
+        assert_eq!(messages.len(), 1);
+        assert_identity(&messages[0], "grok-4.5", "xai");
+    }
+
+    #[test]
+    fn kimi_code_unmatched_arbitrary_alias_is_retained() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = write_kimi_code_wire(
+            &temp_dir,
+            "agent-1",
+            &[usage("cheap", "turn", 6, 3, 0, 0, 2_000)],
+        );
+
+        let messages = parse_kimi_code_file(&path);
+
+        assert_eq!(messages.len(), 1);
+        assert_identity(&messages[0], "cheap", "unknown");
+    }
+
+    #[test]
+    fn kimi_code_alias_whitespace_mismatch_does_not_restore_request_model() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = write_kimi_code_wire(
+            &temp_dir,
+            "agent-1",
+            &[
+                request(" cheap ", "grok-4.5", "openai", 1_000),
+                usage("cheap", "turn", 6, 3, 0, 0, 2_000),
+            ],
+        );
+
+        let messages = parse_kimi_code_file(&path);
+
+        assert_eq!(messages.len(), 1);
+        assert_identity(&messages[0], "cheap", "unknown");
+    }
+
+    #[test]
+    fn kimi_code_byte_identical_alias_whitespace_restores_request_model() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = write_kimi_code_wire(
+            &temp_dir,
+            "agent-1",
+            &[
+                request(" cheap ", "grok-4.5", "openai", 1_000),
+                usage(" cheap ", "turn", 6, 3, 0, 0, 2_000),
+            ],
+        );
+
+        let messages = parse_kimi_code_file(&path);
+
+        assert_eq!(messages.len(), 1);
+        assert_identity(&messages[0], "grok-4.5", "xai");
+    }
+
+    #[test]
+    fn kimi_code_missing_usage_model_does_not_match_or_consume_request() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = write_kimi_code_wire(
+            &temp_dir,
+            "agent-1",
+            &[
+                request("kimi-for-coding", "grok-4.5", "openai", 1_000),
+                usage_without_model("turn", 6, 3, 0, 0, 2_000),
+                usage("kimi-for-coding", "turn", 7, 4, 0, 0, 3_000),
+            ],
+        );
+
+        let messages = parse_kimi_code_file(&path);
+
+        assert_eq!(messages.len(), 2);
+        assert_identity(&messages[0], DEFAULT_MODEL, "moonshotai");
+        assert_identity(&messages[1], "grok-4.5", "xai");
+    }
+
+    #[test]
+    fn kimi_code_retry_uses_latest_matching_request() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = write_kimi_code_wire(
+            &temp_dir,
+            "agent-1",
+            &[
+                request("__secondary__", "claude-sonnet-4", "anthropic", 1_000),
+                request("__secondary__", "grok-4.5", "openai", 1_100),
+                usage("__secondary__", "turn", 8, 3, 0, 0, 2_000),
+            ],
+        );
+
+        let messages = parse_kimi_code_file(&path);
+
+        assert_eq!(messages.len(), 1);
+        assert_identity(&messages[0], "grok-4.5", "xai");
+    }
+
+    #[test]
+    fn kimi_code_completed_pair_retires_older_requests() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = write_kimi_code_wire(
+            &temp_dir,
+            "agent-1",
+            &[
+                request("__secondary__", "claude-sonnet-4", "anthropic", 1_000),
+                request("__secondary__", "grok-4.5", "openai", 1_100),
+                usage("__secondary__", "turn", 8, 3, 0, 0, 2_000),
+                usage("__secondary__", "turn", 7, 2, 0, 0, 3_000),
+            ],
+        );
+
+        let messages = parse_kimi_code_file(&path);
+
+        assert_eq!(messages.len(), 2);
+        assert_identity(&messages[0], "grok-4.5", "xai");
+        assert_identity(&messages[1], "__secondary__", "unknown");
+    }
+
+    #[test]
+    fn kimi_code_zero_usage_consumes_request_before_omission() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = write_kimi_code_wire(
+            &temp_dir,
+            "agent-1",
+            &[
+                request("__secondary__", "grok-4.5", "openai", 1_000),
+                usage("__secondary__", "turn", 0, 0, 0, 0, 2_000),
+                usage("__secondary__", "turn", 9, 4, 0, 0, 3_000),
+            ],
+        );
+
+        let messages = parse_kimi_code_file(&path);
+
+        assert_eq!(messages.len(), 1);
+        assert_identity(&messages[0], "__secondary__", "unknown");
+    }
+
+    #[test]
+    fn kimi_code_session_usage_consumes_request_before_scope_filter() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = write_kimi_code_wire(
+            &temp_dir,
+            "agent-1",
+            &[
+                request("__secondary__", "grok-4.5", "openai", 1_000),
+                usage("__secondary__", "session", 10, 5, 0, 0, 2_000),
+                usage("__secondary__", "turn", 9, 4, 0, 0, 3_000),
+            ],
+        );
+
+        let messages = parse_kimi_code_file(&path);
+
+        assert_eq!(messages.len(), 1);
+        assert_identity(&messages[0], "__secondary__", "unknown");
+    }
+
+    #[test]
+    fn kimi_code_ignores_duplicate_step_end_usage() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = write_kimi_code_wire(
+            &temp_dir,
+            "agent-1",
+            &[
+                request("__secondary__", "grok-4.5", "openai", 1_000),
+                step_end_with_usage(1_900),
+                usage("__secondary__", "turn", 10, 5, 2, 1, 2_000),
+            ],
+        );
+
+        let messages = parse_kimi_code_file(&path);
+
+        assert_eq!(messages.len(), 1);
+        assert_identity(&messages[0], "grok-4.5", "xai");
+        assert_eq!(messages[0].tokens.total(), 18);
+    }
+
+    #[test]
+    fn kimi_code_files_do_not_share_request_state() {
+        let temp_dir = TempDir::new().unwrap();
+        let main_path = write_kimi_code_wire(
+            &temp_dir,
+            "main",
+            &[request("__secondary__", "kimi-k2.5", "openai", 1_000)],
+        );
+        let child_path = write_kimi_code_wire(
+            &temp_dir,
+            "agent-1",
+            &[usage("__secondary__", "turn", 7, 3, 0, 0, 2_000)],
+        );
+
+        assert!(parse_kimi_code_file(&main_path).is_empty());
+        let child_messages = parse_kimi_code_file(&child_path);
+
+        assert_eq!(child_messages.len(), 1);
+        assert_identity(&child_messages[0], "__secondary__", "unknown");
+    }
+
+    #[test]
+    fn kimi_code_unknown_custom_model_over_openai_protocol_stays_unknown() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = write_kimi_code_wire(
+            &temp_dir,
+            "agent-1",
+            &[
+                request("__secondary__", "private-model", "openai", 1_000),
+                usage("__secondary__", "turn", 4, 2, 0, 0, 2_000),
+            ],
+        );
+
+        let messages = parse_kimi_code_file(&path);
+
+        assert_eq!(messages.len(), 1);
+        assert_identity(&messages[0], "private-model", "unknown");
+    }
+
+    #[test]
+    fn kimi_code_provider_resolution_prefers_model_ownership() {
+        assert_eq!(
+            resolve_kimi_code_provider("grok-4.5", Some("openai")),
+            "xai"
+        );
+        assert_eq!(
+            resolve_kimi_code_provider("gpt-5.6", Some("openai")),
+            "openai"
+        );
+        assert_eq!(
+            resolve_kimi_code_provider("claude-sonnet-4", Some("openai")),
+            "anthropic"
+        );
+        assert_eq!(
+            resolve_kimi_code_provider("gemini-2.5-pro", Some("openai")),
+            "google"
+        );
+        assert_eq!(
+            resolve_kimi_code_provider("kimi-k2.5", Some("openai")),
+            "moonshotai"
+        );
+        assert_eq!(
+            resolve_kimi_code_provider("private-model", Some("openai")),
+            "unknown"
+        );
+    }
+
+    #[test]
+    fn kimi_code_moonshot_model_without_provider_hint_is_canonical() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = write_kimi_code_wire(
+            &temp_dir,
+            "main",
+            &[
+                request("fast", "moonshot-v1", "", 1_000),
+                usage("fast", "turn", 5, 2, 0, 0, 2_000),
+            ],
+        );
+
+        let messages = parse_kimi_code_file(&path);
+
+        assert_eq!(messages.len(), 1);
+        assert_identity(&messages[0], "moonshot-v1", "moonshotai");
+    }
+
+    #[test]
+    fn kimi_code_logged_kimi_provider_is_canonical_moonshotai() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = write_kimi_code_wire(
+            &temp_dir,
+            "main",
+            &[
+                request("k3", "k3", "kimi", 1_000),
+                usage("k3", "turn", 10, 5, 2, 1, 2_000),
+            ],
+        );
+
+        let messages = parse_kimi_code_file(&path);
+
+        assert_eq!(messages.len(), 1);
+        assert_identity(&messages[0], "k3", "moonshotai");
+        assert_eq!(messages[0].tokens.input, 10);
+        assert_eq!(messages[0].tokens.output, 5);
+        assert_eq!(messages[0].tokens.cache_read, 2);
+        assert_eq!(messages[0].tokens.cache_write, 1);
+    }
+
+    #[test]
+    fn kimi_code_concrete_kimi_model_uses_canonical_moonshot_provider() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = write_kimi_code_wire(
+            &temp_dir,
+            "main",
+            &[
+                "{malformed json".to_string(),
+                usage("kimi-code/kimi-k2.5", "turn", 5, 2, 0, 0, 2_000),
+            ],
+        );
+
+        let messages = parse_kimi_code_file(&path);
+
+        assert_eq!(messages.len(), 1);
+        assert_identity(&messages[0], "kimi-k2.5", "moonshotai");
+    }
+
+    #[test]
+    fn kimi_code_request_without_nonempty_alias_is_not_a_candidate() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = write_kimi_code_wire(
+            &temp_dir,
+            "agent-1",
+            &[
+                json!({
+                    "type": "llm.request",
+                    "provider": "openai",
+                    "model": "grok-4.5",
+                    "modelAlias": "",
+                    "time": 1_000
+                })
+                .to_string(),
+                usage("__secondary__", "turn", 5, 2, 0, 0, 2_000),
+            ],
+        );
+
+        let messages = parse_kimi_code_file(&path);
+
+        assert_eq!(messages.len(), 1);
+        assert_identity(&messages[0], "__secondary__", "unknown");
+    }
+
+    #[test]
+    fn kimi_code_request_without_nonempty_normalized_model_is_not_a_candidate() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = write_kimi_code_wire(
+            &temp_dir,
+            "agent-1",
+            &[
+                request("__secondary__", "kimi-code/", "openai", 1_000),
+                usage("__secondary__", "turn", 5, 2, 0, 0, 2_000),
+            ],
+        );
+
+        let messages = parse_kimi_code_file(&path);
+
+        assert_eq!(messages.len(), 1);
+        assert_identity(&messages[0], "__secondary__", "unknown");
+    }
+
+    #[test]
+    fn kimi_code_invalid_newer_same_alias_retires_older_request() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = write_kimi_code_wire(
+            &temp_dir,
+            "agent-1",
+            &[
+                request("__secondary__", "claude-sonnet-4", "anthropic", 1_000),
+                request("__secondary__", "kimi-code/", "openai", 1_100),
+                usage("__secondary__", "turn", 5, 2, 0, 0, 2_000),
+            ],
+        );
+
+        let messages = parse_kimi_code_file(&path);
+
+        assert_eq!(messages.len(), 1);
+        assert_identity(&messages[0], "__secondary__", "unknown");
+    }
+
+    #[test]
+    fn legacy_kimi_parsing_keeps_accounting_and_canonical_provider() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+        let path = root
+            .join("sessions")
+            .join("group-1")
+            .join("session-legacy")
+            .join("wire.jsonl");
+
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(root.join("config.json"), r#"{"model":"kimi-for-coding"}"#).unwrap();
+        fs::write(
+            &path,
+            concat!(
+                r#"{"timestamp":1700000000.0,"message":{"type":"StatusUpdate","payload":{"token_usage":{"input_other":10,"output":5,"input_cache_read":2,"input_cache_creation":1},"message_id":"msg-1"}}}"#,
+                "\n"
+            ),
+        )
+        .unwrap();
+
+        let messages = parse_kimi_file(&path);
+
+        assert_eq!(messages.len(), 1);
+        assert_identity(&messages[0], "kimi-for-coding", "moonshotai");
+        assert_eq!(messages[0].session_id, "session-legacy");
+        assert_eq!(messages[0].timestamp, 1_700_000_000_000);
+        assert_eq!(messages[0].tokens.total(), 18);
+    }
+}
