@@ -246,7 +246,10 @@ Number formatting:
 4. **By client** — sorted by tokens desc; progress share bar
 5. **By model** — flat list with provider label; share bar
 6. **By project** — sorted by cost desc; each workspace row shows cost + tokens and its models sorted by cost desc. `Unattributed` never exposes workspace keys or diagnostic session details
-7. **Footer** — Last updated (`generatedAt`); **Refresh**; **Settings…**; **Open tokens.ci**; **Quit**
+7. **Optional error banner** — when present, follows PROJECT within the scrolling report content
+8. **Fixed footer** — outside the scrolling content; Last updated (`generatedAt`); **Refresh**; **Settings…**; **Open tokens.ci**; **Quit**
+
+The normal business-section order is COST → CLIENT → MODEL → PROJECT, with PROJECT final before the optional error banner. The footer remains fixed outside the scrolling content.
 
 Period changes: call CLI with new `--period` (Layer B should make this cheap after one warm scan). Prefer not blocking UI: show spinner in panel, keep prior period data until new JSON arrives.
 
@@ -326,7 +329,7 @@ Minimum macOS: **13.0** (Ventura) unless packaging constraints force 14.
 
 1. **CLI `tokens usage --json`** with periods + force-rescan + Layer B snapshot  
 2. **Swift Menu Bar MVP**: status title, summary, period, refresh, settings shell, missing-CLI state  
-3. **Panel completeness**: byClient (+ nested models), byProject / PROJECT (+ nested models), byModel, byDay, share bars, tokens.ci link
+3. **Panel completeness**: byDay / COST, byClient (+ nested models), byModel, byProject / PROJECT (+ nested models), share bars, tokens.ci link
 4. **Polish**: interval timer, stale-while-revalidate, formatting edge cases, README  
 
 ## 9. Security and privacy

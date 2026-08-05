@@ -14,7 +14,7 @@
 - The optional error banner remains after PROJECT.
 - The fixed footer remains outside the scrolling report body.
 - Do not change report schemas, aggregation, formatting, pagination, panel sizing, or section internals.
-- Build the repository CLI before the final Swift test run; the pre-change baseline otherwise has one unrelated failure caused by the outdated system CLI.
+- Run the current integrated Swift test suite and build the release menu bar product before final verification.
 - Do not create a git commit unless the user explicitly authorizes it.
 
 ## File Structure
@@ -135,7 +135,8 @@ checks = {
         "**By client**",
         "**By model**",
         "**By project**",
-        "**Footer**",
+        "**Optional error banner**",
+        "**Fixed footer**",
     ],
     "docs/implementation-plan.md": [
         "`COST · 14 DAYS`",
@@ -165,7 +166,8 @@ Replace the dropdown list with this order and preserve the existing section desc
 4. **By client** — sorted by tokens desc; progress share bar
 5. **By model** — flat list with provider label; share bar
 6. **By project** — sorted by cost desc; each workspace row shows cost + tokens and its models sorted by cost desc. `Unattributed` never exposes workspace keys or diagnostic session details
-7. **Footer** — Last updated (`generatedAt`); **Refresh**; **Settings…**; **Open tokens.ci**; **Quit**
+7. **Optional error banner** — when present, follows PROJECT within the scrolling report content
+8. **Fixed footer** — outside the scrolling content; Last updated (`generatedAt`); **Refresh**; **Settings…**; **Open tokens.ci**; **Quit**
 ```
 
 - [ ] **Step 3: Update the implementation-plan middle-scroll order**
@@ -223,25 +225,25 @@ git status --short
 
 Expected: no whitespace errors; only the approved design document, implementation plan, runtime file, and synchronized product documents are changed or untracked.
 
-- [ ] **Step 2: Build the repository CLI and release menu bar application together**
+- [ ] **Step 2: Build the release menu bar application**
 
 Run:
 
 ```bash
-make build-release
+swift build -c release --product TokensMenuBar
 ```
 
-Expected: the release CLI and menu bar app both build successfully.
+Expected: the release menu bar app builds successfully.
 
-- [ ] **Step 3: Run the full Swift test suite against the repository CLI**
+- [ ] **Step 3: Run the full integrated Swift test suite**
 
 Run:
 
 ```bash
-TOKENS_CLI="$PWD/cli/target/release/tokens" swift test
+swift test
 ```
 
-Expected: all 30 XCTest tests pass, including the all-period CLI integration test.
+Expected: all current XCTest tests pass, including the CLI integration coverage.
 
 - [ ] **Step 4: Restart the release menu bar application**
 

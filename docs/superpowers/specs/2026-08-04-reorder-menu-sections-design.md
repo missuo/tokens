@@ -36,7 +36,7 @@ The change does not modify data loading or transformation. Each section continue
 - Launch the release menu bar application and visually confirm the final order.
 - Confirm COST rendering, PROJECT pagination, nested model pagination, scrolling, error-banner placement, and fixed-footer behavior remain intact.
 
-The pre-change baseline had 29 passing tests and one unrelated failure because the installed system CLI was too old to support the menu bar report command. Final verification must use the CLI built from this repository.
+Final verification requires all current XCTest tests to pass against the repository's integrated behavior.
 
 ## Non-Goals
 
