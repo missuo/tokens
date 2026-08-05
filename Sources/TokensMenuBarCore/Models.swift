@@ -350,9 +350,7 @@ public struct ProjectUsage: Codable, Equatable, Identifiable {
     }
 
     private static func usableFolderName(from value: String) -> String? {
-        let normalized = value
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .replacingOccurrences(of: "\\", with: "/")
+        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
 
         return normalized
             .split(separator: "/", omittingEmptySubsequences: true)

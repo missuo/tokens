@@ -67,7 +67,7 @@ final class ProjectUsageTests: XCTestCase {
     }
 
     func testFolderNameUsesUnattributedWhenDisplayNameAndKeyAreUnusable() {
-        let project = makeProject(projectKey: " \\ /// ", displayName: "  ///  ")
+        let project = makeProject(projectKey: "  /// ", displayName: "  ///  ")
 
         XCTAssertEqual(project.folderName, "Unattributed")
     }
@@ -76,6 +76,24 @@ final class ProjectUsageTests: XCTestCase {
         let project = makeProject(projectKey: "///", displayName: "Legacy Project")
 
         XCTAssertEqual(project.folderName, "Legacy Project")
+    }
+
+    func testFolderNamePreservesLiteralBackslashesInDisplayName() {
+        let project = makeProject(
+            projectKey: "/Users/example/client-archive",
+            displayName: "client\\archive"
+        )
+
+        XCTAssertEqual(project.folderName, "client\\archive")
+    }
+
+    func testFolderNameSplitsPathsOnlyOnForwardSlash() {
+        let project = makeProject(
+            projectKey: "/Users/example/client-archive",
+            displayName: "/Users/example/client\\archive/"
+        )
+
+        XCTAssertEqual(project.folderName, "client\\archive")
     }
 
     func testFolderNameKeepsUnattributedPrivate() {

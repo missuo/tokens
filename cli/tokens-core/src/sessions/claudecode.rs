@@ -528,8 +528,10 @@ pub fn parse_claude_file_with_cache_and_home(
         buffer.clear();
         buffer.extend_from_slice(trimmed.as_bytes());
         if let Ok(entry) = simd_json::from_slice::<ClaudeEntry>(&mut buffer) {
-            if let Some(label) = entry.cwd.as_deref().and_then(cwd_label_from_raw) {
-                workspace_label = Some(label);
+            if workspace_key.is_some() {
+                if let Some(label) = entry.cwd.as_deref().and_then(cwd_label_from_raw) {
+                    workspace_label = Some(label);
+                }
             }
 
             // Detect sidechain on the first parseable entry (any type).
@@ -822,8 +824,12 @@ fn claude_workspace_from_path(path: &Path) -> (Option<String>, Option<String>) {
 
 /// Derive a short folder label from a Claude entry `cwd` without using it as identity.
 fn cwd_label_from_raw(raw: &str) -> Option<String> {
-    let normalized = normalize_workspace_key(raw)?;
-    workspace_label_from_key(&normalized)
+    let component = raw.trim_end_matches('/').rsplit('/').next()?.trim();
+    if component.is_empty() {
+        None
+    } else {
+        Some(component.to_string())
+    }
 }
 
 fn sanitize_cc_mirror_segment(raw: &str) -> String {
@@ -1847,6 +1853,61 @@ mod tests {
         assert_eq!(
             messages[0].workspace_label.as_deref(),
             Some("project-folder-name-display")
+        );
+    }
+
+    #[test]
+    fn whitespace_leaf_cwd_preserves_previous_valid_label() {
+        let dir = tempdir().expect("tempdir");
+        let project_dir = dir
+            .path()
+            .join(".claude")
+            .join("projects")
+            .join("-Users-example-Documents-Codebase-tokens");
+        std::fs::create_dir_all(&project_dir).expect("project dir");
+        let session = project_dir.join("session.jsonl");
+        write_session(
+            &session,
+            &[
+                &assistant_line(
+                    "msg-1",
+                    "req-1",
+                    Some("/Users/example/Documents/Codebase/tokens"),
+                ),
+                &assistant_line("msg-2", "req-2", Some("/Users/example/   /")),
+            ],
+        );
+
+        let messages = parse_claude_file(&session);
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].workspace_label.as_deref(), Some("tokens"));
+        assert_eq!(messages[1].workspace_label.as_deref(), Some("tokens"));
+    }
+
+    #[test]
+    fn cwd_label_preserves_literal_backslashes() {
+        let dir = tempdir().expect("tempdir");
+        let project_dir = dir
+            .path()
+            .join(".claude")
+            .join("projects")
+            .join("-Users-example-client-archive");
+        std::fs::create_dir_all(&project_dir).expect("project dir");
+        let session = project_dir.join("session.jsonl");
+        write_session(
+            &session,
+            &[&assistant_line(
+                "msg-1",
+                "req-1",
+                Some(r"/Users/example/client\\archive/"),
+            )],
+        );
+
+        let messages = parse_claude_file(&session);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(
+            messages[0].workspace_label.as_deref(),
+            Some(r"client\archive")
         );
     }
 
