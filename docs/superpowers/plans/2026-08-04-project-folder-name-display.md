@@ -4,28 +4,31 @@
 
 **Goal:** Show only the final project folder name in PROJECT rows, truncate long names without displacing usage metrics, and reveal the complete folder name on hover.
 
-**Architecture:** Add a presentation-focused computed property to `ProjectUsage` that derives a safe folder name from `projectKey` and applies the approved fallbacks. The PROJECT row will consume that property for visible text, hover help, accessibility, and nested-model expansion copy; report generation and schema remain unchanged.
+**Architecture:** Claude session parsing reads optional JSONL `cwd` values and applies the latest valid final-folder label to `workspace_label` while preserving the path-derived `workspace_key`. Aggregation promotes that label into report `displayName`. The menu bar `ProjectUsage.folderName` presentation property prefers non-empty `displayName` over encoded keys, and PROJECT rows consume it for visible text, hover help, accessibility, and nested-model expansion copy. Report schema fields remain unchanged.
 
-**Tech Stack:** Swift 5.9, SwiftUI, XCTest, Swift Package Manager, macOS 13+
+**Tech Stack:** Rust (tokens-core Claude parser), Swift 5.9, SwiftUI, XCTest, Swift Package Manager, macOS 13+
 
 ## Global Constraints
 
 - Execute all implementation work in an isolated git worktree created with `superpowers:using-git-worktrees`.
-- For an attributed project, derive the visible name from the final non-empty `/`-separated component of its project path.
-- Do not display the full project path in the row, hover text, or accessibility text.
-- Keep the project name on one line and truncate overflow with an ellipsis.
+- Preserve Claude `workspace_key` / `projectKey` identity from the session path; never replace it with `cwd`.
+- Prefer non-empty report `displayName` (cwd-corrected) for menu bar labels; do not derive visible text from an encoded Claude key when `displayName` is non-empty.
+- Do not display the full project path or full cwd in the row, hover text, or accessibility text.
+- Keep the project name on one line and truncate overflow with an ellipsis (tail).
 - Hover text must contain the complete, untruncated final folder name only.
 - Cost and token values must retain layout priority and remain visible.
-- A non-nil but unusable project key falls back to the existing display name; an empty fallback becomes `Unattributed`.
 - A nil project key is unattributed, always renders `Unattributed`, and never exposes display-name or path data.
+- Increment only the Claude per-client parser version for cache invalidation.
 - Do not change report schema, aggregation, sorting, pagination, panel width, or tooltip styling.
 - Do not create git commits unless the user explicitly authorizes commits during execution.
 
 ## File Structure
 
+- `cli/tokens-core/src/sessions/claudecode.rs` — deserializes optional `cwd`, tracks latest valid label, applies it to emitted messages; owns focused Rust tests.
+- `cli/tokens-core/src/message_cache.rs` — Claude-only `parser_version` bump.
 - `Sources/TokensMenuBarCore/Models.swift` — owns the reusable project folder-name derivation and fallback behavior.
 - `Sources/TokensMenuBarCore/Views.swift` — renders the derived name, truncation behavior, system hover help, and accessible copy.
-- `Tests/TokensMenuBarTests/ProjectUsageTests.swift` — verifies path extraction, fallbacks, long-name preservation, and unattributed privacy behavior.
+- `Tests/TokensMenuBarTests/ProjectUsageTests.swift` — verifies displayName preference, path extraction, fallbacks, long-name preservation, and unattributed privacy behavior.
 
 ---
 
@@ -235,3 +238,21 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ```
 
 Expected: one focused commit containing the approved design, implementation plan, implementation, and tests; unrelated `piolium/` content remains untracked and excluded.
+
+---
+
+### Amendment: Claude cwd-based folder labels
+
+**Files:**
+- Modify: `cli/tokens-core/src/sessions/claudecode.rs`
+- Modify: `cli/tokens-core/src/message_cache.rs` (`ClientId::Claude` parser version 2 → 3)
+- Modify: `Sources/TokensMenuBarCore/Models.swift` (`folderName` prefers non-empty `displayName`)
+- Modify: `Tests/TokensMenuBarTests/ProjectUsageTests.swift`
+- Modify: design + plan docs
+
+**Steps:**
+1. Add failing Rust tests for key stability, worktree folder preservation, later-cwd updates, and missing/unusable cwd fallback.
+2. Deserialize optional `cwd`, track latest valid normalized label, apply to emitted messages; keep path-derived key.
+3. Bump Claude parser version only.
+4. Update Swift `folderName` + tests to prefer corrected `displayName`.
+5. Run focused Rust/Swift tests, full Swift suite, tokens-core package tests, `make restart-release`, and live `tokens usage --json --period today --refresh`.

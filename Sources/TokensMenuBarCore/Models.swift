@@ -342,13 +342,27 @@ public struct ProjectUsage: Codable, Equatable, Identifiable {
     public let models: [ProjectModelUsage]
 
     public var folderName: String {
-        guard let projectKey else { return "Unattributed" }
-        let fallbackName = displayName.isEmpty ? "Unattributed" : displayName
-        guard let lastComponent = projectKey
-            .split(separator: "/", omittingEmptySubsequences: true)
-            .last
+        guard projectKey != nil else { return "Unattributed" }
+
+        // Prefer the report display name when present (Claude cwd-corrected labels
+        // land here). Never surface an encoded slug key while a non-empty display
+        // name is available.
+        if !displayName.isEmpty {
+            if let lastComponent = displayName
+                .split(separator: "/", omittingEmptySubsequences: true)
+                .last
+            {
+                return String(lastComponent)
+            }
+            return displayName
+        }
+
+        guard let projectKey,
+              let lastComponent = projectKey
+                .split(separator: "/", omittingEmptySubsequences: true)
+                .last
         else {
-            return fallbackName
+            return "Unattributed"
         }
         return String(lastComponent)
     }

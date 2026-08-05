@@ -11,23 +11,41 @@ final class ProjectUsageTests: XCTestCase {
         XCTAssertEqual(project.folderName, "tokens")
     }
 
-    func testFolderNameIgnoresTrailingSeparators() {
+    func testFolderNamePrefersNonEmptyDisplayNameOverEncodedKey() {
         let project = makeProject(
-            projectKey: "/Users/example/Documents/Codebase/tokens///",
-            displayName: "legacy-name"
+            projectKey: "-Users-example-Documents-Codebase-tokens",
+            displayName: "tokens"
         )
 
         XCTAssertEqual(project.folderName, "tokens")
     }
 
-    func testFolderNamePreservesCompleteLongFolderName() {
-        let longName = "an-extremely-long-project-folder-name-that-will-not-fit-in-the-row"
+    func testFolderNameUsesDisplayNameWhenKeyHasTrailingSeparators() {
         let project = makeProject(
-            projectKey: "/Users/example/\(longName)",
+            projectKey: "/Users/example/Documents/Codebase/tokens///",
             displayName: "legacy-name"
         )
 
+        XCTAssertEqual(project.folderName, "legacy-name")
+    }
+
+    func testFolderNamePreservesCompleteLongFolderNameFromDisplayName() {
+        let longName = "an-extremely-long-project-folder-name-that-will-not-fit-in-the-row"
+        let project = makeProject(
+            projectKey: "-Users-example-Documents-\(longName)",
+            displayName: longName
+        )
+
         XCTAssertEqual(project.folderName, longName)
+    }
+
+    func testFolderNameFallsBackToKeyComponentWhenDisplayNameEmpty() {
+        let project = makeProject(
+            projectKey: "/Users/example/Documents/Codebase/tokens",
+            displayName: ""
+        )
+
+        XCTAssertEqual(project.folderName, "tokens")
     }
 
     func testFolderNameFallsBackForUnusableProjectKey() {

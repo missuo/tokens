@@ -729,7 +729,9 @@ fn parser_version(client: ClientId) -> u32 {
         // Desktop v1 parsed a non-ACP shape and did not track its CLI title
         // lookup; its timestamp handling is unaffected by the #890 follow-up.
         ClientId::DevinDesktop => 2,
-        ClientId::Claude => 2,
+        // v2->v3: Claude session labels prefer the latest valid JSONL `cwd`
+        // final folder component while keeping the path-derived workspace key.
+        ClientId::Claude => 3,
         // Junie's usage-event timestamp is now back-calculated to the call
         // start (timestampMs - usage.time) instead of the recorded
         // (end-anchored) timestampMs. Follow-up to #890.
