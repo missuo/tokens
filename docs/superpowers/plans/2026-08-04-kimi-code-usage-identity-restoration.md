@@ -631,19 +631,29 @@ Do not weaken or remove a test to obtain GREEN.
   - `resolve_kimi_code_usage_identity`.
   - Correct `UnifiedMessage` identity before aggregation/pricing.
 
-- [ ] **Step 1: Extend shared Moonshot-family inference**
+- [ ] **Step 1: Extend shared Moonshot-family canonicalization and inference**
 
-Update the existing Kimi/Moonshot branch in `inferred_provider_from_model` and add focused helper coverage:
+Canonicalize the `kimi` provider alias with the Moonshot family, make model inference delimiter-aware, and add positive and negative focused helper coverage:
 
 ```rust
+        "kimi" | "moonshot" | "moonshotai" => "moonshotai",
+
     // Kimi / Moonshot AI — `kimi-k2.5`, `kimi-code`, `moonshot-v1`, etc.
-    if contains_delimited(&lower, "kimi") || lower.contains("moonshot") {
+    if contains_delimited(&lower, "kimi")
+        || contains_delimited(&lower, "moonshot")
+        || contains_delimited(&lower, "moonshotai")
+    {
         return Some("moonshotai");
     }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn canonicalizes_kimi_provider_alias() {
+        assert_eq!(canonical_provider("kimi").as_deref(), Some("moonshotai"));
+    }
 
     #[test]
     fn infers_moonshot_provider_from_model_family() {
@@ -655,6 +665,15 @@ mod tests {
             inferred_provider_from_model("MoonshotAI/moonshot-v1-128k"),
             Some("moonshotai")
         );
+        assert_eq!(
+            inferred_provider_from_model("moonshotai-v1"),
+            Some("moonshotai")
+        );
+    }
+
+    #[test]
+    fn does_not_infer_moonshot_from_embedded_substring() {
+        assert_eq!(inferred_provider_from_model("notmoonshot-proxy"), None);
     }
 }
 ```
@@ -759,13 +778,6 @@ fn resolve_kimi_code_provider(model_id: &str, provider_hint: Option<&str>) -> St
         .and_then(provider_identity::canonical_provider)
         // Kimi can log `openai` as a compatibility protocol for other owners.
         .filter(|provider| provider != "openai")
-        .map(|provider| {
-            if provider == "kimi" {
-                DEFAULT_PROVIDER.to_string()
-            } else {
-                provider
-            }
-        })
         .unwrap_or_else(|| UNKNOWN_PROVIDER.to_string())
 }
 
@@ -828,12 +840,13 @@ Replace the current usage-only handling with:
             continue;
         }
 
-        // Correlation and retirement occur before scope and zero-token filters.
-        let recorded_model = wire_line.model.as_deref().unwrap_or(DEFAULT_MODEL);
-        let matched_request =
-            consume_matching_kimi_request(&mut pending_requests, recorded_model);
+        // Correlation and retirement occur before scope and zero-token filters,
+        // but only a model actually present on the wire can identify an alias.
+        let recorded_model = wire_line.model.as_deref();
+        let matched_request = recorded_model
+            .and_then(|model| consume_matching_kimi_request(&mut pending_requests, model));
         let (model_id, provider_id) = resolve_kimi_code_usage_identity(
-            recorded_model,
+            recorded_model.unwrap_or(DEFAULT_MODEL),
             matched_request.as_ref(),
         );
 
@@ -954,7 +967,7 @@ Run:
 
 ```bash
 cargo fmt --manifest-path cli/Cargo.toml --all
-git diff -- cli/tokens-core/src/sessions/kimi.rs cli/tokens-core/src/message_cache.rs
+git diff -- cli/tokens-core/src/sessions/kimi.rs cli/tokens-core/src/message_cache.rs cli/tokens-core/src/provider_identity.rs
 ```
 
 Expected: no unrelated formatting changes.
@@ -1086,7 +1099,7 @@ Verify in the Model section:
 
 ---
 
-### Task 7: Review the complete Kimi change
+### Task 7: Review the complete six-file Kimi change
 
 **Files:**
 - Review all files intended for the standalone Kimi commit.
@@ -1102,14 +1115,21 @@ Run:
 ```bash
 git diff --check
 git status --short
-git diff -- cli/tokens-core/src/sessions/kimi.rs cli/tokens-core/src/message_cache.rs
+git diff -- \
+  cli/tokens-core/src/sessions/kimi.rs \
+  cli/tokens-core/src/message_cache.rs \
+  cli/tokens-core/src/provider_identity.rs \
+  docs/research/2026-08-04-kimi-code-usage-identity.md \
+  docs/superpowers/specs/2026-08-04-kimi-code-usage-identity-restoration-design.md \
+  docs/superpowers/plans/2026-08-04-kimi-code-usage-identity-restoration.md
 ```
 
-Expected intended Kimi commit files:
+Expected six intended Kimi commit files:
 
 ```text
 cli/tokens-core/src/sessions/kimi.rs
 cli/tokens-core/src/message_cache.rs
+cli/tokens-core/src/provider_identity.rs
 docs/research/2026-08-04-kimi-code-usage-identity.md
 docs/superpowers/specs/2026-08-04-kimi-code-usage-identity-restoration-design.md
 docs/superpowers/plans/2026-08-04-kimi-code-usage-identity-restoration.md
@@ -1133,9 +1153,9 @@ Fix all Critical and Important findings, rerun affected tests, and obtain a clea
 
 ---
 
-### Task 8: Commit and push the Kimi restoration
+### Task 8: Commit and push the six-file Kimi restoration
 
-**Files:** Exactly the five intended Kimi source/documentation files.
+**Files:** Exactly the six intended Kimi source/documentation files.
 
 **Interfaces:**
 - Consumes: reviewed and verified working tree based on `origin/main`.
@@ -1149,6 +1169,7 @@ Run:
 git add \
   cli/tokens-core/src/sessions/kimi.rs \
   cli/tokens-core/src/message_cache.rs \
+  cli/tokens-core/src/provider_identity.rs \
   docs/research/2026-08-04-kimi-code-usage-identity.md \
   docs/superpowers/specs/2026-08-04-kimi-code-usage-identity-restoration-design.md \
   docs/superpowers/plans/2026-08-04-kimi-code-usage-identity-restoration.md
@@ -1166,7 +1187,7 @@ git diff --cached
 
 Expected:
 
-- Exactly five staged files.
+- Exactly six staged files.
 - No Cargo manifest, Swift, pricing, aggregation, scanner, or report-schema changes.
 - `CACHE_FORMAT_VERSION` remains `5`.
 - Kimi parser version is `3`.

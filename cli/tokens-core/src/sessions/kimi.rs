@@ -222,13 +222,6 @@ fn resolve_kimi_code_provider(model_id: &str, provider_hint: Option<&str>) -> St
         .and_then(provider_identity::canonical_provider)
         // Kimi can log `openai` as a compatibility protocol for other owners.
         .filter(|provider| provider != "openai")
-        .map(|provider| {
-            if provider == "kimi" {
-                DEFAULT_PROVIDER.to_string()
-            } else {
-                provider
-            }
-        })
         .unwrap_or_else(|| UNKNOWN_PROVIDER.to_string())
 }
 
@@ -299,11 +292,15 @@ pub fn parse_kimi_code_file(path: &Path) -> Vec<UnifiedMessage> {
             continue;
         }
 
-        // Correlation and retirement occur before scope and zero-token filters.
-        let recorded_model = wire_line.model.as_deref().unwrap_or(DEFAULT_MODEL);
-        let matched_request = consume_matching_kimi_request(&mut pending_requests, recorded_model);
-        let (model_id, provider_id) =
-            resolve_kimi_code_usage_identity(recorded_model, matched_request.as_ref());
+        // Correlation and retirement occur before scope and zero-token filters,
+        // but only a model actually present on the wire can identify an alias.
+        let recorded_model = wire_line.model.as_deref();
+        let matched_request = recorded_model
+            .and_then(|model| consume_matching_kimi_request(&mut pending_requests, model));
+        let (model_id, provider_id) = resolve_kimi_code_usage_identity(
+            recorded_model.unwrap_or(DEFAULT_MODEL),
+            matched_request.as_ref(),
+        );
 
         if wire_line.usage_scope.as_deref() != Some("turn") {
             continue;
@@ -517,6 +514,28 @@ mod tests {
         .to_string()
     }
 
+    fn usage_without_model(
+        scope: &str,
+        input: i64,
+        output: i64,
+        cache_read: i64,
+        cache_write: i64,
+        time: i64,
+    ) -> String {
+        json!({
+            "type": "usage.record",
+            "usage": {
+                "inputOther": input,
+                "output": output,
+                "inputCacheRead": cache_read,
+                "inputCacheCreation": cache_write
+            },
+            "usageScope": scope,
+            "time": time
+        })
+        .to_string()
+    }
+
     fn step_end_with_usage(time: i64) -> String {
         json!({
             "type": "context.append_loop_event",
@@ -594,6 +613,26 @@ mod tests {
 
         assert_eq!(messages.len(), 1);
         assert_identity(&messages[0], "cheap", "unknown");
+    }
+
+    #[test]
+    fn kimi_code_missing_usage_model_does_not_match_or_consume_request() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = write_kimi_code_wire(
+            &temp_dir,
+            "agent-1",
+            &[
+                request("kimi-for-coding", "grok-4.5", "openai", 1_000),
+                usage_without_model("turn", 6, 3, 0, 0, 2_000),
+                usage("kimi-for-coding", "turn", 7, 4, 0, 0, 3_000),
+            ],
+        );
+
+        let messages = parse_kimi_code_file(&path);
+
+        assert_eq!(messages.len(), 2);
+        assert_identity(&messages[0], DEFAULT_MODEL, "moonshotai");
+        assert_identity(&messages[1], "grok-4.5", "xai");
     }
 
     #[test]
