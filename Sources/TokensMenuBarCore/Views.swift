@@ -531,14 +531,17 @@ public struct MenuPanelView: View {
             ?? MenuBarLayout.projectModelPageSize
         let visibleModels = Array(project.models.prefix(max(visibleModelCount, 0)))
         let hasMoreModels = project.models.count > visibleModels.count
+        let folderName = project.folderName
 
         return VStack(alignment: .leading, spacing: 7) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(project.displayName)
+                Text(folderName)
                     .font(.system(size: 12, weight: .medium, design: .monospaced))
                     .lineLimit(1)
-                    .truncationMode(.middle)
+                    .truncationMode(.tail)
                     .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+                    .help(folderName)
+                    .accessibilityLabel(folderName)
                 Text("\(Formatting.cost(project.cost)) · \(Formatting.compactTokens(project.tokens))")
                     .font(.system(size: 12, design: .monospaced))
                     .monospacedDigit()
@@ -557,7 +560,7 @@ public struct MenuPanelView: View {
                         if hasMoreModels {
                             projectModelExpandIcon(
                                 remaining: project.models.count - visibleModels.count,
-                                accessibilityNoun: "models for \(project.displayName)"
+                                accessibilityNoun: "models for \(folderName)"
                             ) {
                                 projectModelVisibleCounts[project.id] = min(
                                     visibleModelCount + MenuBarLayout.projectModelPageSize,

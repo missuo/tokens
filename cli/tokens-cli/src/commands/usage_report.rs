@@ -926,13 +926,14 @@ fn report_from_contributions(
                     .then_with(|| a.model_id.cmp(&b.model_id))
                     .then_with(|| a.provider_id.cmp(&b.provider_id))
             });
+            let display_name = if project_key.is_none() {
+                "Unattributed".to_string()
+            } else {
+                project.display_name
+            };
             ProjectUsage {
                 project_key,
-                display_name: if project.display_name.is_empty() {
-                    "Unattributed".to_string()
-                } else {
-                    project.display_name
-                },
+                display_name,
                 tokens: project.totals.tokens,
                 cost: project.totals.cost,
                 messages: project.totals.messages,
@@ -1137,6 +1138,106 @@ mod tests {
             }],
             active_time_ms: None,
         }
+    }
+
+    #[test]
+    fn bare_claude_cwd_stays_private_through_json_report() {
+        let dir = tempfile::tempdir().unwrap();
+        let transcripts_dir = dir.path().join(".claude").join("transcripts");
+        std::fs::create_dir_all(&transcripts_dir).unwrap();
+        let session = transcripts_dir.join("session.jsonl");
+        std::fs::write(
+            &session,
+            r#"{"type":"assistant","timestamp":"2026-08-04T12:00:00.000Z","cwd":"/Users/example/secret-project","requestId":"req-1","message":{"id":"msg-1","model":"claude-sonnet-4-5","usage":{"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}
+"#,
+        )
+        .unwrap();
+
+        let messages = tokens_core::sessions::claudecode::parse_claude_file(&session);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].workspace_key, None);
+        assert_eq!(messages[0].workspace_label, None);
+
+        let contributions = tokens_core::aggregate_by_date(messages);
+        assert_eq!(contributions.len(), 1);
+        assert_eq!(contributions[0].projects.len(), 1);
+        assert_eq!(contributions[0].projects[0].project_key, None);
+        assert_eq!(contributions[0].projects[0].project_label, "Unattributed");
+
+        let today = NaiveDate::parse_from_str(&contributions[0].date, "%Y-%m-%d").unwrap();
+        let report = report_from_contributions(
+            UsagePeriod::All,
+            false,
+            "incremental",
+            0,
+            true,
+            0,
+            0,
+            &contributions,
+            &contributions,
+            today,
+            "2026-08-04T12:00:00Z",
+        );
+        let json = serde_json::to_value(&report).unwrap();
+        assert_eq!(json["byProject"][0]["projectKey"], serde_json::Value::Null);
+        assert_eq!(json["byProject"][0]["displayName"], "Unattributed");
+        assert!(!json.to_string().contains("secret-project"));
+    }
+
+    #[test]
+    fn report_preserves_empty_name_for_attributed_project_key() {
+        let mut day = sample_day();
+        day.projects[0].project_label.clear();
+        let today = NaiveDate::from_ymd_opt(2026, 7, 26).unwrap();
+        let report = report_from_contributions(
+            UsagePeriod::Today,
+            false,
+            "incremental",
+            0,
+            true,
+            0,
+            0,
+            &[day.clone()],
+            &[day],
+            today,
+            "2026-07-26T00:00:00Z",
+        );
+
+        assert_eq!(report.by_project.len(), 1);
+        assert_eq!(
+            report.by_project[0].project_key.as_deref(),
+            Some("/work/example")
+        );
+        assert_eq!(report.by_project[0].display_name, "");
+    }
+
+    #[test]
+    fn report_forces_unattributed_name_for_nil_project_key() {
+        let mut day = sample_day();
+        day.projects = vec![ProjectContribution {
+            project_key: None,
+            project_label: "/Users/example/secret-project".into(),
+            totals: day.totals.clone(),
+            models: vec![],
+        }];
+        let today = NaiveDate::from_ymd_opt(2026, 7, 26).unwrap();
+        let report = report_from_contributions(
+            UsagePeriod::Today,
+            false,
+            "incremental",
+            0,
+            true,
+            0,
+            0,
+            &[day.clone()],
+            &[day],
+            today,
+            "2026-07-26T00:00:00Z",
+        );
+
+        assert_eq!(report.by_project.len(), 1);
+        assert_eq!(report.by_project[0].project_key, None);
+        assert_eq!(report.by_project[0].display_name, "Unattributed");
     }
 
     #[test]
