@@ -240,16 +240,17 @@ Number formatting:
 
 ### Dropdown panel sections (top → bottom)
 
-1. **Period control** — segmented: Today | 7d | 30d | All
-2. **Summary** — tokens, cost, messages; optional mini token-breakdown
-3. **By day / cost** — compact cost bars
-4. **By client** — sorted by tokens desc; progress share bar
-5. **By model** — flat list with provider label; share bar
-6. **By project** — sorted by cost desc; each workspace row shows cost + tokens and its models sorted by cost desc. `Unattributed` never exposes workspace keys or diagnostic session details
-7. **Optional error banner** — when present, follows PROJECT within the scrolling report content
-8. **Fixed footer** — outside the scrolling content; Last updated (`generatedAt`); **Refresh**; **Settings…**; **Open tokens.ci**; **Quit**
+1. **Period control** — segmented: Today | 7d | 30d | All; fixed above the report body
+2. **TOTAL** — required report-body section with total tokens, cost, messages, and date range
+3. **BREAKDOWN** — required report-body section with input, output, cache, and reasoning token metrics
+4. **COST** — compact daily cost bars
+5. **CLIENT** — sorted by tokens desc; progress share bar
+6. **MODEL** — flat list with provider label; share bar
+7. **PROJECT** — sorted by cost desc; each workspace row shows cost + tokens and its models sorted by cost desc. `Unattributed` never exposes workspace keys or diagnostic session details
+8. **Optional error banner** — when present, follows PROJECT within the scrolling report content
+9. **Fixed footer** — outside the scrolling content; Last updated (`generatedAt`); **Refresh**; **Settings…**; **Open tokens.ci**; **Quit**
 
-The normal business-section order is COST → CLIENT → MODEL → PROJECT, with PROJECT final before the optional error banner. The footer remains fixed outside the scrolling content.
+The required scrolling report-body order is TOTAL → BREAKDOWN → COST → CLIENT → MODEL → PROJECT. The period control remains above that body, an optional error banner may follow PROJECT inside it, and the footer remains fixed outside the scrolling content.
 
 Period changes: call CLI with new `--period` (Layer B should make this cheap after one warm scan). Prefer not blocking UI: show spinner in panel, keep prior period data until new JSON arrives.
 

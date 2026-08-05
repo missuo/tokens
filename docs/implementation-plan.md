@@ -8,10 +8,12 @@
 
 **Tech Stack:** SwiftUI, AppKit `NSPopover` / `NSWindow`, SwiftPM package `.`, XCTest.
 
-**Design source (canonical):**
+**Design source (canonical visual-language and interaction references only):**
 - Preview: `design/menubar-ui-v1/` (tab **Final** + **Interactions**)
 - Shots: `full-final.png`, `full-ix-hover.png`, `full-ix-scroll.png`, `full-ix-settings.png`, `full-ix-settings-ctx.png`
 - Notes: `design/menubar-ui-v1/README.md`
+
+These retained artifacts define the Minimal Mono visual language and interaction treatment, but not the current report-section composition. `docs/design-spec.md` controls the runtime section composition and order.
 
 ## Global Constraints
 
@@ -326,7 +328,8 @@ EOF
    - CLIENT rows (`report.byClient`) with uppercase `CLIENT` section label
    - MODEL rows (`report.byModel`) with uppercase `MODEL` section label
    - PROJECT rows (`report.byProject`) with uppercase `PROJECT` section label (schema v2; cost-sorted workspaces + nested models)
-4. Footer actions
+   - Optional error banner after PROJECT when `store.lastError` is present
+4. Fixed footer actions outside the scrolling content
 
 **Remove / replace from current UI:**
 - `Divider()` under header and above footer

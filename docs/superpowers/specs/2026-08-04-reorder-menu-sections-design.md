@@ -31,12 +31,12 @@ The change does not modify data loading or transformation. Each section continue
 
 ## Testing
 
-- Run the Swift test suite.
-- Build the menu bar application and repository CLI together.
+- Run `make build-release` to build the repository CLI and release menu bar application together.
+- Run `TOKENS_CLI="$PWD/cli/target/release/tokens" swift test` so the Swift suite explicitly exercises the repository-built CLI.
 - Launch the release menu bar application and visually confirm the final order.
 - Confirm COST rendering, PROJECT pagination, nested model pagination, scrolling, error-banner placement, and fixed-footer behavior remain intact.
 
-Final verification requires all current XCTest tests to pass against the repository's integrated behavior.
+Final verification requires the current XCTest suite to pass against the repository's integrated behavior.
 
 ## Non-Goals
 

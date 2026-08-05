@@ -14,7 +14,7 @@
 - The optional error banner remains after PROJECT.
 - The fixed footer remains outside the scrolling report body.
 - Do not change report schemas, aggregation, formatting, pagination, panel sizing, or section internals.
-- Run the current integrated Swift test suite and build the release menu bar product before final verification.
+- Run `make build-release`, then run the integrated Swift suite with `TOKENS_CLI="$PWD/cli/target/release/tokens" swift test` before final verification.
 - Do not create a git commit unless the user explicitly authorizes it.
 
 ## File Structure
@@ -89,15 +89,15 @@ Run the exact Python command from Step 1.
 
 Expected: PASS with no output.
 
-- [ ] **Step 4: Compile the menu bar product**
+- [ ] **Step 4: Build the repository CLI and release menu bar product**
 
 Run:
 
 ```bash
-swift build --product TokensMenuBar
+make build-release
 ```
 
-Expected: build completes successfully.
+Expected: the repository CLI and release menu bar application build successfully.
 
 - [ ] **Step 5: Review the focused runtime diff**
 
@@ -130,44 +130,58 @@ python3 - <<'PY'
 from pathlib import Path
 
 checks = {
-    "docs/design-spec.md": [
-        "**By day / cost**",
-        "**By client**",
-        "**By model**",
-        "**By project**",
-        "**Optional error banner**",
-        "**Fixed footer**",
-    ],
-    "docs/implementation-plan.md": [
-        "`COST · 14 DAYS`",
-        "CLIENT rows",
-        "MODEL rows",
-        "PROJECT rows",
-        "Footer actions",
-    ],
+    "docs/design-spec.md": {
+        "bounds": ("### Dropdown panel sections", "\nPeriod changes:"),
+        "markers": [
+            "**TOTAL**",
+            "**BREAKDOWN**",
+            "**COST**",
+            "**CLIENT**",
+            "**MODEL**",
+            "**PROJECT**",
+            "**Optional error banner**",
+            "**Fixed footer**",
+        ],
+    },
+    "docs/implementation-plan.md": {
+        "bounds": ("**Section order (top → bottom):**", "\n**Remove / replace from current UI:**"),
+        "markers": [
+            "TOTAL + cost/messages",
+            "BREAKDOWN 4 cards",
+            "`COST · 14 DAYS`",
+            "CLIENT rows",
+            "MODEL rows",
+            "PROJECT rows",
+            "Optional error banner after PROJECT",
+            "Fixed footer actions outside the scrolling content",
+        ],
+    },
 }
-for filename, markers in checks.items():
+for filename, check in checks.items():
     text = Path(filename).read_text()
-    positions = [text.index(marker) for marker in markers]
+    start, end = check["bounds"]
+    section = text[text.index(start):text.index(end, text.index(start))]
+    positions = [section.index(marker) for marker in check["markers"]]
     assert positions == sorted(positions), (filename, positions)
 PY
 ```
 
-Expected: FAIL because both documents currently place PROJECT before MODEL and COST.
+Expected: FAIL because the documents do not yet encode the complete required report-body order and scroll/footer boundaries.
 
 - [ ] **Step 2: Update the product design order**
 
 Replace the dropdown list with this order and preserve the existing section descriptions:
 
 ```markdown
-1. **Period control** — segmented: Today | 7d | 30d | All
-2. **Summary** — tokens, cost, messages; optional mini token-breakdown
-3. **By day / cost** — compact cost bars
-4. **By client** — sorted by tokens desc; progress share bar
-5. **By model** — flat list with provider label; share bar
-6. **By project** — sorted by cost desc; each workspace row shows cost + tokens and its models sorted by cost desc. `Unattributed` never exposes workspace keys or diagnostic session details
-7. **Optional error banner** — when present, follows PROJECT within the scrolling report content
-8. **Fixed footer** — outside the scrolling content; Last updated (`generatedAt`); **Refresh**; **Settings…**; **Open tokens.ci**; **Quit**
+1. **Period control** — segmented: Today | 7d | 30d | All; fixed above the report body
+2. **TOTAL** — required report-body section with total tokens, cost, messages, and date range
+3. **BREAKDOWN** — required report-body section with input, output, cache, and reasoning token metrics
+4. **COST** — compact daily cost bars
+5. **CLIENT** — sorted by tokens desc; progress share bar
+6. **MODEL** — flat list with provider label; share bar
+7. **PROJECT** — sorted by cost desc; each workspace row shows cost + tokens and its models sorted by cost desc. `Unattributed` never exposes workspace keys or diagnostic session details
+8. **Optional error banner** — when present, follows PROJECT within the scrolling report content
+9. **Fixed footer** — outside the scrolling content; Last updated (`generatedAt`); **Refresh**; **Settings…**; **Open tokens.ci**; **Quit**
 ```
 
 - [ ] **Step 3: Update the implementation-plan middle-scroll order**
@@ -181,9 +195,10 @@ Make the middle-scroll bullets appear in this order while preserving their exist
 - CLIENT rows (`report.byClient`) with uppercase `CLIENT` section label
 - MODEL rows (`report.byModel`) with uppercase `MODEL` section label
 - PROJECT rows (`report.byProject`) with uppercase `PROJECT` section label
+- Optional error banner after PROJECT when `store.lastError` is present
 ```
 
-Keep `Footer actions` after the middle scroll.
+Keep fixed footer actions outside the scrolling content.
 
 - [ ] **Step 4: Re-run the documentation order check**
 
@@ -225,25 +240,25 @@ git status --short
 
 Expected: no whitespace errors; only the approved design document, implementation plan, runtime file, and synchronized product documents are changed or untracked.
 
-- [ ] **Step 2: Build the release menu bar application**
+- [ ] **Step 2: Build the repository CLI and release menu bar application**
 
 Run:
 
 ```bash
-swift build -c release --product TokensMenuBar
+make build-release
 ```
 
-Expected: the release menu bar app builds successfully.
+Expected: the repository CLI and release menu bar application build successfully.
 
-- [ ] **Step 3: Run the full integrated Swift test suite**
+- [ ] **Step 3: Run the full integrated Swift test suite against the repository CLI**
 
 Run:
 
 ```bash
-swift test
+TOKENS_CLI="$PWD/cli/target/release/tokens" swift test
 ```
 
-Expected: all current XCTest tests pass, including the CLI integration coverage.
+Expected: the current XCTest suite passes, including the CLI integration coverage against the repository-built binary.
 
 - [ ] **Step 4: Restart the release menu bar application**
 
