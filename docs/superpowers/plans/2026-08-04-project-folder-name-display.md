@@ -131,13 +131,24 @@ Add this computed property inside `ProjectUsage` in `Sources/TokensMenuBarCore/M
 
 ```swift
 public var folderName: String {
-    guard let projectKey else { return "Unattributed" }
-    let fallbackName = displayName.isEmpty ? "Unattributed" : displayName
-    guard let lastComponent = projectKey
-        .split(separator: "/", omittingEmptySubsequences: true)
-        .last
+    guard projectKey != nil else { return "Unattributed" }
+
+    if !displayName.isEmpty {
+        if let lastComponent = displayName
+            .split(separator: "/", omittingEmptySubsequences: true)
+            .last
+        {
+            return String(lastComponent)
+        }
+        return displayName
+    }
+
+    guard let projectKey,
+          let lastComponent = projectKey
+            .split(separator: "/", omittingEmptySubsequences: true)
+            .last
     else {
-        return fallbackName
+        return "Unattributed"
     }
     return String(lastComponent)
 }

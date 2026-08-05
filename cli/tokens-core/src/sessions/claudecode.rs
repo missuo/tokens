@@ -585,6 +585,10 @@ pub fn parse_claude_file_with_cache_and_home(
                                 tool_message.tokens.input,
                                 tool_message.timestamp,
                             );
+                            update_workspace_label(
+                                &mut messages[existing_idx],
+                                tool_message.workspace_label.as_deref(),
+                            );
                             continue;
                         }
                         processed_hashes.insert(dedup_key.clone(), messages.len());
@@ -646,6 +650,10 @@ pub fn parse_claude_file_with_cache_and_home(
                                     choice,
                                 );
                             }
+                            update_workspace_label(
+                                &mut messages[existing_idx],
+                                workspace_label.as_deref(),
+                            );
                             continue;
                         }
                         Some(hash)
@@ -665,6 +673,10 @@ pub fn parse_claude_file_with_cache_and_home(
                                     choice,
                                 );
                             }
+                            update_workspace_label(
+                                &mut messages[existing_idx],
+                                workspace_label.as_deref(),
+                            );
                             continue;
                         }
                         Some(hash)
@@ -931,6 +943,12 @@ fn merge_claude_tool_result_duplicate(
     existing.tokens.input = existing.tokens.input.max(input_tokens.max(0));
     if timestamp_ms >= existing.timestamp {
         existing.set_timestamp(timestamp_ms);
+    }
+}
+
+fn update_workspace_label(existing: &mut UnifiedMessage, candidate: Option<&str>) {
+    if let Some(label) = candidate.map(str::trim).filter(|label| !label.is_empty()) {
+        existing.workspace_label = Some(label.to_string());
     }
 }
 
@@ -1744,5 +1762,68 @@ mod tests {
                 Some("-Users-example-Documents-Codebase-tokens")
             );
         }
+    }
+
+    #[test]
+    fn assistant_duplicate_with_later_cwd_updates_existing_label() {
+        let dir = tempdir().expect("tempdir");
+        let project_dir = dir
+            .path()
+            .join(".claude")
+            .join("projects")
+            .join("-Users-example-Documents-Codebase-tokens");
+        std::fs::create_dir_all(&project_dir).expect("project dir");
+        let session = project_dir.join("session.jsonl");
+        write_session(
+            &session,
+            &[
+                &assistant_line("msg-1", "req-1", None),
+                &assistant_line(
+                    "msg-1",
+                    "req-1",
+                    Some(
+                        "/Users/example/Documents/Codebase/tokens/.claude/worktrees/project-folder-name-display",
+                    ),
+                ),
+            ],
+        );
+
+        let messages = parse_claude_file(&session);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(
+            messages[0].workspace_key.as_deref(),
+            Some("-Users-example-Documents-Codebase-tokens")
+        );
+        assert_eq!(
+            messages[0].workspace_label.as_deref(),
+            Some("project-folder-name-display")
+        );
+    }
+
+    #[test]
+    fn tool_result_duplicate_with_later_cwd_updates_existing_label() {
+        let dir = tempdir().expect("tempdir");
+        let project_dir = dir
+            .path()
+            .join(".claude")
+            .join("projects")
+            .join("-Users-example-Documents-Codebase-tokens");
+        std::fs::create_dir_all(&project_dir).expect("project dir");
+        let session = project_dir.join("session.jsonl");
+        let first = r#"{"type":"tool_result","timestamp":"2026-08-04T12:00:00.000Z","tool_use_id":"tool-1","input_tokens":10}"#;
+        let second = r#"{"type":"tool_result","timestamp":"2026-08-04T12:00:01.000Z","tool_use_id":"tool-1","input_tokens":20,"cwd":"/Users/example/Documents/Codebase/tokens/.claude/worktrees/project-folder-name-display"}"#;
+        write_session(&session, &[first, second]);
+
+        let messages = parse_claude_file(&session);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].tokens.input, 20);
+        assert_eq!(
+            messages[0].workspace_key.as_deref(),
+            Some("-Users-example-Documents-Codebase-tokens")
+        );
+        assert_eq!(
+            messages[0].workspace_label.as_deref(),
+            Some("project-folder-name-display")
+        );
     }
 }
