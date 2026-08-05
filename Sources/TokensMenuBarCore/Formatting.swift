@@ -163,6 +163,11 @@ public enum Formatting {
             + "\(compactTokens(bucket.totals.tokens, locale: locale)) tokens\(state)"
     }
 
+    /// Compact covered-range label for the cost chart tooltip. Ranges within
+    /// a single calendar day keep their hours (`Aug 5, 09:00 – 10:00`); a
+    /// full day collapses to the date alone; ranges spanning two or more days
+    /// drop the hours (`Aug 5 – 7`, `Aug 30 – Sep 1`). The covered end is
+    /// exclusive, so day boundaries are derived from the last covered moment.
     public static func chartBucketTooltipRange(
         _ bucket: UsageTimeBucket,
         timeZone: TimeZone,
@@ -172,13 +177,37 @@ public enum Formatting {
               let end = parseISO8601(bucket.coveredEndExclusive) else {
             return "\(bucket.coveredStart) – \(bucket.coveredEndExclusive)"
         }
+        let calendar = DateRangePickerConversion.calendar(timeZone: timeZone)
         let formatter = DateFormatter()
-        formatter.calendar = DateRangePickerConversion.calendar(timeZone: timeZone)
+        formatter.calendar = calendar
         formatter.timeZone = timeZone
         formatter.locale = locale
-        formatter.dateFormat = "MMM d, HH:mm XXXXX"
-        return "\(formatter.string(from: start)) – \(formatter.string(from: end))"
-            .replacingOccurrences(of: "-", with: "−")
+
+        func string(from date: Date, format: String) -> String {
+            formatter.dateFormat = format
+            return formatter.string(from: date)
+        }
+
+        // Step back an instant from the exclusive end to get the last
+        // covered moment for day-boundary decisions.
+        let lastCovered = end.addingTimeInterval(-0.001)
+
+        if calendar.isDate(start, inSameDayAs: lastCovered) {
+            if calendar.startOfDay(for: start) == start,
+               calendar.startOfDay(for: end) == end {
+                // Covers the whole day; the hours carry no information.
+                return string(from: start, format: "MMM d")
+            }
+            return "\(string(from: start, format: "MMM d, HH:mm")) – "
+                + string(from: end, format: "HH:mm")
+        }
+
+        if calendar.isDate(start, equalTo: lastCovered, toGranularity: .month) {
+            return "\(string(from: start, format: "MMM d")) – "
+                + string(from: lastCovered, format: "d")
+        }
+        return "\(string(from: start, format: "MMM d")) – "
+            + string(from: lastCovered, format: "MMM d")
     }
 
     private static func chartLabel(

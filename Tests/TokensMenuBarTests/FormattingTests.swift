@@ -133,6 +133,109 @@ final class FormattingTests: XCTestCase {
         XCTAssertEqual(Formatting.menuBarTitle(report: nil, mode: .tokens, missingBinary: true, hasError: false), "tokens?")
     }
 
+    func testTooltipRangeWithinSingleDayKeepsHours() throws {
+        let timezone = try XCTUnwrap(TimeZone(identifier: "UTC"))
+        let locale = Locale(identifier: "en_US")
+
+        XCTAssertEqual(
+            Formatting.chartBucketTooltipRange(
+                bucket(
+                    id: "hour",
+                    start: "2026-08-05T09:00:00Z",
+                    end: "2026-08-05T10:00:00Z"
+                ),
+                timeZone: timezone,
+                locale: locale
+            ),
+            "Aug 5, 09:00 – 10:00"
+        )
+        XCTAssertEqual(
+            Formatting.chartBucketTooltipRange(
+                bucket(
+                    id: "partial-day",
+                    start: "2026-08-05T00:00:00Z",
+                    end: "2026-08-05T14:30:00Z"
+                ),
+                timeZone: timezone,
+                locale: locale
+            ),
+            "Aug 5, 00:00 – 14:30"
+        )
+    }
+
+    func testTooltipRangeFullDayCollapsesToDate() throws {
+        let timezone = try XCTUnwrap(TimeZone(identifier: "UTC"))
+        let locale = Locale(identifier: "en_US")
+
+        XCTAssertEqual(
+            Formatting.chartBucketTooltipRange(
+                bucket(
+                    id: "full-day",
+                    start: "2026-08-05T00:00:00Z",
+                    end: "2026-08-06T00:00:00Z"
+                ),
+                timeZone: timezone,
+                locale: locale
+            ),
+            "Aug 5"
+        )
+    }
+
+    func testTooltipRangeMultipleDaysDropsHours() throws {
+        let timezone = try XCTUnwrap(TimeZone(identifier: "UTC"))
+        let locale = Locale(identifier: "en_US")
+
+        // Full calendar days: the exclusive end lands on the next midnight.
+        XCTAssertEqual(
+            Formatting.chartBucketTooltipRange(
+                bucket(
+                    id: "same-month",
+                    start: "2026-08-05T00:00:00Z",
+                    end: "2026-08-08T00:00:00Z"
+                ),
+                timeZone: timezone,
+                locale: locale
+            ),
+            "Aug 5 – 7"
+        )
+        XCTAssertEqual(
+            Formatting.chartBucketTooltipRange(
+                bucket(
+                    id: "partial-days",
+                    start: "2026-08-05T09:00:00Z",
+                    end: "2026-08-07T14:30:00Z"
+                ),
+                timeZone: timezone,
+                locale: locale
+            ),
+            "Aug 5 – 7"
+        )
+        XCTAssertEqual(
+            Formatting.chartBucketTooltipRange(
+                bucket(
+                    id: "cross-month",
+                    start: "2026-08-30T00:00:00Z",
+                    end: "2026-09-02T00:00:00Z"
+                ),
+                timeZone: timezone,
+                locale: locale
+            ),
+            "Aug 30 – Sep 1"
+        )
+        XCTAssertEqual(
+            Formatting.chartBucketTooltipRange(
+                bucket(
+                    id: "cross-year",
+                    start: "2025-12-30T00:00:00Z",
+                    end: "2026-01-02T00:00:00Z"
+                ),
+                timeZone: timezone,
+                locale: locale
+            ),
+            "Dec 30 – Jan 1"
+        )
+    }
+
     private func bucket(id: String, start: String, end: String) -> UsageTimeBucket {
         UsageTimeBucket(
             id: id,
