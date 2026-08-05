@@ -179,9 +179,9 @@ struct PendingKimiRequest {
 
 impl PendingKimiRequest {
     fn from_wire_line(wire_line: &KimiCodeWireLine) -> Option<Self> {
-        let model_alias = wire_line.model_alias.as_deref()?.trim();
+        let model_alias = wire_line.model_alias.as_deref()?;
         let model = normalize_kimi_code_model(wire_line.model.as_deref()?.trim());
-        if model_alias.is_empty() || model.is_empty() {
+        if model_alias.trim().is_empty() || model.is_empty() {
             return None;
         }
 
@@ -274,8 +274,7 @@ pub fn parse_kimi_code_file(path: &Path) -> Vec<UnifiedMessage> {
             let model_alias = wire_line
                 .model_alias
                 .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty());
+                .filter(|value| !value.trim().is_empty());
             if let Some(request) = PendingKimiRequest::from_wire_line(&wire_line) {
                 pending_requests.push(request);
             } else if let Some(model_alias) = model_alias {
@@ -613,6 +612,42 @@ mod tests {
 
         assert_eq!(messages.len(), 1);
         assert_identity(&messages[0], "cheap", "unknown");
+    }
+
+    #[test]
+    fn kimi_code_alias_whitespace_mismatch_does_not_restore_request_model() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = write_kimi_code_wire(
+            &temp_dir,
+            "agent-1",
+            &[
+                request(" cheap ", "grok-4.5", "openai", 1_000),
+                usage("cheap", "turn", 6, 3, 0, 0, 2_000),
+            ],
+        );
+
+        let messages = parse_kimi_code_file(&path);
+
+        assert_eq!(messages.len(), 1);
+        assert_identity(&messages[0], "cheap", "unknown");
+    }
+
+    #[test]
+    fn kimi_code_byte_identical_alias_whitespace_restores_request_model() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = write_kimi_code_wire(
+            &temp_dir,
+            "agent-1",
+            &[
+                request(" cheap ", "grok-4.5", "openai", 1_000),
+                usage(" cheap ", "turn", 6, 3, 0, 0, 2_000),
+            ],
+        );
+
+        let messages = parse_kimi_code_file(&path);
+
+        assert_eq!(messages.len(), 1);
+        assert_identity(&messages[0], "grok-4.5", "xai");
     }
 
     #[test]
