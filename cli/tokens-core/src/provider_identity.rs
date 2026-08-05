@@ -12,7 +12,7 @@ fn canonicalize_provider_segment(segment: &str) -> Option<String> {
         "" | "unknown" => return None,
         "x_ai" | "xai" => "xai",
         "z_ai" | "zai" => "zai",
-        "moonshot" | "moonshotai" => "moonshotai",
+        "kimi" | "moonshot" | "moonshotai" => "moonshotai",
         "meta" | "meta_llama" => "meta_llama",
         "azure" | "azure_ai" => "azure_ai",
         "anthropic" | "vertex" | "vertex_ai" => "anthropic",
@@ -179,8 +179,11 @@ pub fn inferred_provider_from_model(model: &str) -> Option<&'static str> {
         return Some("sakana");
     }
 
-    // Kimi (Moonshot AI) — `kimi`, `kimi-k2.5`, `kimi-code` variants
-    if contains_delimited(&lower, "kimi") {
+    // Kimi / Moonshot AI — `kimi-k2.5`, `kimi-code`, `moonshot-v1`, etc.
+    if contains_delimited(&lower, "kimi")
+        || contains_delimited(&lower, "moonshot")
+        || contains_delimited(&lower, "moonshotai")
+    {
         return Some("moonshotai");
     }
     // MiMo (Xiaomi) — `mimo-v2.5` etc.
@@ -195,3 +198,33 @@ pub fn inferred_provider_from_model(model: &str) -> Option<&'static str> {
     None
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn canonicalizes_kimi_provider_alias() {
+        assert_eq!(canonical_provider("kimi").as_deref(), Some("moonshotai"));
+    }
+
+    #[test]
+    fn infers_moonshot_provider_from_model_family() {
+        assert_eq!(
+            inferred_provider_from_model("moonshot-v1"),
+            Some("moonshotai")
+        );
+        assert_eq!(
+            inferred_provider_from_model("MoonshotAI/moonshot-v1-128k"),
+            Some("moonshotai")
+        );
+        assert_eq!(
+            inferred_provider_from_model("moonshotai-v1"),
+            Some("moonshotai")
+        );
+    }
+
+    #[test]
+    fn does_not_infer_moonshot_from_embedded_substring() {
+        assert_eq!(inferred_provider_from_model("notmoonshot-proxy"), None);
+    }
+}

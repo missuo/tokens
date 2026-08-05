@@ -803,7 +803,10 @@ fn parser_version(client: ClientId) -> u32 {
         // Desktop v1 parsed a non-ACP shape and did not track its CLI title
         // lookup; its timestamp handling is unaffected by the #890 follow-up.
         ClientId::DevinDesktop => 2,
-        ClientId::Claude => 2,
+        // v2->v3: Claude session labels prefer the latest valid JSONL `cwd`
+        // final folder component while keeping the path-derived workspace key;
+        // wrong-typed cwd metadata is ignored without rejecting usage entries.
+        ClientId::Claude => 3,
         // Junie's usage-event timestamp is now back-calculated to the call
         // start (timestampMs - usage.time) instead of the recorded
         // (end-anchored) timestampMs. Follow-up to #890.
@@ -826,9 +829,11 @@ fn parser_version(client: ClientId) -> u32 {
         // to the (end-anchored) turn_end timestamp. Second-round follow-up
         // to #890.
         ClientId::Kiro => 2,
-        // Kimi now checks each token bucket independently when deciding
-        // whether a usage record is empty, avoiding an overflowing sum.
-        ClientId::Kimi => 2,
+        // v1->v2: check each token bucket independently when deciding whether
+        // a usage record is empty, avoiding an overflowing sum.
+        // v2->v3: correlate Kimi Code usage aliases with preceding request
+        // records to restore concrete model and provider identity.
+        ClientId::Kimi => 3,
         _ => 1,
     }
 }
@@ -1795,5 +1800,11 @@ mod tests {
             read_shard(file.path(), identity),
             ShardReadStatus::Stale
         ));
+    }
+
+    #[test]
+    fn kimi_parser_version_bump_is_client_scoped() {
+        assert_eq!(CACHE_FORMAT_VERSION, 6);
+        assert_eq!(parser_version(ClientId::Kimi), 3);
     }
 }

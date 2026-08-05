@@ -9,7 +9,7 @@ public enum MenuBarLayout {
     public static let sectionSpacing: CGFloat = 22
     /// CLIENT / PROJECT / MODEL lists: collapsed page size; chevron loads another page.
     public static let listPageSize = 5
-    /// Nested models under each PROJECT row: collapsed page size; More loads another page.
+    /// Nested models under each PROJECT row: collapsed page size; expand control loads another page.
     public static let projectModelPageSize = 3
     public static let shareBarHeight: CGFloat = 2
     public static let chartHeight: CGFloat = 128

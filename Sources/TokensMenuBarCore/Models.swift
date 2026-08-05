@@ -375,6 +375,25 @@ public struct ProjectUsage: Codable, Equatable, Identifiable {
     public let cost: Double
     public let messages: Int32
     public let models: [ProjectModelUsage]
+
+    public var folderName: String {
+        guard let projectKey else { return "Unattributed" }
+
+        return Self.usableFolderName(from: displayName)
+            ?? Self.usableFolderName(from: projectKey)
+            ?? "Unattributed"
+    }
+
+    private static func usableFolderName(from value: String) -> String? {
+        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return normalized
+            .split(separator: "/", omittingEmptySubsequences: true)
+            .reversed()
+            .lazy
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first { !$0.isEmpty }
+    }
 }
 
 public struct ProjectModelUsage: Codable, Equatable, Identifiable {

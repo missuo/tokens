@@ -10,7 +10,7 @@ use super::{
     normalize_agent_name, normalize_workspace_key, workspace_label_from_key, UnifiedMessage,
 };
 use crate::{pricing, provider_identity, TokenBreakdown};
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader};
@@ -40,6 +40,19 @@ pub struct ClaudeEntry {
     /// Optional billing or routing provider emitted by wrappers around Claude Code.
     #[serde(rename = "providerId", alias = "provider_id", alias = "provider")]
     pub provider_id: Option<String>,
+    /// Working directory recorded on session entries. Used only for display labels;
+    /// project identity remains the path-derived workspace key. Wrong-typed values
+    /// are ignored so display-only metadata cannot reject an otherwise valid entry.
+    #[serde(default, deserialize_with = "deserialize_optional_string_lenient")]
+    pub cwd: Option<String>,
+}
+
+fn deserialize_optional_string_lenient<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Value::deserialize(deserializer)?;
+    Ok(value.as_str().map(str::to_string))
 }
 
 /// Meta sidecar written next to nested-layout sidechain transcripts.
@@ -440,7 +453,10 @@ pub fn parse_claude_file_with_cache_and_home(
         return Vec::new();
     }
 
-    let (workspace_key, workspace_label) = claude_workspace_from_path(path);
+    let (workspace_key, path_workspace_label) = claude_workspace_from_path(path);
+    // Display label may be refined by later `cwd` values in the session JSONL.
+    // Project identity (`workspace_key`) stays path-derived and never switches to cwd.
+    let mut workspace_label = path_workspace_label;
     let cc_mirror_metadata = cc_mirror_variant_metadata_from_path(path, home_dir);
     let client_id = cc_mirror_metadata
         .as_ref()
@@ -522,6 +538,12 @@ pub fn parse_claude_file_with_cache_and_home(
         buffer.clear();
         buffer.extend_from_slice(trimmed.as_bytes());
         if let Ok(entry) = simd_json::from_slice::<ClaudeEntry>(&mut buffer) {
+            if workspace_key.is_some() {
+                if let Some(label) = entry.cwd.as_deref().and_then(cwd_label_from_raw) {
+                    workspace_label = Some(label);
+                }
+            }
+
             // Detect sidechain on the first parseable entry (any type).
             // All lines in a subagent file carry isSidechain: true.
             if !sidechain_detected {
@@ -575,6 +597,11 @@ pub fn parse_claude_file_with_cache_and_home(
                                 tool_message.tokens.input,
                                 tool_message.timestamp,
                                 tool_message.timestamp_provenance,
+                            );
+                            update_workspace_labels_after_duplicate(
+                                &mut messages,
+                                existing_idx,
+                                tool_message.workspace_label.as_deref(),
                             );
                             continue;
                         }
@@ -637,6 +664,11 @@ pub fn parse_claude_file_with_cache_and_home(
                                     choice,
                                 );
                             }
+                            update_workspace_labels_after_duplicate(
+                                &mut messages,
+                                existing_idx,
+                                workspace_label.as_deref(),
+                            );
                             continue;
                         }
                         Some(hash)
@@ -656,6 +688,11 @@ pub fn parse_claude_file_with_cache_and_home(
                                     choice,
                                 );
                             }
+                            update_workspace_labels_after_duplicate(
+                                &mut messages,
+                                existing_idx,
+                                workspace_label.as_deref(),
+                            );
                             continue;
                         }
                         Some(hash)
@@ -799,6 +836,16 @@ fn claude_workspace_from_path(path: &Path) -> (Option<String>, Option<String>) {
     (None, None)
 }
 
+/// Derive a short folder label from a Claude entry `cwd` without using it as identity.
+fn cwd_label_from_raw(raw: &str) -> Option<String> {
+    let component = raw.trim_end_matches('/').rsplit('/').next()?.trim();
+    if component.is_empty() {
+        None
+    } else {
+        Some(component.to_string())
+    }
+}
+
 fn sanitize_cc_mirror_segment(raw: &str) -> String {
     let mut segment: String = raw
         .trim()
@@ -921,13 +968,31 @@ fn merge_claude_tool_result_duplicate(
     timestamp_provenance: crate::TimestampProvenance,
 ) {
     existing.tokens.input = existing.tokens.input.max(input_tokens.max(0));
-    let existing_is_exact = existing.is_trustworthy_for_hourly();
-    let candidate_is_exact = timestamp_provenance.is_trustworthy_for_hourly();
-    if (candidate_is_exact && !existing_is_exact)
-        || (candidate_is_exact == existing_is_exact && timestamp_ms > existing.timestamp)
-    {
+    if !existing.is_trustworthy_for_hourly() && timestamp_provenance.is_trustworthy_for_hourly() {
         existing.set_timestamp(timestamp_ms);
         existing.set_timestamp_provenance(timestamp_provenance);
+    }
+}
+
+fn update_workspace_labels_after_duplicate(
+    messages: &mut [UnifiedMessage],
+    duplicate_idx: usize,
+    candidate: Option<&str>,
+) {
+    let Some(label) = candidate.map(str::trim).filter(|label| !label.is_empty()) else {
+        return;
+    };
+    let duplicate_timestamp = messages[duplicate_idx].timestamp;
+    let workspace_key = messages[duplicate_idx].workspace_key.clone();
+
+    for (index, message) in messages.iter_mut().enumerate() {
+        if index == duplicate_idx
+            || (workspace_key.is_some()
+                && message.workspace_key == workspace_key
+                && message.timestamp >= duplicate_timestamp)
+        {
+            message.workspace_label = Some(label.to_string());
+        }
     }
 }
 
@@ -1586,10 +1651,10 @@ fn finalize_headless_state(
         },
         0.0,
     );
-
     if state.timestamp_ms.is_none() {
         message.set_timestamp_provenance(crate::TimestampProvenance::Fallback);
     }
+
     *state = ClaudeHeadlessState::default();
     Some(message)
 }
@@ -1597,6 +1662,29 @@ fn finalize_headless_state(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
+    use tempfile::tempdir;
+
+    fn write_session(path: &Path, lines: &[&str]) {
+        let mut file = std::fs::File::create(path).expect("create session");
+        for line in lines {
+            writeln!(file, "{line}").expect("write session line");
+        }
+    }
+
+    fn assistant_line(id: &str, request_id: &str, cwd: Option<&str>) -> String {
+        assistant_line_at(id, request_id, "2026-08-04T12:00:00.000Z", cwd)
+    }
+
+    fn assistant_line_at(id: &str, request_id: &str, timestamp: &str, cwd: Option<&str>) -> String {
+        let cwd_json = match cwd {
+            Some(value) => format!(r#","cwd":"{value}""#),
+            None => String::new(),
+        };
+        format!(
+            r#"{{"type":"assistant","timestamp":"{timestamp}","requestId":"{request_id}","message":{{"id":"{id}","model":"claude-sonnet-4-5","usage":{{"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}}{cwd_json}}}"#
+        )
+    }
 
     #[test]
     fn assistant_duplicate_recovers_exact_timestamp_from_fallback() {
@@ -1673,5 +1761,428 @@ mod tests {
         assert_eq!(existing.timestamp, 1_000);
         assert!(existing.is_trustworthy_for_hourly());
         assert_eq!(existing.tokens.input, 10);
+    }
+
+    #[test]
+    fn cwd_label_replaces_encoded_path_label_without_changing_key() {
+        let dir = tempdir().expect("tempdir");
+        let project_dir = dir
+            .path()
+            .join(".claude")
+            .join("projects")
+            .join("-Users-example-Documents-Codebase-tokens");
+        std::fs::create_dir_all(&project_dir).expect("project dir");
+        let session = project_dir.join("session.jsonl");
+        write_session(
+            &session,
+            &[&assistant_line(
+                "msg-1",
+                "req-1",
+                Some("/Users/example/Documents/Codebase/tokens"),
+            )],
+        );
+
+        let messages = parse_claude_file(&session);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(
+            messages[0].workspace_key.as_deref(),
+            Some("-Users-example-Documents-Codebase-tokens")
+        );
+        assert_eq!(messages[0].workspace_label.as_deref(), Some("tokens"));
+    }
+
+    #[test]
+    fn cwd_label_preserves_hyphenated_worktree_folder_name() {
+        let dir = tempdir().expect("tempdir");
+        let project_dir = dir
+            .path()
+            .join(".claude")
+            .join("projects")
+            .join("-Users-example-Documents-Codebase-tokens--claude-worktrees-project-folder-name-display");
+        std::fs::create_dir_all(&project_dir).expect("project dir");
+        let session = project_dir.join("session.jsonl");
+        let long_folder = "project-folder-name-display";
+        let cwd =
+            format!("/Users/example/Documents/Codebase/tokens/.claude/worktrees/{long_folder}");
+        write_session(&session, &[&assistant_line("msg-1", "req-1", Some(&cwd))]);
+
+        let messages = parse_claude_file(&session);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(
+            messages[0].workspace_key.as_deref(),
+            Some(
+                "-Users-example-Documents-Codebase-tokens--claude-worktrees-project-folder-name-display"
+            )
+        );
+        assert_eq!(messages[0].workspace_label.as_deref(), Some(long_folder));
+    }
+
+    #[test]
+    fn later_valid_cwd_updates_label_for_later_messages() {
+        let dir = tempdir().expect("tempdir");
+        let project_dir = dir
+            .path()
+            .join(".claude")
+            .join("projects")
+            .join("-Users-example-Documents-Codebase-tokens");
+        std::fs::create_dir_all(&project_dir).expect("project dir");
+        let session = project_dir.join("session.jsonl");
+        write_session(
+            &session,
+            &[
+                &assistant_line(
+                    "msg-1",
+                    "req-1",
+                    Some("/Users/example/Documents/Codebase/tokens"),
+                ),
+                &assistant_line(
+                    "msg-2",
+                    "req-2",
+                    Some(
+                        "/Users/example/Documents/Codebase/tokens/.claude/worktrees/project-folder-name-display",
+                    ),
+                ),
+            ],
+        );
+
+        let messages = parse_claude_file(&session);
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].workspace_label.as_deref(), Some("tokens"));
+        assert_eq!(
+            messages[1].workspace_label.as_deref(),
+            Some("project-folder-name-display")
+        );
+        assert_eq!(
+            messages[0].workspace_key.as_deref(),
+            messages[1].workspace_key.as_deref()
+        );
+        assert_eq!(
+            messages[0].workspace_key.as_deref(),
+            Some("-Users-example-Documents-Codebase-tokens")
+        );
+    }
+
+    #[test]
+    fn missing_or_unusable_cwd_falls_back_to_path_derived_label() {
+        let dir = tempdir().expect("tempdir");
+        let project_dir = dir
+            .path()
+            .join(".claude")
+            .join("projects")
+            .join("-Users-example-Documents-Codebase-tokens");
+        std::fs::create_dir_all(&project_dir).expect("project dir");
+        let session = project_dir.join("session.jsonl");
+        write_session(
+            &session,
+            &[
+                &assistant_line("msg-1", "req-1", None),
+                &assistant_line("msg-2", "req-2", Some("///")),
+                &assistant_line("msg-3", "req-3", Some("   ")),
+            ],
+        );
+
+        let messages = parse_claude_file(&session);
+        assert_eq!(messages.len(), 3);
+        for message in &messages {
+            assert_eq!(
+                message.workspace_key.as_deref(),
+                Some("-Users-example-Documents-Codebase-tokens")
+            );
+            assert_eq!(
+                message.workspace_label.as_deref(),
+                Some("-Users-example-Documents-Codebase-tokens")
+            );
+        }
+    }
+
+    #[test]
+    fn assistant_duplicate_with_later_cwd_updates_existing_label() {
+        let dir = tempdir().expect("tempdir");
+        let project_dir = dir
+            .path()
+            .join(".claude")
+            .join("projects")
+            .join("-Users-example-Documents-Codebase-tokens");
+        std::fs::create_dir_all(&project_dir).expect("project dir");
+        let session = project_dir.join("session.jsonl");
+        write_session(
+            &session,
+            &[
+                &assistant_line("msg-1", "req-1", None),
+                &assistant_line(
+                    "msg-1",
+                    "req-1",
+                    Some(
+                        "/Users/example/Documents/Codebase/tokens/.claude/worktrees/project-folder-name-display",
+                    ),
+                ),
+            ],
+        );
+
+        let messages = parse_claude_file(&session);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(
+            messages[0].workspace_key.as_deref(),
+            Some("-Users-example-Documents-Codebase-tokens")
+        );
+        assert_eq!(
+            messages[0].workspace_label.as_deref(),
+            Some("project-folder-name-display")
+        );
+    }
+
+    #[test]
+    fn malformed_assistant_duplicate_cwd_does_not_double_aggregated_usage() {
+        let dir = tempdir().expect("tempdir");
+        let project_dir = dir
+            .path()
+            .join(".claude")
+            .join("projects")
+            .join("-Users-example-Documents-Codebase-tokens");
+        std::fs::create_dir_all(&project_dir).expect("project dir");
+        let session = project_dir.join("session.jsonl");
+        let malformed_duplicate = r#"{"type":"assistant","timestamp":"2026-08-04T12:00:01.000Z","requestId":"req-1","cwd":{"unexpected":true},"message":{"id":"msg-1","model":"claude-sonnet-4-5","usage":{"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}"#;
+        write_session(
+            &session,
+            &[&assistant_line("msg-1", "req-1", None), malformed_duplicate],
+        );
+
+        let messages = parse_claude_file(&session);
+        let days = crate::aggregator::aggregate_by_date(messages);
+        assert_eq!(days.len(), 1);
+        assert_eq!(days[0].totals.tokens, 15);
+        assert_eq!(days[0].totals.messages, 1);
+    }
+
+    #[test]
+    fn malformed_tool_result_duplicate_cwd_does_not_double_aggregated_usage() {
+        let dir = tempdir().expect("tempdir");
+        let project_dir = dir
+            .path()
+            .join(".claude")
+            .join("projects")
+            .join("-Users-example-Documents-Codebase-tokens");
+        std::fs::create_dir_all(&project_dir).expect("project dir");
+        let session = project_dir.join("session.jsonl");
+        let assistant = assistant_line("msg-1", "req-1", None);
+        let first_tool_result = r#"{"type":"tool_result","timestamp":"2026-08-04T12:00:01.000Z","tool_use_id":"tool-1","input_tokens":10}"#;
+        let malformed_duplicate = r#"{"type":"tool_result","timestamp":"2026-08-04T12:00:02.000Z","tool_use_id":"tool-1","input_tokens":20,"cwd":["unexpected"],"model":"claude-sonnet-4-5","usage":{"input_tokens":20,"output_tokens":0}}"#;
+        write_session(
+            &session,
+            &[&assistant, first_tool_result, malformed_duplicate],
+        );
+
+        let messages = parse_claude_file(&session);
+        let days = crate::aggregator::aggregate_by_date(messages);
+        assert_eq!(days.len(), 1);
+        assert_eq!(days[0].totals.tokens, 35);
+        assert_eq!(days[0].totals.messages, 1);
+    }
+
+    #[test]
+    fn tool_result_duplicate_merge_preserves_original_timestamp_and_day() {
+        let original_timestamp = parse_claude_entry_timestamp(Some("2026-08-04T12:00:00.000Z"))
+            .expect("original timestamp");
+        let duplicate_timestamp = parse_claude_entry_timestamp(Some("2026-08-05T12:00:00.000Z"))
+            .expect("duplicate timestamp");
+        let mut message = UnifiedMessage::new(
+            "claude",
+            "claude-sonnet-4-5",
+            "anthropic",
+            "session",
+            original_timestamp,
+            TokenBreakdown {
+                input: 10,
+                ..TokenBreakdown::default()
+            },
+            0.0,
+        );
+        let original_date = message.date.clone();
+
+        merge_claude_tool_result_duplicate(
+            &mut message,
+            20,
+            duplicate_timestamp,
+            crate::TimestampProvenance::Exact,
+        );
+
+        assert_eq!(message.tokens.input, 20);
+        assert_eq!(message.timestamp, original_timestamp);
+        assert_eq!(message.date, original_date);
+    }
+
+    #[test]
+    fn cross_midnight_tool_result_duplicate_keeps_original_aggregation_day() {
+        let dir = tempdir().expect("tempdir");
+        let project_dir = dir
+            .path()
+            .join(".claude")
+            .join("projects")
+            .join("-Users-example-Documents-Codebase-tokens");
+        std::fs::create_dir_all(&project_dir).expect("project dir");
+        let session = project_dir.join("session.jsonl");
+        let original_timestamp = parse_claude_entry_timestamp(Some("2026-08-04T12:00:00.000Z"))
+            .expect("original timestamp");
+        let expected_date = UnifiedMessage::new(
+            "claude",
+            "claude-sonnet-4-5",
+            "anthropic",
+            "expected",
+            original_timestamp,
+            TokenBreakdown::default(),
+            0.0,
+        )
+        .date;
+        let first = r#"{"type":"tool_result","timestamp":"2026-08-04T12:00:00.000Z","tool_use_id":"tool-1","input_tokens":10}"#;
+        let duplicate = r#"{"type":"tool_result","timestamp":"2026-08-05T12:00:00.000Z","tool_use_id":"tool-1","input_tokens":20}"#;
+        write_session(&session, &[first, duplicate]);
+
+        let messages = parse_claude_file(&session);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].tokens.input, 20);
+        assert_eq!(messages[0].timestamp, original_timestamp);
+        assert_eq!(messages[0].date, expected_date);
+
+        let days = crate::aggregator::aggregate_by_date(messages);
+        assert_eq!(days.len(), 1);
+        assert_eq!(days[0].date, expected_date);
+        assert_eq!(days[0].totals.tokens, 20);
+        assert_eq!(days[0].totals.messages, 0);
+    }
+
+    #[test]
+    fn tool_result_duplicate_with_later_cwd_updates_existing_label() {
+        let dir = tempdir().expect("tempdir");
+        let project_dir = dir
+            .path()
+            .join(".claude")
+            .join("projects")
+            .join("-Users-example-Documents-Codebase-tokens");
+        std::fs::create_dir_all(&project_dir).expect("project dir");
+        let session = project_dir.join("session.jsonl");
+        let first = r#"{"type":"tool_result","timestamp":"2026-08-04T12:00:00.000Z","tool_use_id":"tool-1","input_tokens":10}"#;
+        let second = r#"{"type":"tool_result","timestamp":"2026-08-04T12:00:01.000Z","tool_use_id":"tool-1","input_tokens":20,"cwd":"/Users/example/Documents/Codebase/tokens/.claude/worktrees/project-folder-name-display"}"#;
+        write_session(&session, &[first, second]);
+
+        let messages = parse_claude_file(&session);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].tokens.input, 20);
+        assert_eq!(
+            messages[0].workspace_key.as_deref(),
+            Some("-Users-example-Documents-Codebase-tokens")
+        );
+        assert_eq!(
+            messages[0].workspace_label.as_deref(),
+            Some("project-folder-name-display")
+        );
+    }
+
+    #[test]
+    fn whitespace_leaf_cwd_preserves_previous_valid_label() {
+        let dir = tempdir().expect("tempdir");
+        let project_dir = dir
+            .path()
+            .join(".claude")
+            .join("projects")
+            .join("-Users-example-Documents-Codebase-tokens");
+        std::fs::create_dir_all(&project_dir).expect("project dir");
+        let session = project_dir.join("session.jsonl");
+        write_session(
+            &session,
+            &[
+                &assistant_line(
+                    "msg-1",
+                    "req-1",
+                    Some("/Users/example/Documents/Codebase/tokens"),
+                ),
+                &assistant_line("msg-2", "req-2", Some("/Users/example/   /")),
+            ],
+        );
+
+        let messages = parse_claude_file(&session);
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].workspace_label.as_deref(), Some("tokens"));
+        assert_eq!(messages[1].workspace_label.as_deref(), Some("tokens"));
+    }
+
+    #[test]
+    fn cwd_label_preserves_literal_backslashes() {
+        let dir = tempdir().expect("tempdir");
+        let project_dir = dir
+            .path()
+            .join(".claude")
+            .join("projects")
+            .join("-Users-example-client-archive");
+        std::fs::create_dir_all(&project_dir).expect("project dir");
+        let session = project_dir.join("session.jsonl");
+        write_session(
+            &session,
+            &[&assistant_line(
+                "msg-1",
+                "req-1",
+                Some(r"/Users/example/client\\archive/"),
+            )],
+        );
+
+        let messages = parse_claude_file(&session);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(
+            messages[0].workspace_label.as_deref(),
+            Some(r"client\archive")
+        );
+    }
+
+    #[test]
+    fn late_duplicate_cwd_wins_project_label_without_changing_usage() {
+        let dir = tempdir().expect("tempdir");
+        let project_key = "-Users-example-Documents-Codebase-tokens";
+        let project_dir = dir
+            .path()
+            .join(".claude")
+            .join("projects")
+            .join(project_key);
+        std::fs::create_dir_all(&project_dir).expect("project dir");
+        let session = project_dir.join("session.jsonl");
+        write_session(
+            &session,
+            &[
+                &assistant_line_at(
+                    "msg-a",
+                    "req-a",
+                    "2026-08-04T12:00:00.000Z",
+                    Some("/Users/example/Documents/Codebase/tokens"),
+                ),
+                &assistant_line_at(
+                    "msg-b",
+                    "req-b",
+                    "2026-08-04T12:00:02.000Z",
+                    None,
+                ),
+                &assistant_line_at(
+                    "msg-a",
+                    "req-a",
+                    "2026-08-05T12:00:03.000Z",
+                    Some(
+                        "/Users/example/Documents/Codebase/tokens/.claude/worktrees/project-folder-name-display",
+                    ),
+                ),
+            ],
+        );
+
+        let messages = parse_claude_file(&session);
+        assert_eq!(messages.len(), 2);
+        let days = crate::aggregator::aggregate_by_date(messages);
+        assert_eq!(days.len(), 1);
+        assert_eq!(days[0].totals.tokens, 30);
+        assert_eq!(days[0].totals.messages, 2);
+        assert_eq!(days[0].projects.len(), 1);
+        assert_eq!(
+            days[0].projects[0].project_key.as_deref(),
+            Some(project_key)
+        );
+        assert_eq!(
+            days[0].projects[0].project_label,
+            "project-folder-name-display"
+        );
     }
 }
