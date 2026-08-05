@@ -454,6 +454,25 @@ public struct MenuPanelView: View {
         .accessibilityHint("\(remaining) more")
     }
 
+    /// Icon-only expand control for nested Project model pagination.
+    private func projectModelExpandIcon(
+        remaining: Int,
+        accessibilityNoun: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: "chevron.down")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 6)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Show more \(accessibilityNoun)")
+        .accessibilityHint("\(remaining) more")
+    }
+
     private func clientRow(_ client: ClientUsage) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -510,39 +529,44 @@ public struct MenuPanelView: View {
     private func projectRow(_ project: ProjectUsage) -> some View {
         let visibleModelCount = projectModelVisibleCounts[project.id]
             ?? MenuBarLayout.projectModelPageSize
-        let visibleModels = Array(project.models.prefix(max(visibleModelCount, 0)))
-        let hasMoreModels = project.models.count > visibleModels.count
+        let modelPage = ProjectModelPresentation.page(
+            from: project.models,
+            visibleCount: visibleModelCount
+        )
+        let folderName = project.folderName
 
         return VStack(alignment: .leading, spacing: 7) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(project.displayName)
+                Text(folderName)
                     .font(.system(size: 12, weight: .medium, design: .monospaced))
                     .lineLimit(1)
-                    .truncationMode(.middle)
+                    .truncationMode(.tail)
                     .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+                    .help(folderName)
+                    .accessibilityLabel(folderName)
                 Text("\(Formatting.cost(project.cost)) · \(Formatting.compactTokens(project.tokens))")
                     .font(.system(size: 12, design: .monospaced))
                     .monospacedDigit()
                     .layoutPriority(2)
             }
 
-            if !project.models.isEmpty {
+            if modelPage.totalCount > 0 {
                 HStack(alignment: .top, spacing: 9) {
                     Rectangle()
                         .fill(Color.primary.opacity(0.16))
                         .frame(width: 1)
                     VStack(alignment: .leading, spacing: 6) {
-                        ForEach(visibleModels) { model in
+                        ForEach(modelPage.models) { model in
                             projectModelRow(model)
                         }
-                        if hasMoreModels {
-                            expandChevron(
-                                remaining: project.models.count - visibleModels.count,
-                                accessibilityNoun: "models for \(project.displayName)"
+                        if modelPage.hasMore {
+                            projectModelExpandIcon(
+                                remaining: modelPage.remainingCount,
+                                accessibilityNoun: "models for \(folderName)"
                             ) {
                                 projectModelVisibleCounts[project.id] = min(
                                     visibleModelCount + MenuBarLayout.projectModelPageSize,
-                                    project.models.count
+                                    modelPage.totalCount
                                 )
                             }
                         }
