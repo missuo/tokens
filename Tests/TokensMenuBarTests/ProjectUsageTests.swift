@@ -48,6 +48,30 @@ final class ProjectUsageTests: XCTestCase {
         XCTAssertEqual(project.folderName, "tokens")
     }
 
+    func testFolderNameFallsBackToKeyWhenDisplayNameIsWhitespace() {
+        let project = makeProject(
+            projectKey: "/Users/example/Documents/Codebase/tokens",
+            displayName: "  \n\t "
+        )
+
+        XCTAssertEqual(project.folderName, "tokens")
+    }
+
+    func testFolderNameFallsBackToKeyWhenDisplayNameIsRootOnly() {
+        let project = makeProject(
+            projectKey: "/Users/example/Documents/Codebase/tokens",
+            displayName: "///"
+        )
+
+        XCTAssertEqual(project.folderName, "tokens")
+    }
+
+    func testFolderNameUsesUnattributedWhenDisplayNameAndKeyAreUnusable() {
+        let project = makeProject(projectKey: " \\ /// ", displayName: "  ///  ")
+
+        XCTAssertEqual(project.folderName, "Unattributed")
+    }
+
     func testFolderNameFallsBackForUnusableProjectKey() {
         let project = makeProject(projectKey: "///", displayName: "Legacy Project")
 

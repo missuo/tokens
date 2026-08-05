@@ -585,8 +585,9 @@ pub fn parse_claude_file_with_cache_and_home(
                                 tool_message.tokens.input,
                                 tool_message.timestamp,
                             );
-                            update_workspace_label(
-                                &mut messages[existing_idx],
+                            update_workspace_labels_after_duplicate(
+                                &mut messages,
+                                existing_idx,
                                 tool_message.workspace_label.as_deref(),
                             );
                             continue;
@@ -650,8 +651,9 @@ pub fn parse_claude_file_with_cache_and_home(
                                     choice,
                                 );
                             }
-                            update_workspace_label(
-                                &mut messages[existing_idx],
+                            update_workspace_labels_after_duplicate(
+                                &mut messages,
+                                existing_idx,
                                 workspace_label.as_deref(),
                             );
                             continue;
@@ -673,8 +675,9 @@ pub fn parse_claude_file_with_cache_and_home(
                                     choice,
                                 );
                             }
-                            update_workspace_label(
-                                &mut messages[existing_idx],
+                            update_workspace_labels_after_duplicate(
+                                &mut messages,
+                                existing_idx,
                                 workspace_label.as_deref(),
                             );
                             continue;
@@ -946,9 +949,25 @@ fn merge_claude_tool_result_duplicate(
     }
 }
 
-fn update_workspace_label(existing: &mut UnifiedMessage, candidate: Option<&str>) {
-    if let Some(label) = candidate.map(str::trim).filter(|label| !label.is_empty()) {
-        existing.workspace_label = Some(label.to_string());
+fn update_workspace_labels_after_duplicate(
+    messages: &mut [UnifiedMessage],
+    duplicate_idx: usize,
+    candidate: Option<&str>,
+) {
+    let Some(label) = candidate.map(str::trim).filter(|label| !label.is_empty()) else {
+        return;
+    };
+    let duplicate_timestamp = messages[duplicate_idx].timestamp;
+    let workspace_key = messages[duplicate_idx].workspace_key.clone();
+
+    for (index, message) in messages.iter_mut().enumerate() {
+        if index == duplicate_idx
+            || (workspace_key.is_some()
+                && message.workspace_key == workspace_key
+                && message.timestamp >= duplicate_timestamp)
+        {
+            message.workspace_label = Some(label.to_string());
+        }
     }
 }
 
@@ -1619,12 +1638,16 @@ mod tests {
     }
 
     fn assistant_line(id: &str, request_id: &str, cwd: Option<&str>) -> String {
+        assistant_line_at(id, request_id, "2026-08-04T12:00:00.000Z", cwd)
+    }
+
+    fn assistant_line_at(id: &str, request_id: &str, timestamp: &str, cwd: Option<&str>) -> String {
         let cwd_json = match cwd {
             Some(value) => format!(r#","cwd":"{value}""#),
             None => String::new(),
         };
         format!(
-            r#"{{"type":"assistant","timestamp":"2026-08-04T12:00:00.000Z","requestId":"{request_id}","message":{{"id":"{id}","model":"claude-sonnet-4-5","usage":{{"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}}{cwd_json}}}"#
+            r#"{{"type":"assistant","timestamp":"{timestamp}","requestId":"{request_id}","message":{{"id":"{id}","model":"claude-sonnet-4-5","usage":{{"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}}{cwd_json}}}"#
         )
     }
 
@@ -1824,6 +1847,60 @@ mod tests {
         assert_eq!(
             messages[0].workspace_label.as_deref(),
             Some("project-folder-name-display")
+        );
+    }
+
+    #[test]
+    fn late_duplicate_cwd_wins_project_label_without_changing_usage() {
+        let dir = tempdir().expect("tempdir");
+        let project_key = "-Users-example-Documents-Codebase-tokens";
+        let project_dir = dir
+            .path()
+            .join(".claude")
+            .join("projects")
+            .join(project_key);
+        std::fs::create_dir_all(&project_dir).expect("project dir");
+        let session = project_dir.join("session.jsonl");
+        write_session(
+            &session,
+            &[
+                &assistant_line_at(
+                    "msg-a",
+                    "req-a",
+                    "2026-08-04T12:00:00.000Z",
+                    Some("/Users/example/Documents/Codebase/tokens"),
+                ),
+                &assistant_line_at(
+                    "msg-b",
+                    "req-b",
+                    "2026-08-04T12:00:02.000Z",
+                    None,
+                ),
+                &assistant_line_at(
+                    "msg-a",
+                    "req-a",
+                    "2026-08-05T12:00:03.000Z",
+                    Some(
+                        "/Users/example/Documents/Codebase/tokens/.claude/worktrees/project-folder-name-display",
+                    ),
+                ),
+            ],
+        );
+
+        let messages = parse_claude_file(&session);
+        assert_eq!(messages.len(), 2);
+        let days = crate::aggregator::aggregate_by_date(messages);
+        assert_eq!(days.len(), 1);
+        assert_eq!(days[0].totals.tokens, 30);
+        assert_eq!(days[0].totals.messages, 2);
+        assert_eq!(days[0].projects.len(), 1);
+        assert_eq!(
+            days[0].projects[0].project_key.as_deref(),
+            Some(project_key)
+        );
+        assert_eq!(
+            days[0].projects[0].project_label,
+            "project-folder-name-display"
         );
     }
 }
