@@ -4,25 +4,27 @@
 
 **Goal:** Rebuild the macOS Tokens Menu Bar panel and Settings to match the locked **FINAL · 06 Minimal Mono v2** visual language and its interaction frames (chart hover, long-list scroll, settings sheet).
 
-**Architecture:** Keep the existing data path (`UsageStore` → `tokens usage --json`). Replace presentation only: extract design tokens + small pure views (`CostChartView`, share bars, section chrome), rewrite `MenuPanelView` layout, restyle `SettingsView`, and tighten popover sizing in `AppMain`. Live CLI JSON contract is `docs/design-spec.md` **schema v2** (includes `byProject` between client and model); this UI plan does not invent a parallel schema. Chart uses existing `byDay[].cost` / `byDay[].tokens` / `byDay[].date`.
+**Architecture:** Keep the existing data path (`UsageStore` → `tokens usage --json`). Replace presentation only: extract design tokens + small pure views (`CostChartView`, share bars, section chrome), rewrite `MenuPanelView` layout, restyle `SettingsView`, and tighten popover sizing in `AppMain`. Live CLI JSON contract is `docs/design-spec.md` **schema v2** (including `byProject`); the runtime data-section order is COST → CLIENT → MODEL → PROJECT, with PROJECT final among normal business sections. This UI plan does not invent a parallel schema. Chart uses existing `byDay[].cost` / `byDay[].tokens` / `byDay[].date`.
 
 **Tech Stack:** SwiftUI, AppKit `NSPopover` / `NSWindow`, SwiftPM package `.`, XCTest.
 
-**Design source (canonical):**
+**Design source (canonical visual-language and interaction references only):**
 - Preview: `design/menubar-ui-v1/` (tab **Final** + **Interactions**)
 - Shots: `full-final.png`, `full-ix-hover.png`, `full-ix-scroll.png`, `full-ix-settings.png`, `full-ix-settings-ctx.png`
 - Notes: `design/menubar-ui-v1/README.md`
+
+These retained artifacts define the Minimal Mono visual language and interaction treatment, but not the current report-section composition. `docs/design-spec.md` controls the runtime section composition and order.
 
 ## Global Constraints
 
 - macOS **13.0+**; menu-bar-only app (`LSUIElement` / `.accessory`)
 - Panel width stays **400pt** (popover content width)
-- Live CLI JSON contract is **`schemaVersion: 2`** per `docs/design-spec.md` (PROJECT / `byProject` between CLIENT and MODEL). This plan is UI-focused and must not reintroduce a schema-v1-only contract or omit PROJECT from the panel section order.
+- Live CLI JSON contract is **`schemaVersion: 2`** per `docs/design-spec.md` (including PROJECT / `byProject`). This plan is UI-focused and must not reintroduce a schema-v1-only contract or deviate from the COST → CLIENT → MODEL → PROJECT panel data-section order.
 - Do **not** reintroduce section hairline `Divider`s between content blocks (spacing-only rhythm)
 - Mono visual language: prefer monospaced digits + uppercase micro-labels; system font stack is OK if monospaced digit attributes are applied consistently
 - Light/Dark: follow system appearance (no custom theme toggle in app v1); tokens must work in both
 - Keep existing settings keys / `AppSettings` fields; only restyle UI unless a field is already present but unlabeled
-- Copy tone: short, uppercase section labels (`TOTAL`, `BREAKDOWN`, `CLIENT`, `PROJECT`, `MODEL`, `COST · 14 DAYS`), footer actions uppercase (`REFRESH`, `SETTINGS`, `TOKENS.CI`, `QUIT`)
+- Copy tone: short, uppercase section labels in runtime order (`TOTAL`, `BREAKDOWN`, `COST · 14 DAYS`, `CLIENT`, `MODEL`, `PROJECT`), footer actions uppercase (`REFRESH`, `SETTINGS`, `TOKENS.CI`, `QUIT`)
 - Number formatting stays in `Formatting` (existing tests must keep passing)
 - Frequent small commits after each green test cycle
 
@@ -39,10 +41,10 @@
 | Period | Underline-style tabs (not filled segmented capsule): `TODAY · 7D · 30D · ALL`; active = 2pt bottom bar + primary text; inactive = muted |
 | Summary | Label `TOTAL` → huge tokens; row of `COST` + `MESSAGES`; date range muted `YYYY-MM-DD — YYYY-MM-DD` |
 | Breakdown | **4 equal cards** in one row: `in` / `out` / `cache` / `reason`; card fill subtle; **2pt top accent** bars in mono steps (full → ~28% opacity), not neon colors |
-| Client | Rows: name · `tokens · share%`; **2pt** high share bar, **radius 0**; sorted by tokens desc (already from CLI) |
-| Project | Section between Client and Model; rows sorted by cost desc with nested model cost/token details (`byProject` from schema v2). `Unattributed` never exposes workspace keys |
-| Model | Flat rows: `modelId / provider` · tokens (no nested client disclosure in final UI) |
-| Day → Cost chart | Bar chart, **Y = cost ($)**, **X = date**; default window = **last up to 14 days** of `byDay` (see Task 3 rules); Y ticks 0 / mid / max; sparse X labels |
+| Day → Cost chart | First data section after BREAKDOWN. Bar chart, **Y = cost ($)**, **X = date**; default window = **last up to 14 days** of `byDay` (see Task 3 rules); Y ticks 0 / mid / max; sparse X labels |
+| Client | Follows COST. Rows: name · `tokens · share%`; **2pt** high share bar, **radius 0**; sorted by tokens desc (already from CLI) |
+| Model | Follows CLIENT. Flat rows: `modelId / provider` · tokens (no nested client disclosure in final UI) |
+| Project | Final normal business section after MODEL; rows sorted by cost desc with nested model cost/token details (`byProject` from schema v2). `Unattributed` never exposes workspace keys |
 | Footer | No top divider; muted `UPDATED … · {scan.mode}`; actions: `REFRESH` · `SETTINGS` · `TOKENS.CI` · `QUIT` |
 
 ### Interactions
@@ -322,11 +324,12 @@ EOF
 3. Middle scroll:
    - TOTAL + cost/messages + date range
    - BREAKDOWN 4 cards from `report.tokenBreakdown` (`input`, `output`, `cacheRead`, `reasoning` — label `in/out/cache/reason`; **omit cacheWrite** in the 4-up to match design; if product wants 5th metric later, do not squeeze into this plan)
-   - CLIENT rows (`report.byClient`) with uppercase `CLIENT` section label
-   - PROJECT rows (`report.byProject`) with uppercase `PROJECT` section label (schema v2; cost-sorted workspaces + nested models)
-   - MODEL rows (`report.byModel`) with uppercase `MODEL` section label
    - `COST · 14 DAYS` + `CostChartView(days: report.byDay)` (helper always caps at 14; period already filters CLI `byDay`)
-4. Footer actions
+   - CLIENT rows (`report.byClient`) with uppercase `CLIENT` section label
+   - MODEL rows (`report.byModel`) with uppercase `MODEL` section label
+   - PROJECT rows (`report.byProject`) with uppercase `PROJECT` section label (schema v2; cost-sorted workspaces + nested models)
+   - Optional error banner after PROJECT when `store.lastError` is present
+4. Fixed footer actions outside the scrolling content
 
 **Remove / replace from current UI:**
 - `Divider()` under header and above footer

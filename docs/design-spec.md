@@ -240,13 +240,17 @@ Number formatting:
 
 ### Dropdown panel sections (top → bottom)
 
-1. **Period control** — segmented: Today | 7d | 30d | All  
-2. **Summary** — tokens, cost, messages; optional mini token-breakdown  
-3. **By client** — sorted by tokens desc; progress share bar
-4. **By project** — sorted by cost desc; each workspace row shows cost + tokens and its models sorted by cost desc. `Unattributed` never exposes workspace keys or diagnostic session details
-5. **By model** — flat list with provider label; share bar
-6. **By day / cost** — compact cost bars
-7. **Footer** — Last updated (`generatedAt`); **Refresh**; **Settings…**; **Open tokens.ci**; **Quit**
+1. **Period control** — segmented: Today | 7d | 30d | All; fixed above the report body
+2. **TOTAL** — required report-body section with total tokens, cost, messages, and date range
+3. **BREAKDOWN** — required report-body section with input, output, cache, and reasoning token metrics
+4. **COST** — compact daily cost bars
+5. **CLIENT** — sorted by tokens desc; progress share bar
+6. **MODEL** — flat list with provider label; share bar
+7. **PROJECT** — sorted by cost desc; each workspace row shows cost + tokens and its models sorted by cost desc. `Unattributed` never exposes workspace keys or diagnostic session details
+8. **Optional error banner** — when present, follows PROJECT within the scrolling report content
+9. **Fixed footer** — outside the scrolling content; Last updated (`generatedAt`); **Refresh**; **Settings…**; **Open tokens.ci**; **Quit**
+
+The required scrolling report-body order is TOTAL → BREAKDOWN → COST → CLIENT → MODEL → PROJECT. The period control remains above that body, an optional error banner may follow PROJECT inside it, and the footer remains fixed outside the scrolling content.
 
 Period changes: call CLI with new `--period` (Layer B should make this cheap after one warm scan). Prefer not blocking UI: show spinner in panel, keep prior period data until new JSON arrives.
 
@@ -326,7 +330,7 @@ Minimum macOS: **13.0** (Ventura) unless packaging constraints force 14.
 
 1. **CLI `tokens usage --json`** with periods + force-rescan + Layer B snapshot  
 2. **Swift Menu Bar MVP**: status title, summary, period, refresh, settings shell, missing-CLI state  
-3. **Panel completeness**: byClient (+ nested models), byProject / PROJECT (+ nested models), byModel, byDay, share bars, tokens.ci link
+3. **Panel completeness**: byDay / COST, byClient (+ nested models), byModel, byProject / PROJECT (+ nested models), share bars, tokens.ci link
 4. **Polish**: interval timer, stale-while-revalidate, formatting edge cases, README  
 
 ## 9. Security and privacy
