@@ -240,12 +240,12 @@ Number formatting:
 
 ### Dropdown panel sections (top → bottom)
 
-1. **Period control** — segmented: Today | 7d | 30d | All  
-2. **Summary** — tokens, cost, messages; optional mini token-breakdown  
-3. **By client** — sorted by tokens desc; progress share bar
-4. **By project** — sorted by cost desc; each workspace row shows cost + tokens and its models sorted by cost desc. `Unattributed` never exposes workspace keys or diagnostic session details
+1. **Period control** — segmented: Today | 7d | 30d | All
+2. **Summary** — tokens, cost, messages; optional mini token-breakdown
+3. **By day / cost** — compact cost bars
+4. **By client** — sorted by tokens desc; progress share bar
 5. **By model** — flat list with provider label; share bar
-6. **By day / cost** — compact cost bars
+6. **By project** — sorted by cost desc; each workspace row shows cost + tokens and its models sorted by cost desc. `Unattributed` never exposes workspace keys or diagnostic session details
 7. **Footer** — Last updated (`generatedAt`); **Refresh**; **Settings…**; **Open tokens.ci**; **Quit**
 
 Period changes: call CLI with new `--period` (Layer B should make this cheap after one warm scan). Prefer not blocking UI: show spinner in panel, keep prior period data until new JSON arrives.

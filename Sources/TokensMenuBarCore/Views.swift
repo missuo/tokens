@@ -174,10 +174,10 @@ public struct MenuPanelView: View {
         VStack(alignment: .leading, spacing: MenuBarLayout.sectionSpacing) {
             totalSection(report)
             breakdownSection(report)
-            clientSection(report)
-            projectSection(report)
-            modelSection(report)
             costChartSection(report)
+            clientSection(report)
+            modelSection(report)
+            projectSection(report)
             if let error = store.lastError {
                 errorBanner(error)
             }

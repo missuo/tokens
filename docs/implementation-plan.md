@@ -322,10 +322,10 @@ EOF
 3. Middle scroll:
    - TOTAL + cost/messages + date range
    - BREAKDOWN 4 cards from `report.tokenBreakdown` (`input`, `output`, `cacheRead`, `reasoning` — label `in/out/cache/reason`; **omit cacheWrite** in the 4-up to match design; if product wants 5th metric later, do not squeeze into this plan)
-   - CLIENT rows (`report.byClient`) with uppercase `CLIENT` section label
-   - PROJECT rows (`report.byProject`) with uppercase `PROJECT` section label (schema v2; cost-sorted workspaces + nested models)
-   - MODEL rows (`report.byModel`) with uppercase `MODEL` section label
    - `COST · 14 DAYS` + `CostChartView(days: report.byDay)` (helper always caps at 14; period already filters CLI `byDay`)
+   - CLIENT rows (`report.byClient`) with uppercase `CLIENT` section label
+   - MODEL rows (`report.byModel`) with uppercase `MODEL` section label
+   - PROJECT rows (`report.byProject`) with uppercase `PROJECT` section label (schema v2; cost-sorted workspaces + nested models)
 4. Footer actions
 
 **Remove / replace from current UI:**
