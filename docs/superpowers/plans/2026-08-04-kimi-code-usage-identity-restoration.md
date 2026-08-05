@@ -10,8 +10,8 @@
 
 ## Global Constraints
 
-- Preserve the existing PR #5 commit `935760a6e8c30398aac24083797cb431d56e98c4` unchanged.
-- Add one coherent Kimi restoration commit after the existing Project UI commit.
+- Use `origin/main` as the baseline.
+- Produce one coherent standalone Kimi restoration commit on `fix/kimi-code-usage-identity` for PR #7.
 - Implement restoration in the Kimi parser, not aggregation or presentation.
 - Process each physical `wire.jsonl` independently; never share pending requests across files.
 - Use JSONL line order, not timestamps, for correlation.
@@ -26,7 +26,6 @@
 - Keep `CACHE_FORMAT_VERSION` unchanged at `5`.
 - Increment only `ClientId::Kimi` parser version from `2` to `3`.
 - Do not modify Cargo manifests; `tempfile = "3"` already exists in `tokens-core` dev-dependencies.
-- Do not stage unrelated untracked Project-filter design/plan documents.
 
 ## File Structure
 
@@ -55,32 +54,33 @@
 
 ---
 
-### Task 1: Protect the existing PR state and capture a live baseline
+### Task 1: Protect the standalone branch state and capture a live baseline
 
 **Files:** None.
 
 **Interfaces:**
-- Consumes: existing branch and installed Kimi history.
+- Consumes: `origin/main`, the standalone Kimi branch, and installed Kimi history.
 - Produces: `/tmp/kimi-identity-before.json` for final accounting comparison.
 
-- [ ] **Step 1: Confirm branch, commit, and working-tree state**
+- [ ] **Step 1: Confirm branch, baseline, and working-tree state**
 
 Run:
 
 ```bash
+git fetch origin
 git status --short --branch
+git branch --show-current
 git log --oneline --decorate -3
-git diff fe6db19..HEAD --stat
+git diff origin/main...HEAD --stat
 ```
 
-Expected:
+Expected before implementation:
 
-- Branch is `worktree-hide-synthetic-unknown-project-model`.
-- `HEAD` is `935760a fix: hide synthetic unknown project model`.
-- The committed diff from `fe6db19` contains only the approved Project UI filter and tests.
+- Branch is `fix/kimi-code-usage-identity`.
+- `origin/main` is the baseline, and `HEAD` has no committed Kimi changes beyond that baseline yet.
 - Kimi research/spec/plan files may be untracked; no tracked source file is modified.
 
-If `HEAD` is not `935760a`, stop before editing.
+If the branch is not `fix/kimi-code-usage-identity` or it contains unrelated committed changes relative to `origin/main`, stop before editing.
 
 - [ ] **Step 2: Build the current release CLI**
 
@@ -867,7 +867,7 @@ Run:
 swift test
 ```
 
-Expected: all Swift tests, including the Project filter tests already in PR #5, pass.
+Expected: all Swift tests pass.
 
 - [ ] **Step 6: Build both release products**
 
@@ -951,14 +951,13 @@ Verify in the Model section:
 - `grok-4.5 / xai` is present.
 - Counts and cost agree with `/tmp/kimi-identity-after.json`.
 - Kimi/Moonshot models use `moonshotai`.
-- The existing Project-section placeholder hiding remains effective.
 
 ---
 
 ### Task 7: Review the complete Kimi change
 
 **Files:**
-- Review all files intended for the second commit.
+- Review all files intended for the standalone Kimi commit.
 
 **Interfaces:**
 - Consumes: implementation, tests, and documentation.
@@ -984,13 +983,6 @@ docs/superpowers/specs/2026-08-04-kimi-code-usage-identity-restoration-design.md
 docs/superpowers/plans/2026-08-04-kimi-code-usage-identity-restoration.md
 ```
 
-Do not stage:
-
-```text
-docs/superpowers/plans/2026-08-04-hide-synthetic-unknown-project-model.md
-docs/superpowers/specs/2026-08-04-hide-synthetic-unknown-project-model-design.md
-```
-
 Do not use `git add -A` or stage an entire documentation directory.
 
 - [ ] **Step 2: Request task-scoped and whole-change code review**
@@ -1014,8 +1006,8 @@ Fix all Critical and Important findings, rerun affected tests, and obtain a clea
 **Files:** Exactly the five intended Kimi source/documentation files.
 
 **Interfaces:**
-- Consumes: reviewed and verified working tree.
-- Produces: one second commit on PR #5's existing branch.
+- Consumes: reviewed and verified working tree based on `origin/main`.
+- Produces: one coherent standalone commit on `fix/kimi-code-usage-identity` for PR #7.
 
 - [ ] **Step 1: Stage only approved files**
 
@@ -1046,7 +1038,6 @@ Expected:
 - No Cargo manifest, Swift, pricing, aggregation, scanner, or report-schema changes.
 - `CACHE_FORMAT_VERSION` remains `5`.
 - Kimi parser version is `3`.
-- No unrelated Project-filter documentation is staged.
 
 - [ ] **Step 3: Commit**
 
@@ -1058,19 +1049,18 @@ git commit \
   -m "Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ```
 
-- [ ] **Step 4: Verify two-commit PR history**
+- [ ] **Step 4: Verify the standalone commit history**
 
 Run:
 
 ```bash
-git log --oneline fe6db19..HEAD
+git log --oneline origin/main..HEAD
 ```
 
-Expected order:
+Expected:
 
 ```text
 <new-sha> fix: restore Kimi Code usage identity
-935760a fix: hide synthetic unknown project model
 ```
 
 - [ ] **Step 5: Push without force**
@@ -1078,40 +1068,39 @@ Expected order:
 Run:
 
 ```bash
-git push origin HEAD:worktree-hide-synthetic-unknown-project-model
+git push origin HEAD:fix/kimi-code-usage-identity
 ```
 
 Do not use force push.
 
 ---
 
-### Task 9: Update and verify PR #5
+### Task 9: Update and verify PR #7
 
 **Files:**
-- Create temporary `/tmp/pr-5-body.md`; do not commit it.
+- Create temporary `/tmp/pr-7-body.md`; do not commit it.
 
 **Interfaces:**
-- Consumes: pushed branch and fresh verification evidence.
-- Produces: PR #5 description covering both the Project filter and Kimi parser restoration.
+- Consumes: pushed standalone Kimi branch and fresh verification evidence.
+- Produces: a Kimi-only PR #7 description.
 
-- [ ] **Step 1: Confirm PR contains both commits**
+- [ ] **Step 1: Confirm the standalone PR**
 
 Run:
 
 ```bash
-gh pr view 5 --repo HuaileiW/tokens --json number,title,url,headRefName,baseRefName,commits,state
+gh pr view 7 --repo HuaileiW/tokens --json number,title,url,headRefName,baseRefName,commits,state
 ```
 
-Expected: PR #5 remains open against `main`, and contains both commits.
+Expected: PR #7 is open from `fix/kimi-code-usage-identity` against `main` and contains the single coherent Kimi restoration commit.
 
 - [ ] **Step 2: Write the updated PR body**
 
-Write `/tmp/pr-5-body.md` with:
+Write `/tmp/pr-7-body.md` with:
 
 ```markdown
 ## Summary
 
-- hide the exact `<synthetic> / unknown` placeholder from nested Project model details without changing project totals
 - restore Kimi Code `usage.record` routing aliases from the nearest preceding same-file `llm.request`
 - report Grok usage as `grok-4.5 / xai` even when Kimi logged the OpenAI-compatible `openai` protocol
 - consume request state before turn-scope and zero-token filtering
@@ -1150,25 +1139,25 @@ Mark an item complete only if its corresponding command/check passed.
 Run:
 
 ```bash
-gh pr edit 5 --repo HuaileiW/tokens --body-file /tmp/pr-5-body.md
+gh pr edit 7 --repo HuaileiW/tokens --body-file /tmp/pr-7-body.md
 ```
 
-If GraphQL rate limits block `gh pr edit`, use the GitHub REST API to update PR #5 without changing title, base, or head.
+If GraphQL rate limits block `gh pr edit`, use the GitHub REST API to update PR #7 without changing title, base, or head.
 
 - [ ] **Step 4: Verify the remote PR and final local state**
 
 Run:
 
 ```bash
-gh pr view 5 --repo HuaileiW/tokens --json title,body,commits,url,state
-gh pr checks 5 --repo HuaileiW/tokens
+gh pr view 7 --repo HuaileiW/tokens --json title,body,commits,url,state
+gh pr checks 7 --repo HuaileiW/tokens
 git status --short --branch
 ```
 
 Expected:
 
-- PR body describes both commits and ends with the required Claude Code footer.
-- Both commits are present.
+- PR body contains only the Kimi restoration summary and verification and ends with the required Claude Code footer.
+- The standalone Kimi commit is present.
 - Checks are passing or clearly reported as still in progress.
 - Branch is no longer ahead of its remote.
 - No Kimi implementation file remains modified or untracked.
