@@ -454,6 +454,25 @@ public struct MenuPanelView: View {
         .accessibilityHint("\(remaining) more")
     }
 
+    /// Icon-only expand control for nested Project model pagination.
+    private func projectModelExpandIcon(
+        remaining: Int,
+        accessibilityNoun: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: "chevron.down")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 6)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Show more \(accessibilityNoun)")
+        .accessibilityHint("\(remaining) more")
+    }
+
     private func clientRow(_ client: ClientUsage) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -536,7 +555,7 @@ public struct MenuPanelView: View {
                             projectModelRow(model)
                         }
                         if hasMoreModels {
-                            expandChevron(
+                            projectModelExpandIcon(
                                 remaining: project.models.count - visibleModels.count,
                                 accessibilityNoun: "models for \(project.displayName)"
                             ) {
