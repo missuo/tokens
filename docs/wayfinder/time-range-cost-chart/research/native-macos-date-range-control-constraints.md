@@ -1,10 +1,10 @@
 # Research: Native macOS date-range control constraints
 
-**Ticket:** `docs/wayfinder/time-range-cost-chart/tickets/03-research-native-date-range-controls.md`  
-**Question:** Which supported macOS SwiftUI/AppKit controls and interaction patterns can provide an inclusive single-date or date-range picker in a Menu Bar `NSPopover`, with reliable keyboard navigation, locale-aware formatting, disabled future dates, and compact selected-range presentation?  
-**Project deployment target:** macOS 13 (`Package.swift` → `.macOS(.v13)`)  
-**Current shell:** SwiftUI content hosted in AppKit `NSPopover` (`.transient`), made key on show (`Sources/TokensMenuBar/AppMain.swift`).  
-**Research date:** 2026-08-04  
+**Ticket:** `docs/wayfinder/time-range-cost-chart/tickets/03-research-native-date-range-controls.md`
+**Question:** Which supported macOS SwiftUI/AppKit controls and interaction patterns can provide an inclusive single-date or date-range picker in a Menu Bar `NSPopover`, with reliable keyboard navigation, locale-aware formatting, disabled future dates, and compact selected-range presentation?
+**Project deployment target:** macOS 13 (`Package.swift` → `.macOS(.v13)`)
+**Current shell:** SwiftUI content hosted in AppKit `NSPopover` (`.transient`), made key on show (`Sources/TokensMenuBar/AppMain.swift`).
+**Research date:** 2026-08-04
 **Scope:** Primary Apple sources only (official docs + local SDK headers/interfaces). No product implementation.
 
 ---
@@ -155,7 +155,7 @@ Map requirements (from `map.md`): Custom single-day **or** inclusive date-range;
 5. `maxDate` = end of “today” in reporting calendar/time zone (and optional `minDate` if All/history needs a floor)
 6. Read `dateValue` + `timeInterval`; convert to inclusive reporting dates.
 
-**Pros:** One control, true range selection, system keyboard/accessibility for the control, no dual-picker consistency bugs.  
+**Pros:** One control, true range selection, system keyboard/accessibility for the control, no dual-picker consistency bugs.
 **Cons:** Graphical size fights a dense 400pt popover; range semantics are start+duration (not inclusive end date); SwiftUI bridging required.
 
 ### Pattern B — Two SwiftUI single `DatePicker`s (start + end)
@@ -164,7 +164,7 @@ Map requirements (from `map.md`): Custom single-day **or** inclusive date-range;
 2. Constrain both with `in:` so neither can exceed today; additionally keep `start ≤ end` in app state (swap/clamp on change).
 3. Styles: `.compact` for collapsed rows, or `.graphical` if expanding an editor region; macOS `.field` / `.stepperField` for denser keyboard entry.
 
-**Pros:** Pure SwiftUI; easy max-date; clear single-day mode (one picker or start==end).  
+**Pros:** Pure SwiftUI; easy max-date; clear single-day mode (one picker or start==end).
 **Cons:** Not one inclusive range gesture; must implement range integrity and VO labeling (“Start”, “End”) yourself; two graphical calendars are heavier than one.
 
 ### Pattern C — Compact label + expandable editor (matches “becomes a compact label”)
@@ -179,7 +179,7 @@ Expanded editor (in-panel disclosure, nested popover, or sheet):
 
 For compact **editing** without a permanent calendar, AppKit text-field style + `presentsCalendarOverlay = true`, or SwiftUI `.compact` / `.field`.
 
-**Pros:** Aligns with map’s compact Custom presentation; protects popover density.  
+**Pros:** Aligns with map’s compact Custom presentation; protects popover density.
 **Cons:** Extra interaction state (collapsed vs editing); nested UI must respect transient popover dismissal rules (§4).
 
 ### Pattern D — Rejected for macOS product path
