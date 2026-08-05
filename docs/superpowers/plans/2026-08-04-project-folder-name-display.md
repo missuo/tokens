@@ -59,6 +59,10 @@ Add tests covering:
 8. A tool-result duplicate carrying a later valid cwd refreshes the deduplicated message label without double-counting tokens.
 9. End-to-end ordering: older message A, newer message B, then a late duplicate of A carrying the final cwd label. Feed parsed messages through `aggregate_by_date` and assert the project label is final while project key, total tokens, total messages, and day count remain unchanged.
 10. A bare transcript with cwd remains `workspace_key == nil`, carries no `workspace_label`, aggregates as `Unattributed`, and serializes to report JSON without the cwd folder name.
+11. Assistant duplicates with wrong-typed cwd metadata still enter normal deduplication, so messages and tokens are not doubled.
+12. Tool-result duplicates with wrong-typed cwd metadata still enter normal deduplication, so messages and tokens are not doubled.
+13. Direct tool-result duplicate merging preserves the retained message timestamp and derived day while taking token maxima.
+14. A parser-to-aggregation tool-result duplicate crossing midnight stays on the original day and is counted once.
 
 - [ ] **Step 2: Run the focused Rust tests and verify RED**
 
@@ -72,7 +76,7 @@ Expected before implementation: the cwd/duplicate regressions fail because Claud
 
 - [ ] **Step 3: Deserialize and normalize optional cwd labels**
 
-In `ClaudeEntry`, deserialize optional `cwd`.
+In `ClaudeEntry`, deserialize optional `cwd` leniently: strings remain available, null/missing values remain `None`, and wrong-typed display-only metadata becomes `None` without rejecting the entry.
 
 During parsing:
 
@@ -89,10 +93,10 @@ Apply the current label to assistant, tool-result, and headless messages without
 
 When a late duplicate supplies a valid label:
 
-1. Merge tokens and timing with the existing dedup behavior.
+1. Merge token maxima with the existing dedup behavior while preserving the original retained timestamp and derived day.
 2. Refresh the duplicate's label.
 3. Refresh already-emitted messages in the same attributed workspace whose timestamps could otherwise outrank the duplicate during aggregation.
-4. Do not rewrite timestamps, derived dates, tokens, costs, message counts, or workspace identity.
+4. Do not rewrite timestamps, derived dates, costs, message counts, or workspace identity.
 
 Reuse the existing duplicate maps and message vector; do not add report fields or change aggregation ordering.
 
@@ -108,7 +112,7 @@ Run:
 cargo test --manifest-path cli/Cargo.toml -p tokens-core --lib sessions::claudecode::tests -- --nocapture
 ```
 
-Expected: all nine focused Claude cwd/duplicate tests pass, including whitespace-leaf, literal-backslash, and parser-to-aggregation regressions.
+Expected: all focused Claude cwd/duplicate tests pass, including malformed-cwd deduplication, whitespace-leaf, literal-backslash, and cross-midnight parser-to-aggregation regressions.
 
 - [ ] **Step 7: Run focused usage-report privacy tests and verify GREEN**
 

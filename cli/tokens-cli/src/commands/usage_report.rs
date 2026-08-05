@@ -926,7 +926,7 @@ fn report_from_contributions(
                     .then_with(|| a.model_id.cmp(&b.model_id))
                     .then_with(|| a.provider_id.cmp(&b.provider_id))
             });
-            let display_name = if project_key.is_none() || project.display_name.is_empty() {
+            let display_name = if project_key.is_none() {
                 "Unattributed".to_string()
             } else {
                 project.display_name
@@ -1182,6 +1182,33 @@ mod tests {
         assert_eq!(json["byProject"][0]["projectKey"], serde_json::Value::Null);
         assert_eq!(json["byProject"][0]["displayName"], "Unattributed");
         assert!(!json.to_string().contains("secret-project"));
+    }
+
+    #[test]
+    fn report_preserves_empty_name_for_attributed_project_key() {
+        let mut day = sample_day();
+        day.projects[0].project_label.clear();
+        let today = NaiveDate::from_ymd_opt(2026, 7, 26).unwrap();
+        let report = report_from_contributions(
+            UsagePeriod::Today,
+            false,
+            "incremental",
+            0,
+            true,
+            0,
+            0,
+            &[day.clone()],
+            &[day],
+            today,
+            "2026-07-26T00:00:00Z",
+        );
+
+        assert_eq!(report.by_project.len(), 1);
+        assert_eq!(
+            report.by_project[0].project_key.as_deref(),
+            Some("/work/example")
+        );
+        assert_eq!(report.by_project[0].display_name, "");
     }
 
     #[test]

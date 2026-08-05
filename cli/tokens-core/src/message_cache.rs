@@ -730,7 +730,8 @@ fn parser_version(client: ClientId) -> u32 {
         // lookup; its timestamp handling is unaffected by the #890 follow-up.
         ClientId::DevinDesktop => 2,
         // v2->v3: Claude session labels prefer the latest valid JSONL `cwd`
-        // final folder component while keeping the path-derived workspace key.
+        // final folder component while keeping the path-derived workspace key;
+        // wrong-typed cwd metadata is ignored without rejecting usage entries.
         ClientId::Claude => 3,
         // Junie's usage-event timestamp is now back-calculated to the call
         // start (timestampMs - usage.time) instead of the recorded
