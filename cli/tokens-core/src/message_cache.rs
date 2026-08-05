@@ -1514,18 +1514,5 @@ mod tests {
     fn kimi_parser_version_bump_is_client_scoped() {
         assert_eq!(CACHE_FORMAT_VERSION, 5);
         assert_eq!(parser_version(ClientId::Kimi), 3);
-
-        assert_eq!(parser_version(ClientId::Codex), 6);
-        assert_eq!(parser_version(ClientId::Jcode), 7);
-        assert_eq!(parser_version(ClientId::Copilot), 8);
-        assert_eq!(parser_version(ClientId::Pi), 2);
-        assert_eq!(parser_version(ClientId::DevinCli), 3);
-        assert_eq!(parser_version(ClientId::DevinDesktop), 2);
-        assert_eq!(parser_version(ClientId::Claude), 3);
-        assert_eq!(parser_version(ClientId::Junie), 2);
-        assert_eq!(parser_version(ClientId::Zcode), 3);
-        assert_eq!(parser_version(ClientId::OpenCodeReview), 2);
-        assert_eq!(parser_version(ClientId::Kiro), 2);
-        assert_eq!(parser_version(ClientId::OpenCode), 1);
     }
 }

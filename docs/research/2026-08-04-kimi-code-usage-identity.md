@@ -6,7 +6,7 @@
 
 ## Recommendation
 
-Resolve a synthetic `usage.record.model` such as `__secondary__` from the **nearest preceding, still-unmatched `llm.request` in the same physical agent `wire.jsonl` whose `modelAlias` equals the usage record's model**. Use JSONL line order, not timestamps. Kimi Code emits `llm.request` before making the provider request and emits `usage.record` only after the stream finishes successfully; the usage record deliberately stores the request's alias, while the request event stores both the alias and resolved concrete model. There is no shared request/usage ID in either persisted schema, so ID correlation is not presently available.[1][2][3]
+Resolve a routed `usage.record.model`, whether a synthesized value such as `__secondary__` or an arbitrary alias such as `cheap`, from the **nearest preceding, still-unmatched `llm.request` in the same physical agent `wire.jsonl` whose `modelAlias` equals the usage record's model**. Use JSONL line order, not timestamps. When that exact same-alias request carries a differing concrete model, use the concrete request model; without a reliable match, retain the normalized recorded value. Kimi Code emits `llm.request` before making the provider request and emits `usage.record` only after the stream finishes successfully; the usage record deliberately stores the request's alias, while the request event stores both the alias and resolved concrete model. There is no shared request/usage ID in either persisted schema, so ID correlation is not presently available.[1][2][3]
 
 For `llm.request { provider: "openai", model: "grok-4.5" }`, canonicalize the usage provider to `xai`, not `openai`: Kimi Code's `provider` field is populated from the resolved model's **wire protocol**, not its commercial vendor. The official tests state this distinction directly, and Kimi's supported configuration imports xAI as an OpenAI-compatible provider. Prefer event-time catalog/provider ID or xAI base URL when available, then the resolved `grok*` model family; this repository already canonicalizes `grok*` as `xai`.[3][11][14][15]
 
@@ -92,9 +92,10 @@ Process each `wire.jsonl` independently and in append order.
    - logged protocol (`provider`);
    - matched/unmatched state.
 4. **Correlate every usage record before applying the zero-token filter.** Kimi writes `emptyUsage()` when a provider finishes without reporting usage. A zero-valued `usage.record` must still consume/close its request candidate even if no `UnifiedMessage` is ultimately emitted; otherwise the next nonzero record can be paired to the wrong request.[3]
-5. **Handle concrete usage directly.** If `usage.record.model` is not a recognized routing/synthetic alias, retain its normalized model. A same-alias request may still supply a better provider, but model replacement is unnecessary.
-6. **Resolve a synthetic alias by causal pairing.** Search backward for the nearest unmatched request where `request.modelAlias == usage.model`. Prefer a request before the usage line; require the same physical stream. Mark it matched and use its concrete `request.model` and protocol.
-   - LIFO handles failed/retried attempts: the latest successful attempt is adjacent to the eventual usage, while earlier failed attempts remain unmatched.
+5. **Preserve unmatched or already-concrete usage.** Without a reliable exact same-alias request, retain the normalized `usage.record.model`. When a matching request carries the same concrete model, resolution naturally preserves it while allowing the request to supply provider evidence.
+6. **Resolve arbitrary aliases by causal pairing.** Search backward for the nearest unmatched request where `request.modelAlias == usage.model`. Prefer a request before the usage line; require the same physical stream. Mark it matched and use its concrete `request.model` and protocol whenever the request model differs, regardless of whether the alias is reserved (`__secondary__`) or arbitrary (`cheap`).
+   - LIFO handles failed/retried attempts: the latest successful attempt is adjacent to the eventual usage, while completing the pair retires older pending attempts that would cross it.
+   - A newer request with the same nonempty alias but no usable concrete model is a barrier and retires older same-alias candidates; later usage must not revive identity from before that unusable request.
    - Do not require timestamp equality or a maximum wall-clock gap; long model calls are legitimate.
 7. **Constrain ambiguous cases.** Do not cross an already matched request/usage pair. If nested or concurrent requests ever appear in one stream and two candidates cannot be distinguished by alias plus LIFO, leave the identity unresolved rather than guessing. Preserve diagnostic provenance such as `resolvedFrom = request-order` and the source line numbers.
 8. **Fallbacks, in descending confidence:**
@@ -137,7 +138,7 @@ The `openai` value describes the OpenAI-compatible protocol. Reporting it as the
 - **Secondary model changed live:** only later spawned subagents use the new binding; current config cannot relabel earlier child files.[8]
 - **Resumed subagent:** it retains its model; correlate within its persisted agent stream rather than applying the main agent's current model.[10]
 - **Patched secondary model:** usage may store `__secondary__`; config on disk intentionally lacks that derived entry.[6]
-- **Failed request or recovery retry:** may leave unmatched request events. LIFO matching chooses the later successful attempt.
+- **Failed request or recovery retry:** may leave unmatched request events. LIFO matching chooses the later successful attempt; a newer unusable same-alias request is a barrier that retires older same-alias candidates.
 - **Truncated file starts with usage:** use a session-specific config fallback if provable; otherwise preserve unresolved alias.
 - **Truncated file ends after request:** emit no usage record; do not fabricate usage.
 - **Zero-token usage:** it must consume its matched request before being omitted from counted messages; otherwise request state drifts.
@@ -150,27 +151,28 @@ The `openai` value describes the OpenAI-compatible protocol. Reporting it as the
 
 Add small JSONL fixtures at the parser boundary, each with expected model/provider, token totals, and correlation provenance:
 
-1. Concrete `usage.record` with matching concrete request.
+1. Concrete `usage.record` with matching concrete request remains concrete.
 2. `__secondary__` usage paired to `grok-4.5` / protocol `openai` → `grok-4.5` / `xai`.
-3. Two sequential alias requests/usages → one-to-one LIFO matches.
-4. Failed request, retry request, then usage → retry model selected.
-5. Main file uses Kimi while child file uses Grok with identical timestamps → no cross-agent contamination.
-6. Two sibling agent files use different secondary models concurrently.
-7. Child profile prefers secondary but explicit spawn uses primary → request wins.
-8. Resumed child retains old model after main/secondary config changes.
-9. Patched secondary emits `__secondary__` while disk config contains only the base alias.
-10. Truncated leading alias usage with a provable session-start mapping → low-confidence config fallback.
-11. Truncated leading alias usage with changed/unknown config → unresolved alias, provider `unknown`.
-12. Ambiguous same-stream candidates → unresolved rather than arbitrary match.
-13. `usageScope: "session"`, missing scope, and duplicated `step.end` do not change strict turn totals.
-14. Both v1 (`step.end` before usage) and v2 (`usage` before `step.end`) fixture ordering count exactly once.
-15. Same timestamp for usage and next request → line order pairs usage to the preceding request.
-16. Zero-valued usage closes its request, then is omitted; the next usage matches the next request.
-17. Unknown custom model over protocol `openai` → provider `unknown` unless event-time catalog/config identifies the vendor.
+3. Arbitrary `cheap` alias paired to a differing concrete model restores that model.
+4. Two sequential alias requests/usages → one-to-one LIFO matches.
+5. Failed request, retry request, then usage → retry model selected; a newer unusable same-alias request blocks older candidates.
+6. Main file uses Kimi while child file uses Grok with identical timestamps → no cross-agent contamination.
+7. Two sibling agent files use different secondary models concurrently.
+8. Child profile prefers secondary but explicit spawn uses primary → request wins.
+9. Resumed child retains old model after main/secondary config changes.
+10. Patched secondary emits `__secondary__` while disk config contains only the base alias.
+11. Truncated leading alias usage with a provable session-start mapping → low-confidence config fallback.
+12. Truncated leading alias usage with changed/unknown config → unresolved alias, provider `unknown`.
+13. Ambiguous same-stream candidates → unresolved rather than arbitrary match.
+14. `usageScope: "session"`, missing scope, and duplicated `step.end` do not change strict turn totals.
+15. Both v1 (`step.end` before usage) and v2 (`usage` before `step.end`) fixture ordering count exactly once.
+16. Same timestamp for usage and next request → line order pairs usage to the preceding request.
+17. Zero-valued usage closes its request, then is omitted; the next usage matches the next request.
+18. Unknown custom model over protocol `openai` → provider `unknown` unless event-time catalog/config identifies the vendor.
 
-## Current Repository Gap
+## Pinned Pre-fix Repository Gap
 
-The current parser reads only `usage.record`, normalizes its `model` field, and always supplies the fixed provider `moonshot`; it does not deserialize or correlate `llm.request`.[12] Thus `__secondary__` remains synthetic and a resolved `grok-4.5` call is incorrectly attributed to Moonshot. Identity restoration should be implemented inside the Kimi Code parser as a single ordered pass, before constructing `UnifiedMessage`; aggregation and production UI code need no special alias logic.
+At base commit [`fe499bd7314934af4cf36724c81e177f8f74197e`](https://github.com/HuaileiW/tokens/commit/fe499bd7314934af4cf36724c81e177f8f74197e), before this restoration, the parser read only `usage.record`, normalized its `model` field, and always supplied the fixed provider `moonshot`; it did not deserialize or correlate `llm.request`.[12] Thus `__secondary__` remained synthetic and a resolved `grok-4.5` call was incorrectly attributed to Moonshot. The restored parser performs correlation inside the Kimi Code parser as a single ordered pass before constructing `UnifiedMessage`; aggregation and production UI code need no special alias logic.
 
 ## Sources
 
@@ -185,7 +187,7 @@ The current parser reads only `usage.record`, normalizes its `model` field, and 
 9. MoonshotAI Kimi Code official provider/model configuration semantics: provider `type` includes `openai`, while model aliases separately identify provider and server model: [`config-files.md` lines 122–163](https://github.com/MoonshotAI/kimi-code/blob/4ac7240fff595b41a94a63c4b4ca74840ad95cf8/docs/en/configuration/config-files.md#L122-L163).
 10. MoonshotAI Kimi Code official agent profile model-preference and resume semantics: [`agents.md` lines 97–114](https://github.com/MoonshotAI/kimi-code/blob/4ac7240fff595b41a94a63c4b4ca74840ad95cf8/docs/en/customization/agents.md#L97-L114).
 11. This repository's provider canonicalization conventions: [`cli/tokens-core/src/provider_identity.rs` lines 11–23 and 124–152](../../cli/tokens-core/src/provider_identity.rs).
-12. This repository's current Kimi Code parser: [`cli/tokens-core/src/sessions/kimi.rs` lines 153–232](../../cli/tokens-core/src/sessions/kimi.rs).
+12. This repository's pre-fix Kimi Code parser at base `fe499bd7314934af4cf36724c81e177f8f74197e`: [`cli/tokens-core/src/sessions/kimi.rs` lines 153–232](https://github.com/HuaileiW/tokens/blob/fe499bd7314934af4cf36724c81e177f8f74197e/cli/tokens-core/src/sessions/kimi.rs#L153-L232).
 13. MoonshotAI Kimi Code 0.32.0 wire protocol manifest version 1.5: [`wire-manifest.d.ts` lines 1–16](https://github.com/MoonshotAI/kimi-code/blob/4ac7240fff595b41a94a63c4b4ca74840ad95cf8/packages/agent-core-v2/docs/wire-manifest.d.ts#L1-L16).
 14. MoonshotAI Kimi Code, official statement that durable `provider` is the wire protocol and protocol enum definitions: [`llmRequester.test.ts` lines 140–157](https://github.com/MoonshotAI/kimi-code/blob/4ac7240fff595b41a94a63c4b4ca74840ad95cf8/packages/agent-core-v2/test/agent/llmRequester/llmRequester.test.ts#L140-L157) and [`protocol.ts` lines 1–18, 32–39](https://github.com/MoonshotAI/kimi-code/blob/4ac7240fff595b41a94a63c4b4ca74840ad95cf8/packages/agent-core-v2/src/kosong/protocol/protocol.ts#L1-L18).
 15. MoonshotAI Kimi Code, xAI imported as an OpenAI-compatible provider with Grok models: [`providers.md` lines 22–35](https://github.com/MoonshotAI/kimi-code/blob/4ac7240fff595b41a94a63c4b4ca74840ad95cf8/docs/en/configuration/providers.md#L22-L35) and [`provider.test.ts` lines 1003–1017, 1033–1064](https://github.com/MoonshotAI/kimi-code/blob/4ac7240fff595b41a94a63c4b4ca74840ad95cf8/apps/kimi-code/test/cli/provider.test.ts#L1003-L1017).

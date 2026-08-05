@@ -49,20 +49,20 @@ For every `usage.record`, attempt correlation before deciding whether the record
 
 ### Alias correlation
 
-When the usage model is a recognized routing alias such as `__secondary__`:
+For every usage model, including arbitrary routing aliases such as `cheap` and synthesized aliases such as `__secondary__`:
 
 1. Search backward within the same file for the nearest unmatched request whose alias exactly equals the usage model.
 2. Use JSONL line order, not timestamps.
 3. Consume the matched request and retire older pending requests that would require crossing the completed request/usage pair.
-4. Use the request's concrete model as the usage model.
+4. Use the matched request's normalized concrete model as the usage model. A differing request model is exact event-time evidence that the recorded usage value was an alias, regardless of the alias spelling.
 
-This LIFO behavior selects the latest retry candidate while preventing an older failed request from being revived by a later usage record.
+This LIFO behavior selects the latest retry candidate while preventing an older failed request from being revived by a later usage record. A newer request with a nonempty alias but no usable concrete model is a barrier: it retires every older pending request with that same alias, so later usage cannot revive stale identity across the unusable request.
 
-If no reliable same-stream match exists, keep the routing alias and use provider `unknown`. Do not infer identity from another file or from current global configuration.
+If no reliable same-stream match exists, retain the normalized recorded model. In particular, unresolved routing aliases remain visible instead of being guessed from another file or from current global configuration; provider remains `unknown` when the retained name and available event evidence do not establish ownership.
 
 ### Concrete usage models
 
-When a usage record already contains a non-routing model identifier, retain its normalized model name. A same-alias request may provide provider evidence, but ordinary usage model names are not replaced unnecessarily.
+When a usage record already contains a concrete model identifier, a same-alias request normally carries that same concrete model and resolution preserves it. Without a reliable same-alias match, retain the normalized recorded model. Replacement occurs only when an exact same-alias request supplies a differing concrete model.
 
 ### Filtering order
 
@@ -116,7 +116,7 @@ A separate usage-snapshot epoch is out of scope because the Menu Bar refresh pat
 ## Error Handling and Fallbacks
 
 - Malformed JSON lines remain skipped using existing parser behavior.
-- Requests lacking a nonempty alias or concrete model are not correlation candidates.
+- Requests lacking a nonempty alias are not correlation candidates. A request with a nonempty alias but no usable concrete model is a same-alias barrier that retires older candidates.
 - Unmatched routing aliases remain visible as aliases with provider `unknown`; the parser does not guess.
 - Truncated files beginning with an alias usage remain unresolved unless future event-time metadata provides an exact mapping.
 - Truncated files ending with a request produce no fabricated usage.
@@ -130,15 +130,17 @@ Add parser-boundary Rust tests using temporary files with the real Kimi Code pat
 Minimum required cases:
 
 1. `__secondary__` paired with `grok-4.5` over OpenAI protocol becomes `grok-4.5 / xai`.
-2. A retry sequence uses the latest matching request.
-3. Completing a pair retires older candidates so later usage cannot cross the pair.
-4. A zero-token usage consumes its request but emits no message.
-5. Main and child agent files cannot contaminate each other's correlation state.
-6. Session-scope and `step.end` records remain uncounted.
-7. An unknown custom model over OpenAI protocol remains provider `unknown`.
-8. Concrete Kimi usage uses canonical provider `moonshotai`.
-9. Existing legacy Kimi parsing remains correct.
-10. Kimi cache parser version is incremented and other client versions remain unchanged.
+2. An arbitrary alias such as `cheap` restores a differing request model.
+3. A retry sequence uses the latest matching request.
+4. Completing a pair retires older candidates so later usage cannot cross the pair.
+5. A newer unusable same-alias request retires older same-alias candidates.
+6. A zero-token usage consumes its request but emits no message.
+7. Main and child agent files cannot contaminate each other's correlation state.
+8. Session-scope and `step.end` records remain uncounted.
+9. An unknown custom model over OpenAI protocol remains provider `unknown`.
+10. Concrete Kimi and Moonshot-family usage uses canonical provider `moonshotai`, including without a provider hint.
+11. Existing legacy Kimi parsing remains correct.
+12. Kimi cache parser version is incremented while the global cache format remains unchanged.
 
 Verification must include:
 
@@ -152,6 +154,7 @@ Verification must include:
 ## Files Expected to Change
 
 - Kimi parser and its inline tests.
+- Shared provider-identity inference and its focused tests.
 - Kimi source-message parser version.
 - Research, design, and implementation-plan documentation.
 - Existing PR description after verification.

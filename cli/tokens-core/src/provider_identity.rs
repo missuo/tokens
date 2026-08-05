@@ -179,8 +179,8 @@ pub fn inferred_provider_from_model(model: &str) -> Option<&'static str> {
         return Some("sakana");
     }
 
-    // Kimi (Moonshot AI) — `kimi`, `kimi-k2.5`, `kimi-code` variants
-    if contains_delimited(&lower, "kimi") {
+    // Kimi / Moonshot AI — `kimi-k2.5`, `kimi-code`, `moonshot-v1`, etc.
+    if contains_delimited(&lower, "kimi") || lower.contains("moonshot") {
         return Some("moonshotai");
     }
     // MiMo (Xiaomi) — `mimo-v2.5` etc.
@@ -195,3 +195,19 @@ pub fn inferred_provider_from_model(model: &str) -> Option<&'static str> {
     None
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn infers_moonshot_provider_from_model_family() {
+        assert_eq!(
+            inferred_provider_from_model("moonshot-v1"),
+            Some("moonshotai")
+        );
+        assert_eq!(
+            inferred_provider_from_model("MoonshotAI/moonshot-v1-128k"),
+            Some("moonshotai")
+        );
+    }
+}

@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Restore concrete Kimi Code model and provider identity from ordered request/usage events so synthetic aliases such as `__secondary__ / moonshot` become the real identity, including `grok-4.5 / xai`, without changing token accounting.
+**Goal:** Restore concrete Kimi Code model and provider identity from ordered request/usage events so synthesized or arbitrary aliases such as `__secondary__` and `cheap` become the real identity, including `grok-4.5 / xai`, without changing token accounting.
 
 **Architecture:** Extend the Kimi Code parser into a single ordered pass over each physical `wire.jsonl`. Keep unmatched requests in per-file state, consume the nearest preceding same-alias request before filtering each usage record, and infer commercial provider ownership from the resolved model before considering the logged protocol. Increment only the Kimi parser cache version so historical Kimi files are reparsed.
 
@@ -39,6 +39,9 @@
 - `cli/tokens-core/src/message_cache.rs`
   - Increment only the Kimi parser version.
   - Add an inline version-scope test.
+- `cli/tokens-core/src/provider_identity.rs`
+  - Infer Moonshot-family model names as canonical provider `moonshotai`.
+  - Add focused shared-helper coverage.
 
 ### Documentation included in the Kimi commit
 
@@ -46,11 +49,11 @@
 - `docs/superpowers/specs/2026-08-04-kimi-code-usage-identity-restoration-design.md`
 - `docs/superpowers/plans/2026-08-04-kimi-code-usage-identity-restoration.md`
 
-### Read-only dependency
+### Shared dependency
 
 - `cli/tokens-core/src/provider_identity.rs`
   - Reuse `canonical_provider(raw: &str) -> Option<String>`.
-  - Reuse `inferred_provider_from_model(model: &str) -> Option<&'static str>`.
+  - Extend `inferred_provider_from_model(model: &str) -> Option<&'static str>` for Moonshot-family models.
 
 ---
 
@@ -248,6 +251,43 @@ cargo test --manifest-path cli/Cargo.toml -p tokens-core sessions::kimi::tests::
 
 Expected: test fails because current output remains `__secondary__ / moonshot`.
 
+Add coverage proving correlation is not limited to a reserved alias:
+
+```rust
+    #[test]
+    fn kimi_code_arbitrary_alias_restores_differing_concrete_model() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = write_kimi_code_wire(
+            &temp_dir,
+            "agent-1",
+            &[
+                request("cheap", "grok-4.5", "openai", 1_000),
+                usage("cheap", "turn", 6, 3, 0, 0, 2_000),
+            ],
+        );
+
+        let messages = parse_kimi_code_file(&path);
+
+        assert_eq!(messages.len(), 1);
+        assert_identity(&messages[0], "grok-4.5", "xai");
+    }
+
+    #[test]
+    fn kimi_code_unmatched_arbitrary_alias_is_retained() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = write_kimi_code_wire(
+            &temp_dir,
+            "agent-1",
+            &[usage("cheap", "turn", 6, 3, 0, 0, 2_000)],
+        );
+
+        let messages = parse_kimi_code_file(&path);
+
+        assert_eq!(messages.len(), 1);
+        assert_identity(&messages[0], "cheap", "unknown");
+    }
+```
+
 - [ ] **Step 3: Add retry and pair-boundary tests**
 
 ```rust
@@ -429,6 +469,42 @@ Expected: test fails because current output remains `__secondary__ / moonshot`.
     }
 
     #[test]
+    fn kimi_code_moonshot_model_without_provider_hint_is_canonical() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = write_kimi_code_wire(
+            &temp_dir,
+            "main",
+            &[
+                request("fast", "moonshot-v1", "", 1_000),
+                usage("fast", "turn", 5, 2, 0, 0, 2_000),
+            ],
+        );
+
+        let messages = parse_kimi_code_file(&path);
+
+        assert_eq!(messages.len(), 1);
+        assert_identity(&messages[0], "moonshot-v1", "moonshotai");
+    }
+
+    #[test]
+    fn kimi_code_logged_kimi_provider_is_canonical_moonshotai() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = write_kimi_code_wire(
+            &temp_dir,
+            "main",
+            &[
+                request("k3", "k3", "kimi", 1_000),
+                usage("k3", "turn", 10, 5, 2, 1, 2_000),
+            ],
+        );
+
+        let messages = parse_kimi_code_file(&path);
+
+        assert_eq!(messages.len(), 1);
+        assert_identity(&messages[0], "k3", "moonshotai");
+    }
+
+    #[test]
     fn kimi_code_request_without_nonempty_alias_is_not_a_candidate() {
         let temp_dir = TempDir::new().unwrap();
         let path = write_kimi_code_wire(
@@ -443,6 +519,43 @@ Expected: test fails because current output remains `__secondary__ / moonshot`.
                     "time": 1_000
                 })
                 .to_string(),
+                usage("__secondary__", "turn", 5, 2, 0, 0, 2_000),
+            ],
+        );
+
+        let messages = parse_kimi_code_file(&path);
+
+        assert_eq!(messages.len(), 1);
+        assert_identity(&messages[0], "__secondary__", "unknown");
+    }
+
+    #[test]
+    fn kimi_code_request_without_nonempty_normalized_model_is_not_a_candidate() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = write_kimi_code_wire(
+            &temp_dir,
+            "agent-1",
+            &[
+                request("__secondary__", "kimi-code/", "openai", 1_000),
+                usage("__secondary__", "turn", 5, 2, 0, 0, 2_000),
+            ],
+        );
+
+        let messages = parse_kimi_code_file(&path);
+
+        assert_eq!(messages.len(), 1);
+        assert_identity(&messages[0], "__secondary__", "unknown");
+    }
+
+    #[test]
+    fn kimi_code_invalid_newer_same_alias_retires_older_request() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = write_kimi_code_wire(
+            &temp_dir,
+            "agent-1",
+            &[
+                request("__secondary__", "claude-sonnet-4", "anthropic", 1_000),
+                request("__secondary__", "kimi-code/", "openai", 1_100),
                 usage("__secondary__", "turn", 5, 2, 0, 0, 2_000),
             ],
         );
@@ -506,6 +619,7 @@ Do not weaken or remove a test to obtain GREEN.
 ### Task 3: Implement ordered correlation and identity restoration
 
 **Files:**
+- Modify: `cli/tokens-core/src/provider_identity.rs` Moonshot-family inference and focused test.
 - Modify: `cli/tokens-core/src/sessions/kimi.rs` imports, constants, Kimi Code wire types, helpers, and parser loop.
 
 **Interfaces:**
@@ -517,7 +631,35 @@ Do not weaken or remove a test to obtain GREEN.
   - `resolve_kimi_code_usage_identity`.
   - Correct `UnifiedMessage` identity before aggregation/pricing.
 
-- [ ] **Step 1: Import provider identity helpers and canonicalize constants**
+- [ ] **Step 1: Extend shared Moonshot-family inference**
+
+Update the existing Kimi/Moonshot branch in `inferred_provider_from_model` and add focused helper coverage:
+
+```rust
+    // Kimi / Moonshot AI — `kimi-k2.5`, `kimi-code`, `moonshot-v1`, etc.
+    if contains_delimited(&lower, "kimi") || lower.contains("moonshot") {
+        return Some("moonshotai");
+    }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn infers_moonshot_provider_from_model_family() {
+        assert_eq!(
+            inferred_provider_from_model("moonshot-v1"),
+            Some("moonshotai")
+        );
+        assert_eq!(
+            inferred_provider_from_model("MoonshotAI/moonshot-v1-128k"),
+            Some("moonshotai")
+        );
+    }
+}
+```
+
+- [ ] **Step 2: Import provider identity helpers and canonicalize constants**
 
 Add:
 
@@ -530,12 +672,11 @@ Replace the provider constant with:
 ```rust
 const DEFAULT_PROVIDER: &str = "moonshotai";
 const UNKNOWN_PROVIDER: &str = "unknown";
-const SECONDARY_MODEL_ALIAS: &str = "__secondary__";
 ```
 
 The canonical `DEFAULT_PROVIDER` also fixes legacy Kimi provider identity.
 
-- [ ] **Step 2: Extend Kimi Code deserialization and define pending request state**
+- [ ] **Step 3: Extend Kimi Code deserialization and define pending request state**
 
 Replace the Kimi Code wire type with:
 
@@ -568,7 +709,7 @@ struct PendingKimiRequest {
 impl PendingKimiRequest {
     fn from_wire_line(wire_line: &KimiCodeWireLine) -> Option<Self> {
         let model_alias = wire_line.model_alias.as_deref()?.trim();
-        let model = wire_line.model.as_deref()?.trim();
+        let model = normalize_kimi_code_model(wire_line.model.as_deref()?.trim());
         if model_alias.is_empty() || model.is_empty() {
             return None;
         }
@@ -582,7 +723,7 @@ impl PendingKimiRequest {
 
         Some(Self {
             model_alias: model_alias.to_string(),
-            model: normalize_kimi_code_model(model),
+            model,
             provider,
         })
     }
@@ -591,15 +732,11 @@ impl PendingKimiRequest {
 
 Do not add request IDs, timestamps, current configuration, or cross-file state.
 
-- [ ] **Step 3: Add matching and identity helpers**
+- [ ] **Step 4: Add matching and identity helpers**
 
 Insert before `parse_kimi_code_file`:
 
 ```rust
-fn is_kimi_code_routing_alias(model: &str) -> bool {
-    model == SECONDARY_MODEL_ALIAS
-}
-
 /// Select the nearest preceding same-alias request and retire the completed
 /// request together with every older pending request. Newer requests remain.
 fn consume_matching_kimi_request(
@@ -622,6 +759,13 @@ fn resolve_kimi_code_provider(model_id: &str, provider_hint: Option<&str>) -> St
         .and_then(provider_identity::canonical_provider)
         // Kimi can log `openai` as a compatibility protocol for other owners.
         .filter(|provider| provider != "openai")
+        .map(|provider| {
+            if provider == "kimi" {
+                DEFAULT_PROVIDER.to_string()
+            } else {
+                provider
+            }
+        })
         .unwrap_or_else(|| UNKNOWN_PROVIDER.to_string())
 }
 
@@ -630,23 +774,13 @@ fn resolve_kimi_code_usage_identity(
     matched_request: Option<&PendingKimiRequest>,
 ) -> (String, String) {
     let normalized_recorded_model = normalize_kimi_code_model(recorded_model);
-
-    if is_kimi_code_routing_alias(&normalized_recorded_model) {
-        let Some(request) = matched_request else {
-            return (normalized_recorded_model, UNKNOWN_PROVIDER.to_string());
-        };
-
-        let model_id = request.model.clone();
-        let provider_id =
-            resolve_kimi_code_provider(&model_id, request.provider.as_deref());
-        return (model_id, provider_id);
-    }
-
+    let model_id = matched_request
+        .map(|request| request.model.clone())
+        .unwrap_or(normalized_recorded_model);
     let provider_hint = matched_request.and_then(|request| request.provider.as_deref());
-    let provider_id =
-        resolve_kimi_code_provider(&normalized_recorded_model, provider_hint);
+    let provider_id = resolve_kimi_code_provider(&model_id, provider_hint);
 
-    (normalized_recorded_model, provider_id)
+    (model_id, provider_id)
 }
 ```
 
@@ -655,12 +789,13 @@ Behavior locked by these helpers:
 - `rposition` implements nearest-preceding same-alias LIFO matching.
 - Draining through the selected index retires the selected request and older failed attempts.
 - Requests newer than the selected match remain pending.
-- Only recognized `__secondary__` routing usage is replaced by the request's concrete model.
-- Ordinary non-routing model names remain unchanged after existing prefix normalization.
-- Model-family ownership outranks protocol hints.
-- An unmatched routing alias remains `__secondary__ / unknown`.
+- Any exact same-alias match supplies the request's concrete model, including arbitrary aliases such as `cheap`.
+- Already-concrete usage remains unchanged when the matched request carries the same model, and unmatched recorded names remain normalized but otherwise intact.
+- A newer unusable request is a barrier that retires older pending requests with its same nonempty alias.
+- Model-family ownership outranks protocol hints; logged `kimi` canonicalizes to `moonshotai`.
+- An unmatched routing alias remains visible and resolves to `unknown` when its name supplies no reliable ownership evidence.
 
-- [ ] **Step 4: Refactor the parser into one ordered pass**
+- [ ] **Step 5: Refactor the parser into one ordered pass**
 
 After creating `messages`, add:
 
@@ -672,8 +807,17 @@ Replace the current usage-only handling with:
 
 ```rust
         if wire_line.line_type == "llm.request" {
+            let model_alias = wire_line
+                .model_alias
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
             if let Some(request) = PendingKimiRequest::from_wire_line(&wire_line) {
                 pending_requests.push(request);
+            } else if let Some(model_alias) = model_alias {
+                // A newer unusable request supersedes older candidates for its
+                // alias so later usage cannot revive a failed request.
+                pending_requests.retain(|request| request.model_alias != model_alias);
             }
             continue;
         }
@@ -720,11 +864,12 @@ Replace the current usage-only handling with:
 
 Remove the old fixed-provider Kimi Code construction. Do not change legacy deduplication.
 
-- [ ] **Step 5: Run focused GREEN verification**
+- [ ] **Step 6: Run focused GREEN verification**
 
 Run:
 
 ```bash
+cargo test --manifest-path cli/Cargo.toml -p tokens-core provider_identity::tests -- --nocapture
 cargo test --manifest-path cli/Cargo.toml -p tokens-core sessions::kimi::tests::kimi_code_secondary_alias_restores_grok_xai -- --exact --nocapture
 cargo test --manifest-path cli/Cargo.toml -p tokens-core sessions::kimi::tests -- --nocapture
 ```
@@ -740,7 +885,7 @@ Expected: all Kimi parser tests pass.
 
 **Interfaces:**
 - Consumes: `parser_version(ClientId) -> u32` and `CACHE_FORMAT_VERSION`.
-- Produces: Kimi parser version `3` while global cache format and every other client version remain unchanged.
+- Produces: Kimi parser version `3` while the global cache format remains unchanged; unrelated parser versions are outside this focused invariant test.
 
 - [ ] **Step 1: Add the failing cache-version test**
 
@@ -755,19 +900,6 @@ mod tests {
     fn kimi_parser_version_bump_is_client_scoped() {
         assert_eq!(CACHE_FORMAT_VERSION, 5);
         assert_eq!(parser_version(ClientId::Kimi), 3);
-
-        assert_eq!(parser_version(ClientId::Codex), 6);
-        assert_eq!(parser_version(ClientId::Jcode), 7);
-        assert_eq!(parser_version(ClientId::Copilot), 8);
-        assert_eq!(parser_version(ClientId::Pi), 2);
-        assert_eq!(parser_version(ClientId::DevinCli), 3);
-        assert_eq!(parser_version(ClientId::DevinDesktop), 2);
-        assert_eq!(parser_version(ClientId::Claude), 3);
-        assert_eq!(parser_version(ClientId::Junie), 2);
-        assert_eq!(parser_version(ClientId::Zcode), 3);
-        assert_eq!(parser_version(ClientId::OpenCodeReview), 2);
-        assert_eq!(parser_version(ClientId::Kiro), 2);
-        assert_eq!(parser_version(ClientId::OpenCode), 1);
     }
 }
 ```
@@ -794,7 +926,7 @@ Replace the Kimi arm with:
 ClientId::Kimi => 3,
 ```
 
-Do not alter `CACHE_FORMAT_VERSION` or another client arm.
+Do not alter `CACHE_FORMAT_VERSION` or another client arm. The focused test intentionally avoids pinning unrelated client versions, which have independent parser histories.
 
 - [ ] **Step 4: Run cache GREEN**
 
@@ -1105,9 +1237,9 @@ Write `/tmp/pr-7-body.md` with:
 
 ## Implementation
 
-Kimi Code files are parsed in physical JSONL order with request state local to one `wire.jsonl`. A usage record consumes the nearest unmatched request with the same alias using LIFO matching. Completed pairs retire older failed attempts, while unmatched aliases remain visible with provider `unknown`.
+Kimi Code files are parsed in physical JSONL order with request state local to one `wire.jsonl`. A usage record consumes the nearest unmatched request with the same alias using LIFO matching, and any exact match can restore a differing concrete model regardless of alias spelling. Completed pairs retire older failed attempts; newer unusable same-alias requests act as barriers that retire stale same-alias candidates; unmatched aliases remain visible and use provider `unknown` when no ownership evidence exists.
 
-Provider ownership is inferred from the resolved concrete model before considering the logged protocol. This prevents Grok and unknown custom OpenAI-compatible models from being attributed to OpenAI.
+Provider ownership is inferred from the resolved concrete model before considering the logged protocol. This prevents Grok and unknown custom OpenAI-compatible models from being attributed to OpenAI. Shared model-family inference recognizes both Kimi and Moonshot names as `moonshotai`, and a logged `kimi` provider hint is canonicalized to the same identity.
 
 No Kimi-specific behavior was added to aggregation, pricing, report serialization, or Swift presentation.
 

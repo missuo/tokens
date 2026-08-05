@@ -83,7 +83,6 @@ impl TokenUsage {
 const DEFAULT_MODEL: &str = "kimi-for-coding";
 const DEFAULT_PROVIDER: &str = "moonshotai";
 const UNKNOWN_PROVIDER: &str = "unknown";
-const SECONDARY_MODEL_ALIAS: &str = "__secondary__";
 
 /// Locate the legacy Kimi CLI config consumed by `parse_kimi_file`. Kimi Code
 /// embeds model information in each wire record and does not use this file.
@@ -201,10 +200,6 @@ impl PendingKimiRequest {
     }
 }
 
-fn is_kimi_code_routing_alias(model: &str) -> bool {
-    model == SECONDARY_MODEL_ALIAS
-}
-
 /// Select the nearest preceding same-alias request and retire the completed
 /// request together with every older pending request. Newer requests remain.
 fn consume_matching_kimi_request(
@@ -242,21 +237,13 @@ fn resolve_kimi_code_usage_identity(
     matched_request: Option<&PendingKimiRequest>,
 ) -> (String, String) {
     let normalized_recorded_model = normalize_kimi_code_model(recorded_model);
-
-    if is_kimi_code_routing_alias(&normalized_recorded_model) {
-        let Some(request) = matched_request else {
-            return (normalized_recorded_model, UNKNOWN_PROVIDER.to_string());
-        };
-
-        let model_id = request.model.clone();
-        let provider_id = resolve_kimi_code_provider(&model_id, request.provider.as_deref());
-        return (model_id, provider_id);
-    }
-
+    let model_id = matched_request
+        .map(|request| request.model.clone())
+        .unwrap_or(normalized_recorded_model);
     let provider_hint = matched_request.and_then(|request| request.provider.as_deref());
-    let provider_id = resolve_kimi_code_provider(&normalized_recorded_model, provider_hint);
+    let provider_id = resolve_kimi_code_provider(&model_id, provider_hint);
 
-    (normalized_recorded_model, provider_id)
+    (model_id, provider_id)
 }
 
 /// Parse a Kimi Code wire.jsonl file.
@@ -577,6 +564,39 @@ mod tests {
     }
 
     #[test]
+    fn kimi_code_arbitrary_alias_restores_differing_concrete_model() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = write_kimi_code_wire(
+            &temp_dir,
+            "agent-1",
+            &[
+                request("cheap", "grok-4.5", "openai", 1_000),
+                usage("cheap", "turn", 6, 3, 0, 0, 2_000),
+            ],
+        );
+
+        let messages = parse_kimi_code_file(&path);
+
+        assert_eq!(messages.len(), 1);
+        assert_identity(&messages[0], "grok-4.5", "xai");
+    }
+
+    #[test]
+    fn kimi_code_unmatched_arbitrary_alias_is_retained() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = write_kimi_code_wire(
+            &temp_dir,
+            "agent-1",
+            &[usage("cheap", "turn", 6, 3, 0, 0, 2_000)],
+        );
+
+        let messages = parse_kimi_code_file(&path);
+
+        assert_eq!(messages.len(), 1);
+        assert_identity(&messages[0], "cheap", "unknown");
+    }
+
+    #[test]
     fn kimi_code_retry_uses_latest_matching_request() {
         let temp_dir = TempDir::new().unwrap();
         let path = write_kimi_code_wire(
@@ -739,6 +759,24 @@ mod tests {
             resolve_kimi_code_provider("private-model", Some("openai")),
             "unknown"
         );
+    }
+
+    #[test]
+    fn kimi_code_moonshot_model_without_provider_hint_is_canonical() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = write_kimi_code_wire(
+            &temp_dir,
+            "main",
+            &[
+                request("fast", "moonshot-v1", "", 1_000),
+                usage("fast", "turn", 5, 2, 0, 0, 2_000),
+            ],
+        );
+
+        let messages = parse_kimi_code_file(&path);
+
+        assert_eq!(messages.len(), 1);
+        assert_identity(&messages[0], "moonshot-v1", "moonshotai");
     }
 
     #[test]
