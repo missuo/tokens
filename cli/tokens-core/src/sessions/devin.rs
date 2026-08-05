@@ -303,6 +303,9 @@ pub fn parse_devin_cli_sqlite(db_path: &Path) -> Vec<UnifiedMessage> {
         );
 
         unified.duration_ms = duration_ms;
+        if created_at_ms.is_none() {
+            unified.set_timestamp_provenance(crate::TimestampProvenance::Fallback);
+        }
 
         if let Some(ws) = workspace {
             let workspace_key = normalize_workspace_key(&ws);
@@ -367,6 +370,7 @@ struct DevinDesktopMessage<'a> {
     title: Option<&'a str>,
     model_hint: Option<&'a str>,
     timestamp: i64,
+    timestamp_provenance: crate::TimestampProvenance,
     tokens: TokenBreakdown,
 }
 
@@ -390,6 +394,7 @@ fn desktop_message(
     let provider = provider_identity::inferred_provider_from_model(&model_id)
         .map(str::to_string)
         .unwrap_or_else(|| "devin".to_string());
+    let timestamp_provenance = message.timestamp_provenance;
     let source_key = path.to_string_lossy();
     let mut message = UnifiedMessage::new_with_dedup(
         "devin-desktop",
@@ -401,6 +406,8 @@ fn desktop_message(
         0.0,
         Some(format!("devin-desktop:{source_key}:{dedup_suffix}")),
     );
+
+    message.set_timestamp_provenance(timestamp_provenance);
 
     if let Some(workspace) = resolved.and_then(|session| session.workspace.as_deref()) {
         let workspace_key = normalize_workspace_key(workspace);
@@ -557,6 +564,7 @@ pub fn parse_devin_desktop_ndjson_with_lookup(
         }
 
         let model_hint = notification_model(&notification);
+        let explicit_timestamp = notification_timestamp(&notification);
         legacy_messages.push(desktop_message(
             path,
             lookup,
@@ -564,7 +572,12 @@ pub fn parse_devin_desktop_ndjson_with_lookup(
                 file_session_id: &file_session_id,
                 title: title.as_deref(),
                 model_hint: model_hint.as_deref(),
-                timestamp: notification_timestamp(&notification).unwrap_or(fallback_timestamp),
+                timestamp: explicit_timestamp.unwrap_or(fallback_timestamp),
+                timestamp_provenance: if explicit_timestamp.is_some() {
+                    crate::TimestampProvenance::Exact
+                } else {
+                    crate::TimestampProvenance::Fallback
+                },
                 tokens: TokenBreakdown {
                     input,
                     output,
@@ -600,6 +613,7 @@ pub fn parse_devin_desktop_ndjson_with_lookup(
                 title: title.as_deref(),
                 model_hint: usage.model_id.as_deref(),
                 timestamp: usage.timestamp.unwrap_or(fallback_timestamp),
+                timestamp_provenance: crate::TimestampProvenance::Aggregate,
                 tokens,
             },
             "usage",
@@ -615,4 +629,3 @@ fn session_id_from_ndjson_path(path: &Path) -> String {
         .unwrap_or("unknown")
         .to_string()
 }
-

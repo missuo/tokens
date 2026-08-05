@@ -208,7 +208,7 @@ pub fn parse_droid_file(path: &Path) -> Vec<UnifiedMessage> {
         .filter(|&ts| ts != 0)
         .unwrap_or_else(|| file_modified_timestamp_ms(path));
 
-    vec![UnifiedMessage::new(
+    let mut message = UnifiedMessage::new(
         "droid",
         model,
         provider,
@@ -222,6 +222,7 @@ pub fn parse_droid_file(path: &Path) -> Vec<UnifiedMessage> {
             reasoning: usage.thinking_tokens.unwrap_or(0).max(0),
         },
         0.0,
-    )]
+    );
+    message.set_timestamp_provenance(crate::TimestampProvenance::Aggregate);
+    vec![message]
 }
-

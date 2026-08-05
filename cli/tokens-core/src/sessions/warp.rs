@@ -81,6 +81,7 @@ fn usage_to_message(usage: &WarpAggregateUsage, timestamp: i64) -> Option<Unifie
         cents_to_dollars(spend_cents),
     );
     message.message_count = requests;
+    message.set_timestamp_provenance(crate::TimestampProvenance::Aggregate);
     Some(message)
 }
 
@@ -107,6 +108,7 @@ fn workspace_to_message(workspace: &WarpWorkspaceUsage, timestamp: i64) -> Optio
         cents_to_dollars(spend_cents),
     );
     message.message_count = requests;
+    message.set_timestamp_provenance(crate::TimestampProvenance::Aggregate);
     message.set_workspace(
         workspace.id.clone().filter(|id| !id.trim().is_empty()),
         workspace
@@ -150,4 +152,27 @@ fn sanitize_id(value: &str) -> String {
         .collect::<String>()
         .trim_matches('-')
         .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn warp_usage_rows_are_marked_as_aggregate_timestamps() {
+        let message = usage_to_message(
+            &WarpAggregateUsage {
+                requests_used: Some(3),
+                spend_cents: Some(125),
+            },
+            1_700_000_000_000,
+        )
+        .unwrap();
+
+        assert_eq!(
+            message.timestamp_provenance,
+            crate::TimestampProvenance::Aggregate
+        );
+        assert!(!message.is_trustworthy_for_hourly());
+    }
 }

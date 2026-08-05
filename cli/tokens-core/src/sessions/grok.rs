@@ -148,6 +148,7 @@ impl ActiveTurn {
             0.0,
             Some(format!("grok:{}:{}", metadata.session_id, self.turn_index)),
         );
+        message.set_timestamp_provenance(crate::TimestampProvenance::Aggregate);
         message.set_workspace(
             metadata.workspace_key.clone(),
             metadata.workspace_label.clone(),
@@ -418,6 +419,7 @@ fn build_usage_message(
             metadata.session_id, turn_index, model_key
         )),
     );
+    message.set_timestamp_provenance(crate::TimestampProvenance::Aggregate);
     message.set_workspace(
         metadata.workspace_key.clone(),
         metadata.workspace_label.clone(),
@@ -518,6 +520,7 @@ fn append_signals_reconciliation(
         0.0,
         Some(format!("grok:{}:signals", metadata.session_id)),
     );
+    message.set_timestamp_provenance(crate::TimestampProvenance::Aggregate);
     message.set_workspace(
         metadata.workspace_key.clone(),
         metadata.workspace_label.clone(),

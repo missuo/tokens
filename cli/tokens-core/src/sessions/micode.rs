@@ -328,4 +328,3 @@ pub fn parse_micode_sqlite(db_path: &Path) -> Vec<UnifiedMessage> {
 
     messages
 }
-

@@ -85,6 +85,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if popover.isShown {
             popover.performClose(sender)
         } else {
+            layoutState.willPresent()
             // Resolve 80% max against the display that owns this status item click.
             refreshPresentationHeight()
             // Snap to latest measured size before show — no open animation from a stale height.

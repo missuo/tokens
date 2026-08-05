@@ -118,10 +118,10 @@ pub fn parse_kilo_sqlite_with_fallback(
 
         let agent = msg.agent.or(msg.mode);
         let session_id = msg.session_id.unwrap_or(row_session_id);
-        let timestamp = msg
-            .time
-            .map(|t| t.created as i64)
-            .unwrap_or(fallback_timestamp);
+        let (timestamp, used_fallback_timestamp) = match msg.time {
+            Some(time) => (time.created as i64, false),
+            None => (fallback_timestamp, true),
+        };
 
         let provider = msg
             .provider_id
@@ -148,10 +148,12 @@ pub fn parse_kilo_sqlite_with_fallback(
             agent,
         );
         unified.dedup_key = dedup_key;
+        if used_fallback_timestamp {
+            unified.set_timestamp_provenance(crate::TimestampProvenance::Fallback);
+        }
 
         messages.push(unified);
     }
 
     messages
 }
-

@@ -229,57 +229,92 @@ public enum ScanIntervalCustomUnit: String, Equatable {
     }
 }
 
+public struct DateSelectionRange: Codable, Equatable, Hashable {
+    public let startDate: String
+    public let endDate: String
+
+    public init(startDate: String, endDate: String) {
+        self.startDate = startDate
+        self.endDate = endDate
+    }
+
+    public var isOrdered: Bool { startDate <= endDate }
+}
+
+public enum UsageSelection: Equatable, Hashable, Codable {
+    case preset(UsagePeriod)
+    case custom(DateSelectionRange)
+
+    public var preset: UsagePeriod? {
+        if case .preset(let period) = self { return period }
+        return nil
+    }
+
+    public var customRange: DateSelectionRange? {
+        if case .custom(let range) = self { return range }
+        return nil
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case kind
+        case preset
+        case startDate
+        case endDate
+    }
+
+    private enum Kind: String, Codable {
+        case preset
+        case custom
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        switch try values.decode(Kind.self, forKey: .kind) {
+        case .preset:
+            self = .preset(try values.decode(UsagePeriod.self, forKey: .preset))
+        case .custom:
+            self = .custom(
+                DateSelectionRange(
+                    startDate: try values.decode(String.self, forKey: .startDate),
+                    endDate: try values.decode(String.self, forKey: .endDate)
+                )
+            )
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .preset(let period):
+            try values.encode(Kind.preset, forKey: .kind)
+            try values.encode(period, forKey: .preset)
+        case .custom(let range):
+            try values.encode(Kind.custom, forKey: .kind)
+            try values.encode(range.startDate, forKey: .startDate)
+            try values.encode(range.endDate, forKey: .endDate)
+        }
+    }
+}
+
 public struct UsageReport: Codable, Equatable {
     public let schemaVersion: Int
     public let generatedAt: String
-    public let period: String
-    public let dateRange: DateRange
+    public let selection: UsageSelection
+    public let dateRange: UsageDateRange
     public let scan: ScanInfo
     public let summary: UsageSummary
     public let tokenBreakdown: TokenBreakdown
     public let byClient: [ClientUsage]
     public let byProject: [ProjectUsage]
     public let byModel: [ModelUsage]
-    public let byDay: [DayUsage]
+    public let timeSeries: UsageTimeSeries
     public let meta: UsageMeta
 }
 
-extension UsageReport {
-    private enum CodingKeys: String, CodingKey {
-        case schemaVersion
-        case generatedAt
-        case period
-        case dateRange
-        case scan
-        case summary
-        case tokenBreakdown
-        case byClient
-        case byProject
-        case byModel
-        case byDay
-        case meta
-    }
-
-    public init(from decoder: Decoder) throws {
-        let values = try decoder.container(keyedBy: CodingKeys.self)
-        schemaVersion = try values.decode(Int.self, forKey: .schemaVersion)
-        generatedAt = try values.decode(String.self, forKey: .generatedAt)
-        period = try values.decode(String.self, forKey: .period)
-        dateRange = try values.decode(DateRange.self, forKey: .dateRange)
-        scan = try values.decode(ScanInfo.self, forKey: .scan)
-        summary = try values.decode(UsageSummary.self, forKey: .summary)
-        tokenBreakdown = try values.decode(TokenBreakdown.self, forKey: .tokenBreakdown)
-        byClient = try values.decode([ClientUsage].self, forKey: .byClient)
-        byProject = try values.decodeIfPresent([ProjectUsage].self, forKey: .byProject) ?? []
-        byModel = try values.decode([ModelUsage].self, forKey: .byModel)
-        byDay = try values.decode([DayUsage].self, forKey: .byDay)
-        meta = try values.decode(UsageMeta.self, forKey: .meta)
-    }
-}
-
-public struct DateRange: Codable, Equatable {
-    public let start: String
-    public let end: String
+public struct UsageDateRange: Codable, Equatable {
+    public let startDate: String
+    public let endDate: String
+    public let timezone: String
 }
 
 public struct ScanInfo: Codable, Equatable {
@@ -293,6 +328,7 @@ public struct ScanCacheInfo: Codable, Equatable {
     public let sourceHits: UInt64
     public let sourceMisses: UInt64
     public let snapshotRebuilt: Bool
+    public let snapshotSchemaVersion: UInt32
 }
 
 public struct UsageSummary: Codable, Equatable {
@@ -329,7 +365,6 @@ public struct ClientModelUsage: Codable, Equatable, Identifiable {
     public let tokens: Int64
     public let cost: Double
     public let messages: Int32
-    public let share: Double
 }
 
 public struct ProjectUsage: Codable, Equatable, Identifiable {
@@ -362,18 +397,51 @@ public struct ModelUsage: Codable, Equatable, Identifiable {
     public let clients: [String]
 }
 
-public struct DayUsage: Codable, Equatable, Identifiable {
-    public var id: String { date }
-    public let date: String
+public enum UsageTimeGranularity: String, Codable, Equatable {
+    case hour
+    case day
+    case naturalWeek
+    case naturalMonth
+
+    public var title: String {
+        switch self {
+        case .hour: return "Hourly"
+        case .day: return "Daily"
+        case .naturalWeek: return "Weekly"
+        case .naturalMonth: return "Monthly"
+        }
+    }
+}
+
+public struct UsageTotals: Codable, Equatable {
     public let tokens: Int64
     public let cost: Double
     public let messages: Int32
-    public let intensity: UInt8
+}
+
+public struct UsageTimeBucket: Codable, Equatable, Identifiable {
+    public let id: String
+    public let nominalStart: String
+    public let nominalEndExclusive: String
+    public let coveredStart: String
+    public let coveredEndExclusive: String
+    public let totals: UsageTotals
+    public let contextOnly: Bool
+    public let incompleteEdge: Bool
+    public let active: Bool
+}
+
+public struct UsageTimeSeries: Codable, Equatable {
+    public let granularity: UsageTimeGranularity
+    public let selectionStart: String
+    public let buckets: [UsageTimeBucket]
+    public let unplaced: UsageTotals
 }
 
 public struct UsageMeta: Codable, Equatable {
     public let cliVersion: String
     public let timezone: String
+    public let reportContract: String
 }
 
 public struct UsageErrorReport: Codable {

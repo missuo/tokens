@@ -23,13 +23,15 @@ use std::time::UNIX_EPOCH;
 // 3: UnifiedMessage gained agent_run_id for the opt-in subagent breakdown.
 // 4: UnifiedMessage gained session_title, changing the bincode payload layout.
 // 5: agent_run_id removed with the subagent breakdown, shrinking the payload.
+// 6: UnifiedMessage gained timestamp_provenance for trustworthy hourly facts.
 // Old shards must read as Stale (silent rebuild), not Invalid (corruption
 // warning), so the format version moves with the struct.
-const CACHE_FORMAT_VERSION: u32 = 5;
+const CACHE_FORMAT_VERSION: u32 = 6;
 // V2 intentionally starts cold and leaves source-message-cache.bin untouched:
 // the monolith did not record a trustworthy parser owner for migration.
 const CACHE_SHARD_DIRNAME: &str = "source-message-cache-v2";
 const CACHE_LOCK_FILENAME: &str = "source-message-cache.lock";
+const CACHE_GENERATION_RECORD_BYTES: usize = 16;
 const CACHE_SHARD_COUNT: usize = 256;
 const MAX_CACHE_SHARD_BYTES: u64 = 256 * 1024 * 1024;
 const FINGERPRINT_SAMPLE_BYTES: usize = 4096;
@@ -95,6 +97,78 @@ fn ensure_cache_dir(dir: &Path) -> std::io::Result<()> {
         fs::set_permissions(dir, fs::Permissions::from_mode(0o700))?;
     }
     Ok(())
+}
+
+fn open_cache_lock(path: &Path) -> std::io::Result<File> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| std::io::Error::other("source message cache lock has no parent"))?;
+    ensure_cache_dir(parent)?;
+    #[cfg(unix)]
+    let lock = {
+        use std::os::unix::fs::OpenOptionsExt;
+        OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .mode(0o600)
+            .open(path)?
+    };
+    #[cfg(not(unix))]
+    let lock = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(lock)
+}
+
+fn read_cache_generation(lock: &mut File) -> std::io::Result<u64> {
+    lock.seek(SeekFrom::Start(0))?;
+    let mut bytes = Vec::new();
+    lock.read_to_end(&mut bytes)?;
+    if bytes.is_empty() {
+        return Ok(0);
+    }
+    if bytes.len() == std::mem::size_of::<u64>() {
+        return Ok(u64::from_le_bytes(
+            bytes.try_into().expect("checked length"),
+        ));
+    }
+
+    let mut generation = None;
+    for record in bytes.chunks_exact(CACHE_GENERATION_RECORD_BYTES) {
+        let value = u64::from_le_bytes(record[..8].try_into().expect("fixed record"));
+        let check = u64::from_le_bytes(record[8..].try_into().expect("fixed record"));
+        if check == !value {
+            generation = Some(value);
+        }
+    }
+    generation.ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "invalid source message cache generation",
+        )
+    })
+}
+
+fn write_cache_generation(lock: &mut File, generation: u64) -> std::io::Result<()> {
+    let end = lock.seek(SeekFrom::End(0))?;
+    let remainder = end % CACHE_GENERATION_RECORD_BYTES as u64;
+    if remainder != 0 {
+        let padding = CACHE_GENERATION_RECORD_BYTES as u64 - remainder;
+        lock.write_all(&vec![0; padding as usize])?;
+    }
+    lock.write_all(&generation.to_le_bytes())?;
+    lock.write_all(&(!generation).to_le_bytes())?;
+    lock.sync_all()
 }
 
 fn warn_cache_failure_once(context: &'static str, path: &Path, error: &impl std::fmt::Display) {
@@ -857,6 +931,8 @@ enum DeletionReason {
 #[derive(Default)]
 pub(crate) struct SourceMessageCache {
     pub entries: HashMap<CacheKey, CachedSourceEntry>,
+    generation: u64,
+    lock_file: Option<File>,
     dirty: bool,
     dirty_keys: HashSet<CacheKey>,
     deleted_keys: HashMap<CacheKey, DeletionReason>,
@@ -865,43 +941,53 @@ pub(crate) struct SourceMessageCache {
 
 impl SourceMessageCache {
     pub(crate) fn load() -> Self {
-        let Some(shard_root) = cache_shard_dir() else {
+        let (Some(shard_root), Some(lock_path)) = (cache_shard_dir(), cache_lock_path()) else {
             return Self::default();
         };
-        let Some(lock_path) = cache_lock_path() else {
-            return Self::default();
-        };
-        if let Err(error) = ensure_cache_dir(&shard_root) {
-            warn_cache_failure_once(
-                "source message cache directory is unavailable",
-                &shard_root,
-                &error,
-            );
-            return Self::default();
-        }
-        let lock_file = match OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(&lock_path)
-        {
+        Self::load_from_paths(&shard_root, &lock_path)
+    }
+
+    fn load_from_paths(shard_root: &Path, lock_path: &Path) -> Self {
+        let mut lock_file = match open_cache_lock(lock_path) {
             Ok(file) => file,
             Err(error) => {
                 warn_cache_failure_once(
                     "source message cache lock is unavailable",
-                    &lock_path,
+                    lock_path,
                     &error,
                 );
                 return Self::default();
             }
         };
         if let Err(error) = fs2::FileExt::lock_shared(&lock_file) {
-            warn_cache_failure_once("source message cache lock failed", &lock_path, &error);
+            warn_cache_failure_once("source message cache lock failed", lock_path, &error);
+            return Self::default();
+        }
+        let generation = match read_cache_generation(&mut lock_file) {
+            Ok(generation) => generation,
+            Err(error) => {
+                warn_cache_failure_once(
+                    "source message cache generation is invalid",
+                    lock_path,
+                    &error,
+                );
+                return Self::default();
+            }
+        };
+        if let Err(error) = ensure_cache_dir(shard_root) {
+            warn_cache_failure_once(
+                "source message cache directory is unavailable",
+                shard_root,
+                &error,
+            );
             return Self::default();
         }
 
-        let mut cache = Self::default();
+        let mut cache = Self {
+            generation,
+            lock_file: Some(lock_file),
+            ..Self::default()
+        };
         for identity in CacheIdentity::all() {
             let parser_dir = shard_root.join(identity.namespace);
             let read_dir = match fs::read_dir(&parser_dir) {
@@ -1004,43 +1090,73 @@ impl SourceMessageCache {
     }
 
     fn save_if_dirty_with_limit(&mut self, max_shard_bytes: u64) {
+        let (Some(shard_root), Some(lock_path)) = (cache_shard_dir(), cache_lock_path()) else {
+            return;
+        };
+        self.save_if_dirty_with_limit_at(max_shard_bytes, &shard_root, &lock_path);
+    }
+
+    fn save_if_dirty_with_limit_at(
+        &mut self,
+        max_shard_bytes: u64,
+        shard_root: &Path,
+        lock_path: &Path,
+    ) {
+        let mut lock_file = match self.lock_file.take() {
+            Some(file) => {
+                if let Err(error) = fs2::FileExt::unlock(&file) {
+                    warn_cache_failure_once(
+                        "source message cache shared lock could not be released",
+                        lock_path,
+                        &error,
+                    );
+                    return;
+                }
+                file
+            }
+            None => match open_cache_lock(lock_path) {
+                Ok(file) => file,
+                Err(error) => {
+                    warn_cache_failure_once(
+                        "source message cache lock is unavailable",
+                        lock_path,
+                        &error,
+                    );
+                    return;
+                }
+            },
+        };
         if !self.dirty {
             return;
         }
-
-        let Some(shard_root) = cache_shard_dir() else {
-            return;
-        };
-        if let Err(error) = ensure_cache_dir(&shard_root) {
-            warn_cache_failure_once(
-                "source message cache directory is unavailable",
-                &shard_root,
-                &error,
-            );
+        if let Err(error) = fs2::FileExt::lock_exclusive(&lock_file) {
+            warn_cache_failure_once("source message cache lock failed", lock_path, &error);
             return;
         }
-        let Some(lock_path) = cache_lock_path() else {
-            return;
-        };
-        let lock_file = match OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(&lock_path)
-        {
-            Ok(file) => file,
+        let generation = match read_cache_generation(&mut lock_file) {
+            Ok(generation) => generation,
             Err(error) => {
                 warn_cache_failure_once(
-                    "source message cache lock is unavailable",
-                    &lock_path,
+                    "source message cache generation is invalid",
+                    lock_path,
                     &error,
                 );
                 return;
             }
         };
-        if let Err(error) = fs2::FileExt::lock_exclusive(&lock_file) {
-            warn_cache_failure_once("source message cache lock failed", &lock_path, &error);
+        if generation != self.generation {
+            *self = Self {
+                generation,
+                ..Self::default()
+            };
+            return;
+        }
+        if let Err(error) = ensure_cache_dir(shard_root) {
+            warn_cache_failure_once(
+                "source message cache directory is unavailable",
+                shard_root,
+                &error,
+            );
             return;
         }
 
@@ -1477,27 +1593,207 @@ pub(crate) fn codex_cache_entry_matches_fingerprint(
         && codex_incremental.prefix_hash == fingerprint.content_hash
 }
 
-
 /// Delete on-disk source-message cache shards so the next scan reparses everything.
 ///
 /// Used by `tokens usage --force-rescan` (and similar UI "full rescan" actions).
-/// In-memory caches held by other processes are unaffected until those processes
-/// reload; this process always starts a fresh load after the call.
+/// Clear holds the persistent Layer A lock and advances its generation. A scan
+/// that loaded an older generation may finish, but its later save is discarded
+/// instead of republishing pre-clear cache entries.
 pub fn clear_source_message_cache() -> Result<(), String> {
-    let Some(shard_root) = cache_shard_dir() else {
+    let (Some(shard_root), Some(lock_path)) = (cache_shard_dir(), cache_lock_path()) else {
         return Ok(());
     };
-    if !shard_root.exists() {
-        return Ok(());
-    }
-    fs::remove_dir_all(&shard_root).map_err(|error| {
+    clear_source_message_cache_at(&shard_root, &lock_path)
+}
+
+fn clear_source_message_cache_at(shard_root: &Path, lock_path: &Path) -> Result<(), String> {
+    let mut lock_file = open_cache_lock(lock_path).map_err(|error| {
         format!(
-            "failed to clear source message cache at {}: {error}",
-            shard_root.display()
+            "failed to open source message cache lock at {}: {error}",
+            lock_path.display()
         )
     })?;
-    if let Some(lock_path) = cache_lock_path() {
-        let _ = fs::remove_file(lock_path);
+    fs2::FileExt::lock_exclusive(&lock_file).map_err(|error| {
+        format!(
+            "failed to lock source message cache at {}: {error}",
+            lock_path.display()
+        )
+    })?;
+    let generation = match read_cache_generation(&mut lock_file) {
+        Ok(generation) => generation,
+        Err(error) if error.kind() == std::io::ErrorKind::InvalidData => 0,
+        Err(error) => {
+            return Err(format!(
+                "failed to read source message cache generation at {}: {error}",
+                lock_path.display()
+            ))
+        }
+    };
+    if shard_root.exists() {
+        fs::remove_dir_all(shard_root).map_err(|error| {
+            format!(
+                "failed to clear source message cache at {}: {error}",
+                shard_root.display()
+            )
+        })?;
     }
-    Ok(())
+    let next_generation = generation.checked_add(1).ok_or_else(|| {
+        format!(
+            "source message cache generation overflow at {}",
+            lock_path.display()
+        )
+    })?;
+    write_cache_generation(&mut lock_file, next_generation).map_err(|error| {
+        format!(
+            "failed to advance source message cache generation at {}: {error}",
+            lock_path.display()
+        )
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bincode::Options;
+
+    #[test]
+    fn force_clear_blocks_stale_cache_republish_and_preserves_the_lock_inode() {
+        use std::sync::mpsc;
+
+        let dir = tempfile::tempdir().unwrap();
+        let shard_root = dir.path().join(CACHE_SHARD_DIRNAME);
+        let lock_path = dir.path().join(CACHE_LOCK_FILENAME);
+        let source_path = dir.path().join("source.jsonl");
+        std::fs::write(&source_path, b"source").unwrap();
+        let entry = CachedSourceEntry::new(
+            CacheIdentity::synthetic(),
+            &source_path,
+            SourceFingerprint::from_path(&source_path).unwrap(),
+            vec![],
+            vec![],
+            None,
+        );
+
+        let mut seed = SourceMessageCache::load_from_paths(&shard_root, &lock_path);
+        seed.insert(entry.clone());
+        seed.save_if_dirty_with_limit_at(MAX_CACHE_SHARD_BYTES, &shard_root, &lock_path);
+        assert!(shard_root.exists());
+
+        #[cfg(unix)]
+        let original_lock_inode = {
+            use std::os::unix::fs::MetadataExt;
+            std::fs::metadata(&lock_path).unwrap().ino()
+        };
+
+        let (loaded_tx, loaded_rx) = mpsc::channel();
+        let (save_tx, save_rx) = mpsc::channel();
+        let stale_writer = {
+            let shard_root = shard_root.clone();
+            let lock_path = lock_path.clone();
+            let source_path = source_path.clone();
+            let entry = entry.clone();
+            std::thread::spawn(move || {
+                let mut stale = SourceMessageCache::load_from_paths(&shard_root, &lock_path);
+                assert!(stale
+                    .get(CacheIdentity::synthetic(), &source_path)
+                    .is_some());
+                stale.insert(entry);
+                loaded_tx.send(()).unwrap();
+                save_rx.recv().unwrap();
+                stale.save_if_dirty_with_limit_at(MAX_CACHE_SHARD_BYTES, &shard_root, &lock_path);
+            })
+        };
+
+        loaded_rx.recv().unwrap();
+        let probe = open_cache_lock(&lock_path).unwrap();
+        let shared_lock_is_held = match fs2::FileExt::try_lock_exclusive(&probe) {
+            Ok(()) => {
+                fs2::FileExt::unlock(&probe).unwrap();
+                false
+            }
+            Err(_) => true,
+        };
+        if !shared_lock_is_held {
+            save_tx.send(()).unwrap();
+            stale_writer.join().unwrap();
+            panic!("loaded cache must retain its shared lock until scanning finishes");
+        }
+
+        let clearer = {
+            let shard_root = shard_root.clone();
+            let lock_path = lock_path.clone();
+            std::thread::spawn(move || {
+                clear_source_message_cache_at(&shard_root, &lock_path).unwrap();
+            })
+        };
+        save_tx.send(()).unwrap();
+        stale_writer.join().unwrap();
+        clearer.join().unwrap();
+        assert!(!shard_root.exists());
+
+        let reloaded = SourceMessageCache::load_from_paths(&shard_root, &lock_path);
+        assert!(reloaded
+            .get(CacheIdentity::synthetic(), &source_path)
+            .is_none());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            assert_eq!(
+                std::fs::metadata(&lock_path).unwrap().ino(),
+                original_lock_inode
+            );
+        }
+    }
+
+    #[test]
+    fn force_clear_recovers_from_an_interrupted_generation_record() {
+        let dir = tempfile::tempdir().unwrap();
+        let shard_root = dir.path().join(CACHE_SHARD_DIRNAME);
+        let lock_path = dir.path().join(CACHE_LOCK_FILENAME);
+        let mut lock = open_cache_lock(&lock_path).unwrap();
+        fs2::FileExt::lock_exclusive(&lock).unwrap();
+        lock.write_all(&1_u64.to_le_bytes()[..3]).unwrap();
+        lock.sync_all().unwrap();
+        fs2::FileExt::unlock(&lock).unwrap();
+        drop(lock);
+
+        clear_source_message_cache_at(&shard_root, &lock_path).unwrap();
+
+        let mut lock = open_cache_lock(&lock_path).unwrap();
+        fs2::FileExt::lock_shared(&lock).unwrap();
+        assert_eq!(read_cache_generation(&mut lock).unwrap(), 1);
+        fs2::FileExt::unlock(&lock).unwrap();
+        fs2::FileExt::lock_exclusive(&lock).unwrap();
+        lock.seek(SeekFrom::End(0)).unwrap();
+        lock.write_all(&2_u64.to_le_bytes()[..3]).unwrap();
+        lock.sync_all().unwrap();
+        drop(lock);
+
+        clear_source_message_cache_at(&shard_root, &lock_path).unwrap();
+
+        let mut lock = open_cache_lock(&lock_path).unwrap();
+        fs2::FileExt::lock_shared(&lock).unwrap();
+        assert_eq!(read_cache_generation(&mut lock).unwrap(), 2);
+    }
+
+    #[test]
+    fn old_format_is_stale_before_incompatible_payload_decode() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        let identity = CacheIdentity::synthetic();
+        let envelope = CachedShardEnvelope {
+            format_version: CACHE_FORMAT_VERSION - 1,
+            parser_namespace: identity.namespace.to_string(),
+            parser_version: identity.parser_version,
+            payload: vec![0xff, 0x00, 0xff],
+        };
+        bincode::options()
+            .serialize_into(file.as_file_mut(), &envelope)
+            .unwrap();
+        file.as_file_mut().sync_all().unwrap();
+
+        assert!(matches!(
+            read_shard(file.path(), identity),
+            ShardReadStatus::Stale
+        ));
+    }
 }

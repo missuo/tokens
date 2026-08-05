@@ -4,13 +4,14 @@
 
 use crate::sessions::UnifiedMessage;
 use crate::{
-    ClientContribution, DailyContribution, DailyTotals, DataSummary, GraphMeta, GraphResult,
-    ProjectContribution, ProjectModelContribution, SessionContribution, TokenBreakdown,
-    UnattributedModelDiagnostic, UnattributedSessionDiagnostic, YearSummary,
+    ClientContribution, DailyContribution, DailyHourlyUsageFacts, DailyTotals, DataSummary,
+    ExactHourlyUsageFact, GraphMeta, GraphResult, ProjectContribution, ProjectModelContribution,
+    SessionContribution, TokenBreakdown, UnattributedModelDiagnostic,
+    UnattributedSessionDiagnostic, YearSummary,
 };
 use rayon::prelude::*;
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 /// Aggregate messages into daily contributions
 pub fn aggregate_by_date(messages: Vec<UnifiedMessage>) -> Vec<DailyContribution> {
@@ -57,6 +58,102 @@ pub fn aggregate_by_date(messages: Vec<UnifiedMessage>) -> Vec<DailyContribution
     calculate_intensities(&mut contributions);
 
     contributions
+}
+
+/// Build range-independent exact-hour facts without consuming the source
+/// messages needed by daily aggregation. Untrusted or invalid timestamps are
+/// retained on their existing calendar date as unplaced hourly totals.
+pub fn aggregate_hourly_usage_facts(
+    messages: &[UnifiedMessage],
+    timezone: crate::bucket_tz::BucketTimezone,
+) -> Vec<DailyHourlyUsageFacts> {
+    #[derive(Default)]
+    struct DailyFactsAccumulator {
+        total: DailyTotals,
+        hours: BTreeMap<i64, (i64, DailyTotals)>,
+        unplaced: DailyTotals,
+    }
+
+    let mut days: BTreeMap<String, DailyFactsAccumulator> = BTreeMap::new();
+    for message in messages {
+        let totals = message_totals(message);
+        let day = days.entry(message.date.clone()).or_default();
+        add_totals(&mut day.total, &totals);
+        let exact_hour = message
+            .is_trustworthy_for_hourly()
+            .then_some(message.timestamp)
+            .filter(|timestamp| *timestamp > 0)
+            .filter(|timestamp| timezone.date_of_ms(*timestamp) == message.date)
+            .and_then(|timestamp| timezone.hour_bounds_of_ms(timestamp));
+
+        if let Some((start_ms, end_ms)) = exact_hour {
+            let (_, hour_totals) = day
+                .hours
+                .entry(start_ms)
+                .or_insert((end_ms, DailyTotals::default()));
+            add_totals(hour_totals, &totals);
+        } else {
+            add_totals(&mut day.unplaced, &totals);
+        }
+    }
+
+    days.into_iter()
+        .map(|(date, day)| {
+            let mut remaining = finalized_totals(day.total);
+            let mut unplaced_for_hourly =
+                take_from_remaining(&mut remaining, finalized_totals(day.unplaced));
+            let hours = day
+                .hours
+                .into_iter()
+                .map(|(start_ms, (end_ms, totals))| ExactHourlyUsageFact {
+                    start_ms,
+                    end_ms,
+                    totals: take_from_remaining(&mut remaining, finalized_totals(totals)),
+                })
+                .collect();
+            add_totals(&mut unplaced_for_hourly, &remaining);
+
+            DailyHourlyUsageFacts {
+                date,
+                hours,
+                unplaced_for_hourly,
+            }
+        })
+        .collect()
+}
+
+fn message_totals(message: &UnifiedMessage) -> DailyTotals {
+    DailyTotals {
+        tokens: message.tokens.total(),
+        cost: finite_nonnegative_cost(message.cost),
+        messages: message.message_count.max(0),
+    }
+}
+
+fn add_totals(target: &mut DailyTotals, addition: &DailyTotals) {
+    target.tokens = target.tokens.saturating_add(addition.tokens);
+    target.cost = finite_saturating_cost_add(target.cost, addition.cost);
+    target.messages = target.messages.saturating_add(addition.messages);
+}
+
+fn finalized_totals(totals: DailyTotals) -> DailyTotals {
+    DailyTotals {
+        tokens: totals.tokens.max(0),
+        cost: finite_nonnegative_cost(totals.cost),
+        messages: totals.messages.max(0),
+    }
+}
+
+fn take_from_remaining(remaining: &mut DailyTotals, requested: DailyTotals) -> DailyTotals {
+    let taken = DailyTotals {
+        tokens: requested.tokens.min(remaining.tokens),
+        cost: requested.cost.min(remaining.cost),
+        messages: requested.messages.min(remaining.messages),
+    };
+    remaining.tokens -= taken.tokens;
+    remaining.cost = (remaining.cost - taken.cost).max(0.0);
+    remaining.messages -= taken.messages;
+    taken
 }
 
 /// Aggregate messages into per-session contributions, keyed on `session_id`.
@@ -192,6 +289,15 @@ fn finite_nonnegative_cost(cost: f64) -> f64 {
         cost.max(0.0)
     } else {
         0.0
+    }
+}
+
+fn finite_saturating_cost_add(left: f64, right: f64) -> f64 {
+    let sum = finite_nonnegative_cost(left) + finite_nonnegative_cost(right);
+    if sum.is_finite() {
+        sum
+    } else {
+        f64::MAX
     }
 }
 
@@ -396,21 +502,13 @@ struct ProjectAccumulator {
 
 impl DayAccumulator {
     fn add_message(&mut self, msg: &UnifiedMessage) {
-        let total_tokens = msg
-            .tokens
-            .input
-            .saturating_add(msg.tokens.output)
-            .saturating_add(msg.tokens.cache_read)
-            .saturating_add(msg.tokens.cache_write)
-            .saturating_add(msg.tokens.reasoning);
-        let cost = finite_nonnegative_cost(msg.cost);
+        let message_totals = message_totals(msg);
+        let total_tokens = message_totals.tokens;
+        let cost = message_totals.cost;
 
         self.totals.tokens = self.totals.tokens.saturating_add(total_tokens);
-        self.totals.cost += cost;
-        self.totals.messages = self
-            .totals
-            .messages
-            .saturating_add(msg.message_count.max(0));
+        self.totals.cost = finite_saturating_cost_add(self.totals.cost, cost);
+        self.totals.messages = self.totals.messages.saturating_add(message_totals.messages);
 
         self.token_breakdown.input = self.token_breakdown.input.saturating_add(msg.tokens.input);
         self.token_breakdown.output = self
@@ -474,7 +572,7 @@ impl DayAccumulator {
             .tokens
             .reasoning
             .saturating_add(msg.tokens.reasoning);
-        client_entry.cost += cost;
+        client_entry.cost = finite_saturating_cost_add(client_entry.cost, cost);
         client_entry.messages = client_entry
             .messages
             .saturating_add(msg.message_count.max(0));
@@ -501,7 +599,7 @@ impl DayAccumulator {
             }
         }
         project.totals.tokens = project.totals.tokens.saturating_add(total_tokens);
-        project.totals.cost += cost;
+        project.totals.cost = finite_saturating_cost_add(project.totals.cost, cost);
         project.totals.messages = project
             .totals
             .messages
@@ -522,7 +620,7 @@ impl DayAccumulator {
                 messages: 0,
             });
         project_model.tokens = project_model.tokens.saturating_add(total_tokens);
-        project_model.cost += cost;
+        project_model.cost = finite_saturating_cost_add(project_model.cost, cost);
         project_model.messages = project_model
             .messages
             .saturating_add(msg.message_count.max(0));
@@ -530,7 +628,7 @@ impl DayAccumulator {
 
     fn merge(&mut self, other: DayAccumulator) {
         self.totals.tokens = self.totals.tokens.saturating_add(other.totals.tokens);
-        self.totals.cost += other.totals.cost;
+        self.totals.cost = finite_saturating_cost_add(self.totals.cost, other.totals.cost);
         self.totals.messages = self.totals.messages.saturating_add(other.totals.messages);
 
         self.token_breakdown.input = self
@@ -594,7 +692,7 @@ impl DayAccumulator {
                 .tokens
                 .reasoning
                 .saturating_add(client_contrib.tokens.reasoning);
-            entry.cost += client_contrib.cost;
+            entry.cost = finite_saturating_cost_add(entry.cost, client_contrib.cost);
             entry.messages = entry.messages.saturating_add(client_contrib.messages);
         }
 
@@ -619,7 +717,8 @@ impl DayAccumulator {
                 .totals
                 .tokens
                 .saturating_add(other_project.totals.tokens);
-            project.totals.cost += finite_nonnegative_cost(other_project.totals.cost);
+            project.totals.cost =
+                finite_saturating_cost_add(project.totals.cost, other_project.totals.cost);
             project.totals.messages = project
                 .totals
                 .messages
@@ -637,7 +736,7 @@ impl DayAccumulator {
                             messages: 0,
                         });
                 model.tokens = model.tokens.saturating_add(other_model.tokens);
-                model.cost += finite_nonnegative_cost(other_model.cost);
+                model.cost = finite_saturating_cost_add(model.cost, other_model.cost);
                 model.messages = model.messages.saturating_add(other_model.messages);
             }
         }
@@ -1051,6 +1150,250 @@ mod tests {
             workspace_label.map(str::to_string),
         );
         message
+    }
+
+    fn hourly_message(
+        timestamp: i64,
+        date: &str,
+        tokens: i64,
+        cost: f64,
+        messages: i32,
+    ) -> UnifiedMessage {
+        let mut message = UnifiedMessage::new(
+            "client",
+            "model",
+            "provider",
+            format!("session-{timestamp}"),
+            timestamp,
+            TokenBreakdown {
+                input: tokens,
+                ..TokenBreakdown::default()
+            },
+            cost,
+        );
+        message.date = date.to_string();
+        message.message_count = messages;
+        message
+    }
+
+    #[test]
+    fn hourly_facts_and_unplaced_conserve_each_daily_total() {
+        let timezone = crate::bucket_tz::BucketTimezone::Named(chrono_tz::UTC);
+        let exact_a = hourly_message(1_775_296_500_000, "2026-04-04", 10, 1.25, 1);
+        let exact_b = hourly_message(1_775_300_700_000, "2026-04-04", 20, 2.5, 2);
+        let mut aggregate = hourly_message(1_775_304_000_000, "2026-04-04", 30, 3.75, 3);
+        aggregate.set_timestamp_provenance(crate::TimestampProvenance::Aggregate);
+        let messages = vec![exact_a, exact_b, aggregate];
+
+        let daily = aggregate_by_date(messages.clone());
+        let facts = aggregate_hourly_usage_facts(&messages, timezone);
+
+        assert_eq!(daily.len(), 1);
+        assert_eq!(facts.len(), 1);
+        assert_eq!(facts[0].date, daily[0].date);
+        assert_eq!(facts[0].hours.len(), 2);
+        assert_eq!(facts[0].unplaced_for_hourly.tokens, 30);
+        assert_eq!(facts[0].unplaced_for_hourly.cost, 3.75);
+        assert_eq!(facts[0].unplaced_for_hourly.messages, 3);
+
+        let placed_tokens = facts[0]
+            .hours
+            .iter()
+            .map(|hour| hour.totals.tokens)
+            .sum::<i64>();
+        let placed_cost = facts[0]
+            .hours
+            .iter()
+            .map(|hour| hour.totals.cost)
+            .sum::<f64>();
+        let placed_messages = facts[0]
+            .hours
+            .iter()
+            .map(|hour| hour.totals.messages)
+            .sum::<i32>();
+        assert_eq!(
+            placed_tokens + facts[0].unplaced_for_hourly.tokens,
+            daily[0].totals.tokens
+        );
+        assert_eq!(
+            placed_messages + facts[0].unplaced_for_hourly.messages,
+            daily[0].totals.messages
+        );
+        assert!(
+            (placed_cost + facts[0].unplaced_for_hourly.cost - daily[0].totals.cost).abs()
+                < f64::EPSILON
+        );
+    }
+
+    #[test]
+    fn hourly_facts_conserve_clamped_daily_totals_for_corrupt_negative_tokens() {
+        let timezone = crate::bucket_tz::BucketTimezone::Named(chrono_tz::UTC);
+        let exact_positive = hourly_message(1_775_296_500_000, "2026-04-04", 10, 1.0, 1);
+        let exact_negative = hourly_message(1_775_300_700_000, "2026-04-04", -8, 2.0, 1);
+        let mut aggregate = hourly_message(1_775_304_000_000, "2026-04-04", 5, 3.0, 1);
+        aggregate.set_timestamp_provenance(crate::TimestampProvenance::Aggregate);
+        let messages = vec![exact_positive, exact_negative, aggregate];
+
+        let daily = aggregate_by_date(messages.clone());
+        let facts = aggregate_hourly_usage_facts(&messages, timezone);
+        let placed_tokens = facts[0]
+            .hours
+            .iter()
+            .map(|hour| hour.totals.tokens)
+            .sum::<i64>();
+
+        assert_eq!(daily[0].totals.tokens, 7);
+        assert_eq!(
+            placed_tokens + facts[0].unplaced_for_hourly.tokens,
+            daily[0].totals.tokens
+        );
+    }
+
+    #[test]
+    fn invalid_exact_timestamp_is_unplaced_on_existing_calendar_day() {
+        let timezone = crate::bucket_tz::BucketTimezone::Named(chrono_tz::UTC);
+        let message = hourly_message(i64::MAX, "2026-04-04", 7, 0.75, 2);
+
+        let facts = aggregate_hourly_usage_facts(&[message], timezone);
+
+        assert_eq!(facts.len(), 1);
+        assert_eq!(facts[0].date, "2026-04-04");
+        assert!(facts[0].hours.is_empty());
+        assert_eq!(
+            facts[0].unplaced_for_hourly,
+            DailyTotals {
+                tokens: 7,
+                cost: 0.75,
+                messages: 2,
+            }
+        );
+    }
+
+    #[test]
+    fn repeated_dst_hour_uses_distinct_absolute_buckets() {
+        use chrono::TimeZone;
+
+        let timezone_name = chrono_tz::America::New_York;
+        let chrono::LocalResult::Ambiguous(first, second) =
+            timezone_name.with_ymd_and_hms(2026, 11, 1, 1, 30, 0)
+        else {
+            panic!("expected repeated fall-back hour");
+        };
+        let messages = vec![
+            hourly_message(first.timestamp_millis(), "2026-11-01", 11, 1.0, 1),
+            hourly_message(second.timestamp_millis(), "2026-11-01", 13, 2.0, 1),
+        ];
+
+        let facts = aggregate_hourly_usage_facts(
+            &messages,
+            crate::bucket_tz::BucketTimezone::Named(timezone_name),
+        );
+
+        assert_eq!(facts.len(), 1);
+        assert_eq!(facts[0].hours.len(), 2);
+        assert_eq!(
+            facts[0].hours[1].start_ms - facts[0].hours[0].start_ms,
+            3_600_000
+        );
+        assert_eq!(
+            facts[0].hours[0].end_ms,
+            facts[0].hours[0].start_ms + 3_600_000
+        );
+        assert_eq!(
+            facts[0].hours[1].end_ms,
+            facts[0].hours[1].start_ms + 3_600_000
+        );
+        assert_eq!(facts[0].hours[0].totals.tokens, 11);
+        assert_eq!(facts[0].hours[1].totals.tokens, 13);
+        assert_eq!(facts[0].unplaced_for_hourly, DailyTotals::default());
+    }
+
+    #[test]
+    fn non_hour_dst_transitions_keep_exact_instants_placed_and_repeats_distinct() {
+        use chrono::TimeZone;
+
+        let timezone_name = chrono_tz::Australia::Lord_Howe;
+        let chrono::LocalResult::Ambiguous(first, second) =
+            timezone_name.with_ymd_and_hms(2026, 4, 5, 1, 45, 0)
+        else {
+            panic!("expected Lord Howe repeated half-hour");
+        };
+        let spring = timezone_name
+            .with_ymd_and_hms(2026, 10, 4, 2, 45, 0)
+            .single()
+            .expect("expected valid post-spring-forward instant");
+        let messages = vec![
+            hourly_message(first.timestamp_millis(), "2026-04-05", 11, 1.0, 1),
+            hourly_message(second.timestamp_millis(), "2026-04-05", 13, 2.0, 1),
+            hourly_message(spring.timestamp_millis(), "2026-10-04", 17, 3.0, 1),
+        ];
+
+        let facts = aggregate_hourly_usage_facts(
+            &messages,
+            crate::bucket_tz::BucketTimezone::Named(timezone_name),
+        );
+
+        assert_eq!(facts.len(), 2);
+        assert_eq!(facts[0].hours.len(), 2);
+        assert_eq!(
+            facts[0].hours[1].start_ms - facts[0].hours[0].start_ms,
+            3_600_000
+        );
+        assert_eq!(facts[0].unplaced_for_hourly, DailyTotals::default());
+        assert_eq!(facts[1].hours.len(), 1);
+        assert_eq!(facts[1].hours[0].totals.tokens, 17);
+        assert_eq!(facts[1].unplaced_for_hourly, DailyTotals::default());
+    }
+
+    #[test]
+    fn finite_cost_overflow_saturates_and_conserves_all_usage_facts() {
+        fn assert_conserved(day: &DailyContribution) {
+            assert_eq!(day.totals.cost, f64::MAX);
+            assert!(day.totals.cost.is_finite());
+            assert_eq!(day.clients.len(), 1);
+            assert_eq!(day.clients[0].cost, day.totals.cost);
+            assert_eq!(day.projects.len(), 1);
+            assert_eq!(day.projects[0].totals.cost, day.totals.cost);
+            assert_eq!(day.projects[0].models.len(), 1);
+            assert_eq!(day.projects[0].models[0].cost, day.totals.cost);
+        }
+
+        let first = message(
+            "client",
+            "first",
+            "model",
+            f64::MAX,
+            Some("/workspace"),
+            Some("workspace"),
+        );
+        let mut second = message(
+            "client",
+            "second",
+            "model",
+            f64::MAX,
+            Some("/workspace"),
+            Some("workspace"),
+        );
+        second.timestamp = first.timestamp;
+        second.date = first.date.clone();
+
+        let direct = aggregate_by_date(vec![first.clone(), second.clone()]);
+        assert_eq!(direct.len(), 1);
+        assert_conserved(&direct[0]);
+
+        let mut left = DayAccumulator::default();
+        left.add_message(&first);
+        let mut right = DayAccumulator::default();
+        right.add_message(&second);
+        left.merge(right);
+        assert_conserved(&left.into_contribution(first.date.clone()));
+
+        let hourly =
+            aggregate_hourly_usage_facts(&[first, second], crate::bucket_tz::bucket_timezone());
+        assert_eq!(hourly.len(), 1);
+        assert_eq!(hourly[0].hours.len(), 1);
+        assert_eq!(hourly[0].hours[0].totals.cost, f64::MAX);
+        assert_eq!(hourly[0].unplaced_for_hourly.cost, 0.0);
     }
 
     #[test]

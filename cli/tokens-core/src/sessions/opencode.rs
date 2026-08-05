@@ -648,4 +648,3 @@ pub fn now_secs() -> u64 {
         .unwrap_or_default()
         .as_secs()
 }
-

@@ -116,10 +116,8 @@ pub fn parse_qwen_file(path: &Path) -> Vec<UnifiedMessage> {
         };
 
         // Parse timestamp, fallback to file mtime
-        let timestamp_ms = qwen_line
-            .timestamp
-            .and_then(|ts| parse_timestamp_str(&ts))
-            .unwrap_or(file_mtime);
+        let explicit_timestamp = qwen_line.timestamp.and_then(|ts| parse_timestamp_str(&ts));
+        let timestamp_ms = explicit_timestamp.unwrap_or(file_mtime);
 
         // Extract token counts with defaults
         let input = usage.prompt_token_count.unwrap_or(0).max(0);
@@ -159,6 +157,9 @@ pub fn parse_qwen_file(path: &Path) -> Vec<UnifiedMessage> {
             0.0, // Cost calculated later by pricing resolver
             dedup_key,
         );
+        if explicit_timestamp.is_none() {
+            unified.set_timestamp_provenance(crate::TimestampProvenance::Fallback);
+        }
         unified.set_workspace(workspace_key.clone(), workspace_label.clone());
         messages.push(unified);
     }
@@ -182,4 +183,3 @@ fn qwen_workspace_from_path(path: &Path) -> (Option<String>, Option<String>) {
 
     (None, None)
 }
-

@@ -175,7 +175,7 @@ pub fn parse_cursor_file(path: &Path) -> Vec<UnifiedMessage> {
         // Input tokens = input_without_cache_write
         let input = input_without_cache_write;
 
-        messages.push(UnifiedMessage::new(
+        let mut message = UnifiedMessage::new(
             "cursor",
             model,
             infer_provider(model),
@@ -189,10 +189,24 @@ pub fn parse_cursor_file(path: &Path) -> Vec<UnifiedMessage> {
                 reasoning: 0,
             },
             cost.max(0.0),
-        ));
+        );
+        message.date =
+            cursor_calendar_date(date_str, timestamp, crate::bucket_tz::bucket_timezone());
+        if chrono::NaiveDate::parse_from_str(date_str, "%Y-%m-%d").is_ok() {
+            message.set_timestamp_provenance(crate::TimestampProvenance::DateOnly);
+        }
+        messages.push(message);
     }
 
     messages
+}
+
+fn cursor_calendar_date(date_str: &str, timestamp: i64, timezone: crate::BucketTimezone) -> String {
+    if chrono::NaiveDate::parse_from_str(date_str, "%Y-%m-%d").is_ok() {
+        date_str.to_string()
+    } else {
+        timezone.date_of_ms(timestamp)
+    }
 }
 
 /// Simple CSV line parser that handles quoted fields
@@ -245,9 +259,9 @@ fn parse_date_to_timestamp(date_str: &str) -> i64 {
         return Utc.from_utc_datetime(&dt).timestamp_millis();
     }
 
-    // Date-only format: "2025-02-05" - use noon UTC (12:00:00Z)
-    // Noon keeps the local date stable for all timezones from UTC-12 to UTC+14,
-    // so filtering by local day boundaries won't shift the record to an adjacent day.
+    // Date-only format: "2025-02-05" - use noon UTC as a non-midnight
+    // placeholder instant. The caller preserves the source calendar date directly
+    // and marks the timestamp DateOnly, so this instant is never hourly placed.
     if let Ok(date) = NaiveDate::parse_from_str(date_str, "%Y-%m-%d") {
         let dt = date.and_hms_opt(12, 0, 0).unwrap();
         return Utc.from_utc_datetime(&dt).timestamp_millis();
@@ -256,3 +270,46 @@ fn parse_date_to_timestamp(date_str: &str) -> i64 {
     0
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn date_only_cursor_rows_are_untrusted_but_exact_datetimes_are_trusted() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            "Date,Model,Input (w/ Cache Write),Input (w/o Cache Write),Cache Read,Output Tokens,Total Tokens,Cost,Cost to you"
+        )
+        .unwrap();
+        writeln!(file, "2026-04-04,model,10,8,2,4,14,1.0,1.0").unwrap();
+        writeln!(file, "2026-04-04T10:15:00Z,model,10,8,2,4,14,1.0,1.0").unwrap();
+
+        let messages = parse_cursor_file(file.path());
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(
+            messages[0].timestamp_provenance,
+            crate::TimestampProvenance::DateOnly
+        );
+        assert!(!messages[0].is_trustworthy_for_hourly());
+        assert_eq!(
+            messages[1].timestamp_provenance,
+            crate::TimestampProvenance::Exact
+        );
+        assert!(messages[1].is_trustworthy_for_hourly());
+    }
+
+    #[test]
+    fn date_only_cursor_rows_preserve_source_day_in_utc_plus_fourteen() {
+        let timestamp = parse_date_to_timestamp("2026-04-04");
+        let timezone = crate::BucketTimezone::Named("Pacific/Kiritimati".parse().unwrap());
+
+        assert_eq!(timezone.date_of_ms(timestamp), "2026-04-05");
+        assert_eq!(
+            cursor_calendar_date("2026-04-04", timestamp, timezone),
+            "2026-04-04"
+        );
+    }
+}

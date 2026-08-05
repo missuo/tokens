@@ -117,4 +117,3 @@ pub(crate) fn back_anchor_timestamp(end: i64, duration: i64) -> i64 {
         .filter(|candidate| *candidate > 0)
         .unwrap_or(end)
 }
-

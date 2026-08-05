@@ -57,6 +57,22 @@ pub enum CostSource {
     Estimated,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TimestampProvenance {
+    #[default]
+    Exact,
+    DateOnly,
+    Aggregate,
+    Fallback,
+}
+
+impl TimestampProvenance {
+    pub const fn is_trustworthy_for_hourly(self) -> bool {
+        matches!(self, Self::Exact)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct UnifiedMessage {
     pub client: String,
@@ -66,6 +82,8 @@ pub struct UnifiedMessage {
     pub workspace_key: Option<String>,
     pub workspace_label: Option<String>,
     pub timestamp: i64,
+    #[serde(default)]
+    pub timestamp_provenance: TimestampProvenance,
     pub date: String,
     pub tokens: TokenBreakdown,
     pub cost: f64,
@@ -354,6 +372,7 @@ impl UnifiedMessage {
             workspace_key: None,
             workspace_label: None,
             timestamp,
+            timestamp_provenance: TimestampProvenance::Exact,
             date,
             tokens,
             cost,
@@ -383,6 +402,21 @@ impl UnifiedMessage {
     pub(crate) fn set_timestamp(&mut self, timestamp: i64) {
         self.timestamp = timestamp;
         self.refresh_derived_fields();
+    }
+
+    pub fn set_timestamp_provenance(&mut self, provenance: TimestampProvenance) {
+        self.timestamp_provenance = provenance;
+    }
+
+    pub const fn is_trustworthy_for_hourly(&self) -> bool {
+        self.timestamp_provenance.is_trustworthy_for_hourly()
+    }
+
+    pub(crate) fn retain_best_timestamp_from(&mut self, other: &Self) {
+        if !self.is_trustworthy_for_hourly() && other.is_trustworthy_for_hourly() {
+            self.set_timestamp(other.timestamp);
+            self.set_timestamp_provenance(other.timestamp_provenance);
+        }
     }
 
     pub fn mark_provider_reported_cost(&mut self) {
@@ -445,3 +479,58 @@ fn timestamp_to_date(timestamp_ms: i64) -> String {
     crate::bucket_tz::bucket_timezone().date_of_ms(timestamp_ms)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_message() -> UnifiedMessage {
+        UnifiedMessage::new(
+            "client",
+            "model",
+            "provider",
+            "session",
+            1_700_000_000_000,
+            TokenBreakdown::default(),
+            0.0,
+        )
+    }
+
+    #[test]
+    fn standard_constructors_default_to_exact_hourly_trust() {
+        let message = sample_message();
+
+        assert_eq!(message.timestamp_provenance, TimestampProvenance::Exact);
+        assert!(message.is_trustworthy_for_hourly());
+    }
+
+    #[test]
+    fn timestamp_provenance_marks_date_only_aggregate_and_fallback_as_untrustworthy() {
+        for provenance in [
+            TimestampProvenance::DateOnly,
+            TimestampProvenance::Aggregate,
+            TimestampProvenance::Fallback,
+        ] {
+            let mut message = sample_message();
+            message.set_timestamp_provenance(provenance);
+
+            assert_eq!(message.timestamp_provenance, provenance);
+            assert!(!message.is_trustworthy_for_hourly());
+        }
+    }
+
+    #[test]
+    fn timestamp_provenance_has_stable_serializable_variants() {
+        for (provenance, encoded) in [
+            (TimestampProvenance::Exact, "\"exact\""),
+            (TimestampProvenance::DateOnly, "\"dateOnly\""),
+            (TimestampProvenance::Aggregate, "\"aggregate\""),
+            (TimestampProvenance::Fallback, "\"fallback\""),
+        ] {
+            assert_eq!(serde_json::to_string(&provenance).unwrap(), encoded);
+            assert_eq!(
+                serde_json::from_str::<TimestampProvenance>(encoded).unwrap(),
+                provenance
+            );
+        }
+    }
+}

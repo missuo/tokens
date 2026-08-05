@@ -38,6 +38,18 @@ public enum Formatting {
         return String(format: "$%.2f", value)
     }
 
+    public static func chartCostTick(_ value: Double) -> String {
+        if value.rounded() == value {
+            return "$\(Int(value))"
+        }
+        let magnitude = abs(value)
+        if magnitude < 0.00000001 {
+            return String(format: "$%.1e", value)
+        }
+        let precision = max(2, min(8, Int(ceil(-log10(magnitude)))))
+        return String(format: "$%.*f", precision, value)
+    }
+
     public static func menuBarTitle(
         report: UsageReport?,
         mode: MenuBarDisplayMode,
@@ -76,24 +88,162 @@ public enum Formatting {
     }
 
     public static func relativeTime(fromISO8601 value: String) -> String {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        var date = formatter.date(from: value)
-        if date == nil {
-            formatter.formatOptions = [.withInternetDateTime]
-            date = formatter.date(from: value)
-        }
-        guard let date else { return value }
+        guard let date = parseISO8601(value) else { return value }
         let rel = RelativeDateTimeFormatter()
         rel.unitsStyle = .short
         return rel.localizedString(for: date, relativeTo: Date())
     }
 
-    /// Dense chart axis label: `"2026-07-24"` → `"24"`. Tooltip should use full ISO date.
-    public static func chartDayLabel(isoDate: String) -> String {
-        if isoDate.count >= 10 {
-            return String(isoDate.suffix(2))
+    public static func compactDateRange(
+        _ range: DateSelectionRange,
+        timeZone: TimeZone,
+        locale: Locale = .current
+    ) -> String {
+        guard let start = try? DateRangePickerConversion.date(
+            from: range.startDate,
+            timeZone: timeZone
+        ), let end = try? DateRangePickerConversion.date(
+            from: range.endDate,
+            timeZone: timeZone
+        ) else {
+            return range.startDate == range.endDate
+                ? range.startDate
+                : "\(range.startDate)–\(range.endDate)"
         }
-        return isoDate
+
+        let formatter = DateFormatter()
+        formatter.calendar = DateRangePickerConversion.calendar(timeZone: timeZone)
+        formatter.timeZone = timeZone
+        formatter.locale = locale
+        formatter.dateStyle = .short
+        formatter.timeStyle = .none
+        let startText = formatter.string(from: start)
+        guard range.startDate != range.endDate else { return startText }
+        return "\(startText)–\(formatter.string(from: end))"
+    }
+
+    public static func chartBucketLabels(
+        buckets: [UsageTimeBucket],
+        granularity: UsageTimeGranularity,
+        timeZone: TimeZone,
+        locale: Locale = .current
+    ) -> [String] {
+        let dates = buckets.map { parseISO8601($0.nominalStart) }
+        let baseLabels = dates.map { date -> String in
+            guard let date else { return "—" }
+            return chartLabel(
+                for: date,
+                granularity: granularity,
+                timeZone: timeZone,
+                locale: locale,
+                includeOffset: false
+            )
+        }
+        return disambiguateRepeatedLabels(
+            baseLabels,
+            dates: dates,
+            granularity: granularity,
+            timeZone: timeZone,
+            locale: locale
+        )
+    }
+
+    public static func chartBucketAccessibilityLabel(
+        _ bucket: UsageTimeBucket,
+        timeZone: TimeZone,
+        locale: Locale = .current
+    ) -> String {
+        var states: [String] = []
+        if bucket.contextOnly { states.append("context, excluded from selected total") }
+        if bucket.active { states.append("active") }
+        if bucket.incompleteEdge { states.append("incomplete edge") }
+        let state = states.isEmpty ? "" : ", " + states.joined(separator: ", ")
+        return "\(chartBucketTooltipRange(bucket, timeZone: timeZone, locale: locale)), "
+            + "\(cost(bucket.totals.cost, locale: locale)), "
+            + "\(compactTokens(bucket.totals.tokens, locale: locale)) tokens\(state)"
+    }
+
+    public static func chartBucketTooltipRange(
+        _ bucket: UsageTimeBucket,
+        timeZone: TimeZone,
+        locale: Locale = .current
+    ) -> String {
+        guard let start = parseISO8601(bucket.coveredStart),
+              let end = parseISO8601(bucket.coveredEndExclusive) else {
+            return "\(bucket.coveredStart) – \(bucket.coveredEndExclusive)"
+        }
+        let formatter = DateFormatter()
+        formatter.calendar = DateRangePickerConversion.calendar(timeZone: timeZone)
+        formatter.timeZone = timeZone
+        formatter.locale = locale
+        formatter.dateFormat = "MMM d, HH:mm XXXXX"
+        return "\(formatter.string(from: start)) – \(formatter.string(from: end))"
+            .replacingOccurrences(of: "-", with: "−")
+    }
+
+    private static func chartLabel(
+        for date: Date,
+        granularity: UsageTimeGranularity,
+        timeZone: TimeZone,
+        locale: Locale,
+        includeOffset: Bool
+    ) -> String {
+        let formatter = DateFormatter()
+        formatter.calendar = DateRangePickerConversion.calendar(timeZone: timeZone)
+        formatter.timeZone = timeZone
+        formatter.locale = locale
+        switch granularity {
+        case .hour:
+            formatter.dateFormat = includeOffset ? "ha XXXXX" : "ha"
+        case .day:
+            formatter.setLocalizedDateFormatFromTemplate("EEE d")
+        case .naturalWeek:
+            formatter.setLocalizedDateFormatFromTemplate("MMM d")
+        case .naturalMonth:
+            formatter.setLocalizedDateFormatFromTemplate("MMM")
+        }
+        return formatter.string(from: date)
+            .replacingOccurrences(of: "-", with: "−")
+    }
+
+    private static func disambiguateRepeatedLabels(
+        _ labels: [String],
+        dates: [Date?],
+        granularity: UsageTimeGranularity,
+        timeZone: TimeZone,
+        locale: Locale
+    ) -> [String] {
+        let counts = Dictionary(grouping: labels, by: { $0 }).mapValues(\.count)
+        guard counts.values.contains(where: { $0 > 1 }) else { return labels }
+        return zip(labels, dates).map { label, date in
+            guard counts[label, default: 0] > 1, let date else { return label }
+            let formatter = DateFormatter()
+            formatter.calendar = DateRangePickerConversion.calendar(timeZone: timeZone)
+            formatter.timeZone = timeZone
+            formatter.locale = locale
+            switch granularity {
+            case .hour:
+                return chartLabel(
+                    for: date,
+                    granularity: .hour,
+                    timeZone: timeZone,
+                    locale: locale,
+                    includeOffset: true
+                )
+            case .day, .naturalWeek:
+                formatter.setLocalizedDateFormatFromTemplate("MMM d yy")
+            case .naturalMonth:
+                formatter.setLocalizedDateFormatFromTemplate("MMM yy")
+            }
+            return formatter.string(from: date)
+        }
+    }
+
+    static func parseISO8601(_ value: String) -> Date? {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = formatter.date(from: value) { return date }
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.date(from: value)
     }
 }

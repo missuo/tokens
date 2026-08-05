@@ -12,7 +12,7 @@
 #   make run                       build both, then foreground app run
 #   make test / make help
 
-.PHONY: all help build build-release build-app build-app-release cli restart restart-release start start-release stop run test
+.PHONY: all help build build-release build-app build-app-release cli restart restart-release start start-release stop run test prototype-time-range prototype-report-contract
 
 all: build
 
@@ -36,6 +36,8 @@ help:
 	@echo "  make build-app                 Build only debug Menu Bar"
 	@echo "  make build-app-release         Build only release Menu Bar"
 	@echo "  make test                      Run Swift tests"
+	@echo "  make prototype-time-range      Run throwaway time-range logic prototype"
+	@echo "  make prototype-report-contract Run throwaway report/cache contract prototype"
 	@echo "  make help                      Show this help"
 
 # Unified builds (default)
@@ -79,3 +81,9 @@ run: build
 
 test:
 	swift test
+
+prototype-time-range:
+	cargo run --quiet --manifest-path cli/Cargo.toml -p tokens-cli --example time_range_prototype -- $(ARGS)
+
+prototype-report-contract:
+	cargo run --quiet --manifest-path cli/Cargo.toml -p tokens-cli --example report_contract_prototype -- $(ARGS)

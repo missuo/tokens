@@ -50,9 +50,14 @@ public enum MenuBarLayout {
 @MainActor
 public final class PanelLayoutState: ObservableObject {
     @Published public private(set) var maxHeight: CGFloat
+    @Published public private(set) var presentationGeneration = 0
 
     public init(maxHeight: CGFloat = MenuBarLayout.panelMaxHeight()) {
         self.maxHeight = maxHeight
+    }
+
+    public func willPresent() {
+        presentationGeneration &+= 1
     }
 
     /// Recompute from the status-item (or mouse) screen; no-op if unchanged.

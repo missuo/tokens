@@ -5,28 +5,22 @@
 //! emits a stable JSON schema for the macOS Menu Bar app.
 
 use anyhow::{Context, Result};
-use chrono::{Duration, NaiveDate};
-use fs2::FileExt;
+use chrono::{DateTime, Duration, NaiveDate, Utc};
 use serde::Serialize;
 use std::collections::BTreeMap;
-use std::fs;
 use std::io::Write;
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::path::Path;
 
 use tokens_core::{
     bucket_timezone, clear_source_message_cache, generate_local_usage_scan, BucketTimezone,
-    ClientContribution, DailyContribution, DailyTotals, GraphResult, LocalUsageScan,
-    ProjectContribution, ProjectModelContribution, ReportOptions, TokenBreakdown,
+    DailyContribution, LocalUsageScan, ReportOptions, TokenBreakdown,
 };
 
 use crate::commands::unattributed_diagnostics::{update_diagnostics, DIAGNOSTIC_FILENAME};
+use crate::commands::usage_snapshot;
 use crate::settings;
 
-const SNAPSHOT_SCHEMA_VERSION: u32 = 2;
-const SNAPSHOT_FILENAME: &str = "usage-snapshot-v2.json";
-const LEGACY_SNAPSHOT_FILENAME: &str = "usage-snapshot-v1.json";
-static SNAPSHOT_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+const V2_REPORT_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 #[clap(rename_all = "lower")]
@@ -48,6 +42,102 @@ impl UsagePeriod {
             Self::All => "all",
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+#[clap(rename_all = "lower")]
+pub(crate) enum UsageContract {
+    V2,
+    V3,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct UsageRequestArgs {
+    pub contract: Option<UsageContract>,
+    pub period: Option<UsagePeriod>,
+    pub since: Option<String>,
+    pub until: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum UsageReportRequest {
+    V2Preset { period: UsagePeriod },
+    V3 { selection: UsageReportSelection },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum UsageReportSelection {
+    Preset { period: UsagePeriod },
+    Custom { since: NaiveDate, until: NaiveDate },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum UsageReportAction {
+    LegacyV2 { period: UsagePeriod },
+    V3 { selection: UsageReportSelection },
+}
+
+pub(crate) fn resolve_usage_action(
+    args: UsageRequestArgs,
+    reporting_today: NaiveDate,
+) -> Result<UsageReportAction> {
+    Ok(match validate_usage_request(args, reporting_today)? {
+        UsageReportRequest::V2Preset { period } => UsageReportAction::LegacyV2 { period },
+        UsageReportRequest::V3 { selection } => UsageReportAction::V3 { selection },
+    })
+}
+
+pub(crate) fn validate_usage_request(
+    args: UsageRequestArgs,
+    reporting_today: NaiveDate,
+) -> Result<UsageReportRequest> {
+    let has_custom_date = args.since.is_some() || args.until.is_some();
+
+    if has_custom_date && args.period.is_some() {
+        anyhow::bail!("--period cannot be combined with --since or --until");
+    }
+
+    if has_custom_date {
+        let (Some(since), Some(until)) = (args.since.as_deref(), args.until.as_deref()) else {
+            anyhow::bail!("custom usage ranges require both --since and --until");
+        };
+        if args.contract != Some(UsageContract::V3) {
+            anyhow::bail!("--since and --until require --contract v3");
+        }
+
+        let since = parse_usage_date("--since", since)?;
+        let until = parse_usage_date("--until", until)?;
+        if until < since {
+            anyhow::bail!("--until must be on or after --since");
+        }
+        if since > reporting_today {
+            anyhow::bail!("--since must not be after reporting today ({reporting_today})");
+        }
+        if until > reporting_today {
+            anyhow::bail!("--until must not be after reporting today ({reporting_today})");
+        }
+
+        return Ok(UsageReportRequest::V3 {
+            selection: UsageReportSelection::Custom { since, until },
+        });
+    }
+
+    let period = args.period.unwrap_or(UsagePeriod::Today);
+    match args.contract.unwrap_or(UsageContract::V2) {
+        UsageContract::V2 => Ok(UsageReportRequest::V2Preset { period }),
+        UsageContract::V3 => Ok(UsageReportRequest::V3 {
+            selection: UsageReportSelection::Preset { period },
+        }),
+    }
+}
+
+fn parse_usage_date(flag: &str, value: &str) -> Result<NaiveDate> {
+    let date = NaiveDate::parse_from_str(value, "%Y-%m-%d")
+        .map_err(|_| anyhow::anyhow!("{flag} must use YYYY-MM-DD"))?;
+    if date.format("%Y-%m-%d").to_string() != value {
+        anyhow::bail!("{flag} must use YYYY-MM-DD");
+    }
+    Ok(date)
 }
 
 #[derive(Debug, Serialize)]
@@ -199,74 +289,14 @@ struct UsageErrorBody {
     message: String,
 }
 
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct UsageSnapshotFile {
-    schema_version: u32,
-    generated_at: String,
-    /// Calendar day in the bucket timezone when this snapshot was written
-    /// (`YYYY-MM-DD`). Used for same-day reuse — never derive this from the
-    /// UTC prefix of `generated_at` (that breaks after local midnight when
-    /// UTC has already rolled over).
-    #[serde(default)]
-    bucket_date: String,
-    timezone: String,
-    contributions: Vec<SnapshotDay>,
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct SnapshotDay {
-    date: String,
-    tokens: i64,
-    cost: f64,
-    messages: i32,
-    intensity: u8,
-    token_breakdown: TokenBreakdownDtoSerde,
-    clients: Vec<SnapshotClientRow>,
-    projects: Vec<SnapshotProject>,
-}
-
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct TokenBreakdownDtoSerde {
-    input: i64,
-    output: i64,
-    cache_read: i64,
-    cache_write: i64,
-    reasoning: i64,
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct SnapshotClientRow {
-    client: String,
-    model_id: String,
-    provider_id: String,
-    tokens: TokenBreakdownDtoSerde,
-    cost: f64,
-    messages: i32,
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct SnapshotProject {
-    project_key: Option<String>,
-    project_label: String,
-    tokens: i64,
-    cost: f64,
-    messages: i32,
-    models: Vec<SnapshotProjectModel>,
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct SnapshotProjectModel {
-    model_id: String,
-    provider_id: String,
-    tokens: i64,
-    cost: f64,
-    messages: i32,
+fn build_v2_error_report(error: &anyhow::Error) -> UsageErrorReport {
+    UsageErrorReport {
+        schema_version: V2_REPORT_SCHEMA_VERSION,
+        error: UsageErrorBody {
+            code: "scan_failed".to_string(),
+            message: format!("{error:#}"),
+        },
+    }
 }
 
 /// Run `tokens usage`.
@@ -292,13 +322,7 @@ pub(crate) fn run(
         }
         Err(err) => {
             if json {
-                let payload = UsageErrorReport {
-                    schema_version: SNAPSHOT_SCHEMA_VERSION,
-                    error: UsageErrorBody {
-                        code: "scan_failed".to_string(),
-                        message: format!("{err:#}"),
-                    },
-                };
+                let payload = build_v2_error_report(&err);
                 let _ = writeln!(
                     std::io::stdout(),
                     "{}",
@@ -310,57 +334,189 @@ pub(crate) fn run(
     }
 }
 
-fn build_report(period: UsagePeriod, refresh: bool, force_rescan: bool) -> Result<UsageReport> {
-    let started = std::time::Instant::now();
-    let today = bucket_timezone().today();
-    let (since, until) = period_bounds(period, today);
-
-    if force_rescan {
-        clear_source_message_cache().map_err(|e| anyhow::anyhow!(e))?;
-        clear_usage_snapshots();
-    } else if !refresh {
-        if let Some(report) =
-            try_report_from_snapshot(period, today, since.as_deref(), until.as_deref())
-        {
-            return Ok(report);
+fn with_snapshot_operation<T, ReadSnapshot, Rebuild>(
+    cache_dir: &Path,
+    bypass_snapshot: bool,
+    mut read_snapshot: ReadSnapshot,
+    rebuild: Rebuild,
+) -> Result<T>
+where
+    ReadSnapshot: FnMut() -> Option<T>,
+    Rebuild: FnOnce() -> Result<T>,
+{
+    if !bypass_snapshot {
+        let _shared = usage_snapshot::acquire_shared_operation_lock(cache_dir)?;
+        if let Some(value) = read_snapshot() {
+            return Ok(value);
         }
     }
 
-    let scan = scan_all_local()?;
-    write_snapshot_from_graph(&scan.graph)?;
-    let diagnostics_path = tokens_core::paths::get_cache_dir().join(DIAGNOSTIC_FILENAME);
-    if let Err(error) = update_diagnostics(
-        &diagnostics_path,
-        &scan.graph.meta.generated_at,
-        &timezone_label(),
-        &scan.unattributed_sessions,
-    ) {
-        eprintln!("tokens: warning: {error:#}");
+    let _exclusive = usage_snapshot::acquire_exclusive_operation_lock(cache_dir)?;
+    if !bypass_snapshot {
+        if let Some(value) = read_snapshot() {
+            return Ok(value);
+        }
     }
-    let graph = scan.graph;
+    rebuild()
+}
 
-    // Keep full history for the always-14-day cost chart; filter only for
-    // summary / client / model rolls (period-scoped).
-    let chart_source = graph.contributions.clone();
-    let mut contributions = graph.contributions;
-    filter_contributions(&mut contributions, since.as_deref(), until.as_deref());
+pub(crate) struct UsageSnapshotAcquisition {
+    pub(crate) snapshot: usage_snapshot::UsageSnapshot,
+    pub(crate) mode: String,
+    pub(crate) force_rescan: bool,
+    pub(crate) duration_ms: u32,
+    pub(crate) source_hits: u64,
+    pub(crate) source_misses: u64,
+    pub(crate) snapshot_rebuilt: bool,
+}
 
-    let duration_ms = started.elapsed().as_millis() as u32;
-    let mode = if force_rescan { "full" } else { "incremental" };
+pub(crate) fn acquire_usage_snapshot(
+    reporting_now: DateTime<Utc>,
+    refresh: bool,
+    force_rescan: bool,
+) -> Result<UsageSnapshotAcquisition> {
+    let started = std::time::Instant::now();
+    let reporting_timezone = bucket_timezone();
+    let bucket_date = reporting_timezone.date_of_ms(reporting_now.timestamp_millis());
+    if bucket_date.is_empty() {
+        anyhow::bail!("reporting time is outside the configured timezone calendar");
+    }
+    let timezone = timezone_label_for(reporting_timezone);
+    let cache_dir = tokens_core::paths::get_cache_dir();
 
-    Ok(report_from_contributions(
+    with_snapshot_operation(
+        &cache_dir,
+        refresh || force_rescan,
+        || {
+            usage_snapshot::load_reusable_snapshot(&cache_dir, &bucket_date, &timezone).map(
+                |snapshot| UsageSnapshotAcquisition {
+                    snapshot,
+                    mode: "snapshot".to_string(),
+                    force_rescan: false,
+                    duration_ms: 0,
+                    source_hits: 0,
+                    source_misses: 0,
+                    snapshot_rebuilt: false,
+                },
+            )
+        },
+        || {
+            if force_rescan {
+                clear_force_rescan_caches(&cache_dir, || {
+                    clear_source_message_cache().map_err(anyhow::Error::msg)
+                })?;
+            }
+
+            let scan = scan_all_local()?;
+            let snapshot = usage_snapshot::build_snapshot(&scan, &bucket_date, &timezone)?;
+            usage_snapshot::write_snapshot(&cache_dir, &snapshot)?;
+            let diagnostics_path = cache_dir.join(DIAGNOSTIC_FILENAME);
+            if let Err(error) = update_diagnostics(
+                &diagnostics_path,
+                &scan.graph.meta.generated_at,
+                &timezone,
+                &scan.unattributed_sessions,
+            ) {
+                eprintln!("tokens: warning: {error:#}");
+            }
+
+            Ok(UsageSnapshotAcquisition {
+                snapshot,
+                mode: if force_rescan { "full" } else { "incremental" }.to_string(),
+                force_rescan,
+                duration_ms: elapsed_millis_u32(&started),
+                source_hits: 0,
+                source_misses: 0,
+                snapshot_rebuilt: true,
+            })
+        },
+    )
+}
+
+fn build_report(period: UsagePeriod, refresh: bool, force_rescan: bool) -> Result<UsageReport> {
+    build_current_v2_report(
         period,
+        refresh,
         force_rescan,
-        mode,
-        duration_ms,
-        true,
-        0,
-        0,
-        &contributions,
-        &chart_source,
-        today,
-        &graph.meta.generated_at,
-    ))
+        Utc::now,
+        acquire_usage_snapshot,
+    )
+}
+
+fn build_current_v2_report<Now, Acquire>(
+    period: UsagePeriod,
+    refresh: bool,
+    force_rescan: bool,
+    mut now: Now,
+    mut acquire: Acquire,
+) -> Result<UsageReport>
+where
+    Now: FnMut() -> DateTime<Utc>,
+    Acquire: FnMut(DateTime<Utc>, bool, bool) -> Result<UsageSnapshotAcquisition>,
+{
+    let acquisition_started_at = now();
+    let mut acquisition = acquire(acquisition_started_at, refresh, force_rescan)?;
+
+    for attempt in 0..2 {
+        let reporting_now = now();
+        let reporting_timezone = parse_snapshot_timezone(&acquisition.snapshot.timezone)?;
+        let reporting_date = reporting_timezone.date_of_ms(reporting_now.timestamp_millis());
+        if reporting_date.is_empty() {
+            anyhow::bail!("reporting time is outside the snapshot timezone calendar");
+        }
+        if reporting_date == acquisition.snapshot.bucket_date {
+            let today = NaiveDate::parse_from_str(&acquisition.snapshot.bucket_date, "%Y-%m-%d")
+                .context("invalid acquired usage snapshot bucket date")?;
+            let (since, until) = period_bounds(period, today);
+            let chart_source = usage_snapshot::daily_contributions(&acquisition.snapshot);
+            let contributions =
+                selected_contributions(&chart_source, since.as_deref(), until.as_deref());
+
+            return Ok(report_from_contributions(
+                period,
+                force_rescan || acquisition.force_rescan,
+                &acquisition.mode,
+                acquisition.duration_ms,
+                acquisition.snapshot_rebuilt,
+                acquisition.source_hits,
+                acquisition.source_misses,
+                &contributions,
+                &chart_source,
+                today,
+                &acquisition.snapshot.generated_at,
+            ));
+        }
+        if attempt == 1 {
+            break;
+        }
+        acquisition = acquire(reporting_now, false, false)?;
+    }
+
+    anyhow::bail!("reporting day changed repeatedly while acquiring the usage snapshot")
+}
+
+fn elapsed_millis_u32(started: &std::time::Instant) -> u32 {
+    started.elapsed().as_millis().min(u32::MAX as u128) as u32
+}
+
+fn clear_force_rescan_caches<F>(cache_dir: &Path, clear_source: F) -> Result<()>
+where
+    F: FnOnce() -> Result<()>,
+{
+    let source_result = clear_source();
+    let snapshot_result = usage_snapshot::clear_usage_snapshots(cache_dir);
+    let mut failures = Vec::new();
+    if let Err(error) = source_result {
+        failures.push(format!("clear Layer A source cache: {error:#}"));
+    }
+    if let Err(error) = snapshot_result {
+        failures.push(format!("clear Layer B usage snapshots: {error:#}"));
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        anyhow::bail!("force rescan cache clear failed: {}", failures.join("; "))
+    }
 }
 
 fn scan_all_local() -> Result<LocalUsageScan> {
@@ -402,258 +558,73 @@ fn period_bounds(period: UsagePeriod, today: NaiveDate) -> (Option<String>, Opti
     }
 }
 
+fn selected_contributions(
+    days: &[DailyContribution],
+    since: Option<&str>,
+    until: Option<&str>,
+) -> Vec<DailyContribution> {
+    days.iter()
+        .filter(|day| contribution_is_selected(day, since, until))
+        .cloned()
+        .collect()
+}
+
+#[cfg(test)]
 fn filter_contributions(
     days: &mut Vec<DailyContribution>,
     since: Option<&str>,
     until: Option<&str>,
 ) {
-    if let Some(since) = since {
-        days.retain(|d| d.date.as_str() >= since);
-    }
-    if let Some(until) = until {
-        days.retain(|d| d.date.as_str() <= until);
-    }
+    days.retain(|day| contribution_is_selected(day, since, until));
 }
 
-fn snapshot_path() -> PathBuf {
-    tokens_core::paths::get_cache_dir().join(SNAPSHOT_FILENAME)
-}
-
-fn legacy_snapshot_path() -> PathBuf {
-    tokens_core::paths::get_cache_dir().join(LEGACY_SNAPSHOT_FILENAME)
-}
-
-/// Remove current (v2) and legacy (v1) Layer B usage snapshots.
-///
-/// Called by `--force-rescan` before a full rebuild so period filters cannot
-/// reuse stale aggregated rollups after the source-message cache is cleared.
-fn clear_usage_snapshots() {
-    let _ = fs::remove_file(snapshot_path());
-    let _ = fs::remove_file(legacy_snapshot_path());
+fn contribution_is_selected(
+    day: &DailyContribution,
+    since: Option<&str>,
+    until: Option<&str>,
+) -> bool {
+    since.is_none_or(|since| day.date.as_str() >= since)
+        && until.is_none_or(|until| day.date.as_str() <= until)
 }
 
 fn timezone_label() -> String {
-    match bucket_timezone() {
+    timezone_label_for(bucket_timezone())
+}
+
+fn parse_snapshot_timezone(value: &str) -> Result<BucketTimezone> {
+    if value == "local" {
+        Ok(BucketTimezone::Local)
+    } else {
+        tokens_core::parse_bucket_timezone(value)
+            .with_context(|| format!("invalid snapshot timezone {value}"))
+    }
+}
+
+fn timezone_label_for(timezone: BucketTimezone) -> String {
+    match timezone {
         BucketTimezone::Local => iana_time_zone::get_timezone().unwrap_or_else(|_| "local".into()),
         BucketTimezone::Named(tz) => tz.name().to_string(),
     }
 }
 
-/// Resolve the bucket-local calendar day this snapshot belongs to.
-fn snapshot_bucket_day(snapshot: &UsageSnapshotFile) -> Option<String> {
-    if !snapshot.bucket_date.is_empty() {
-        return Some(snapshot.bucket_date.clone());
-    }
-    // Legacy snapshots (no bucket_date): convert generated_at from absolute
-    // time into the process bucket timezone instead of slicing the UTC date.
-    bucket_day_from_generated_at(&snapshot.generated_at)
-}
-
-fn bucket_day_from_generated_at(generated_at: &str) -> Option<String> {
-    // Accept RFC3339 with or without fractional seconds.
-    let dt = chrono::DateTime::parse_from_rfc3339(generated_at)
-        .ok()
-        .map(|d| d.with_timezone(&chrono::Utc))
-        .or_else(|| {
-            chrono::DateTime::parse_from_str(generated_at, "%Y-%m-%dT%H:%M:%S%.f%z")
-                .ok()
-                .map(|d| d.with_timezone(&chrono::Utc))
-        })?;
-    let day = match bucket_timezone() {
-        BucketTimezone::Local => dt.with_timezone(&chrono::Local).date_naive(),
-        BucketTimezone::Named(tz) => dt.with_timezone(&tz).date_naive(),
-    };
-    Some(day.format("%Y-%m-%d").to_string())
-}
-
-fn snapshot_day_from_contribution(c: &DailyContribution) -> SnapshotDay {
-    SnapshotDay {
-        date: c.date.clone(),
-        tokens: c.totals.tokens,
-        cost: c.totals.cost,
-        messages: c.totals.messages,
-        intensity: c.intensity,
-        token_breakdown: TokenBreakdownDtoSerde {
-            input: c.token_breakdown.input,
-            output: c.token_breakdown.output,
-            cache_read: c.token_breakdown.cache_read,
-            cache_write: c.token_breakdown.cache_write,
-            reasoning: c.token_breakdown.reasoning,
-        },
-        clients: c
-            .clients
-            .iter()
-            .map(|row| SnapshotClientRow {
-                client: row.client.clone(),
-                model_id: row.model_id.clone(),
-                provider_id: row.provider_id.clone(),
-                tokens: TokenBreakdownDtoSerde {
-                    input: row.tokens.input,
-                    output: row.tokens.output,
-                    cache_read: row.tokens.cache_read,
-                    cache_write: row.tokens.cache_write,
-                    reasoning: row.tokens.reasoning,
-                },
-                cost: row.cost,
-                messages: row.messages,
-            })
-            .collect(),
-        projects: c
-            .projects
-            .iter()
-            .map(|project| SnapshotProject {
-                project_key: project.project_key.clone(),
-                project_label: project.project_label.clone(),
-                tokens: project.totals.tokens,
-                cost: project.totals.cost,
-                messages: project.totals.messages,
-                models: project
-                    .models
-                    .iter()
-                    .map(|model| SnapshotProjectModel {
-                        model_id: model.model_id.clone(),
-                        provider_id: model.provider_id.clone(),
-                        tokens: model.tokens,
-                        cost: model.cost,
-                        messages: model.messages,
-                    })
-                    .collect(),
-            })
-            .collect(),
-    }
-}
-
-fn write_snapshot_from_graph(graph: &GraphResult) -> Result<()> {
-    let snapshot = UsageSnapshotFile {
-        schema_version: SNAPSHOT_SCHEMA_VERSION,
-        generated_at: graph.meta.generated_at.clone(),
-        bucket_date: bucket_timezone().today().format("%Y-%m-%d").to_string(),
-        timezone: timezone_label(),
-        contributions: graph
-            .contributions
-            .iter()
-            .map(snapshot_day_from_contribution)
-            .collect(),
-    };
-
-    let path = snapshot_path();
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let body = serde_json::to_vec_pretty(&snapshot)?;
-    write_private_snapshot(&path, &body)?;
-    let _ = fs::remove_file(legacy_snapshot_path());
-    Ok(())
-}
-
-/// Persist a snapshot through an exclusive lock + process-unique temporary file.
-/// Concurrent refreshes queue on the lock; each published snapshot is complete
-/// and workspace keys remain owner-only on Unix.
-fn write_private_snapshot(path: &Path, body: &[u8]) -> Result<()> {
-    let lock_path = snapshot_lock_path(path);
-    let lock = open_private_snapshot_lock(&lock_path)?;
-    lock.lock_exclusive()
-        .with_context(|| format!("lock usage snapshot {}", lock_path.display()))?;
-
-    let sequence = SNAPSHOT_TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-    let tmp = path.with_extension(format!("json.{}.{}.tmp", std::process::id(), sequence));
-    let result = (|| -> Result<()> {
-        #[cfg(unix)]
-        let mut output = {
-            use std::os::unix::fs::OpenOptionsExt;
-            fs::OpenOptions::new()
-                .create_new(true)
-                .write(true)
-                .mode(0o600)
-                .open(&tmp)?
-        };
-        #[cfg(not(unix))]
-        let mut output = fs::OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&tmp)?;
-
-        output.write_all(body)?;
-        output.sync_all()?;
-        tokens_core::fs_atomic::replace_file(&tmp, path)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
-        }
-        Ok(())
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&tmp);
-    }
-    result.with_context(|| format!("write usage snapshot {}", path.display()))
-}
-
-fn snapshot_lock_path(path: &Path) -> PathBuf {
-    path.with_extension("json.lock")
-}
-
-fn open_private_snapshot_lock(path: &Path) -> Result<fs::File> {
-    #[cfg(unix)]
-    let lock = {
-        use std::os::unix::fs::OpenOptionsExt;
-        fs::OpenOptions::new()
-            .create(true)
-            .read(true)
-            .write(true)
-            .mode(0o600)
-            .open(path)
-    };
-    #[cfg(not(unix))]
-    let lock = fs::OpenOptions::new()
-        .create(true)
-        .read(true)
-        .write(true)
-        .open(path);
-
-    let lock = lock.with_context(|| format!("open usage snapshot lock {}", path.display()))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
-    }
-    Ok(lock)
-}
-
-fn try_report_from_snapshot(
+#[cfg(test)]
+fn try_report_from_snapshot_in(
+    cache_dir: &Path,
     period: UsagePeriod,
     today: NaiveDate,
     since: Option<&str>,
     until: Option<&str>,
+    expected_timezone: &str,
 ) -> Option<UsageReport> {
-    let path = snapshot_path();
-    let raw = fs::read_to_string(&path).ok()?;
-    let snapshot: UsageSnapshotFile = serde_json::from_str(&raw).ok()?;
-    if snapshot.schema_version != SNAPSHOT_SCHEMA_VERSION {
-        return None;
-    }
-    let today_s = today.format("%Y-%m-%d").to_string();
-    let snapshot_day = snapshot_bucket_day(&snapshot)?;
-    if snapshot_day != today_s {
-        return None;
-    }
-    if snapshot.timezone != timezone_label() {
-        return None;
-    }
+    let today_string = today.format("%Y-%m-%d").to_string();
+    let snapshot =
+        usage_snapshot::load_reusable_snapshot(cache_dir, &today_string, expected_timezone)?;
 
     // Full snapshot history drives the 14-day cost chart even when the selected
-    // period is `today` (which would otherwise leave byDay empty/almost empty
-    // right after midnight).
-    let chart_source = snapshot_days_to_contributions(&snapshot.contributions);
-    let mut days = snapshot.contributions;
-    if let Some(since) = since {
-        days.retain(|d| d.date.as_str() >= since);
-    }
-    if let Some(until) = until {
-        days.retain(|d| d.date.as_str() <= until);
-    }
+    // period is `today`.
+    let chart_source = usage_snapshot::daily_contributions(&snapshot);
+    let contributions = selected_contributions(&chart_source, since, until);
 
-    let contributions = snapshot_days_to_contributions(&days);
     Some(report_from_contributions(
         period,
         false,
@@ -667,70 +638,6 @@ fn try_report_from_snapshot(
         today,
         &snapshot.generated_at,
     ))
-}
-
-fn snapshot_days_to_contributions(days: &[SnapshotDay]) -> Vec<DailyContribution> {
-    days.iter()
-        .map(|d| DailyContribution {
-            date: d.date.clone(),
-            totals: DailyTotals {
-                tokens: d.tokens,
-                cost: d.cost,
-                messages: d.messages,
-            },
-            intensity: d.intensity,
-            token_breakdown: TokenBreakdown {
-                input: d.token_breakdown.input,
-                output: d.token_breakdown.output,
-                cache_read: d.token_breakdown.cache_read,
-                cache_write: d.token_breakdown.cache_write,
-                reasoning: d.token_breakdown.reasoning,
-            },
-            clients: d
-                .clients
-                .iter()
-                .map(|c| ClientContribution {
-                    client: c.client.clone(),
-                    model_id: c.model_id.clone(),
-                    provider_id: c.provider_id.clone(),
-                    tokens: TokenBreakdown {
-                        input: c.tokens.input,
-                        output: c.tokens.output,
-                        cache_read: c.tokens.cache_read,
-                        cache_write: c.tokens.cache_write,
-                        reasoning: c.tokens.reasoning,
-                    },
-                    cost: c.cost,
-                    messages: c.messages,
-                })
-                .collect(),
-            projects: d
-                .projects
-                .iter()
-                .map(|project| ProjectContribution {
-                    project_key: project.project_key.clone(),
-                    project_label: project.project_label.clone(),
-                    totals: DailyTotals {
-                        tokens: project.tokens,
-                        cost: project.cost,
-                        messages: project.messages,
-                    },
-                    models: project
-                        .models
-                        .iter()
-                        .map(|model| ProjectModelContribution {
-                            model_id: model.model_id.clone(),
-                            provider_id: model.provider_id.clone(),
-                            tokens: model.tokens,
-                            cost: model.cost,
-                            messages: model.messages,
-                        })
-                        .collect(),
-                })
-                .collect(),
-            active_time_ms: None,
-        })
-        .collect()
 }
 
 fn report_from_contributions(
@@ -748,7 +655,7 @@ fn report_from_contributions(
     today: NaiveDate,
     generated_at: &str,
 ) -> UsageReport {
-    let (range_start, range_end) = date_range_of(contributions, period);
+    let (range_start, range_end) = date_range_of(contributions, period, today);
 
     let mut total_tokens: i64 = 0;
     let mut total_cost = 0.0;
@@ -974,7 +881,7 @@ fn report_from_contributions(
     let by_day = chart_by_day(chart_contributions, today, 14);
 
     UsageReport {
-        schema_version: SNAPSHOT_SCHEMA_VERSION,
+        schema_version: V2_REPORT_SCHEMA_VERSION,
         generated_at: generated_at.to_string(),
         period: period.as_str().to_string(),
         date_range: DateRange {
@@ -1056,11 +963,15 @@ fn chart_by_day(source: &[DailyContribution], today: NaiveDate, limit: i64) -> V
     out
 }
 
-fn date_range_of(contributions: &[DailyContribution], period: UsagePeriod) -> (String, String) {
+fn date_range_of(
+    contributions: &[DailyContribution],
+    period: UsagePeriod,
+    today: NaiveDate,
+) -> (String, String) {
     if let (Some(first), Some(last)) = (contributions.first(), contributions.last()) {
         return (first.date.clone(), last.date.clone());
     }
-    let today = bucket_timezone().today().format("%Y-%m-%d").to_string();
+    let today = today.format("%Y-%m-%d").to_string();
     match period {
         UsagePeriod::All => (String::new(), String::new()),
         _ => (today.clone(), today),
@@ -1088,6 +999,343 @@ fn print_human(report: &UsageReport) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+    use tokens_core::{
+        ClientContribution, DailyHourlyUsageFacts, DailyTotals, ProjectContribution,
+        ProjectModelContribution,
+    };
+
+    fn reporting_today() -> NaiveDate {
+        NaiveDate::from_ymd_opt(2026, 8, 4).unwrap()
+    }
+
+    fn usage_request(
+        contract: Option<UsageContract>,
+        period: Option<UsagePeriod>,
+        since: Option<&str>,
+        until: Option<&str>,
+    ) -> UsageRequestArgs {
+        UsageRequestArgs {
+            contract,
+            period,
+            since: since.map(str::to_string),
+            until: until.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn v2_wire_schema_stays_separate_from_snapshot_schema() {
+        let today = reporting_today();
+        let report = report_from_contributions(
+            UsagePeriod::Today,
+            false,
+            "snapshot",
+            0,
+            false,
+            0,
+            0,
+            &[],
+            &[],
+            today,
+            "2026-08-04T00:00:00Z",
+        );
+        let error = build_v2_error_report(&anyhow::anyhow!("scan failed"));
+
+        assert_eq!(V2_REPORT_SCHEMA_VERSION, 2);
+        assert_eq!(report.schema_version, V2_REPORT_SCHEMA_VERSION);
+        assert_eq!(error.schema_version, V2_REPORT_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn v2_json_error_envelope_remains_the_exact_external_v2_shape() {
+        assert_eq!(
+            serde_json::to_value(build_v2_error_report(&anyhow::anyhow!(
+                "representative scan failure"
+            )))
+            .unwrap(),
+            json!({
+                "schemaVersion": 2,
+                "error": {
+                    "code": "scan_failed",
+                    "message": "representative scan failure"
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn v2_presets_route_to_legacy_report_without_scanning() {
+        for (args, period) in [
+            (usage_request(None, None, None, None), UsagePeriod::Today),
+            (
+                usage_request(None, Some(UsagePeriod::Days7), None, None),
+                UsagePeriod::Days7,
+            ),
+            (
+                usage_request(
+                    Some(UsageContract::V2),
+                    Some(UsagePeriod::Days30),
+                    None,
+                    None,
+                ),
+                UsagePeriod::Days30,
+            ),
+        ] {
+            assert_eq!(
+                resolve_usage_action(args, reporting_today()).unwrap(),
+                UsageReportAction::LegacyV2 { period }
+            );
+        }
+    }
+
+    #[test]
+    fn v3_preset_and_custom_route_to_v3_seam_without_scanning() {
+        assert_eq!(
+            resolve_usage_action(
+                usage_request(Some(UsageContract::V3), Some(UsagePeriod::All), None, None,),
+                reporting_today(),
+            )
+            .unwrap(),
+            UsageReportAction::V3 {
+                selection: UsageReportSelection::Preset {
+                    period: UsagePeriod::All,
+                },
+            }
+        );
+        assert_eq!(
+            resolve_usage_action(
+                usage_request(
+                    Some(UsageContract::V3),
+                    None,
+                    Some("2026-08-01"),
+                    Some("2026-08-04"),
+                ),
+                reporting_today(),
+            )
+            .unwrap(),
+            UsageReportAction::V3 {
+                selection: UsageReportSelection::Custom {
+                    since: NaiveDate::from_ymd_opt(2026, 8, 1).unwrap(),
+                    until: reporting_today(),
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn explicit_v2_contract_rejects_custom_dates() {
+        let error = validate_usage_request(
+            usage_request(
+                Some(UsageContract::V2),
+                None,
+                Some("2026-07-01"),
+                Some("2026-08-04"),
+            ),
+            reporting_today(),
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "--since and --until require --contract v3"
+        );
+    }
+
+    #[test]
+    fn omitted_contract_and_period_validate_as_v2_today_preset() {
+        let request =
+            validate_usage_request(usage_request(None, None, None, None), reporting_today())
+                .unwrap();
+
+        assert_eq!(
+            request,
+            UsageReportRequest::V2Preset {
+                period: UsagePeriod::Today,
+            }
+        );
+    }
+
+    #[test]
+    fn explicit_v2_period_validates_as_v2_preset() {
+        let request = validate_usage_request(
+            usage_request(
+                Some(UsageContract::V2),
+                Some(UsagePeriod::Days30),
+                None,
+                None,
+            ),
+            reporting_today(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            request,
+            UsageReportRequest::V2Preset {
+                period: UsagePeriod::Days30,
+            }
+        );
+    }
+
+    #[test]
+    fn v3_period_validates_as_v3_preset() {
+        let request = validate_usage_request(
+            usage_request(
+                Some(UsageContract::V3),
+                Some(UsagePeriod::Days7),
+                None,
+                None,
+            ),
+            reporting_today(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            request,
+            UsageReportRequest::V3 {
+                selection: UsageReportSelection::Preset {
+                    period: UsagePeriod::Days7,
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn v3_dates_validate_as_custom_selection() {
+        let request = validate_usage_request(
+            usage_request(
+                Some(UsageContract::V3),
+                None,
+                Some("2026-07-01"),
+                Some("2026-08-04"),
+            ),
+            reporting_today(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            request,
+            UsageReportRequest::V3 {
+                selection: UsageReportSelection::Custom {
+                    since: NaiveDate::from_ymd_opt(2026, 7, 1).unwrap(),
+                    until: reporting_today(),
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn custom_dates_require_v3_contract() {
+        let error = validate_usage_request(
+            usage_request(None, None, Some("2026-07-01"), Some("2026-08-04")),
+            reporting_today(),
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "--since and --until require --contract v3"
+        );
+    }
+
+    #[test]
+    fn explicit_period_cannot_be_mixed_with_custom_dates() {
+        let error = validate_usage_request(
+            usage_request(
+                Some(UsageContract::V3),
+                Some(UsagePeriod::Today),
+                Some("2026-08-01"),
+                Some("2026-08-04"),
+            ),
+            reporting_today(),
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "--period cannot be combined with --since or --until"
+        );
+    }
+
+    #[test]
+    fn custom_selection_requires_both_dates() {
+        for request in [
+            usage_request(Some(UsageContract::V3), None, Some("2026-08-01"), None),
+            usage_request(Some(UsageContract::V3), None, None, Some("2026-08-04")),
+        ] {
+            let error = validate_usage_request(request, reporting_today()).unwrap_err();
+            assert_eq!(
+                error.to_string(),
+                "custom usage ranges require both --since and --until"
+            );
+        }
+    }
+
+    #[test]
+    fn custom_dates_must_use_strict_calendar_format() {
+        for request in [
+            usage_request(
+                Some(UsageContract::V3),
+                None,
+                Some("2026-8-01"),
+                Some("2026-08-04"),
+            ),
+            usage_request(
+                Some(UsageContract::V3),
+                None,
+                Some("2026-08-01"),
+                Some("2026-02-30"),
+            ),
+        ] {
+            let error = validate_usage_request(request, reporting_today()).unwrap_err();
+            assert!(error.to_string().contains("must use YYYY-MM-DD"));
+        }
+    }
+
+    #[test]
+    fn custom_until_cannot_precede_since() {
+        let error = validate_usage_request(
+            usage_request(
+                Some(UsageContract::V3),
+                None,
+                Some("2026-08-04"),
+                Some("2026-08-03"),
+            ),
+            reporting_today(),
+        )
+        .unwrap_err();
+
+        assert_eq!(error.to_string(), "--until must be on or after --since");
+    }
+
+    #[test]
+    fn custom_dates_cannot_be_after_reporting_today() {
+        for (request, flag) in [
+            (
+                usage_request(
+                    Some(UsageContract::V3),
+                    None,
+                    Some("2026-08-05"),
+                    Some("2026-08-05"),
+                ),
+                "--since",
+            ),
+            (
+                usage_request(
+                    Some(UsageContract::V3),
+                    None,
+                    Some("2026-08-04"),
+                    Some("2026-08-05"),
+                ),
+                "--until",
+            ),
+        ] {
+            let error = validate_usage_request(request, reporting_today()).unwrap_err();
+            assert_eq!(
+                error.to_string(),
+                format!("{flag} must not be after reporting today (2026-08-04)")
+            );
+        }
+    }
 
     fn sample_day() -> DailyContribution {
         DailyContribution {
@@ -1137,6 +1385,765 @@ mod tests {
             }],
             active_time_ms: None,
         }
+    }
+
+    fn contract_day(
+        date: &str,
+        totals: DailyTotals,
+        intensity: u8,
+        token_breakdown: TokenBreakdown,
+        clients: Vec<ClientContribution>,
+        projects: Vec<ProjectContribution>,
+    ) -> DailyContribution {
+        DailyContribution {
+            date: date.into(),
+            totals,
+            intensity,
+            token_breakdown,
+            clients,
+            projects,
+            active_time_ms: None,
+        }
+    }
+
+    fn adapter_client(
+        client: &str,
+        model_id: &str,
+        provider_id: &str,
+        tokens: i64,
+        cost: f64,
+        messages: i32,
+    ) -> ClientContribution {
+        ClientContribution {
+            client: client.into(),
+            model_id: model_id.into(),
+            provider_id: provider_id.into(),
+            tokens: TokenBreakdown {
+                input: tokens,
+                ..TokenBreakdown::default()
+            },
+            cost,
+            messages,
+        }
+    }
+
+    fn adapter_project_model(
+        model_id: &str,
+        provider_id: &str,
+        tokens: i64,
+        cost: f64,
+        messages: i32,
+    ) -> ProjectModelContribution {
+        ProjectModelContribution {
+            model_id: model_id.into(),
+            provider_id: provider_id.into(),
+            tokens,
+            cost,
+            messages,
+        }
+    }
+
+    fn adapter_project(
+        project_key: Option<&str>,
+        project_label: &str,
+        tokens: i64,
+        cost: f64,
+        messages: i32,
+        models: Vec<ProjectModelContribution>,
+    ) -> ProjectContribution {
+        ProjectContribution {
+            project_key: project_key.map(str::to_string),
+            project_label: project_label.into(),
+            totals: DailyTotals {
+                tokens,
+                cost,
+                messages,
+            },
+            models,
+        }
+    }
+
+    fn v2_snapshot_adapter_days() -> Vec<DailyContribution> {
+        vec![
+            contract_day(
+                "2026-07-25",
+                DailyTotals {
+                    tokens: 25,
+                    cost: 0.25,
+                    messages: 1,
+                },
+                1,
+                TokenBreakdown {
+                    input: 25,
+                    ..TokenBreakdown::default()
+                },
+                vec![adapter_client("history", "old", "p0", 25, 0.25, 1)],
+                vec![adapter_project(
+                    Some("/work/history"),
+                    "History",
+                    25,
+                    0.25,
+                    1,
+                    vec![adapter_project_model("old", "p0", 25, 0.25, 1)],
+                )],
+            ),
+            contract_day(
+                "2026-08-01",
+                DailyTotals {
+                    tokens: 100,
+                    cost: 2.0,
+                    messages: 3,
+                },
+                2,
+                TokenBreakdown {
+                    input: 100,
+                    ..TokenBreakdown::default()
+                },
+                vec![
+                    adapter_client("alpha", "m1", "p1", 60, 1.2, 1),
+                    adapter_client("alpha", "m2", "p2", 20, 0.4, 1),
+                    adapter_client("beta", "m1", "p1", 20, 0.4, 1),
+                ],
+                vec![
+                    adapter_project(
+                        Some("/work/alpha"),
+                        "Alpha Old",
+                        80,
+                        1.6,
+                        2,
+                        vec![
+                            adapter_project_model("m1", "p1", 60, 1.2, 1),
+                            adapter_project_model("m2", "p2", 20, 0.4, 1),
+                        ],
+                    ),
+                    adapter_project(
+                        None,
+                        "",
+                        20,
+                        0.4,
+                        1,
+                        vec![adapter_project_model("m1", "p1", 20, 0.4, 1)],
+                    ),
+                ],
+            ),
+            contract_day(
+                "2026-08-04",
+                DailyTotals {
+                    tokens: 200,
+                    cost: 4.0,
+                    messages: 4,
+                },
+                4,
+                TokenBreakdown {
+                    input: 200,
+                    ..TokenBreakdown::default()
+                },
+                vec![
+                    adapter_client("alpha", "m1", "p1", 20, 0.4, 1),
+                    adapter_client("beta", "m2", "p2", 180, 3.6, 3),
+                ],
+                vec![
+                    adapter_project(
+                        Some("/work/alpha"),
+                        "Alpha New",
+                        50,
+                        1.0,
+                        1,
+                        vec![
+                            adapter_project_model("m1", "p1", 20, 0.4, 1),
+                            adapter_project_model("m2", "p2", 30, 0.6, 0),
+                        ],
+                    ),
+                    adapter_project(
+                        Some("/work/beta"),
+                        "Beta",
+                        150,
+                        3.0,
+                        3,
+                        vec![adapter_project_model("m2", "p2", 150, 3.0, 3)],
+                    ),
+                ],
+            ),
+        ]
+    }
+
+    fn expected_v2_snapshot_adapter_report() -> UsageReport {
+        let day = |date: &str, tokens, cost, messages, intensity| DayUsage {
+            date: date.into(),
+            tokens,
+            cost,
+            messages,
+            intensity,
+        };
+        UsageReport {
+            schema_version: 2,
+            generated_at: "2026-08-04T12:34:56Z".into(),
+            period: "7d".into(),
+            date_range: DateRange {
+                start: "2026-08-01".into(),
+                end: "2026-08-04".into(),
+            },
+            scan: ScanInfo {
+                mode: "snapshot".into(),
+                force_rescan: false,
+                duration_ms: 0,
+                cache: ScanCacheInfo {
+                    source_hits: 0,
+                    source_misses: 0,
+                    snapshot_rebuilt: false,
+                },
+            },
+            summary: UsageSummary {
+                total_tokens: 300,
+                total_cost: 6.0,
+                messages: 7,
+                active_days: 2,
+                clients: vec!["alpha".into(), "beta".into()],
+                models: vec!["m1".into(), "m2".into()],
+            },
+            token_breakdown: TokenBreakdownDto {
+                input: 300,
+                output: 0,
+                cache_read: 0,
+                cache_write: 0,
+                reasoning: 0,
+            },
+            by_client: vec![
+                ClientUsage {
+                    client: "beta".into(),
+                    tokens: 200,
+                    cost: 4.0,
+                    messages: 4,
+                    share: 0.6666666666666666,
+                    models: vec![
+                        ClientModelUsage {
+                            model_id: "m2".into(),
+                            provider_id: "p2".into(),
+                            tokens: 180,
+                            cost: 3.6,
+                            messages: 3,
+                            share: 0.9,
+                        },
+                        ClientModelUsage {
+                            model_id: "m1".into(),
+                            provider_id: "p1".into(),
+                            tokens: 20,
+                            cost: 0.4,
+                            messages: 1,
+                            share: 0.1,
+                        },
+                    ],
+                },
+                ClientUsage {
+                    client: "alpha".into(),
+                    tokens: 100,
+                    cost: 2.0,
+                    messages: 3,
+                    share: 0.3333333333333333,
+                    models: vec![
+                        ClientModelUsage {
+                            model_id: "m1".into(),
+                            provider_id: "p1".into(),
+                            tokens: 80,
+                            cost: 1.6,
+                            messages: 2,
+                            share: 0.8,
+                        },
+                        ClientModelUsage {
+                            model_id: "m2".into(),
+                            provider_id: "p2".into(),
+                            tokens: 20,
+                            cost: 0.4,
+                            messages: 1,
+                            share: 0.2,
+                        },
+                    ],
+                },
+            ],
+            by_project: vec![
+                ProjectUsage {
+                    project_key: Some("/work/beta".into()),
+                    display_name: "Beta".into(),
+                    tokens: 150,
+                    cost: 3.0,
+                    messages: 3,
+                    models: vec![ProjectModelUsage {
+                        model_id: "m2".into(),
+                        provider_id: "p2".into(),
+                        tokens: 150,
+                        cost: 3.0,
+                        messages: 3,
+                    }],
+                },
+                ProjectUsage {
+                    project_key: Some("/work/alpha".into()),
+                    display_name: "Alpha New".into(),
+                    tokens: 130,
+                    cost: 2.6,
+                    messages: 3,
+                    models: vec![
+                        ProjectModelUsage {
+                            model_id: "m1".into(),
+                            provider_id: "p1".into(),
+                            tokens: 80,
+                            cost: 1.6,
+                            messages: 2,
+                        },
+                        ProjectModelUsage {
+                            model_id: "m2".into(),
+                            provider_id: "p2".into(),
+                            tokens: 50,
+                            cost: 1.0,
+                            messages: 1,
+                        },
+                    ],
+                },
+                ProjectUsage {
+                    project_key: None,
+                    display_name: "Unattributed".into(),
+                    tokens: 20,
+                    cost: 0.4,
+                    messages: 1,
+                    models: vec![ProjectModelUsage {
+                        model_id: "m1".into(),
+                        provider_id: "p1".into(),
+                        tokens: 20,
+                        cost: 0.4,
+                        messages: 1,
+                    }],
+                },
+            ],
+            by_model: vec![
+                ModelUsageRow {
+                    model_id: "m2".into(),
+                    provider_id: "p2".into(),
+                    tokens: 200,
+                    cost: 4.0,
+                    messages: 4,
+                    share: 0.6666666666666666,
+                    clients: vec!["alpha".into(), "beta".into()],
+                },
+                ModelUsageRow {
+                    model_id: "m1".into(),
+                    provider_id: "p1".into(),
+                    tokens: 100,
+                    cost: 2.0,
+                    messages: 3,
+                    share: 0.3333333333333333,
+                    clients: vec!["alpha".into(), "beta".into()],
+                },
+            ],
+            by_day: vec![
+                day("2026-07-22", 0, 0.0, 0, 0),
+                day("2026-07-23", 0, 0.0, 0, 0),
+                day("2026-07-24", 0, 0.0, 0, 0),
+                day("2026-07-25", 25, 0.25, 1, 1),
+                day("2026-07-26", 0, 0.0, 0, 0),
+                day("2026-07-27", 0, 0.0, 0, 0),
+                day("2026-07-28", 0, 0.0, 0, 0),
+                day("2026-07-29", 0, 0.0, 0, 0),
+                day("2026-07-30", 0, 0.0, 0, 0),
+                day("2026-07-31", 0, 0.0, 0, 0),
+                day("2026-08-01", 100, 2.0, 3, 3),
+                day("2026-08-02", 0, 0.0, 0, 0),
+                day("2026-08-03", 0, 0.0, 0, 0),
+                day("2026-08-04", 200, 4.0, 4, 4),
+            ],
+            meta: UsageMeta {
+                cli_version: "27.0.1".into(),
+                timezone: "UTC".into(),
+            },
+        }
+    }
+
+    #[test]
+    fn v2_report_serializes_the_complete_established_contract() {
+        tokens_core::set_bucket_timezone(BucketTimezone::Named(chrono_tz::UTC));
+        let first = contract_day(
+            "2026-08-01",
+            DailyTotals {
+                tokens: 100,
+                cost: 2.0,
+                messages: 3,
+            },
+            2,
+            TokenBreakdown {
+                input: 50,
+                output: 20,
+                cache_read: 10,
+                cache_write: 10,
+                reasoning: 10,
+            },
+            vec![
+                ClientContribution {
+                    client: "alpha".into(),
+                    model_id: "m1".into(),
+                    provider_id: "p1".into(),
+                    tokens: TokenBreakdown {
+                        input: 60,
+                        ..TokenBreakdown::default()
+                    },
+                    cost: 1.2,
+                    messages: 1,
+                },
+                ClientContribution {
+                    client: "alpha".into(),
+                    model_id: "m2".into(),
+                    provider_id: "p2".into(),
+                    tokens: TokenBreakdown {
+                        output: 20,
+                        ..TokenBreakdown::default()
+                    },
+                    cost: 0.4,
+                    messages: 1,
+                },
+                ClientContribution {
+                    client: "beta".into(),
+                    model_id: "m1".into(),
+                    provider_id: "p1".into(),
+                    tokens: TokenBreakdown {
+                        reasoning: 20,
+                        ..TokenBreakdown::default()
+                    },
+                    cost: 0.4,
+                    messages: 1,
+                },
+            ],
+            vec![
+                ProjectContribution {
+                    project_key: Some("/work/alpha".into()),
+                    project_label: "Alpha Old".into(),
+                    totals: DailyTotals {
+                        tokens: 80,
+                        cost: 1.6,
+                        messages: 2,
+                    },
+                    models: vec![
+                        ProjectModelContribution {
+                            model_id: "m1".into(),
+                            provider_id: "p1".into(),
+                            tokens: 60,
+                            cost: 1.2,
+                            messages: 1,
+                        },
+                        ProjectModelContribution {
+                            model_id: "m2".into(),
+                            provider_id: "p2".into(),
+                            tokens: 20,
+                            cost: 0.4,
+                            messages: 1,
+                        },
+                    ],
+                },
+                ProjectContribution {
+                    project_key: None,
+                    project_label: String::new(),
+                    totals: DailyTotals {
+                        tokens: 20,
+                        cost: 0.4,
+                        messages: 1,
+                    },
+                    models: vec![ProjectModelContribution {
+                        model_id: "m1".into(),
+                        provider_id: "p1".into(),
+                        tokens: 20,
+                        cost: 0.4,
+                        messages: 1,
+                    }],
+                },
+            ],
+        );
+        let last = contract_day(
+            "2026-08-04",
+            DailyTotals {
+                tokens: 200,
+                cost: 4.0,
+                messages: 4,
+            },
+            4,
+            TokenBreakdown {
+                input: 80,
+                output: 50,
+                cache_read: 30,
+                cache_write: 20,
+                reasoning: 20,
+            },
+            vec![
+                ClientContribution {
+                    client: "alpha".into(),
+                    model_id: "m1".into(),
+                    provider_id: "p1".into(),
+                    tokens: TokenBreakdown {
+                        input: 20,
+                        ..TokenBreakdown::default()
+                    },
+                    cost: 0.4,
+                    messages: 1,
+                },
+                ClientContribution {
+                    client: "beta".into(),
+                    model_id: "m2".into(),
+                    provider_id: "p2".into(),
+                    tokens: TokenBreakdown {
+                        output: 180,
+                        ..TokenBreakdown::default()
+                    },
+                    cost: 3.6,
+                    messages: 3,
+                },
+            ],
+            vec![
+                ProjectContribution {
+                    project_key: Some("/work/alpha".into()),
+                    project_label: "Alpha New".into(),
+                    totals: DailyTotals {
+                        tokens: 50,
+                        cost: 1.0,
+                        messages: 1,
+                    },
+                    models: vec![
+                        ProjectModelContribution {
+                            model_id: "m1".into(),
+                            provider_id: "p1".into(),
+                            tokens: 20,
+                            cost: 0.4,
+                            messages: 1,
+                        },
+                        ProjectModelContribution {
+                            model_id: "m2".into(),
+                            provider_id: "p2".into(),
+                            tokens: 30,
+                            cost: 0.6,
+                            messages: 0,
+                        },
+                    ],
+                },
+                ProjectContribution {
+                    project_key: Some("/work/beta".into()),
+                    project_label: "Beta".into(),
+                    totals: DailyTotals {
+                        tokens: 150,
+                        cost: 3.0,
+                        messages: 3,
+                    },
+                    models: vec![ProjectModelContribution {
+                        model_id: "m2".into(),
+                        provider_id: "p2".into(),
+                        tokens: 150,
+                        cost: 3.0,
+                        messages: 3,
+                    }],
+                },
+            ],
+        );
+        let chart_only = contract_day(
+            "2026-07-25",
+            DailyTotals {
+                tokens: 25,
+                cost: 0.25,
+                messages: 1,
+            },
+            1,
+            TokenBreakdown::default(),
+            vec![],
+            vec![],
+        );
+        let report = report_from_contributions(
+            UsagePeriod::Days7,
+            false,
+            "incremental",
+            37,
+            true,
+            2,
+            3,
+            &[first.clone(), last.clone()],
+            &[chart_only, first, last],
+            NaiveDate::from_ymd_opt(2026, 8, 4).unwrap(),
+            "2026-08-04T12:34:56Z",
+        );
+
+        assert_eq!(
+            serde_json::to_value(report).unwrap(),
+            json!({
+                "schemaVersion": 2,
+                "generatedAt": "2026-08-04T12:34:56Z",
+                "period": "7d",
+                "dateRange": {
+                    "start": "2026-08-01",
+                    "end": "2026-08-04"
+                },
+                "scan": {
+                    "mode": "incremental",
+                    "forceRescan": false,
+                    "durationMs": 37,
+                    "cache": {
+                        "sourceHits": 2,
+                        "sourceMisses": 3,
+                        "snapshotRebuilt": true
+                    }
+                },
+                "summary": {
+                    "totalTokens": 300,
+                    "totalCost": 6.0,
+                    "messages": 7,
+                    "activeDays": 2,
+                    "clients": ["alpha", "beta"],
+                    "models": ["m1", "m2"]
+                },
+                "tokenBreakdown": {
+                    "input": 130,
+                    "output": 70,
+                    "cacheRead": 40,
+                    "cacheWrite": 30,
+                    "reasoning": 30
+                },
+                "byClient": [
+                    {
+                        "client": "beta",
+                        "tokens": 200,
+                        "cost": 4.0,
+                        "messages": 4,
+                        "share": 0.6666666666666666,
+                        "models": [
+                            {
+                                "modelId": "m2",
+                                "providerId": "p2",
+                                "tokens": 180,
+                                "cost": 3.6,
+                                "messages": 3,
+                                "share": 0.9
+                            },
+                            {
+                                "modelId": "m1",
+                                "providerId": "p1",
+                                "tokens": 20,
+                                "cost": 0.4,
+                                "messages": 1,
+                                "share": 0.1
+                            }
+                        ]
+                    },
+                    {
+                        "client": "alpha",
+                        "tokens": 100,
+                        "cost": 2.0,
+                        "messages": 3,
+                        "share": 0.3333333333333333,
+                        "models": [
+                            {
+                                "modelId": "m1",
+                                "providerId": "p1",
+                                "tokens": 80,
+                                "cost": 1.6,
+                                "messages": 2,
+                                "share": 0.8
+                            },
+                            {
+                                "modelId": "m2",
+                                "providerId": "p2",
+                                "tokens": 20,
+                                "cost": 0.4,
+                                "messages": 1,
+                                "share": 0.2
+                            }
+                        ]
+                    }
+                ],
+                "byProject": [
+                    {
+                        "projectKey": "/work/beta",
+                        "displayName": "Beta",
+                        "tokens": 150,
+                        "cost": 3.0,
+                        "messages": 3,
+                        "models": [{
+                            "modelId": "m2",
+                            "providerId": "p2",
+                            "tokens": 150,
+                            "cost": 3.0,
+                            "messages": 3
+                        }]
+                    },
+                    {
+                        "projectKey": "/work/alpha",
+                        "displayName": "Alpha New",
+                        "tokens": 130,
+                        "cost": 2.6,
+                        "messages": 3,
+                        "models": [
+                            {
+                                "modelId": "m1",
+                                "providerId": "p1",
+                                "tokens": 80,
+                                "cost": 1.6,
+                                "messages": 2
+                            },
+                            {
+                                "modelId": "m2",
+                                "providerId": "p2",
+                                "tokens": 50,
+                                "cost": 1.0,
+                                "messages": 1
+                            }
+                        ]
+                    },
+                    {
+                        "projectKey": null,
+                        "displayName": "Unattributed",
+                        "tokens": 20,
+                        "cost": 0.4,
+                        "messages": 1,
+                        "models": [{
+                            "modelId": "m1",
+                            "providerId": "p1",
+                            "tokens": 20,
+                            "cost": 0.4,
+                            "messages": 1
+                        }]
+                    }
+                ],
+                "byModel": [
+                    {
+                        "modelId": "m2",
+                        "providerId": "p2",
+                        "tokens": 200,
+                        "cost": 4.0,
+                        "messages": 4,
+                        "share": 0.6666666666666666,
+                        "clients": ["alpha", "beta"]
+                    },
+                    {
+                        "modelId": "m1",
+                        "providerId": "p1",
+                        "tokens": 100,
+                        "cost": 2.0,
+                        "messages": 3,
+                        "share": 0.3333333333333333,
+                        "clients": ["alpha", "beta"]
+                    }
+                ],
+                "byDay": [
+                    {"date": "2026-07-22", "tokens": 0, "cost": 0.0, "messages": 0, "intensity": 0},
+                    {"date": "2026-07-23", "tokens": 0, "cost": 0.0, "messages": 0, "intensity": 0},
+                    {"date": "2026-07-24", "tokens": 0, "cost": 0.0, "messages": 0, "intensity": 0},
+                    {"date": "2026-07-25", "tokens": 25, "cost": 0.25, "messages": 1, "intensity": 1},
+                    {"date": "2026-07-26", "tokens": 0, "cost": 0.0, "messages": 0, "intensity": 0},
+                    {"date": "2026-07-27", "tokens": 0, "cost": 0.0, "messages": 0, "intensity": 0},
+                    {"date": "2026-07-28", "tokens": 0, "cost": 0.0, "messages": 0, "intensity": 0},
+                    {"date": "2026-07-29", "tokens": 0, "cost": 0.0, "messages": 0, "intensity": 0},
+                    {"date": "2026-07-30", "tokens": 0, "cost": 0.0, "messages": 0, "intensity": 0},
+                    {"date": "2026-07-31", "tokens": 0, "cost": 0.0, "messages": 0, "intensity": 0},
+                    {"date": "2026-08-01", "tokens": 100, "cost": 2.0, "messages": 3, "intensity": 2},
+                    {"date": "2026-08-02", "tokens": 0, "cost": 0.0, "messages": 0, "intensity": 0},
+                    {"date": "2026-08-03", "tokens": 0, "cost": 0.0, "messages": 0, "intensity": 0},
+                    {"date": "2026-08-04", "tokens": 200, "cost": 4.0, "messages": 4, "intensity": 4}
+                ],
+                "meta": {
+                    "cliVersion": "27.0.1",
+                    "timezone": "UTC"
+                }
+            })
+        );
     }
 
     #[test]
@@ -1246,6 +2253,236 @@ mod tests {
     }
 
     #[test]
+    fn v3_snapshot_adapter_preserves_the_complete_period_filtered_v2_contract() {
+        tokens_core::set_bucket_timezone(BucketTimezone::Named(chrono_tz::UTC));
+        let dir = tempfile::tempdir().unwrap();
+        let days = v2_snapshot_adapter_days();
+        let mut graph = tokens_core::generate_graph_result(days.clone(), 1);
+        graph.meta.generated_at = "2026-08-04T12:34:56Z".into();
+        let scan = LocalUsageScan {
+            graph,
+            unattributed_sessions: vec![],
+            hourly_facts: days
+                .iter()
+                .map(|day| DailyHourlyUsageFacts {
+                    date: day.date.clone(),
+                    hours: vec![],
+                    unplaced_for_hourly: day.totals.clone(),
+                })
+                .collect(),
+        };
+        let snapshot =
+            crate::commands::usage_snapshot::build_snapshot(&scan, "2026-08-04", "UTC").unwrap();
+        crate::commands::usage_snapshot::write_snapshot(dir.path(), &snapshot).unwrap();
+
+        let from_snapshot = try_report_from_snapshot_in(
+            dir.path(),
+            UsagePeriod::Days7,
+            NaiveDate::from_ymd_opt(2026, 8, 4).unwrap(),
+            Some("2026-07-29"),
+            Some("2026-08-04"),
+            "UTC",
+        )
+        .unwrap();
+
+        assert_eq!(
+            serde_json::to_value(from_snapshot).unwrap(),
+            serde_json::to_value(expected_v2_snapshot_adapter_report()).unwrap()
+        );
+    }
+
+    #[test]
+    fn empty_v2_preset_range_uses_the_accepted_reporting_day() {
+        let accepted_today = NaiveDate::from_ymd_opt(2026, 8, 5).unwrap();
+
+        assert_eq!(
+            date_range_of(&[], UsagePeriod::Today, accepted_today),
+            ("2026-08-05".into(), "2026-08-05".into())
+        );
+    }
+
+    #[test]
+    fn v2_today_reacquires_after_reporting_timezone_midnight() {
+        fn acquisition(date: &str, generated_at: &str, tokens: i64) -> UsageSnapshotAcquisition {
+            let totals = DailyTotals {
+                tokens,
+                cost: tokens as f64 / 100.0,
+                messages: 1,
+            };
+            let day = contract_day(
+                date,
+                totals.clone(),
+                1,
+                TokenBreakdown {
+                    input: tokens,
+                    ..TokenBreakdown::default()
+                },
+                vec![adapter_client(
+                    "client",
+                    "model",
+                    "provider",
+                    tokens,
+                    totals.cost,
+                    totals.messages,
+                )],
+                vec![adapter_project(
+                    Some("/work/project"),
+                    "project",
+                    tokens,
+                    totals.cost,
+                    totals.messages,
+                    vec![adapter_project_model(
+                        "model",
+                        "provider",
+                        tokens,
+                        totals.cost,
+                        totals.messages,
+                    )],
+                )],
+            );
+            let mut graph = tokens_core::generate_graph_result(vec![day.clone()], 1);
+            graph.meta.generated_at = generated_at.into();
+            let scan = LocalUsageScan {
+                graph,
+                unattributed_sessions: vec![],
+                hourly_facts: vec![DailyHourlyUsageFacts {
+                    date: day.date.clone(),
+                    hours: vec![],
+                    unplaced_for_hourly: day.totals,
+                }],
+            };
+
+            UsageSnapshotAcquisition {
+                snapshot: usage_snapshot::build_snapshot(&scan, date, "America/Los_Angeles")
+                    .unwrap(),
+                mode: "incremental".into(),
+                force_rescan: false,
+                duration_ms: 0,
+                source_hits: 0,
+                source_misses: 0,
+                snapshot_rebuilt: true,
+            }
+        }
+
+        let parse_time = |value: &str| {
+            DateTime::parse_from_rfc3339(value)
+                .unwrap()
+                .with_timezone(&Utc)
+        };
+        let mut times = std::collections::VecDeque::from([
+            parse_time("2026-08-04T23:59:59-07:00"),
+            parse_time("2026-08-05T00:00:01-07:00"),
+            parse_time("2026-08-05T00:00:02-07:00"),
+        ]);
+        let mut snapshots = std::collections::VecDeque::from([
+            acquisition("2026-08-04", "2026-08-05T06:59:59Z", 100),
+            acquisition("2026-08-05", "2026-08-05T07:00:02Z", 200),
+        ]);
+        let mut calls = Vec::new();
+
+        let report = build_current_v2_report(
+            UsagePeriod::Today,
+            true,
+            true,
+            || times.pop_front().unwrap(),
+            |reporting_now, refresh, force_rescan| {
+                calls.push((reporting_now, refresh, force_rescan));
+                Ok(snapshots.pop_front().unwrap())
+            },
+        )
+        .unwrap();
+
+        assert_eq!(calls.len(), 2);
+        assert_eq!(
+            calls[0],
+            (parse_time("2026-08-04T23:59:59-07:00"), true, true)
+        );
+        assert_eq!(
+            calls[1],
+            (parse_time("2026-08-05T00:00:01-07:00"), false, false)
+        );
+        assert_eq!(report.generated_at, "2026-08-05T07:00:02Z");
+        assert_eq!(report.date_range.start, "2026-08-05");
+        assert_eq!(report.date_range.end, "2026-08-05");
+        assert_eq!(report.summary.total_tokens, 200);
+        assert_eq!(report.scan.force_rescan, true);
+        assert_eq!(report.by_day.last().unwrap().date, "2026-08-05");
+    }
+
+    #[test]
+    fn cache_miss_rechecks_after_exclusive_operation_lock_before_scanning() {
+        use std::cell::Cell;
+
+        let dir = tempfile::tempdir().unwrap();
+        let reads = Cell::new(0);
+        let scanned = Cell::new(false);
+
+        let value = with_snapshot_operation(
+            dir.path(),
+            false,
+            || {
+                let next = reads.get() + 1;
+                reads.set(next);
+                (next == 2).then_some(7)
+            },
+            || {
+                scanned.set(true);
+                Ok(9)
+            },
+        )
+        .unwrap();
+
+        assert_eq!(value, 7);
+        assert_eq!(reads.get(), 2);
+        assert!(!scanned.get());
+    }
+
+    #[test]
+    fn refresh_bypasses_snapshot_reads_under_exclusive_operation_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let value = with_snapshot_operation(
+            dir.path(),
+            true,
+            || panic!("refresh must not read Layer B"),
+            || Ok(11),
+        )
+        .unwrap();
+
+        assert_eq!(value, 11);
+    }
+
+    #[test]
+    fn force_clear_attempts_layer_a_and_every_layer_b_file_and_combines_errors() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join(usage_snapshot::SNAPSHOT_FILENAME)).unwrap();
+        std::fs::create_dir(dir.path().join(usage_snapshot::V2_SNAPSHOT_FILENAME)).unwrap();
+        std::fs::write(
+            dir.path().join(usage_snapshot::V1_SNAPSHOT_FILENAME),
+            b"stale",
+        )
+        .unwrap();
+        let source_attempted = AtomicBool::new(false);
+
+        let error = clear_force_rescan_caches(dir.path(), || {
+            source_attempted.store(true, Ordering::SeqCst);
+            Err(anyhow::anyhow!("Layer A clear denied"))
+        })
+        .unwrap_err();
+        let message = format!("{error:#}");
+
+        assert!(source_attempted.load(Ordering::SeqCst));
+        assert!(message.contains("Layer A clear denied"));
+        assert!(message.contains(usage_snapshot::SNAPSHOT_FILENAME));
+        assert!(message.contains(usage_snapshot::V2_SNAPSHOT_FILENAME));
+        assert!(!dir
+            .path()
+            .join(usage_snapshot::V1_SNAPSHOT_FILENAME)
+            .exists());
+    }
+
+    #[test]
     fn live_project_contributions_match_after_snapshot_dto_round_trip() {
         fn live_message(
             date: &str,
@@ -1334,11 +2571,24 @@ mod tests {
             "2026-07-26T00:00:00Z",
         );
 
-        let snapshot_days: Vec<SnapshotDay> =
-            live.iter().map(snapshot_day_from_contribution).collect();
-        let encoded = serde_json::to_vec(&snapshot_days).unwrap();
-        let decoded: Vec<SnapshotDay> = serde_json::from_slice(&encoded).unwrap();
-        let restored = snapshot_days_to_contributions(&decoded);
+        let mut graph = tokens_core::generate_graph_result(live.clone(), 1);
+        graph.meta.generated_at = "2026-07-26T00:00:00Z".into();
+        let scan = LocalUsageScan {
+            graph,
+            unattributed_sessions: vec![],
+            hourly_facts: live
+                .iter()
+                .map(|day| DailyHourlyUsageFacts {
+                    date: day.date.clone(),
+                    hours: vec![],
+                    unplaced_for_hourly: day.totals.clone(),
+                })
+                .collect(),
+        };
+        let snapshot = usage_snapshot::build_snapshot(&scan, "2026-07-26", "UTC").unwrap();
+        let encoded = serde_json::to_vec(&snapshot).unwrap();
+        let decoded: usage_snapshot::UsageSnapshot = serde_json::from_slice(&encoded).unwrap();
+        let restored = usage_snapshot::daily_contributions(&decoded);
         let snapshot_report = report_from_contributions(
             UsagePeriod::All,
             false,
@@ -1382,78 +2632,6 @@ mod tests {
                 assert_eq!(live_model.messages, snapshot_model.messages);
                 assert!((live_model.cost - snapshot_model.cost).abs() <= 1e-10);
             }
-        }
-    }
-
-    #[test]
-    fn snapshot_project_round_trip_restores_daily_projects() {
-        let project = SnapshotProject {
-            project_key: Some("/work/example".into()),
-            project_label: "example".into(),
-            tokens: 10,
-            cost: 2.0,
-            messages: 1,
-            models: vec![SnapshotProjectModel {
-                model_id: "model".into(),
-                provider_id: "provider".into(),
-                tokens: 10,
-                cost: 2.0,
-                messages: 1,
-            }],
-        };
-        let day = SnapshotDay {
-            date: "2026-07-26".into(),
-            tokens: 10,
-            cost: 2.0,
-            messages: 1,
-            intensity: 4,
-            token_breakdown: TokenBreakdownDtoSerde::default(),
-            clients: vec![],
-            projects: vec![project],
-        };
-        let encoded = serde_json::to_vec(&day).unwrap();
-        let decoded: SnapshotDay = serde_json::from_slice(&encoded).unwrap();
-        let contributions = snapshot_days_to_contributions(&[decoded]);
-        assert_eq!(contributions[0].projects[0].project_label, "example");
-        assert_eq!(contributions[0].projects[0].models[0].cost, 2.0);
-    }
-
-    #[test]
-    fn concurrent_snapshot_writers_publish_valid_private_files() {
-        use std::sync::Arc;
-
-        let dir = tempfile::tempdir().unwrap();
-        let path = Arc::new(dir.path().join(SNAPSHOT_FILENAME));
-        let body = br#"{"schemaVersion":2,"projects":["/private/workspace"]}"#.to_vec();
-        let writers: Vec<_> = (0..20)
-            .map(|_| {
-                let path = Arc::clone(&path);
-                let body = body.clone();
-                std::thread::spawn(move || write_private_snapshot(&path, &body))
-            })
-            .collect();
-
-        for writer in writers {
-            writer.join().unwrap().unwrap();
-        }
-        let published = fs::read(&*path).unwrap();
-        let value: serde_json::Value = serde_json::from_slice(&published).unwrap();
-        assert_eq!(value["schemaVersion"], SNAPSHOT_SCHEMA_VERSION);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            assert_eq!(
-                fs::metadata(&*path).unwrap().permissions().mode() & 0o777,
-                0o600
-            );
-            assert_eq!(
-                fs::metadata(snapshot_lock_path(&path))
-                    .unwrap()
-                    .permissions()
-                    .mode()
-                    & 0o777,
-                0o600
-            );
         }
     }
 
@@ -1537,139 +2715,5 @@ mod tests {
         filter_contributions(&mut days, Some("2026-07-26"), Some("2026-07-26"));
         assert_eq!(days.len(), 1);
         assert_eq!(days[0].date, "2026-07-26");
-    }
-
-    #[test]
-    fn bucket_day_from_utc_generated_at_uses_local_bucket() {
-        // 2026-07-27 03:33 UTC is still 2026-07-26 evening in America/Los_Angeles.
-        tokens_core::set_bucket_timezone(
-            tokens_core::parse_bucket_timezone("America/Los_Angeles").unwrap(),
-        );
-        let day = bucket_day_from_generated_at("2026-07-27T03:33:08.153036+00:00");
-        assert_eq!(day.as_deref(), Some("2026-07-26"));
-    }
-
-    #[test]
-    fn snapshot_bucket_date_field_wins() {
-        let snap = UsageSnapshotFile {
-            schema_version: SNAPSHOT_SCHEMA_VERSION,
-            generated_at: "2026-07-27T03:33:08.153036+00:00".into(),
-            bucket_date: "2026-07-26".into(),
-            timezone: "America/Los_Angeles".into(),
-            contributions: vec![],
-        };
-        assert_eq!(snapshot_bucket_day(&snap).as_deref(), Some("2026-07-26"));
-    }
-
-    /// Isolate snapshot path resolution under a temporary `TOKENS_CONFIG_DIR`.
-    /// Restores the previous env value even if the test panics.
-    struct TempTokensConfig {
-        previous: Option<std::ffi::OsString>,
-        _dir: tempfile::TempDir,
-    }
-
-    impl TempTokensConfig {
-        fn new() -> Self {
-            let dir = tempfile::tempdir().unwrap();
-            let previous = std::env::var_os("TOKENS_CONFIG_DIR");
-            std::env::set_var("TOKENS_CONFIG_DIR", dir.path());
-            Self {
-                previous,
-                _dir: dir,
-            }
-        }
-
-        fn cache_dir(&self) -> PathBuf {
-            tokens_core::paths::get_cache_dir()
-        }
-    }
-
-    impl Drop for TempTokensConfig {
-        fn drop(&mut self) {
-            match &self.previous {
-                Some(value) => std::env::set_var("TOKENS_CONFIG_DIR", value),
-                None => std::env::remove_var("TOKENS_CONFIG_DIR"),
-            }
-        }
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn force_rescan_clears_current_and_legacy_usage_snapshots() {
-        // design-spec §7: `--force-rescan` clears the Layer B snapshot
-        // (current + legacy filenames) so the next report rebuilds from scan.
-        let env = TempTokensConfig::new();
-        let cache = env.cache_dir();
-        fs::create_dir_all(&cache).unwrap();
-
-        let current = snapshot_path();
-        let legacy = legacy_snapshot_path();
-        assert_eq!(current.parent(), Some(cache.as_path()));
-        fs::write(&current, br#"{"schemaVersion":2,"stale":true}"#).unwrap();
-        fs::write(&legacy, br#"{"schemaVersion":1,"stale":true}"#).unwrap();
-        assert!(current.is_file());
-        assert!(legacy.is_file());
-
-        clear_usage_snapshots();
-
-        assert!(
-            !current.exists(),
-            "current usage snapshot should be removed on force-rescan"
-        );
-        assert!(
-            !legacy.exists(),
-            "legacy usage snapshot should be removed on force-rescan"
-        );
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn mismatched_snapshot_schema_version_is_rejected() {
-        // design-spec §7: schema mismatch must not serve the snapshot; caller
-        // rebuilds from a fresh scan (`try_report_from_snapshot` → None).
-        let env = TempTokensConfig::new();
-        let cache = env.cache_dir();
-        fs::create_dir_all(&cache).unwrap();
-
-        let today = bucket_timezone().today();
-        let today_s = today.format("%Y-%m-%d").to_string();
-        let tz = timezone_label();
-
-        let matching = UsageSnapshotFile {
-            schema_version: SNAPSHOT_SCHEMA_VERSION,
-            generated_at: format!("{today_s}T12:00:00Z"),
-            bucket_date: today_s.clone(),
-            timezone: tz.clone(),
-            contributions: vec![],
-        };
-        fs::write(
-            snapshot_path(),
-            serde_json::to_vec_pretty(&matching).unwrap(),
-        )
-        .unwrap();
-        assert!(
-            try_report_from_snapshot(UsagePeriod::Today, today, Some(&today_s), Some(&today_s))
-                .is_some(),
-            "control: matching schema version should load from snapshot"
-        );
-
-        let mismatched = UsageSnapshotFile {
-            schema_version: SNAPSHOT_SCHEMA_VERSION + 1,
-            generated_at: matching.generated_at,
-            bucket_date: matching.bucket_date,
-            timezone: matching.timezone,
-            contributions: matching.contributions,
-        };
-        fs::write(
-            snapshot_path(),
-            serde_json::to_vec_pretty(&mismatched).unwrap(),
-        )
-        .unwrap();
-
-        assert!(
-            try_report_from_snapshot(UsagePeriod::Today, today, Some(&today_s), Some(&today_s))
-                .is_none(),
-            "mismatched schema version must reject the snapshot so the caller rebuilds from scan"
-        );
     }
 }

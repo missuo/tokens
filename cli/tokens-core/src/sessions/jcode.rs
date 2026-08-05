@@ -272,6 +272,9 @@ fn parse_jcode_messages(
                 Some(dedup_key),
             );
             unified.duration_ms = duration_ms;
+            if explicit_timestamp.is_none() {
+                unified.set_timestamp_provenance(crate::TimestampProvenance::Fallback);
+            }
             if !is_replacement
                 && message.role.as_deref() == Some("assistant")
                 && context.pending_turn_start
@@ -380,6 +383,7 @@ pub fn parse_jcode_file(path: &Path) -> Vec<UnifiedMessage> {
                         // is derived from snapshot ordering, while the journal only
                         // carries the corrected token_usage for this message_id.
                         message.is_turn_start = parsed[existing_index].is_turn_start;
+                        message.retain_best_timestamp_from(&parsed[existing_index]);
                         parsed[existing_index] = message;
                     }
                     None => {
@@ -396,3 +400,47 @@ pub fn parse_jcode_file(path: &Path) -> Vec<UnifiedMessage> {
     parsed
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn journal_correction_keeps_exact_snapshot_timestamp_with_corrected_usage() {
+        let dir = tempfile::tempdir().unwrap();
+        let snapshot_path = dir.path().join("session_test.json");
+        std::fs::write(
+            &snapshot_path,
+            r#"{
+                "id": "session-1",
+                "provider_key": "anthropic",
+                "model": "claude-sonnet-4",
+                "messages": [{
+                    "id": "assistant-1",
+                    "role": "assistant",
+                    "timestamp": "2026-04-04T01:02:03Z",
+                    "token_usage": {"input_tokens": 5, "output_tokens": 1}
+                }]
+            }"#,
+        )
+        .unwrap();
+        std::fs::write(
+            jcode_journal_path(&snapshot_path),
+            r#"{"append_messages":[{"id":"assistant-1","role":"assistant","token_usage":{"input_tokens":9,"output_tokens":2}}]}"#,
+        )
+        .unwrap();
+
+        let messages = parse_jcode_file(&snapshot_path);
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].tokens.input, 9);
+        assert_eq!(messages[0].tokens.output, 2);
+        assert_eq!(
+            messages[0].timestamp,
+            parse_timestamp_str("2026-04-04T01:02:03Z").unwrap()
+        );
+        assert_eq!(
+            messages[0].timestamp_provenance,
+            crate::TimestampProvenance::Exact
+        );
+    }
+}

@@ -574,6 +574,7 @@ pub fn parse_claude_file_with_cache_and_home(
                                 &mut messages[existing_idx],
                                 tool_message.tokens.input,
                                 tool_message.timestamp,
+                                tool_message.timestamp_provenance,
                             );
                             continue;
                         }
@@ -705,6 +706,9 @@ pub fn parse_claude_file_with_cache_and_home(
                     dedup_key,
                 );
                 unified.duration_ms = duration_ms;
+                if pending_request_start_timestamp_ms.is_none() && parsed_timestamp.is_none() {
+                    unified.set_timestamp_provenance(crate::TimestampProvenance::Fallback);
+                }
                 unified.agent = sidechain_agent.clone();
                 unified.set_workspace(workspace_key.clone(), workspace_label.clone());
                 // Mark the first assistant response after a user message as a turn start
@@ -894,7 +898,10 @@ fn merge_claude_duplicate(
         .max(usage.cache_creation_input_tokens.unwrap_or(0).max(0));
 
     if let Some(timestamp_ms) = parsed_timestamp {
-        if timestamp_ms >= existing.timestamp {
+        if !existing.is_trustworthy_for_hourly() {
+            existing.set_timestamp(timestamp_ms);
+            existing.set_timestamp_provenance(crate::TimestampProvenance::Exact);
+        } else if timestamp_ms >= existing.timestamp {
             let new_duration = timestamp_ms.saturating_sub(existing.timestamp);
             if new_duration > 0 {
                 // Duplicates can arrive out of order (e.g. late-processed
@@ -911,10 +918,16 @@ fn merge_claude_tool_result_duplicate(
     existing: &mut UnifiedMessage,
     input_tokens: i64,
     timestamp_ms: i64,
+    timestamp_provenance: crate::TimestampProvenance,
 ) {
     existing.tokens.input = existing.tokens.input.max(input_tokens.max(0));
-    if timestamp_ms >= existing.timestamp {
+    let existing_is_exact = existing.is_trustworthy_for_hourly();
+    let candidate_is_exact = timestamp_provenance.is_trustworthy_for_hourly();
+    if (candidate_is_exact && !existing_is_exact)
+        || (candidate_is_exact == existing_is_exact && timestamp_ms > existing.timestamp)
+    {
         existing.set_timestamp(timestamp_ms);
+        existing.set_timestamp_provenance(timestamp_provenance);
     }
 }
 
@@ -973,9 +986,9 @@ fn extract_claude_tool_result_message(
 
     let provider_choice = claude_provider_choice(&raw_model, provider_hint.as_deref());
     let model = canonicalize_claude_model(&raw_model);
-    let timestamp = parse_claude_entry_timestamp(context.entry.timestamp.as_deref())
-        .or_else(|| extract_claude_timestamp(&value))
-        .unwrap_or(context.fallback_timestamp);
+    let explicit_timestamp = parse_claude_entry_timestamp(context.entry.timestamp.as_deref())
+        .or_else(|| extract_claude_timestamp(&value));
+    let timestamp = explicit_timestamp.unwrap_or(context.fallback_timestamp);
 
     let mut message = UnifiedMessage::new_with_dedup(
         context.client_id,
@@ -999,6 +1012,9 @@ fn extract_claude_tool_result_message(
         }),
     );
     message.message_count = 0;
+    if explicit_timestamp.is_none() {
+        message.set_timestamp_provenance(crate::TimestampProvenance::Fallback);
+    }
     message.agent = context.sidechain_agent;
     message.set_workspace(context.workspace_key, context.workspace_label);
     Some(message)
@@ -1320,9 +1336,10 @@ fn extract_claude_headless_message(
         provider_hint.as_deref().or(default_provider_hint),
     );
     let model = canonicalize_claude_model(&raw_model);
-    let timestamp = extract_claude_timestamp(value).unwrap_or(fallback_timestamp);
+    let explicit_timestamp = extract_claude_timestamp(value);
+    let timestamp = explicit_timestamp.unwrap_or(fallback_timestamp);
 
-    Some(UnifiedMessage::new(
+    let mut message = UnifiedMessage::new(
         client_id,
         model,
         provider_id,
@@ -1340,7 +1357,11 @@ fn extract_claude_headless_message(
             reasoning: 0,
         },
         0.0,
-    ))
+    );
+    if explicit_timestamp.is_none() {
+        message.set_timestamp_provenance(crate::TimestampProvenance::Fallback);
+    }
+    Some(message)
 }
 
 /// Internal Claude Code system/tool tags that should NOT be counted as human turns.
@@ -1550,7 +1571,7 @@ fn finalize_headless_state(
         return None;
     }
 
-    let message = UnifiedMessage::new(
+    let mut message = UnifiedMessage::new(
         client_id,
         model,
         provider_id,
@@ -1566,7 +1587,91 @@ fn finalize_headless_state(
         0.0,
     );
 
+    if state.timestamp_ms.is_none() {
+        message.set_timestamp_provenance(crate::TimestampProvenance::Fallback);
+    }
     *state = ClaudeHeadlessState::default();
     Some(message)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn assistant_duplicate_recovers_exact_timestamp_from_fallback() {
+        let mut existing = UnifiedMessage::new(
+            "claude",
+            "model",
+            "anthropic",
+            "session",
+            2_000,
+            TokenBreakdown::default(),
+            0.0,
+        );
+        existing.set_timestamp_provenance(crate::TimestampProvenance::Fallback);
+
+        merge_claude_duplicate(
+            &mut existing,
+            &ClaudeUsage {
+                input_tokens: None,
+                output_tokens: None,
+                cache_read_input_tokens: None,
+                cache_creation_input_tokens: None,
+            },
+            Some(1_000),
+        );
+
+        assert_eq!(existing.timestamp, 1_000);
+        assert!(existing.is_trustworthy_for_hourly());
+    }
+
+    #[test]
+    fn tool_result_duplicate_never_replaces_exact_timestamp_with_fallback() {
+        let mut existing = UnifiedMessage::new(
+            "claude",
+            "model",
+            "anthropic",
+            "session",
+            1_000,
+            TokenBreakdown::default(),
+            0.0,
+        );
+
+        merge_claude_tool_result_duplicate(
+            &mut existing,
+            10,
+            2_000,
+            crate::TimestampProvenance::Fallback,
+        );
+
+        assert_eq!(existing.timestamp, 1_000);
+        assert!(existing.is_trustworthy_for_hourly());
+        assert_eq!(existing.tokens.input, 10);
+    }
+
+    #[test]
+    fn tool_result_duplicate_recovers_exact_timestamp_from_fallback() {
+        let mut existing = UnifiedMessage::new(
+            "claude",
+            "model",
+            "anthropic",
+            "session",
+            2_000,
+            TokenBreakdown::default(),
+            0.0,
+        );
+        existing.set_timestamp_provenance(crate::TimestampProvenance::Fallback);
+
+        merge_claude_tool_result_duplicate(
+            &mut existing,
+            10,
+            1_000,
+            crate::TimestampProvenance::Exact,
+        );
+
+        assert_eq!(existing.timestamp, 1_000);
+        assert!(existing.is_trustworthy_for_hourly());
+        assert_eq!(existing.tokens.input, 10);
+    }
+}

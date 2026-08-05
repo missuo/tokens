@@ -240,17 +240,16 @@ fn parse_gemini_session(session: GeminiSession, fallback_timestamp: i64) -> Vec<
             None => continue,
         };
 
-        let timestamp = msg
+        let explicit_timestamp = msg
             .timestamp
             .and_then(|ts| chrono::DateTime::parse_from_rfc3339(&ts).ok())
-            .map(|dt| dt.timestamp_millis())
-            .unwrap_or(fallback_timestamp);
-        messages.push(build_gemini_token_message(
-            model,
-            &session_id,
-            timestamp,
-            tokens,
-        ));
+            .map(|dt| dt.timestamp_millis());
+        let timestamp = explicit_timestamp.unwrap_or(fallback_timestamp);
+        let mut message = build_gemini_token_message(model, &session_id, timestamp, tokens);
+        if explicit_timestamp.is_none() {
+            message.set_timestamp_provenance(crate::TimestampProvenance::Fallback);
+        }
+        messages.push(message);
     }
 
     messages
@@ -299,11 +298,14 @@ fn parse_direct_gemini_token_message(
     let model = extract_string(value.get("model")).or(model_hint)?;
     let tokens_value = value.get("tokens")?;
     let tokens = deserialize_tokens(tokens_value)?;
-    let timestamp = extract_timestamp_from_value(value).unwrap_or(fallback_timestamp);
+    let explicit_timestamp = extract_timestamp_from_value(value);
+    let timestamp = explicit_timestamp.unwrap_or(fallback_timestamp);
 
-    Some(build_gemini_token_message(
-        model, session_id, timestamp, tokens,
-    ))
+    let mut message = build_gemini_token_message(model, session_id, timestamp, tokens);
+    if explicit_timestamp.is_none() {
+        message.set_timestamp_provenance(crate::TimestampProvenance::Fallback);
+    }
+    Some(message)
 }
 
 fn parse_gemini_headless_jsonl(path: &Path, fallback_timestamp: i64) -> GeminiParseResult {
@@ -389,6 +391,8 @@ fn parse_gemini_headless_jsonl(path: &Path, fallback_timestamp: i64) -> GeminiPa
             ) {
                 if let Some(id) = extract_string(value.get("id")) {
                     if let Some(index) = direct_message_indices.get(&id).copied() {
+                        let mut message = message;
+                        message.retain_best_timestamp_from(&messages[index]);
                         messages[index] = message;
                     } else {
                         direct_message_indices.insert(id, messages.len());
@@ -480,7 +484,7 @@ fn build_messages_from_stats(
             } else {
                 (usage.input.max(0), usage.cached.max(0))
             };
-            UnifiedMessage::new(
+            let mut message = UnifiedMessage::new(
                 "gemini",
                 usage.model,
                 "google",
@@ -494,7 +498,9 @@ fn build_messages_from_stats(
                     reasoning: usage.reasoning.max(0),
                 },
                 0.0,
-            )
+            );
+            message.set_timestamp_provenance(crate::TimestampProvenance::Aggregate);
+            message
         })
         .collect()
 }
@@ -614,3 +620,37 @@ fn extract_timestamp_from_value(value: &Value) -> Option<i64> {
         .and_then(parse_timestamp_value)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn duplicate_direct_record_keeps_exact_timestamp_when_correction_uses_fallback() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session-test.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                "{\"type\":\"gemini\",\"id\":\"message-1\",\"model\":\"gemini-2.5-pro\",\"timestamp\":\"2026-04-04T01:02:03Z\",\"tokens\":{\"input\":5,\"output\":1}}\n",
+                "{\"type\":\"gemini\",\"id\":\"message-1\",\"model\":\"gemini-2.5-pro\",\"tokens\":{\"input\":9,\"output\":2}}\n"
+            ),
+        )
+        .unwrap();
+
+        let messages = parse_gemini_file(&path);
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].tokens.input, 9);
+        assert_eq!(messages[0].tokens.output, 2);
+        assert_eq!(
+            messages[0].timestamp,
+            chrono::DateTime::parse_from_rfc3339("2026-04-04T01:02:03Z")
+                .unwrap()
+                .timestamp_millis()
+        );
+        assert_eq!(
+            messages[0].timestamp_provenance,
+            crate::TimestampProvenance::Exact
+        );
+    }
+}

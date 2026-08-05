@@ -11,4 +11,3 @@ use std::path::Path;
 pub fn parse_cline_file(path: &Path) -> Vec<UnifiedMessage> {
     parse_roo_kilo_file(path, "cline")
 }
-

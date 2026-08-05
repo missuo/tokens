@@ -224,4 +224,3 @@ fn provider_from_api_protocol(api_protocol: Option<&str>) -> String {
         .unwrap_or("unknown")
         .to_string()
 }
-

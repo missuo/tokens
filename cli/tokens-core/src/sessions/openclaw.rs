@@ -225,10 +225,11 @@ fn parse_openclaw_session(session_path: &Path, session_id: &str) -> Vec<UnifiedM
 
                     current_model = Some(model.clone());
                     current_provider = Some(provider.clone());
-                    let timestamp = msg.timestamp.unwrap_or(file_mtime_ms);
+                    let explicit_timestamp = msg.timestamp;
+                    let timestamp = explicit_timestamp.unwrap_or(file_mtime_ms);
                     let cost = usage.cost.and_then(|c| c.total).unwrap_or(0.0);
 
-                    messages.push(UnifiedMessage::new(
+                    let mut message = UnifiedMessage::new(
                         "openclaw",
                         model,
                         provider,
@@ -242,7 +243,11 @@ fn parse_openclaw_session(session_path: &Path, session_id: &str) -> Vec<UnifiedM
                             reasoning: 0,
                         },
                         cost.max(0.0),
-                    ));
+                    );
+                    if explicit_timestamp.is_none() {
+                        message.set_timestamp_provenance(crate::TimestampProvenance::Fallback);
+                    }
+                    messages.push(message);
                 }
             }
             _ => {}
@@ -251,4 +256,3 @@ fn parse_openclaw_session(session_path: &Path, session_id: &str) -> Vec<UnifiedM
 
     messages
 }
-
