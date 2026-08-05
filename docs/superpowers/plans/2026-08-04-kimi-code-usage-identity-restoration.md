@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - Use `origin/main` as the baseline.
-- Produce one coherent standalone Kimi restoration commit on `fix/kimi-code-usage-identity` for PR #7.
+- Keep PR #7 standalone on `fix/kimi-code-usage-identity`; all commits must remain scoped to the Kimi restoration or its review corrections.
 - Implement restoration in the Kimi parser, not aggregation or presentation.
 - Process each physical `wire.jsonl` independently; never share pending requests across files.
 - Use JSONL line order, not timestamps, for correlation.
@@ -1007,7 +1007,7 @@ Fix all Critical and Important findings, rerun affected tests, and obtain a clea
 
 **Interfaces:**
 - Consumes: reviewed and verified working tree based on `origin/main`.
-- Produces: one coherent standalone commit on `fix/kimi-code-usage-identity` for PR #7.
+- Produces: a standalone Kimi restoration history on `fix/kimi-code-usage-identity` for PR #7; scoped review corrections may follow the implementation commit.
 
 - [ ] **Step 1: Stage only approved files**
 
@@ -1057,11 +1057,7 @@ Run:
 git log --oneline origin/main..HEAD
 ```
 
-Expected:
-
-```text
-<new-sha> fix: restore Kimi Code usage identity
-```
+Expected: history contains the Kimi implementation commit plus only scoped review or preparation follow-ups; no unrelated commits.
 
 - [ ] **Step 5: Push without force**
 
@@ -1092,7 +1088,7 @@ Run:
 gh pr view 7 --repo HuaileiW/tokens --json number,title,url,headRefName,baseRefName,commits,state
 ```
 
-Expected: PR #7 is open from `fix/kimi-code-usage-identity` against `main` and contains the single coherent Kimi restoration commit.
+Expected: PR #7 is open from `fix/kimi-code-usage-identity` against `main`, and every commit is scoped to the Kimi restoration or its review corrections.
 
 - [ ] **Step 2: Write the updated PR body**
 
