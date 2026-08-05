@@ -755,9 +755,11 @@ fn parser_version(client: ClientId) -> u32 {
         // to the (end-anchored) turn_end timestamp. Second-round follow-up
         // to #890.
         ClientId::Kiro => 2,
-        // Kimi now checks each token bucket independently when deciding
-        // whether a usage record is empty, avoiding an overflowing sum.
-        ClientId::Kimi => 2,
+        // v1->v2: check each token bucket independently when deciding whether
+        // a usage record is empty, avoiding an overflowing sum.
+        // v2->v3: correlate Kimi Code usage aliases with preceding request
+        // records to restore concrete model and provider identity.
+        ClientId::Kimi => 3,
         _ => 1,
     }
 }
@@ -1480,7 +1482,6 @@ pub(crate) fn codex_cache_entry_matches_fingerprint(
         && codex_incremental.prefix_hash == fingerprint.content_hash
 }
 
-
 /// Delete on-disk source-message cache shards so the next scan reparses everything.
 ///
 /// Used by `tokens usage --force-rescan` (and similar UI "full rescan" actions).
@@ -1503,4 +1504,28 @@ pub fn clear_source_message_cache() -> Result<(), String> {
         let _ = fs::remove_file(lock_path);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn kimi_parser_version_bump_is_client_scoped() {
+        assert_eq!(CACHE_FORMAT_VERSION, 5);
+        assert_eq!(parser_version(ClientId::Kimi), 3);
+
+        assert_eq!(parser_version(ClientId::Codex), 6);
+        assert_eq!(parser_version(ClientId::Jcode), 7);
+        assert_eq!(parser_version(ClientId::Copilot), 8);
+        assert_eq!(parser_version(ClientId::Pi), 2);
+        assert_eq!(parser_version(ClientId::DevinCli), 3);
+        assert_eq!(parser_version(ClientId::DevinDesktop), 2);
+        assert_eq!(parser_version(ClientId::Claude), 3);
+        assert_eq!(parser_version(ClientId::Junie), 2);
+        assert_eq!(parser_version(ClientId::Zcode), 3);
+        assert_eq!(parser_version(ClientId::OpenCodeReview), 2);
+        assert_eq!(parser_version(ClientId::Kiro), 2);
+        assert_eq!(parser_version(ClientId::OpenCode), 1);
+    }
 }
