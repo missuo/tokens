@@ -510,8 +510,10 @@ public struct MenuPanelView: View {
     private func projectRow(_ project: ProjectUsage) -> some View {
         let visibleModelCount = projectModelVisibleCounts[project.id]
             ?? MenuBarLayout.projectModelPageSize
-        let visibleModels = Array(project.models.prefix(max(visibleModelCount, 0)))
-        let hasMoreModels = project.models.count > visibleModels.count
+        let modelPage = ProjectModelPresentation.page(
+            from: project.models,
+            visibleCount: visibleModelCount
+        )
 
         return VStack(alignment: .leading, spacing: 7) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -526,23 +528,23 @@ public struct MenuPanelView: View {
                     .layoutPriority(2)
             }
 
-            if !project.models.isEmpty {
+            if modelPage.totalCount > 0 {
                 HStack(alignment: .top, spacing: 9) {
                     Rectangle()
                         .fill(Color.primary.opacity(0.16))
                         .frame(width: 1)
                     VStack(alignment: .leading, spacing: 6) {
-                        ForEach(visibleModels) { model in
+                        ForEach(modelPage.models) { model in
                             projectModelRow(model)
                         }
-                        if hasMoreModels {
+                        if modelPage.hasMore {
                             expandChevron(
-                                remaining: project.models.count - visibleModels.count,
+                                remaining: modelPage.remainingCount,
                                 accessibilityNoun: "models for \(project.displayName)"
                             ) {
                                 projectModelVisibleCounts[project.id] = min(
                                     visibleModelCount + MenuBarLayout.projectModelPageSize,
-                                    project.models.count
+                                    modelPage.totalCount
                                 )
                             }
                         }
