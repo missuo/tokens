@@ -340,6 +340,18 @@ public struct ProjectUsage: Codable, Equatable, Identifiable {
     public let cost: Double
     public let messages: Int32
     public let models: [ProjectModelUsage]
+
+    public var folderName: String {
+        guard let projectKey else { return "Unattributed" }
+        let fallbackName = displayName.isEmpty ? "Unattributed" : displayName
+        guard let lastComponent = projectKey
+            .split(separator: "/", omittingEmptySubsequences: true)
+            .last
+        else {
+            return fallbackName
+        }
+        return String(lastComponent)
+    }
 }
 
 public struct ProjectModelUsage: Codable, Equatable, Identifiable {
