@@ -86,19 +86,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             popover.performClose(sender)
         } else {
             layoutState.willPresent()
-            // Resolve 80% max against the display that owns this status item click.
-            refreshPresentationHeight()
-            // Snap to latest measured size before show — no open animation from a stale height.
+            // Resolve the 80% cap against the display the user actually clicked.
+            // `button.window.screen` is unreliable at click time on multi-monitor
+            // setups: once the popover takes key focus, macOS can migrate the
+            // active menu bar (and the status item’s window) to another display
+            // mid-presentation. A post-show re-clamp against that moving anchor
+            // re-anchored the visible popover — the “opens on the other screen”
+            // flash. Size once, up front, against the screen under the mouse.
+            if let screen = MenuBarLayout.mouseScreen() {
+                _ = layoutState.refresh(screen: screen)
+            } else {
+                _ = layoutState.refresh(anchor: button)
+            }
+            // Snap to the latest measured size before show — no geometry changes
+            // once the popover is visible.
             if let pending = pendingPopoverSize {
                 applyPopoverSize(pending)
                 pendingPopoverSize = nil
+            } else {
+                applyPopoverSize(popover.contentSize)
             }
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             popover.contentViewController?.view.window?.makeKey()
-            // After show, window.screen is definitive — refresh once more if needed.
-            DispatchQueue.main.async { [weak self] in
-                self?.refreshPresentationHeight()
-            }
         }
     }
 
@@ -147,7 +156,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Snap only — panel height is driven by measured CLIENT/MODEL content, not a tween.
     private func applyPopoverSize(_ size: CGSize) {
         let width = max(size.width, MenuBarLayout.panelWidth)
-        // Prefer live layoutState (status-item screen); fall back to anchor resolve.
+        // Prefer live layoutState (presentation screen); fall back to anchor resolve.
         let maxH = layoutState?.maxHeight
             ?? MenuBarLayout.panelMaxHeight(anchor: statusItem?.button)
         let height = min(max(size.height, 120), maxH)

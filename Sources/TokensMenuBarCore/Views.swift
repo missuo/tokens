@@ -37,7 +37,7 @@ public struct MenuPanelView: View {
         self.onIdealSizeChange = onIdealSizeChange
     }
 
-    /// Cap from the presentation display (refreshed by AppDelegate from status-item screen).
+    /// Cap from the presentation display (refreshed by AppDelegate from the clicked display).
     private var panelMaxHeight: CGFloat { layout.maxHeight }
 
     private var maxBodyHeight: CGFloat {

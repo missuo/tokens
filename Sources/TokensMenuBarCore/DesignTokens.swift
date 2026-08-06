@@ -16,6 +16,15 @@ public enum MenuBarLayout {
     /// Fallback when content has not been measured yet (loading / first paint).
     public static let fallbackContentHeight: CGFloat = 280
 
+    /// Screen under the mouse cursor — the display whose menu bar received the
+    /// click. More reliable than `anchor.window.screen` at click time: once the
+    /// popover takes key focus, macOS can migrate the active menu bar (and the
+    /// status item’s window) to another display mid-presentation.
+    public static func mouseScreen() -> NSScreen? {
+        let mouse = NSEvent.mouseLocation
+        return NSScreen.screens.first(where: { NSMouseInRect(mouse, $0.frame, false) })
+    }
+
     /// Screen where the menu bar panel should size itself.
     /// Prefer the status-item / anchor window’s screen; else the screen under the
     /// mouse (click target on multi-monitor); else `NSScreen.main`.
@@ -28,8 +37,7 @@ public enum MenuBarLayout {
                 return screen
             }
         }
-        let mouse = NSEvent.mouseLocation
-        if let screen = NSScreen.screens.first(where: { NSMouseInRect(mouse, $0.frame, false) }) {
+        if let screen = mouseScreen() {
             return screen
         }
         return NSScreen.main
@@ -46,7 +54,8 @@ public enum MenuBarLayout {
 }
 
 /// Live max panel height for the display currently presenting the menu.
-/// AppDelegate refreshes this from the status-item screen on open / resize.
+/// AppDelegate sizes this from the clicked display (mouse screen) before show;
+/// the screen-parameters path re-clamps from the status-item anchor.
 @MainActor
 public final class PanelLayoutState: ObservableObject {
     @Published public private(set) var maxHeight: CGFloat
@@ -64,6 +73,17 @@ public final class PanelLayoutState: ObservableObject {
     @discardableResult
     public func refresh(anchor: NSView? = nil) -> CGFloat {
         let next = MenuBarLayout.panelMaxHeight(anchor: anchor)
+        if abs(next - maxHeight) > 0.5 {
+            maxHeight = next
+        }
+        return maxHeight
+    }
+
+    /// Recompute against an explicit presentation screen (the display whose
+    /// menu bar was clicked); no-op if unchanged.
+    @discardableResult
+    public func refresh(screen: NSScreen) -> CGFloat {
+        let next = MenuBarLayout.panelMaxHeight(screen: screen)
         if abs(next - maxHeight) > 0.5 {
             maxHeight = next
         }
