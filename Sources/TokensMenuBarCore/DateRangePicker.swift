@@ -68,6 +68,18 @@ public enum DateRangePickerConversion {
         return DateSelectionRange(startDate: value, endDate: value)
     }
 
+    /// The selection a committed draft maps to: nil when the draft is unordered,
+    /// `.preset(.today)` when the draft is exactly today (a single picked day
+    /// jumps straight to the Today preset), otherwise `.custom(draft)` — a
+    /// single non-today day stays an inclusive single-day custom range.
+    public static func committedSelection(
+        for draft: DateSelectionRange,
+        today: DateSelectionRange
+    ) -> UsageSelection? {
+        guard draft.isOrdered else { return nil }
+        return draft == today ? .preset(.today) : .custom(draft)
+    }
+
     public static func range(
         for period: UsagePeriod,
         now: Date = Date(),
@@ -101,6 +113,64 @@ public enum DateRangePickerConversion {
         let start = calendar.startOfDay(for: now)
         guard let tomorrow = calendar.date(byAdding: .day, value: 1, to: start) else { return nil }
         return tomorrow.addingTimeInterval(-1)
+    }
+}
+
+/// Two-click range selection cycle: the first click places the start point, the
+/// second click places the end point, and any click after a completed range
+/// starts over with a new start point. Pure mapping so it can be unit-tested
+/// without an `NSDatePicker`.
+public enum DateRangeSelectionCycle {
+    public enum Phase: Equatable {
+        /// No complete range yet; the next click finishes or restarts the range.
+        case awaitingEnd
+        /// A start+end range is in place; the next click starts over.
+        case complete
+    }
+
+    public struct Result: Equatable {
+        /// Selection to store after the click.
+        public let selection: DateSelectionRange
+        /// Phase the cycle is in after the click.
+        public let phase: Phase
+        /// Whether the picker control must be re-anchored to `selection`
+        /// (the native control extended the old range instead of restarting).
+        public let reanchor: Bool
+    }
+
+    public static func initialPhase(for selection: DateSelectionRange) -> Phase {
+        selection.startDate == selection.endDate ? .awaitingEnd : .complete
+    }
+
+    /// Maps a raw picker report into the two-click cycle.
+    /// - `reported`: the range the control currently shows.
+    /// - `previous`: the last selection handed to the store.
+    /// - `phase`: the cycle phase before this click.
+    public static func reduce(
+        reported: DateSelectionRange,
+        previous: DateSelectionRange,
+        phase: Phase
+    ) -> Result {
+        switch phase {
+        case .awaitingEnd:
+            let next: Phase = reported.startDate == reported.endDate ? .awaitingEnd : .complete
+            return Result(selection: reported, phase: next, reanchor: false)
+        case .complete:
+            // A click after a completed range restarts at the clicked day. When
+            // the native control already collapsed to a single day, nothing to
+            // fix; otherwise pick the endpoint that moved and re-anchor there.
+            if reported.startDate == reported.endDate {
+                return Result(selection: reported, phase: .awaitingEnd, reanchor: false)
+            }
+            let clicked = reported.startDate != previous.startDate
+                ? reported.startDate
+                : reported.endDate
+            return Result(
+                selection: DateSelectionRange(startDate: clicked, endDate: clicked),
+                phase: .awaitingEnd,
+                reanchor: true
+            )
+        }
     }
 }
 
@@ -160,6 +230,7 @@ public struct AppKitDateRangePicker: NSViewRepresentable {
         )
         if current != selection {
             apply(selection, to: picker)
+            context.coordinator.syncCycle(with: selection)
         }
 
         if requestFocus, picker.window?.firstResponder !== picker {
@@ -179,9 +250,13 @@ public struct AppKitDateRangePicker: NSViewRepresentable {
     public final class Coordinator: NSObject {
         fileprivate var parent: AppKitDateRangePicker
         private var focusAttemptScheduled = false
+        private var phase: DateRangeSelectionCycle.Phase
+        private var lastSelection: DateSelectionRange
 
         fileprivate init(parent: AppKitDateRangePicker) {
             self.parent = parent
+            self.phase = DateRangeSelectionCycle.initialPhase(for: parent.selection)
+            self.lastSelection = parent.selection
         }
 
         fileprivate func requestFocus(in picker: NSDatePicker, remainingAttempts: Int = 20) {
@@ -205,12 +280,30 @@ public struct AppKitDateRangePicker: NSViewRepresentable {
             }
         }
 
+        fileprivate func syncCycle(with selection: DateSelectionRange) {
+            phase = DateRangeSelectionCycle.initialPhase(for: selection)
+            lastSelection = selection
+        }
+
         @objc fileprivate func selectionChanged(_ sender: NSDatePicker) {
-            parent.selection = DateRangePickerConversion.selection(
+            let reported = DateRangePickerConversion.selection(
                 dateValue: sender.dateValue,
                 timeInterval: sender.timeInterval,
                 timeZone: parent.timeZone
             )
+            let result = DateRangeSelectionCycle.reduce(
+                reported: reported,
+                previous: lastSelection,
+                phase: phase
+            )
+            phase = result.phase
+            lastSelection = result.selection
+            if result.reanchor {
+                // Force the control to restart from the clicked day instead of
+                // extending the completed range.
+                parent.apply(result.selection, to: sender)
+            }
+            parent.selection = result.selection
         }
     }
 }
