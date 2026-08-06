@@ -1009,13 +1009,18 @@ pub fn parse_codex_file(path: &Path) -> Vec<UnifiedMessage> {
     let session_id = session_id_from_path(path);
     let fallback_timestamp = file_modified_timestamp_ms(path);
     let reader = BufReader::new(file);
-    let parsed = parse_codex_reader(
+    let mut parsed = parse_codex_reader(
         reader,
         &session_id,
         fallback_timestamp,
         0,
         CodexParseState::default(),
     );
+    for index in parsed.fallback_timestamp_indices {
+        if let Some(message) = parsed.messages.get_mut(index) {
+            message.set_timestamp_provenance(crate::TimestampProvenance::Fallback);
+        }
+    }
     parsed.messages
 }
 
@@ -1264,3 +1269,32 @@ fn codex_message_is_human_turn(message: Option<&str>) -> bool {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn public_codex_parser_marks_fallback_timestamps_untrusted() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            r#"{{"type":"turn_context","payload":{{"model":"gpt-5"}}}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            r#"{{"type":"event_msg","payload":{{"type":"token_count","info":{{"last_token_usage":{{"input_tokens":10,"output_tokens":2}},"total_token_usage":{{"input_tokens":10,"output_tokens":2}}}}}}}}"#
+        )
+        .unwrap();
+
+        let messages = parse_codex_file(file.path());
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(
+            messages[0].timestamp_provenance,
+            crate::TimestampProvenance::Fallback
+        );
+        assert!(!messages[0].is_trustworthy_for_hourly());
+    }
+}

@@ -112,7 +112,7 @@ pub fn parse_mux_file(path: &Path) -> Vec<UnifiedMessage> {
             };
             let provider = provider_identity::canonical_provider(&provider).unwrap_or(provider);
 
-            Some(UnifiedMessage::new_with_dedup(
+            let mut message = UnifiedMessage::new_with_dedup(
                 "mux",
                 model_id,
                 provider,
@@ -127,8 +127,9 @@ pub fn parse_mux_file(path: &Path) -> Vec<UnifiedMessage> {
                 },
                 source_cost,
                 dedup_key,
-            ))
+            );
+            message.set_timestamp_provenance(crate::TimestampProvenance::Aggregate);
+            Some(message)
         })
         .collect()
 }
-

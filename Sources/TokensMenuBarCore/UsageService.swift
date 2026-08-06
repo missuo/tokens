@@ -1,14 +1,21 @@
 import Foundation
 
+public enum UsageRefreshPolicy: Equatable {
+    case snapshot
+    case refresh
+    case forceRescan
+}
+
 public struct UsageService {
+    public init() {}
+
     private static let probeLock = NSLock()
     private static var probeCache: [String: Bool] = [:]
 
-    /// Resolve a tokens binary that supports `tokens usage --period`.
+    /// Resolve a tokens binary that supports the explicit Menu Bar v3 report contract.
     ///
-    /// Homebrew still ships an older `tokens usage` (provider quota TUI) that only
-    /// accepts `--json`. Prefer user-local / monorepo builds that implement the
-    /// Menu Bar report contract.
+    /// Homebrew may still ship an older `tokens usage` implementation. Prefer
+    /// user-local / monorepo builds that advertise the complete v3 range surface.
     public static func resolveBinaryPath(override: String? = nil) -> String? {
         if let override, !override.isEmpty, FileManager.default.isExecutableFile(atPath: override) {
             if supportsMenuBarUsage(at: override) || overrideOverrideBypass(override) {
@@ -97,7 +104,7 @@ public struct UsageService {
         return out
     }
 
-    /// True when `tokens usage --help` advertises `--period` (Menu Bar schema).
+    /// True when `tokens usage --help` advertises the complete v3 range contract.
     public static func supportsMenuBarUsage(at path: String) -> Bool {
         probeLock.lock()
         if let cached = probeCache[path] {
@@ -122,7 +129,8 @@ public struct UsageService {
         let out = String(data: stdout.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
         let err = String(data: stderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
         let help = out + err
-        let ok = help.contains("--period")
+        let requiredOptions = ["--contract", "--period", "--since", "--until"]
+        let ok = requiredOptions.allSatisfy(help.contains)
         probeLock.lock()
         probeCache[path] = ok
         probeLock.unlock()
@@ -159,10 +167,34 @@ public struct UsageService {
         }
     }
 
+    static func arguments(
+        for selection: UsageSelection,
+        refreshPolicy: UsageRefreshPolicy = .snapshot
+    ) -> [String] {
+        var arguments = ["usage", "--json", "--contract", "v3"]
+        switch selection {
+        case .preset(let period):
+            arguments.append(contentsOf: ["--period", period.cliValue])
+        case .custom(let range):
+            arguments.append(contentsOf: [
+                "--since", range.startDate,
+                "--until", range.endDate,
+            ])
+        }
+        switch refreshPolicy {
+        case .snapshot:
+            break
+        case .refresh:
+            arguments.append("--refresh")
+        case .forceRescan:
+            arguments.append("--force-rescan")
+        }
+        return arguments
+    }
+
     public func fetch(
-        period: UsagePeriod,
-        refresh: Bool = false,
-        forceRescan: Bool = false,
+        selection: UsageSelection,
+        refreshPolicy: UsageRefreshPolicy = .snapshot,
         binaryPath: String? = nil,
         timeoutSeconds: TimeInterval = 180
     ) throws -> UsageReport {
@@ -175,19 +207,17 @@ public struct UsageService {
                 code: 2,
                 message: """
                 Found tokens at \(binary), but it is too old for the Menu Bar report \
-                (missing `usage --period`). Build this repo's CLI + app together, e.g.:
+                (missing `usage --contract v3` range options). Build this repo's CLI + app together, e.g.:
                   make build
                   make restart
                 """
             )
         }
 
-        var args = ["usage", "--json", "--period", period.cliValue]
-        if forceRescan {
-            args.append("--force-rescan")
-        } else if refresh {
-            args.append("--refresh")
-        }
+        let args = Self.arguments(
+            for: selection,
+            refreshPolicy: refreshPolicy
+        )
 
         // Inherit a sane PATH for nested tools some scanners may call.
         var env = ProcessInfo.processInfo.environment
@@ -213,11 +243,21 @@ public struct UsageService {
 
         let decoder = JSONDecoder()
         if result.status == 0 {
+            let report: UsageReport
             do {
-                return try decoder.decode(UsageReport.self, from: outData)
+                report = try decoder.decode(UsageReport.self, from: outData)
             } catch {
                 throw UsageServiceError.invalidJSON(error.localizedDescription)
             }
+            guard report.schemaVersion == 3, report.meta.reportContract == "v3" else {
+                throw UsageServiceError.invalidJSON("expected report contract v3")
+            }
+            guard report.selection == selection else {
+                throw UsageServiceError.invalidJSON(
+                    "report selection did not match the requested selection"
+                )
+            }
+            return report
         }
 
         if let errReport = try? decoder.decode(UsageErrorReport.self, from: outData) {
@@ -227,7 +267,6 @@ public struct UsageService {
             )
         }
 
-        // Surface clap-style stderr ("unexpected argument '--period'") clearly.
         let message = [errText, outText]
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .first { !$0.isEmpty } ?? "tokens usage failed"

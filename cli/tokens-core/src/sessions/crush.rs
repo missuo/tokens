@@ -85,6 +85,7 @@ pub fn parse_crush_sqlite(db_path: &Path) -> Vec<UnifiedMessage> {
                     bucket_cost,
                 );
                 message.message_count = bucket.message_count.max(0);
+                message.set_timestamp_provenance(crate::TimestampProvenance::Aggregate);
                 messages.push(message);
             }
 
@@ -111,6 +112,7 @@ pub fn parse_crush_sqlite(db_path: &Path) -> Vec<UnifiedMessage> {
             session.cost.max(0.0),
         );
         message.message_count = 0;
+        message.set_timestamp_provenance(crate::TimestampProvenance::Aggregate);
         messages.push(message);
     }
 
@@ -235,4 +237,3 @@ fn local_day_key(timestamp_ms: i64) -> Option<String> {
 fn fallback_session_timestamp_ms(updated_at: i64, created_at: i64) -> Option<i64> {
     normalize_crush_timestamp_ms(updated_at).or_else(|| normalize_crush_timestamp_ms(created_at))
 }
-

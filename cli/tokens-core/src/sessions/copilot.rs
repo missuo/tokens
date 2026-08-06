@@ -99,6 +99,7 @@ struct CopilotUsageCandidate {
     provider_id: String,
     session_id: String,
     timestamp_ms: i64,
+    timestamp_provenance: crate::TimestampProvenance,
     duration_ms: Option<i64>,
     start_timestamp_ms: Option<i64>,
     end_timestamp_ms: Option<i64>,
@@ -130,6 +131,7 @@ impl CopilotUsageCandidate {
             Some(self.dedup_key),
         );
         message.duration_ms = self.duration_ms;
+        message.set_timestamp_provenance(self.timestamp_provenance);
         message.agent = self.agent;
         message
     }
@@ -146,14 +148,24 @@ impl CopilotUsageCandidate {
             self.tokens.reasoning.max(duplicate.tokens.reasoning),
         );
 
-        let fallback_timestamp_ms = self.timestamp_ms.min(duplicate.timestamp_ms);
+        let current_timestamp = (self.timestamp_ms, self.timestamp_provenance);
+        let duplicate_timestamp = (duplicate.timestamp_ms, duplicate.timestamp_provenance);
+        let current_is_exact = current_timestamp.1.is_trustworthy_for_hourly();
+        let duplicate_is_exact = duplicate_timestamp.1.is_trustworthy_for_hourly();
+        let authoritative_timestamp = match (current_is_exact, duplicate_is_exact) {
+            (true, false) => current_timestamp,
+            (false, true) => duplicate_timestamp,
+            _ if duplicate_timestamp.0 < current_timestamp.0 => duplicate_timestamp,
+            _ => current_timestamp,
+        };
         let fallback_duration_ms = self.duration_ms.max(duplicate.duration_ms);
         self.start_timestamp_ms = match (self.start_timestamp_ms, duplicate.start_timestamp_ms) {
             (Some(current), Some(candidate)) => Some(current.min(candidate)),
             (current, candidate) => current.or(candidate),
         };
         self.end_timestamp_ms = self.end_timestamp_ms.max(duplicate.end_timestamp_ms);
-        self.timestamp_ms = self.start_timestamp_ms.unwrap_or(fallback_timestamp_ms);
+        self.timestamp_ms = authoritative_timestamp.0;
+        self.timestamp_provenance = authoritative_timestamp.1;
         self.duration_ms = self
             .start_timestamp_ms
             .zip(self.end_timestamp_ms)
@@ -469,6 +481,13 @@ fn candidate_from_attributes(
         .to_string();
     let record_timestamp_ms = timestamp_ms_from_record(record);
     let timestamp_ms = record_timestamp_ms.unwrap_or(fallback_timestamp);
+    let timestamp_provenance = if source == CopilotUsageSource::AgentSummarySpan {
+        crate::TimestampProvenance::Aggregate
+    } else if record_timestamp_ms.is_some() {
+        crate::TimestampProvenance::Exact
+    } else {
+        crate::TimestampProvenance::Fallback
+    };
     let duration_ms = duration_ms_from_record(record);
     // Preserve explicit interval boundaries separately: an end-only exporter
     // update uses endTime as its timestamp but must not treat that end as a start.
@@ -502,6 +521,7 @@ fn candidate_from_attributes(
         provider_id,
         session_id,
         timestamp_ms,
+        timestamp_provenance,
         duration_ms,
         start_timestamp_ms,
         end_timestamp_ms,
@@ -964,3 +984,75 @@ fn timestamp_ms_from_unix_nanos(value: &Value) -> Option<i64> {
         .map(|raw| raw / 1_000_000)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn candidate(
+        timestamp_ms: i64,
+        timestamp_provenance: crate::TimestampProvenance,
+        tokens: i64,
+    ) -> CopilotUsageCandidate {
+        CopilotUsageCandidate {
+            source: CopilotUsageSource::ChatSpan,
+            trace_id: Some("trace".to_string()),
+            response_id: None,
+            model: "gpt-4o".to_string(),
+            provider_id: "github-copilot".to_string(),
+            session_id: "session".to_string(),
+            timestamp_ms,
+            timestamp_provenance,
+            duration_ms: None,
+            start_timestamp_ms: timestamp_provenance
+                .is_trustworthy_for_hourly()
+                .then_some(timestamp_ms),
+            end_timestamp_ms: None,
+            inclusive_input_tokens: tokens,
+            tokens: normalize_input_tokens(tokens, 0, 0, 0, 0),
+            dedup_key: "trace:span".to_string(),
+            agent: None,
+            agent_is_direct: false,
+        }
+    }
+
+    #[test]
+    fn duplicate_merge_keeps_exact_timestamp_with_winning_usage() {
+        let exact_timestamp = 1_704_067_200_000;
+        let mut merged = candidate(1_704_153_600_000, crate::TimestampProvenance::Fallback, 5);
+        merged.merge_duplicate(candidate(
+            exact_timestamp,
+            crate::TimestampProvenance::Exact,
+            10,
+        ));
+
+        let mut message = merged.into_message();
+        message.date = "2024-01-01".to_string();
+        assert_eq!(message.timestamp, exact_timestamp);
+        assert!(message.is_trustworthy_for_hourly());
+        assert_eq!(message.tokens.total(), 10);
+
+        let facts = crate::aggregator::aggregate_hourly_usage_facts(
+            &[message],
+            crate::bucket_tz::BucketTimezone::Named(chrono_tz::UTC),
+        );
+        assert_eq!(facts.len(), 1);
+        assert_eq!(facts[0].hours.len(), 1);
+        assert_eq!(facts[0].unplaced_for_hourly.tokens, 0);
+    }
+
+    #[test]
+    fn duplicate_merge_recovers_exact_timestamp_when_fallback_has_more_usage() {
+        let exact_timestamp = 1_704_067_200_000;
+        let mut merged = candidate(exact_timestamp, crate::TimestampProvenance::Exact, 5);
+        merged.merge_duplicate(candidate(
+            1_704_153_600_000,
+            crate::TimestampProvenance::Fallback,
+            10,
+        ));
+
+        let message = merged.into_message();
+        assert_eq!(message.timestamp, exact_timestamp);
+        assert!(message.is_trustworthy_for_hourly());
+        assert_eq!(message.tokens.total(), 10);
+    }
+}

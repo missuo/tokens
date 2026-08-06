@@ -1,0 +1,236 @@
+{
+  "schemaVersion": 3,
+  "generatedAt": "2026-08-04T08:30:00Z",
+  "bucketDate": "2026-08-04",
+  "timezone": "America/Los_Angeles",
+  "days": [
+    {
+      "date": "2026-08-03",
+      "totals": {
+        "tokens": 625000,
+        "cost": 9.5,
+        "messages": 145
+      },
+      "tokenBreakdown": {
+        "input": 218750,
+        "output": 156250,
+        "cacheRead": 156250,
+        "cacheWrite": 31250,
+        "reasoning": 62500
+      },
+      "clients": [
+        {
+          "client": "claude-code",
+          "modelId": "claude-sonnet-5",
+          "providerId": "anthropic",
+          "tokenBreakdown": {
+            "input": 218750,
+            "output": 156250,
+            "cacheRead": 156250,
+            "cacheWrite": 31250,
+            "reasoning": 62500
+          },
+          "cost": 9.5,
+          "messages": 145
+        }
+      ],
+      "projects": [
+        {
+          "projectKey": "/workspace/tokens",
+          "displayName": "tokens",
+          "totals": {
+            "tokens": 625000,
+            "cost": 9.5,
+            "messages": 145
+          },
+          "models": [
+            {
+              "modelId": "claude-sonnet-5",
+              "providerId": "anthropic",
+              "totals": {
+                "tokens": 625000,
+                "cost": 9.5,
+                "messages": 145
+              }
+            }
+          ]
+        }
+      ],
+      "hours": [
+        {
+          "startMs": 1785790800000,
+          "endMs": 1785794400000,
+          "totals": {
+            "tokens": 40000,
+            "cost": 0.5,
+            "messages": 10
+          }
+        },
+        {
+          "startMs": 1785794400000,
+          "endMs": 1785798000000,
+          "totals": {
+            "tokens": 45000,
+            "cost": 0.6,
+            "messages": 11
+          }
+        },
+        {
+          "startMs": 1785798000000,
+          "endMs": 1785801600000,
+          "totals": {
+            "tokens": 50000,
+            "cost": 0.7,
+            "messages": 12
+          }
+        },
+        {
+          "startMs": 1785801600000,
+          "endMs": 1785805200000,
+          "totals": {
+            "tokens": 55000,
+            "cost": 0.8,
+            "messages": 13
+          }
+        },
+        {
+          "startMs": 1785805200000,
+          "endMs": 1785808800000,
+          "totals": {
+            "tokens": 60000,
+            "cost": 0.9,
+            "messages": 14
+          }
+        },
+        {
+          "startMs": 1785808800000,
+          "endMs": 1785812400000,
+          "totals": {
+            "tokens": 65000,
+            "cost": 1.0,
+            "messages": 15
+          }
+        },
+        {
+          "startMs": 1785812400000,
+          "endMs": 1785816000000,
+          "totals": {
+            "tokens": 70000,
+            "cost": 1.1,
+            "messages": 16
+          }
+        },
+        {
+          "startMs": 1785816000000,
+          "endMs": 1785819600000,
+          "totals": {
+            "tokens": 75000,
+            "cost": 1.2000000000000002,
+            "messages": 17
+          }
+        },
+        {
+          "startMs": 1785819600000,
+          "endMs": 1785823200000,
+          "totals": {
+            "tokens": 80000,
+            "cost": 1.3,
+            "messages": 18
+          }
+        },
+        {
+          "startMs": 1785823200000,
+          "endMs": 1785826800000,
+          "totals": {
+            "tokens": 85000,
+            "cost": 1.4,
+            "messages": 19
+          }
+        }
+      ],
+      "unplacedForHourly": {
+        "tokens": 0,
+        "cost": 0.0,
+        "messages": 0
+      }
+    },
+    {
+      "date": "2026-08-04",
+      "totals": {
+        "tokens": 312000,
+        "cost": 4.62,
+        "messages": 118
+      },
+      "tokenBreakdown": {
+        "input": 109200,
+        "output": 78000,
+        "cacheRead": 78000,
+        "cacheWrite": 15600,
+        "reasoning": 31200
+      },
+      "clients": [
+        {
+          "client": "claude-code",
+          "modelId": "claude-sonnet-5",
+          "providerId": "anthropic",
+          "tokenBreakdown": {
+            "input": 109200,
+            "output": 78000,
+            "cacheRead": 78000,
+            "cacheWrite": 15600,
+            "reasoning": 31200
+          },
+          "cost": 4.62,
+          "messages": 118
+        }
+      ],
+      "projects": [
+        {
+          "projectKey": "/workspace/tokens",
+          "displayName": "tokens",
+          "totals": {
+            "tokens": 312000,
+            "cost": 4.62,
+            "messages": 118
+          },
+          "models": [
+            {
+              "modelId": "claude-sonnet-5",
+              "providerId": "anthropic",
+              "totals": {
+                "tokens": 312000,
+                "cost": 4.62,
+                "messages": 118
+              }
+            }
+          ]
+        }
+      ],
+      "hours": [
+        {
+          "startMs": 1785826800000,
+          "endMs": 1785830400000,
+          "totals": {
+            "tokens": 120000,
+            "cost": 1.82,
+            "messages": 45
+          }
+        },
+        {
+          "startMs": 1785830400000,
+          "endMs": 1785834000000,
+          "totals": {
+            "tokens": 180000,
+            "cost": 2.62,
+            "messages": 69
+          }
+        }
+      ],
+      "unplacedForHourly": {
+        "tokens": 12000,
+        "cost": 0.18,
+        "messages": 4
+      }
+    }
+  ]
+}

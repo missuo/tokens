@@ -104,6 +104,20 @@ pub fn matches_synthetic_filter(client: &str, model_id: &str, provider_id: &str)
 // Octofriend SQLite Parser (Strategy 2: parse Octofriend sessions)
 // =============================================================================
 
+fn sqlite_timestamp(timestamp: f64) -> (i64, crate::TimestampProvenance) {
+    let timestamp_ms = if timestamp > 1e12 {
+        timestamp as i64
+    } else {
+        (timestamp * 1000.0) as i64
+    };
+    let provenance = if timestamp.is_finite() && timestamp > 0.0 && timestamp_ms > 0 {
+        crate::TimestampProvenance::Exact
+    } else {
+        crate::TimestampProvenance::Fallback
+    };
+    (timestamp_ms, provenance)
+}
+
 /// Parse Octofriend's SQLite database for token usage data.
 ///
 /// Currently Octofriend only stores input_history (no token data).
@@ -161,11 +175,7 @@ pub fn parse_octofriend_sqlite(db_path: &Path) -> Vec<UnifiedMessage> {
                     continue;
                 }
 
-                let ts_ms = if timestamp > 1e12 {
-                    timestamp as i64
-                } else {
-                    (timestamp * 1000.0) as i64
-                };
+                let (ts_ms, timestamp_provenance) = sqlite_timestamp(timestamp);
 
                 let mut msg = UnifiedMessage::new(
                     "synthetic",
@@ -182,6 +192,7 @@ pub fn parse_octofriend_sqlite(db_path: &Path) -> Vec<UnifiedMessage> {
                     },
                     cost.max(0.0),
                 );
+                msg.set_timestamp_provenance(timestamp_provenance);
                 msg.dedup_key = Some(id);
                 messages.push(msg);
             }
@@ -237,3 +248,28 @@ pub fn parse_octofriend_sqlite(db_path: &Path) -> Vec<UnifiedMessage> {
     messages
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::TimestampProvenance;
+
+    #[test]
+    fn sqlite_timestamp_marks_missing_and_invalid_values_as_fallback() {
+        for timestamp in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            let (_, provenance) = sqlite_timestamp(timestamp);
+            assert_eq!(provenance, TimestampProvenance::Fallback);
+        }
+    }
+
+    #[test]
+    fn sqlite_timestamp_preserves_exact_seconds_and_milliseconds() {
+        assert_eq!(
+            sqlite_timestamp(1_800_000_000.0),
+            (1_800_000_000_000, TimestampProvenance::Exact)
+        );
+        assert_eq!(
+            sqlite_timestamp(1_800_000_000_000.0),
+            (1_800_000_000_000, TimestampProvenance::Exact)
+        );
+    }
+}

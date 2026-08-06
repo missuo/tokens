@@ -31,6 +31,17 @@ python3 -m http.server 4311 --directory designs
 
 Tabs: **Final** · **Interactions** · **Archive 01–05** · **All**
 
+## Time range prototype
+
+Throwaway Wayfinder prototype for the Custom AppKit date-range editor and Cost chart density:
+
+```bash
+python3 -m http.server 4311 --directory design/menubar-ui-v1
+# http://localhost:4311/time-range-prototype.html?variant=B
+```
+
+Variants: **A Inline disclosure** · **B Anchored overlay** · **C Focused editor**. Use the floating switcher or left/right arrow keys. The 1D chart demonstrates the early-Today 12-hour minimum, muted prior-day context, and dashed midnight boundary.
+
 ## Archive
 
 01 Native Glass · 02 Terminal · 03 Dense Dashboard · 04 Brand Neon · 05 Minimal Mono

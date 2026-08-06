@@ -189,11 +189,8 @@ pub fn parse_zcode_file(path: &Path) -> Vec<UnifiedMessage> {
                 let resolved_session = session_id
                     .clone()
                     .unwrap_or_else(|| session_id_from_path.clone());
-                let timestamp = entry
-                    .timestamp
-                    .as_deref()
-                    .and_then(parse_rfc3339_ms)
-                    .unwrap_or(fallback_timestamp);
+                let explicit_timestamp = entry.timestamp.as_deref().and_then(parse_rfc3339_ms);
+                let timestamp = explicit_timestamp.unwrap_or(fallback_timestamp);
 
                 let mut message = UnifiedMessage::new_with_dedup(
                     CLIENT_ID,
@@ -206,6 +203,9 @@ pub fn parse_zcode_file(path: &Path) -> Vec<UnifiedMessage> {
                     Some(format!("{}:{}", resolved_session, assistant_index)),
                 );
                 message.message_count = 1;
+                if explicit_timestamp.is_none() {
+                    message.set_timestamp_provenance(crate::TimestampProvenance::Fallback);
+                }
                 message.is_turn_start = pending_turn_start;
                 message.set_workspace(workspace_key.clone(), workspace_label.clone());
                 messages.push(message);
@@ -412,6 +412,8 @@ pub fn parse_zcode_sqlite(db_path: &Path) -> Vec<UnifiedMessage> {
             .as_deref()
             .map(canonicalize_model)
             .unwrap_or_else(|| UNKNOWN_MODEL.to_string());
+        let used_fallback_timestamp =
+            row.started_at.filter(|value| *value > 0).is_none() && row.completed_at.is_none();
         let timestamp = resolve_zcode_timestamp(
             row.started_at,
             row.completed_at,
@@ -487,6 +489,9 @@ pub fn parse_zcode_sqlite(db_path: &Path) -> Vec<UnifiedMessage> {
             agent,
         );
         message.dedup_key = Some(format!("zcode-sqlite:{}", row.id));
+        if used_fallback_timestamp {
+            message.set_timestamp_provenance(crate::TimestampProvenance::Fallback);
+        }
         message.duration_ms = row.duration_ms.filter(|duration| *duration > 0);
 
         let workspace_root = row.session_directory.or(row.session_path);
@@ -623,4 +628,3 @@ fn workspace_key_from_path(path: &Path) -> Option<String> {
         .and_then(|name| name.to_str())
         .and_then(normalize_workspace_key)
 }
-

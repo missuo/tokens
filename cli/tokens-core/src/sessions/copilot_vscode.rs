@@ -154,6 +154,9 @@ fn request_to_message(
         0.0,
         Some(dedup_key),
     );
+    if timestamp_ms <= 0 {
+        message.set_timestamp_provenance(crate::TimestampProvenance::Fallback);
+    }
 
     if let Some((key, label)) = workspace {
         message.set_workspace(Some(key.clone()), label.clone());
@@ -190,3 +193,37 @@ fn read_workspace_for_file(jsonl_path: &Path) -> Option<(String, Option<String>)
     Some((workspace_key, workspace_label))
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::TimestampProvenance;
+
+    fn request(timestamp: Option<i64>) -> Value {
+        let mut request = serde_json::json!({
+            "promptTokens": 10,
+            "completionTokens": 5,
+            "modelId": "copilot/gpt-5"
+        });
+        if let Some(timestamp) = timestamp {
+            request["timestamp"] = Value::from(timestamp);
+        }
+        request
+    }
+
+    #[test]
+    fn missing_or_invalid_timestamps_are_fallback_provenance() {
+        for timestamp in [None, Some(0), Some(-1)] {
+            let message = request_to_message(&request(timestamp), "session", &None).unwrap();
+            assert_eq!(message.timestamp_provenance, TimestampProvenance::Fallback);
+            assert!(!message.is_trustworthy_for_hourly());
+        }
+    }
+
+    #[test]
+    fn positive_request_timestamp_remains_exact() {
+        let message =
+            request_to_message(&request(Some(1_800_000_000_000)), "session", &None).unwrap();
+        assert_eq!(message.timestamp_provenance, TimestampProvenance::Exact);
+        assert!(message.is_trustworthy_for_hourly());
+    }
+}

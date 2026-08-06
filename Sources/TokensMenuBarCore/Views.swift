@@ -20,6 +20,10 @@ public struct MenuPanelView: View {
     @State private var modelVisibleCount: Int = MenuBarLayout.listPageSize
     /// Per-project nested model page counts keyed by `ProjectUsage.id`.
     @State private var projectModelVisibleCounts: [String: Int] = [:]
+    @State private var showCustomEditor = false
+    @State private var requestDatePickerFocus = false
+    @State private var draftCustomRange = DateRangePickerConversion.today(timeZone: .current)
+    @FocusState private var customTriggerFocused: Bool
 
     public init(
         store: UsageStore,
@@ -50,10 +54,12 @@ public struct MenuPanelView: View {
         return min(bodyContentHeight, maxBodyHeight)
     }
 
-    /// True when selected period and loaded report agree (safe to resize).
-    private var reportMatchesPeriod: Bool {
-        guard let report = store.report else { return false }
-        return report.period == store.period.cliValue
+    private var reportingTimeZone: TimeZone {
+        if let identifier = store.report?.dateRange.timezone,
+           let zone = TimeZone(identifier: identifier) {
+            return zone
+        }
+        return .current
     }
 
     public var body: some View {
@@ -72,15 +78,25 @@ public struct MenuPanelView: View {
                 }
             } else if let report = store.report {
                 measuredChrome {
-                    periodTabs
+                    rangeControls
                         .padding(.horizontal, MenuBarLayout.horizontalPadding)
                         .padding(.top, 14)
                         .padding(.bottom, 6)
+                        .zIndex(showCustomEditor ? 20 : 0)
+                }
+
+                if store.isShowingStaleReport {
+                    measuredChrome {
+                        staleRangeBanner
+                            .padding(.horizontal, MenuBarLayout.horizontalPadding)
+                            .padding(.top, 4)
+                    }
                 }
 
                 // Always ScrollView (even when short) so TODAY vs 30D does not
                 // flip layout structure and remeasure thrash the popover height.
                 reportBody(report)
+                    .opacity(store.isShowingStaleReport ? 0.55 : 1)
                     .frame(height: bodyViewportHeight, alignment: .top)
                     .clipped()
 
@@ -120,8 +136,12 @@ public struct MenuPanelView: View {
             syncBodyHeightAndPublish()
         }
         .onAppear { syncBodyHeightAndPublish() }
+        .onDisappear { closeCustomEditor(restoreFocus: false) }
+        .onChange(of: layout.presentationGeneration) { _ in
+            closeCustomEditor(restoreFocus: false)
+        }
         .onChange(of: store.report?.generatedAt) { _ in syncBodyHeightAndPublish() }
-        .onChange(of: store.period) { _ in
+        .onChange(of: store.selection) { _ in
             // Reset expand pages; keep prior panel height until new report lands.
             clientVisibleCount = MenuBarLayout.listPageSize
             projectVisibleCount = MenuBarLayout.listPageSize
@@ -201,57 +221,210 @@ public struct MenuPanelView: View {
     /// Height is content-driven: CLIENT/MODEL list length sets the body, no forced tween.
     /// Skip resize while the tab is ahead of the loaded report (TODAY short vs 30D tall).
     private func syncBodyHeightAndPublish() {
-        // Hold previous height until report matches selected period — prevents
-        // intermediate collapse/expand when switching into TODAY.
-        if store.report != nil, !reportMatchesPeriod {
-            return
-        }
-
-        // Snap to content height. List rows appearing (period data / chevron) is
-        // what “opens” the panel — not a parallel height animation.
-        if let target = targetBodyHeight, abs(target - bodyViewportHeight) > 0.5 {
+        // Keep the previous body viewport while a different range is loading,
+        // but continue publishing chrome changes (for the stale-data banner).
+        if !store.isShowingStaleReport,
+           let target = targetBodyHeight,
+           abs(target - bodyViewportHeight) > 0.5 {
             bodyViewportHeight = target
         }
 
         let chrome = chromeHeight > 0 ? chromeHeight : 140
-        let body = targetBodyHeight ?? (store.report == nil ? 0 : bodyViewportHeight)
+        let body: CGFloat
+        if store.report == nil {
+            body = 0
+        } else if store.isShowingStaleReport {
+            body = bodyViewportHeight
+        } else {
+            body = targetBodyHeight ?? bodyViewportHeight
+        }
         let ideal = min(chrome + body, panelMaxHeight)
         let height = max(ideal, 120)
         onIdealSizeChange?(CGSize(width: MenuBarLayout.panelWidth, height: height))
     }
 
-    // MARK: - Period tabs
+    // MARK: - Range controls
 
-    private var periodTabs: some View {
+    private var rangeControls: some View {
         HStack(spacing: 0) {
             ForEach(UsagePeriod.allCases) { period in
-                // Use onTapGesture (not Button) so the first click in an NSPopover
-                // is not eaten by button activation / animation transaction.
-                Text(period.monoTitle)
-                    .font(.system(size: 11, design: .monospaced))
-                    .tracking(0.4)
-                    .foregroundStyle(store.period == period ? Color.primary : Color.secondary)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 8)
-                    .contentShape(Rectangle())
-                    .overlay(alignment: .bottom) {
-                        Rectangle()
-                            .fill(store.period == period ? Color.primary : Color.clear)
-                            .frame(height: 2)
-                    }
-                    .onTapGesture {
-                        store.setPeriod(period)
-                    }
-                    .accessibilityAddTraits(.isButton)
-                    .accessibilityAddTraits(store.period == period ? .isSelected : [])
-                    .accessibilityLabel(period.monoTitle)
+                let selected = store.selection == .preset(period)
+                Button {
+                    closeCustomEditor(restoreFocus: false)
+                    store.setPeriod(period)
+                } label: {
+                    Text(period.monoTitle)
+                        .font(.system(size: 11, design: .monospaced))
+                        .tracking(0.4)
+                        .foregroundStyle(selected ? Color.primary : Color.secondary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .contentShape(Rectangle())
+                        .overlay(alignment: .bottom) {
+                            Rectangle()
+                                .fill(selected ? Color.primary : Color.clear)
+                                .frame(height: 2)
+                        }
+                }
+                .buttonStyle(.plain)
+                .frame(maxWidth: .infinity)
+                .accessibilityAddTraits(selected ? .isSelected : [])
+                .accessibilityLabel(period.monoTitle)
             }
+
+            customRangeTrigger
 
             if store.isLoading {
                 ProgressView()
                     .controlSize(.mini)
                     .padding(.leading, 4)
             }
+        }
+        .overlay(alignment: .topTrailing) {
+            if showCustomEditor {
+                customRangeEditor
+                    .offset(y: 42)
+                    .zIndex(30)
+            }
+        }
+    }
+
+    private var customEditorAvailable: Bool {
+        store.selection != .preset(.all) || !store.isShowingStaleReport
+    }
+
+    private var customRangeTrigger: some View {
+        let activeRange = store.selection.customRange
+        let label = activeRange.map {
+            Formatting.compactDateRange($0, timeZone: reportingTimeZone)
+        }
+        let selected = activeRange != nil
+
+        return Button { openCustomEditor() } label: {
+            Group {
+                if let label {
+                    Text(label)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                } else {
+                    Image(systemName: "calendar")
+                }
+            }
+            .font(.system(size: 10, design: .monospaced))
+            .foregroundStyle(selected ? Color.primary : Color.secondary)
+            .frame(minWidth: selected ? 82 : 34, maxWidth: selected ? 108 : 34)
+            .padding(.vertical, 8)
+            .contentShape(Rectangle())
+            .overlay(alignment: .bottom) {
+                Rectangle()
+                    .fill(selected ? Color.primary : Color.clear)
+                    .frame(height: 2)
+            }
+        }
+        .buttonStyle(.plain)
+        .disabled(!customEditorAvailable)
+        .opacity(customEditorAvailable ? 1 : 0.45)
+        .focused($customTriggerFocused)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .accessibilityLabel(
+            label.map { "Custom date range, \($0)" } ?? "Custom date range"
+        )
+        .accessibilityHint(
+            customEditorAvailable
+                ? "Opens the inclusive date range editor"
+                : "Available after the All range finishes loading"
+        )
+    }
+
+    private var customRangeEditor: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("CUSTOM RANGE")
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .tracking(0.8)
+                Spacer()
+                Button("Cancel") { closeCustomEditor(restoreFocus: true) }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 10, design: .monospaced))
+            }
+
+            AppKitDateRangePicker(
+                selection: $draftCustomRange,
+                requestFocus: $requestDatePickerFocus,
+                timeZone: reportingTimeZone,
+                locale: .current,
+                maximumDate: DateRangePickerConversion.maximumDate(
+                    timeZone: reportingTimeZone
+                ) ?? Date()
+            )
+            .frame(width: 300, height: 210)
+
+            HStack {
+                Text(
+                    Formatting.compactDateRange(
+                        draftCustomRange,
+                        timeZone: reportingTimeZone
+                    )
+                )
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                Spacer()
+                Button("APPLY RANGE") {
+                    store.setCustomRange(draftCustomRange)
+                    closeCustomEditor(restoreFocus: true)
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .disabled(!draftCustomRange.isOrdered)
+            }
+        }
+        .padding(12)
+        .frame(width: 324)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(Color(nsColor: .windowBackgroundColor))
+                .shadow(color: .black.opacity(0.24), radius: 10, y: 4)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .strokeBorder(Color.primary.opacity(0.18), lineWidth: 1)
+        )
+        .onExitCommand { closeCustomEditor(restoreFocus: true) }
+        .accessibilityElement(children: .contain)
+    }
+
+    private func openCustomEditor() {
+        if showCustomEditor {
+            closeCustomEditor(restoreFocus: true)
+            return
+        }
+        switch store.selection {
+        case .custom(let range):
+            draftCustomRange = range
+        case .preset(let period):
+            if let report = store.report, report.selection == store.selection {
+                draftCustomRange = DateSelectionRange(
+                    startDate: report.dateRange.startDate,
+                    endDate: report.dateRange.endDate
+                )
+            } else {
+                guard let range = DateRangePickerConversion.range(
+                    for: period,
+                    timeZone: reportingTimeZone
+                ) else { return }
+                draftCustomRange = range
+            }
+        }
+        showCustomEditor = true
+        requestDatePickerFocus = true
+    }
+
+    private func closeCustomEditor(restoreFocus: Bool) {
+        showCustomEditor = false
+        requestDatePickerFocus = false
+        if restoreFocus {
+            DispatchQueue.main.async { customTriggerFocused = true }
         }
     }
 
@@ -668,9 +841,29 @@ public struct MenuPanelView: View {
     // MARK: - COST chart
 
     private func costChartSection(_ report: UsageReport) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            sectionLabel("COST")
-            CostChartView(days: report.byDay, periodRawValue: store.period.rawValue)
+        let unplaced = report.timeSeries.unplaced
+        return VStack(alignment: .leading, spacing: 12) {
+            sectionLabel("\(report.timeSeries.granularity.title.uppercased()) COST")
+            CostChartView(
+                timeSeries: report.timeSeries,
+                timeZone: reportingTimeZone
+            )
+            .id(store.selection)
+            if unplaced.tokens != 0 || unplaced.cost != 0 || unplaced.messages != 0 {
+                Text(
+                    "UNPLACED · \(Formatting.cost(unplaced.cost)) · "
+                        + "\(Formatting.compactTokens(unplaced.tokens)) TOKENS "
+                        + "WITHOUT RELIABLE BUCKET TIME"
+                )
+                .font(.system(size: 9, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityLabel(
+                    "Unplaced usage, \(Formatting.cost(unplaced.cost)), "
+                        + "\(Formatting.compactTokens(unplaced.tokens)) tokens, "
+                        + "without reliable bucket time"
+                )
+            }
         }
     }
 
@@ -742,6 +935,29 @@ public struct MenuPanelView: View {
         Text(text)
             .font(.system(size: 11, design: .monospaced))
             .foregroundStyle(.secondary)
+    }
+
+    private var staleRangeBanner: some View {
+        Text(
+            store.lastError == nil
+                ? "UPDATING RANGE · SHOWING PREVIOUS DATA"
+                : "RANGE UPDATE FAILED · SHOWING PREVIOUS DATA"
+        )
+        .font(.system(size: 9, weight: .medium, design: .monospaced))
+        .foregroundStyle(.secondary)
+        .tracking(0.5)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 7)
+        .padding(.horizontal, 9)
+        .background(
+            RoundedRectangle(cornerRadius: 4)
+                .fill(Color.primary.opacity(0.05))
+        )
+        .accessibilityLabel(
+            store.lastError == nil
+                ? "Updating selected range. Showing previous data."
+                : "Selected range update failed. Showing previous data."
+        )
     }
 
     private var missingCLI: some View {

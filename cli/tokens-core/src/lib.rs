@@ -30,7 +30,7 @@ pub use sessionize::{
     compute_daily_active_time, compute_time_metrics, sessionize, SessionInterval, TimeMetrics,
     DEFAULT_IDLE_GAP_MS,
 };
-pub use sessions::{CostSource, UnifiedMessage};
+pub use sessions::{CostSource, TimestampProvenance, UnifiedMessage};
 
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
@@ -319,6 +319,7 @@ pub struct ParsedMessage {
     pub workspace_key: Option<String>,
     pub workspace_label: Option<String>,
     pub timestamp: i64,
+    pub timestamp_provenance: TimestampProvenance,
     pub date: String,
     pub input: i64,
     pub output: i64,
@@ -419,6 +420,20 @@ pub struct DailyTotals {
     pub messages: i32,
 }
 
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ExactHourlyUsageFact {
+    pub start_ms: i64,
+    pub end_ms: i64,
+    pub totals: DailyTotals,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct DailyHourlyUsageFacts {
+    pub date: String,
+    pub hours: Vec<ExactHourlyUsageFact>,
+    pub unplaced_for_hourly: DailyTotals,
+}
+
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ClientContribution {
     pub client: String,
@@ -491,6 +506,7 @@ pub struct UnattributedSessionDiagnostic {
 pub struct LocalUsageScan {
     pub graph: GraphResult,
     pub unattributed_sessions: Vec<UnattributedSessionDiagnostic>,
+    pub hourly_facts: Vec<DailyHourlyUsageFacts>,
 }
 
 /// Per-session aggregate of token usage, cost, and timing — keyed on
@@ -772,6 +788,7 @@ fn parse_all_messages_with_pricing_with_env_strategy(
         for index in fallback_timestamp_indices {
             if let Some(message) = messages.get_mut(*index) {
                 message.set_timestamp(fallback_timestamp);
+                message.set_timestamp_provenance(TimestampProvenance::Fallback);
             }
         }
         apply_pricing_to_messages(&mut messages, pricing);
@@ -2715,6 +2732,8 @@ async fn generate_usage_scan_with_loaded_pricing(
 
     let daily_active_time = sessionize::compute_daily_active_time(&intervals);
     let unattributed_sessions = aggregator::aggregate_unattributed_sessions(&filtered);
+    let hourly_facts =
+        aggregator::aggregate_hourly_usage_facts(&filtered, crate::bucket_tz::bucket_timezone());
     let contributions = aggregator::aggregate_by_date(filtered);
 
     let processing_time_ms = start.elapsed().as_millis() as u32;
@@ -2730,6 +2749,7 @@ async fn generate_usage_scan_with_loaded_pricing(
     Ok(LocalUsageScan {
         graph: result,
         unattributed_sessions,
+        hourly_facts,
     })
 }
 
@@ -3744,6 +3764,7 @@ fn unified_to_parsed(msg: &UnifiedMessage) -> ParsedMessage {
         workspace_key: msg.workspace_key.clone(),
         workspace_label: msg.workspace_label.clone(),
         timestamp: msg.timestamp,
+        timestamp_provenance: msg.timestamp_provenance,
         date: msg.date.clone(),
         input: msg.tokens.input,
         output: msg.tokens.output,
@@ -3800,6 +3821,7 @@ pub fn parsed_to_unified(msg: &ParsedMessage, cost: f64) -> UnifiedMessage {
         workspace_key: msg.workspace_key.clone(),
         workspace_label: msg.workspace_label.clone(),
         timestamp: msg.timestamp,
+        timestamp_provenance: msg.timestamp_provenance,
         date: msg.date.clone(),
         tokens: TokenBreakdown {
             input: msg.input,

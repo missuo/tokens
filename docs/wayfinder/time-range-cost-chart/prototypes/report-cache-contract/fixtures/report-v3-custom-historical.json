@@ -1,0 +1,184 @@
+{
+  "schemaVersion": 3,
+  "generatedAt": "2026-08-05T00:30:00Z",
+  "selection": {
+    "kind": "custom",
+    "startDate": "2026-06-01",
+    "endDate": "2026-06-05"
+  },
+  "dateRange": {
+    "startDate": "2026-06-01",
+    "endDate": "2026-06-05",
+    "timezone": "America/Los_Angeles"
+  },
+  "scan": {
+    "mode": "snapshot",
+    "forceRescan": false,
+    "durationMs": 12,
+    "cache": {
+      "sourceHits": 0,
+      "sourceMisses": 0,
+      "snapshotRebuilt": false,
+      "snapshotSchemaVersion": 3
+    }
+  },
+  "summary": {
+    "totalTokens": 600000,
+    "totalCost": 8.75,
+    "messages": 210,
+    "activeDays": 5,
+    "clients": [
+      "claude-code"
+    ],
+    "models": [
+      "claude-sonnet-5"
+    ]
+  },
+  "tokenBreakdown": {
+    "input": 210000,
+    "output": 150000,
+    "cacheRead": 150000,
+    "cacheWrite": 30000,
+    "reasoning": 60000
+  },
+  "byClient": [
+    {
+      "client": "claude-code",
+      "tokens": 600000,
+      "cost": 8.75,
+      "messages": 210,
+      "share": 1.0,
+      "models": [
+        {
+          "modelId": "claude-sonnet-5",
+          "providerId": "anthropic",
+          "tokens": 600000,
+          "cost": 8.75,
+          "messages": 210
+        }
+      ]
+    }
+  ],
+  "byProject": [
+    {
+      "projectKey": "/workspace/tokens",
+      "displayName": "tokens",
+      "tokens": 600000,
+      "cost": 8.75,
+      "messages": 210,
+      "models": [
+        {
+          "modelId": "claude-sonnet-5",
+          "providerId": "anthropic",
+          "tokens": 600000,
+          "cost": 8.75,
+          "messages": 210
+        }
+      ]
+    }
+  ],
+  "byModel": [
+    {
+      "modelId": "claude-sonnet-5",
+      "providerId": "anthropic",
+      "tokens": 600000,
+      "cost": 8.75,
+      "messages": 210,
+      "share": 1.0,
+      "clients": [
+        "claude-code"
+      ]
+    }
+  ],
+  "timeSeries": {
+    "granularity": "day",
+    "selectionStart": "2026-06-01T00:00:00-07:00",
+    "buckets": [
+      {
+        "id": "2026-06-01T00:00:00-07:00",
+        "nominalStart": "2026-06-01T00:00:00-07:00",
+        "nominalEndExclusive": "2026-06-02T00:00:00-07:00",
+        "coveredStart": "2026-06-01T00:00:00-07:00",
+        "coveredEndExclusive": "2026-06-02T00:00:00-07:00",
+        "totals": {
+          "tokens": 100000,
+          "cost": 1.25,
+          "messages": 40
+        },
+        "contextOnly": false,
+        "incompleteEdge": false,
+        "active": false
+      },
+      {
+        "id": "2026-06-02T00:00:00-07:00",
+        "nominalStart": "2026-06-02T00:00:00-07:00",
+        "nominalEndExclusive": "2026-06-03T00:00:00-07:00",
+        "coveredStart": "2026-06-02T00:00:00-07:00",
+        "coveredEndExclusive": "2026-06-03T00:00:00-07:00",
+        "totals": {
+          "tokens": 110000,
+          "cost": 1.5,
+          "messages": 41
+        },
+        "contextOnly": false,
+        "incompleteEdge": false,
+        "active": false
+      },
+      {
+        "id": "2026-06-03T00:00:00-07:00",
+        "nominalStart": "2026-06-03T00:00:00-07:00",
+        "nominalEndExclusive": "2026-06-04T00:00:00-07:00",
+        "coveredStart": "2026-06-03T00:00:00-07:00",
+        "coveredEndExclusive": "2026-06-04T00:00:00-07:00",
+        "totals": {
+          "tokens": 120000,
+          "cost": 1.75,
+          "messages": 42
+        },
+        "contextOnly": false,
+        "incompleteEdge": false,
+        "active": false
+      },
+      {
+        "id": "2026-06-04T00:00:00-07:00",
+        "nominalStart": "2026-06-04T00:00:00-07:00",
+        "nominalEndExclusive": "2026-06-05T00:00:00-07:00",
+        "coveredStart": "2026-06-04T00:00:00-07:00",
+        "coveredEndExclusive": "2026-06-05T00:00:00-07:00",
+        "totals": {
+          "tokens": 130000,
+          "cost": 2.0,
+          "messages": 43
+        },
+        "contextOnly": false,
+        "incompleteEdge": false,
+        "active": false
+      },
+      {
+        "id": "2026-06-05T00:00:00-07:00",
+        "nominalStart": "2026-06-05T00:00:00-07:00",
+        "nominalEndExclusive": "2026-06-06T00:00:00-07:00",
+        "coveredStart": "2026-06-05T00:00:00-07:00",
+        "coveredEndExclusive": "2026-06-06T00:00:00-07:00",
+        "totals": {
+          "tokens": 140000,
+          "cost": 2.25,
+          "messages": 44
+        },
+        "contextOnly": false,
+        "incompleteEdge": false,
+        "active": false
+      }
+    ],
+    "unplaced": {
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    }
+  },
+  "meta": {
+    "cliVersion": "prototype",
+    "timezone": "America/Los_Angeles",
+    "reportContract": "v3"
+  }
+}

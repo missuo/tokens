@@ -224,7 +224,8 @@ pub(crate) fn parse_jsonl_file(
         let session_id = item
             .session_id
             .unwrap_or_else(|| fallback_session_id.clone());
-        let timestamp = item.timestamp.unwrap_or(fallback_timestamp);
+        let explicit_timestamp = item.timestamp;
+        let timestamp = explicit_timestamp.unwrap_or(fallback_timestamp);
 
         let mut message = UnifiedMessage::new(
             client,
@@ -236,6 +237,9 @@ pub(crate) fn parse_jsonl_file(
             0.0,
         );
 
+        if explicit_timestamp.is_none() {
+            message.set_timestamp_provenance(crate::TimestampProvenance::Fallback);
+        }
         if let Some(workspace_key) = item.cwd.as_deref().and_then(normalize_workspace_key) {
             let workspace_label = workspace_label_from_key(&workspace_key);
             message.set_workspace(Some(workspace_key), workspace_label);
@@ -251,7 +255,10 @@ pub(crate) fn parse_jsonl_file(
         if let Some(key) = dedup_key {
             if let Some(existing_index) = keyed_indices.get(&key).copied() {
                 if message.tokens.total() >= messages[existing_index].tokens.total() {
+                    message.retain_best_timestamp_from(&messages[existing_index]);
                     messages[existing_index] = message;
+                } else {
+                    messages[existing_index].retain_best_timestamp_from(&message);
                 }
                 continue;
             }
@@ -320,7 +327,8 @@ pub(crate) fn parse_extension_log_file(
             continue;
         };
 
-        let timestamp = parse_log_timestamp_ms(&line).unwrap_or(fallback_timestamp);
+        let explicit_timestamp = parse_log_timestamp_ms(&line);
+        let timestamp = explicit_timestamp.unwrap_or(fallback_timestamp);
         let model_id = models_by_agent
             .get(&agent_id)
             .cloned()
@@ -337,6 +345,9 @@ pub(crate) fn parse_extension_log_file(
             tokens,
             0.0,
         );
+        if explicit_timestamp.is_none() {
+            message.set_timestamp_provenance(crate::TimestampProvenance::Fallback);
+        }
         // Key on the SECOND, not the millisecond. The same [AgentReporter] line
         // is written to multiple sinks (the extension's own log AND the host's
         // output-channel log), each prefixed by its own logger a few ms apart, so
@@ -446,3 +457,39 @@ fn workspace_from_log_path(path: &Path) -> Option<String> {
     normalize_workspace_key(workspace)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn jsonl_dedup_keeps_exact_timestamp_independent_of_usage_winner() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                "{\"type\":\"message\",\"role\":\"assistant\",\"status\":\"completed\",\"sessionId\":\"session-1\",\"timestamp\":1700000000000,\"message\":{\"model\":\"claude-sonnet-4\",\"usage\":{\"inputTokens\":5}},\"providerData\":{\"messageId\":\"fallback-correction\"}}\n",
+                "{\"type\":\"message\",\"role\":\"assistant\",\"status\":\"completed\",\"sessionId\":\"session-1\",\"message\":{\"model\":\"claude-sonnet-4\",\"usage\":{\"inputTokens\":9}},\"providerData\":{\"messageId\":\"fallback-correction\"}}\n",
+                "{\"type\":\"message\",\"role\":\"assistant\",\"status\":\"completed\",\"sessionId\":\"session-1\",\"message\":{\"model\":\"claude-sonnet-4\",\"usage\":{\"inputTokens\":11}},\"providerData\":{\"messageId\":\"exact-lower-usage\"}}\n",
+                "{\"type\":\"message\",\"role\":\"assistant\",\"status\":\"completed\",\"sessionId\":\"session-1\",\"timestamp\":1700003600000,\"message\":{\"model\":\"claude-sonnet-4\",\"usage\":{\"inputTokens\":3}},\"providerData\":{\"messageId\":\"exact-lower-usage\"}}\n"
+            ),
+        )
+        .unwrap();
+
+        let messages = parse_jsonl_file("codebuddy", "codebuddy", &path);
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].tokens.input, 9);
+        assert_eq!(messages[0].timestamp, 1_700_000_000_000);
+        assert_eq!(
+            messages[0].timestamp_provenance,
+            crate::TimestampProvenance::Exact
+        );
+        assert_eq!(messages[1].tokens.input, 11);
+        assert_eq!(messages[1].timestamp, 1_700_003_600_000);
+        assert_eq!(
+            messages[1].timestamp_provenance,
+            crate::TimestampProvenance::Exact
+        );
+    }
+}

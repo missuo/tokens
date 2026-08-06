@@ -92,7 +92,7 @@ impl AmpUsageRecord {
     }
 
     fn into_unified(self, thread_id: &str) -> UnifiedMessage {
-        UnifiedMessage::new(
+        let mut message = UnifiedMessage::new(
             "amp",
             &self.model,
             get_provider_from_model(&self.model),
@@ -100,7 +100,11 @@ impl AmpUsageRecord {
             self.timestamp,
             self.tokens,
             self.cost,
-        )
+        );
+        if !self.has_explicit_timestamp {
+            message.set_timestamp_provenance(crate::TimestampProvenance::Fallback);
+        }
+        message
     }
 }
 
@@ -336,3 +340,34 @@ pub fn parse_amp_file(path: &Path) -> Vec<UnifiedMessage> {
         .collect()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn record(has_explicit_timestamp: bool) -> AmpUsageRecord {
+        AmpUsageRecord {
+            model: "model".to_string(),
+            timestamp: 1_700_000_000_000,
+            has_explicit_timestamp,
+            message_id: None,
+            ledger_to_message_id: None,
+            tokens: TokenBreakdown::default(),
+            cost: 0.0,
+        }
+    }
+
+    #[test]
+    fn amp_fallback_records_are_untrusted_for_hourly_placement() {
+        let exact = record(true).into_unified("thread");
+        let fallback = record(false).into_unified("thread");
+
+        assert_eq!(
+            exact.timestamp_provenance,
+            crate::TimestampProvenance::Exact
+        );
+        assert_eq!(
+            fallback.timestamp_provenance,
+            crate::TimestampProvenance::Fallback
+        );
+    }
+}

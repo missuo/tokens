@@ -8,42 +8,40 @@ public final class AppSettings: ObservableObject {
         static let scanInterval = "scanInterval"
         static let scanIntervalCustomMinutes = "scanIntervalCustomMinutes"
         static let binaryOverride = "binaryOverride"
-        static let lastPeriod = "lastPeriod"
     }
 
+    private let defaults: UserDefaults
+
     @Published public var displayMode: MenuBarDisplayMode {
-        didSet { UserDefaults.standard.set(displayMode.rawValue, forKey: Keys.displayMode) }
+        didSet { defaults.set(displayMode.rawValue, forKey: Keys.displayMode) }
     }
 
     @Published public var scanInterval: ScanIntervalOption {
         didSet {
-            UserDefaults.standard.set(scanInterval.storageKey, forKey: Keys.scanInterval)
+            defaults.set(scanInterval.storageKey, forKey: Keys.scanInterval)
             // Remember last custom minutes so re-selecting CUSTOM restores it.
             if case .custom(let minutes) = scanInterval {
-                UserDefaults.standard.set(minutes, forKey: Keys.scanIntervalCustomMinutes)
+                defaults.set(minutes, forKey: Keys.scanIntervalCustomMinutes)
             }
         }
     }
 
     @Published public var binaryOverride: String {
-        didSet { UserDefaults.standard.set(binaryOverride, forKey: Keys.binaryOverride) }
+        didSet { defaults.set(binaryOverride, forKey: Keys.binaryOverride) }
     }
 
-    @Published public var lastPeriod: UsagePeriod {
-        didSet { UserDefaults.standard.set(lastPeriod.rawValue, forKey: Keys.lastPeriod) }
-    }
-
-    /// Last Custom duration (minutes). Used when switching chip → CUSTOM.
+    /// Last Custom scan duration (minutes). Dashboard date selection is never persisted.
     public var lastCustomMinutes: Int {
-        let stored = UserDefaults.standard.object(forKey: Keys.scanIntervalCustomMinutes) as? Int
+        let stored = defaults.object(forKey: Keys.scanIntervalCustomMinutes) as? Int
         return ScanIntervalOption.clampMinutes(stored ?? 30)
     }
 
-    public init() {
-        let defaults = UserDefaults.standard
-        displayMode = MenuBarDisplayMode(rawValue: defaults.string(forKey: Keys.displayMode) ?? "") ?? .tokens
+    public init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        displayMode = MenuBarDisplayMode(
+            rawValue: defaults.string(forKey: Keys.displayMode) ?? ""
+        ) ?? .tokens
         scanInterval = ScanIntervalOption.fromStorage(defaults.string(forKey: Keys.scanInterval))
         binaryOverride = defaults.string(forKey: Keys.binaryOverride) ?? ""
-        lastPeriod = UsagePeriod(rawValue: defaults.string(forKey: Keys.lastPeriod) ?? "") ?? .today
     }
 }

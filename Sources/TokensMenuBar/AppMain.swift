@@ -85,6 +85,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if popover.isShown {
             popover.performClose(sender)
         } else {
+            layoutState.willPresent()
             // Resolve the 80% cap against the display the user actually clicked.
             // `button.window.screen` is unreliable at click time on multi-monitor
             // setups: once the popover takes key focus, macOS can migrate the

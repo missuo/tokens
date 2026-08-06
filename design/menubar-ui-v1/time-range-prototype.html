@@ -1,0 +1,589 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PROTOTYPE — Time range + Cost chart</title>
+  <link rel="icon" href="data:," />
+  <style>
+    :root {
+      color-scheme: dark;
+      --page: #0b0c10;
+      --panel: #15161a;
+      --panel-2: #1b1c21;
+      --ink: #f2efe8;
+      --muted: #97979e;
+      --dim: #67676e;
+      --line: rgba(255,255,255,.11);
+      --line-strong: rgba(255,255,255,.24);
+      --mark: #d9d7d0;
+      --focus: #9fc5ff;
+      --surface-gap: #15161a;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at 50% -10%, rgba(255,255,255,.07), transparent 34rem),
+        var(--page);
+      color: var(--ink);
+      font-family: var(--sans);
+    }
+    button { font: inherit; }
+    button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+    .page {
+      min-height: 100vh;
+      display: grid;
+      place-items: start center;
+      padding: 46px 20px 120px;
+    }
+    .prototype-note {
+      width: min(780px, 100%);
+      margin-bottom: 18px;
+      display: flex;
+      justify-content: space-between;
+      gap: 20px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    .prototype-note strong { color: var(--ink); font-family: var(--mono); letter-spacing: .04em; }
+    .panel-shell { width: 420px; max-width: calc(100vw - 32px); position: relative; }
+    .panel {
+      position: relative;
+      overflow: hidden;
+      min-height: 610px;
+      border-radius: 14px;
+      border: 1px solid rgba(255,255,255,.15);
+      background: rgba(21,22,26,.98);
+      box-shadow: 0 34px 90px rgba(0,0,0,.48), 0 1px 0 rgba(255,255,255,.06) inset;
+    }
+    .chrome { padding: 14px 18px 0; }
+    .brand-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+    .brand { font: 600 11px/1 var(--mono); letter-spacing: .12em; }
+    .status { color: var(--muted); font: 10px/1 var(--mono); letter-spacing: .08em; }
+    .tabs {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr)) auto;
+      align-items: stretch;
+      border-bottom: 1px solid var(--line);
+    }
+    .tab, .custom-trigger {
+      position: relative;
+      min-width: 0;
+      height: 38px;
+      border: 0;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      font: 10px/1 var(--mono);
+      letter-spacing: .06em;
+      white-space: nowrap;
+    }
+    .tab::after, .custom-trigger::after {
+      content: "";
+      position: absolute;
+      left: 7px;
+      right: 7px;
+      bottom: -1px;
+      height: 2px;
+      background: transparent;
+    }
+    .tab[aria-selected="true"], .custom-trigger[aria-expanded="true"], .custom-trigger.is-custom {
+      color: var(--ink);
+    }
+    .tab[aria-selected="true"]::after, .custom-trigger.is-custom::after { background: var(--ink); }
+    .custom-trigger {
+      max-width: 132px;
+      padding: 0 9px;
+      border-left: 1px solid var(--line);
+      font-variant-numeric: tabular-nums;
+    }
+    .custom-trigger .calendar-icon { font-size: 13px; vertical-align: -1px; }
+    .summary { padding: 18px 20px 14px; }
+    .section-label { color: var(--muted); font: 10px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; }
+    .hero { margin-top: 5px; font: 500 34px/1.05 var(--mono); letter-spacing: -.06em; font-variant-numeric: tabular-nums; }
+    .metrics { display: flex; gap: 28px; margin-top: 14px; }
+    .metric-name { color: var(--muted); font: 9px/1 var(--mono); letter-spacing: .1em; }
+    .metric-value { margin-top: 5px; font: 16px/1 var(--mono); font-variant-numeric: tabular-nums; }
+    .chart-section { padding: 14px 20px 18px; }
+    .chart-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; margin-bottom: 10px; }
+    .chart-subtitle { margin-top: 4px; color: var(--dim); font: 9px/1.3 var(--mono); }
+    .grain-switch { display: flex; gap: 3px; padding: 3px; border-radius: 7px; background: rgba(255,255,255,.055); }
+    .grain-switch button {
+      border: 0;
+      border-radius: 5px;
+      padding: 5px 7px;
+      background: transparent;
+      color: var(--dim);
+      cursor: pointer;
+      font: 9px/1 var(--mono);
+    }
+    .grain-switch button[aria-pressed="true"] { background: rgba(255,255,255,.12); color: var(--ink); }
+    .chart-wrap { position: relative; height: 164px; padding: 8px 0 22px 34px; }
+    .grid-line { position: absolute; left: 34px; right: 0; height: 1px; background: rgba(255,255,255,.07); }
+    .grid-line span { position: absolute; right: calc(100% + 6px); top: -5px; color: var(--dim); font: 8px/1 var(--mono); }
+    .bars { position: absolute; left: 34px; right: 0; top: 8px; bottom: 22px; display: flex; gap: 3px; align-items: end; }
+    .bar-cell { position: relative; flex: 1 1 0; min-width: 0; height: 100%; display: flex; align-items: end; justify-content: center; }
+    .bar {
+      width: min(100%, 18px);
+      min-width: 4px;
+      height: var(--h);
+      min-height: 2px;
+      border-radius: 4px 4px 1px 1px;
+      background: var(--mark);
+      box-shadow: 0 0 0 2px var(--surface-gap);
+      opacity: .92;
+    }
+    .bar.active {
+      background: repeating-linear-gradient(135deg, #d9d7d0 0 3px, #8f8e8a 3px 5px);
+      outline: 1px dashed rgba(255,255,255,.7);
+      outline-offset: 2px;
+    }
+    .bar.context { background: #85858b; opacity: .34; }
+    .bar-cell:hover .bar { opacity: 1; background: #fff; }
+    .selection-boundary {
+      position: absolute;
+      z-index: 4;
+      top: -4px;
+      bottom: -18px;
+      width: 0;
+      border-left: 1px dashed rgba(255,255,255,.62);
+      pointer-events: none;
+    }
+    .selection-boundary span {
+      position: absolute;
+      left: 5px;
+      top: -2px;
+      color: var(--muted);
+      font: 7px/1 var(--mono);
+      letter-spacing: .08em;
+    }
+    .x-label {
+      position: absolute;
+      top: calc(100% + 7px);
+      left: 50%;
+      transform: translateX(-50%);
+      color: var(--dim);
+      font: 8px/1 var(--mono);
+      white-space: nowrap;
+    }
+    .chart-tooltip {
+      position: absolute;
+      z-index: 6;
+      pointer-events: none;
+      min-width: 132px;
+      padding: 9px 10px;
+      border: 1px solid var(--line-strong);
+      border-radius: 7px;
+      background: rgba(12,13,16,.96);
+      box-shadow: 0 10px 30px rgba(0,0,0,.38);
+      font: 9px/1.45 var(--mono);
+      opacity: 0;
+      transform: translate(-50%, -100%);
+    }
+    .chart-tooltip strong { display: block; color: var(--ink); margin-bottom: 2px; }
+    .chart-tooltip span { color: var(--muted); }
+    .chart-legend { margin-top: 5px; color: var(--dim); font: 8px/1.4 var(--mono); }
+    .chart-legend .swatch, .chart-legend .context-swatch, .chart-legend .boundary-swatch { display: inline-block; width: 9px; height: 9px; margin: 0 5px 0 9px; vertical-align: -1px; }
+    .chart-legend span:first-child { margin-left: 0; }
+    .chart-legend .swatch { border: 1px dashed var(--muted); background: repeating-linear-gradient(135deg, #d9d7d0 0 2px, #777 2px 4px); }
+    .chart-legend .context-swatch { background: #85858b; opacity: .45; }
+    .chart-legend .boundary-swatch { width: 0; border-left: 1px dashed rgba(255,255,255,.62); }
+    .list-preview { padding: 0 20px 22px; }
+    .list-row { display: grid; grid-template-columns: 1fr auto; gap: 12px; padding: 11px 0; border-top: 1px solid var(--line); font: 10px/1 var(--mono); }
+    .list-row span:last-child { color: var(--muted); font-variant-numeric: tabular-nums; }
+
+    .calendar-editor {
+      z-index: 12;
+      border: 1px solid var(--line-strong);
+      background: #1a1b20;
+      box-shadow: 0 20px 48px rgba(0,0,0,.48);
+    }
+    .variant-a .calendar-editor { margin: 0 18px 4px; border-radius: 10px; }
+    .variant-b .calendar-editor { position: absolute; top: 84px; right: 14px; width: 306px; border-radius: 10px; }
+    .variant-c .calendar-editor { position: absolute; inset: 52px 14px auto; border-radius: 12px; min-height: 492px; }
+    .editor-head { display: flex; justify-content: space-between; align-items: center; padding: 12px 13px 9px; }
+    .editor-eyebrow { color: var(--muted); font: 9px/1 var(--mono); letter-spacing: .1em; }
+    .editor-title { margin-top: 4px; font: 12px/1 var(--mono); }
+    .editor-close { width: 28px; height: 28px; border: 0; border-radius: 6px; background: rgba(255,255,255,.07); color: var(--ink); cursor: pointer; }
+    .selected-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; padding: 0 12px 10px; }
+    .date-field { border: 1px solid var(--line); border-radius: 7px; padding: 8px 9px; }
+    .date-field label { display: block; color: var(--dim); font: 8px/1 var(--mono); letter-spacing: .08em; }
+    .date-field output { display: block; margin-top: 5px; color: var(--ink); font: 10px/1 var(--mono); }
+    .editor-help { margin: -2px 12px 10px; color: var(--muted); font: 9px/1.45 var(--mono); }
+    .month-head { display: flex; justify-content: space-between; align-items: center; padding: 0 12px 8px; }
+    .month-head button { width: 26px; height: 26px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; }
+    .month-head strong { font: 11px/1 var(--mono); }
+    .calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; padding: 0 12px 12px; }
+    .weekday { padding: 5px 0; text-align: center; color: var(--dim); font: 8px/1 var(--mono); }
+    .day {
+      position: relative;
+      height: 28px;
+      border: 0;
+      border-radius: 5px;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      font: 9px/1 var(--mono);
+    }
+    .day:hover { background: rgba(255,255,255,.08); color: var(--ink); }
+    .day.in-range { border-radius: 2px; background: rgba(255,255,255,.08); color: var(--ink); }
+    .day.range-start, .day.range-end { border-radius: 5px; background: var(--ink); color: #121317; }
+    .day.outside { opacity: .28; }
+    .day.future { opacity: .22; text-decoration: line-through; cursor: not-allowed; }
+    .editor-actions { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 10px 12px 12px; border-top: 1px solid var(--line); }
+    .single-day { border: 0; background: transparent; color: var(--muted); cursor: pointer; font: 9px/1 var(--mono); }
+    .apply { border: 0; border-radius: 6px; padding: 8px 12px; background: var(--ink); color: #111217; cursor: pointer; font: 9px/1 var(--mono); font-weight: 700; }
+    .variant-c .editor-head { padding-top: 18px; }
+    .variant-c .calendar-grid { gap: 5px; }
+    .variant-c .day { height: 34px; }
+    .variant-c .editor-actions { position: absolute; left: 0; right: 0; bottom: 0; }
+    .variant-c.editor-open .panel-body { opacity: .16; filter: blur(1px); pointer-events: none; }
+    .variant-label {
+      position: absolute;
+      top: 12px;
+      right: calc(100% + 12px);
+      width: 180px;
+      color: var(--muted);
+      font: 10px/1.45 var(--mono);
+      text-align: right;
+    }
+    .variant-label strong { display: block; color: var(--ink); margin-bottom: 3px; }
+    .switcher {
+      position: fixed;
+      z-index: 50;
+      left: 50%;
+      bottom: 24px;
+      transform: translateX(-50%);
+      display: grid;
+      grid-template-columns: 38px minmax(190px, auto) 38px;
+      align-items: center;
+      padding: 5px;
+      border: 1px solid rgba(255,255,255,.22);
+      border-radius: 999px;
+      background: rgba(242,239,232,.96);
+      color: #17181c;
+      box-shadow: 0 14px 38px rgba(0,0,0,.45);
+      font: 11px/1 var(--mono);
+    }
+    .switcher button { width: 34px; height: 30px; border: 0; border-radius: 999px; background: transparent; color: inherit; cursor: pointer; }
+    .switcher button:hover { background: rgba(0,0,0,.08); }
+    .switcher-label { text-align: center; padding: 0 10px; white-space: nowrap; }
+    .state-readout { position: fixed; right: 16px; bottom: 16px; color: rgba(255,255,255,.38); font: 9px/1.5 var(--mono); text-align: right; }
+    @media (max-width: 760px) {
+      .prototype-note { display: block; }
+      .variant-label { position: static; width: auto; margin: 0 0 10px; text-align: left; }
+      .state-readout { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <div class="prototype-note">
+      <div><strong>PROTOTYPE — THROWAWAY</strong><br />Three AppKit range-editor placements on the existing 420pt Menu Bar panel, switchable with <code>?variant=A|B|C</code>.</div>
+      <div>Use ← / → to switch variants.<br />Use the chart buttons to inspect label density.</div>
+    </div>
+
+    <section class="panel-shell" aria-label="Time range prototype">
+      <div class="variant-label" id="variant-description"></div>
+      <div class="panel" id="panel">
+        <div class="panel-body">
+          <div class="chrome">
+            <div class="brand-row"><span class="brand">TOKENS</span><span class="status">UPDATED NOW</span></div>
+            <div class="tabs" role="tablist" aria-label="Usage time range">
+              <button class="tab" data-preset="today" role="tab">TODAY</button>
+              <button class="tab" data-preset="7d" role="tab">7D</button>
+              <button class="tab" data-preset="30d" role="tab">30D</button>
+              <button class="tab" data-preset="all" role="tab">ALL</button>
+              <button class="custom-trigger" id="custom-trigger" type="button" aria-haspopup="dialog" aria-expanded="false" aria-label="Choose custom date range"><span class="calendar-icon">▣</span></button>
+            </div>
+          </div>
+
+          <div id="inline-editor-slot"></div>
+
+          <section class="summary" aria-labelledby="total-title">
+            <div class="section-label" id="total-title">TOTAL</div>
+            <div class="hero" id="token-total">8.24M</div>
+            <div class="metrics">
+              <div><div class="metric-name">COST</div><div class="metric-value" id="cost-total">$42.18</div></div>
+              <div><div class="metric-name">MESSAGES</div><div class="metric-value" id="message-total">3,982</div></div>
+            </div>
+          </section>
+
+          <section class="chart-section" aria-labelledby="chart-title">
+            <div class="chart-head">
+              <div>
+                <div class="section-label" id="chart-title">COST · <span id="grain-title">HOURLY</span></div>
+                <div class="chart-subtitle" id="chart-subtitle">Aug 4 · reporting timezone</div>
+              </div>
+              <div class="grain-switch" aria-label="Prototype chart range">
+                <button data-demo="1d" aria-pressed="true">1D</button>
+                <button data-demo="7d" aria-pressed="false">7D</button>
+                <button data-demo="30d" aria-pressed="false">30D</button>
+                <button data-demo="1y" aria-pressed="false">1Y</button>
+              </div>
+            </div>
+            <div class="chart-wrap" id="chart-wrap">
+              <div class="grid-line" style="top:8px"><span id="y-max">$6</span></div>
+              <div class="grid-line" style="top:50%"><span id="y-mid">$3</span></div>
+              <div class="grid-line" style="bottom:22px"><span>$0</span></div>
+              <div class="bars" id="bars"></div>
+              <div class="chart-tooltip" id="tooltip" role="status"></div>
+            </div>
+            <div class="chart-legend" id="chart-legend"></div>
+          </section>
+
+          <section class="list-preview" aria-label="Other dashboard sections">
+            <div class="section-label" style="margin-bottom:8px">PROJECT</div>
+            <div class="list-row"><span>tokens</span><span>4.91M · $24.12</span></div>
+            <div class="list-row"><span>website</span><span>2.03M · $11.08</span></div>
+            <div class="list-row"><span>Unattributed</span><span>1.30M · $6.98</span></div>
+          </section>
+        </div>
+        <div id="overlay-editor-slot"></div>
+      </div>
+    </section>
+  </main>
+
+  <nav class="switcher" aria-label="Prototype variants">
+    <button id="prev-variant" type="button" aria-label="Previous variant">←</button>
+    <div class="switcher-label" id="switcher-label"></div>
+    <button id="next-variant" type="button" aria-label="Next variant">→</button>
+  </nav>
+  <div class="state-readout" id="state-readout" aria-live="polite"></div>
+
+  <template id="calendar-template">
+    <section class="calendar-editor" role="dialog" aria-modal="false" aria-label="Custom date range editor">
+      <div class="editor-head">
+        <div><div class="editor-eyebrow">CUSTOM RANGE</div><div class="editor-title">One native range control</div></div>
+        <button class="editor-close" type="button" aria-label="Close date range editor">×</button>
+      </div>
+      <div class="selected-fields">
+        <div class="date-field"><label>START</label><output data-start></output></div>
+        <div class="date-field"><label>END · INCLUSIVE</label><output data-end></output></div>
+      </div>
+      <div class="editor-help" data-editor-help>Choose start, then end · choose the same day twice for one day.</div>
+      <div class="month-head"><button type="button" aria-label="Previous month">‹</button><strong>AUGUST 2026</strong><button type="button" aria-label="Next month" disabled>›</button></div>
+      <div class="calendar-grid" data-calendar></div>
+      <div class="editor-actions">
+        <button class="single-day" type="button">ONE DAY · AUG 3</button>
+        <button class="apply" type="button">APPLY RANGE</button>
+      </div>
+    </section>
+  </template>
+
+  <script>
+    const variants = {
+      A: { name: "Inline disclosure", detail: "Recommended · calendar expands inside the panel; no nested popover." },
+      B: { name: "Anchored overlay · selected", detail: "Selected · compact range editor anchored to the Custom label." },
+      C: { name: "Focused editor", detail: "Roomiest · a temporary editor layer prioritizes keyboard and calendar work." }
+    };
+
+    const datasets = {
+      "1d": {
+        grain: "HOURLY", subtitle: "Today · 00:00–01:30 · 12h minimum", y: 6,
+        values: [1.2,0.8,1.6,2.4,1.9,3.2,2.7,4.1,3.6,2.8,0.9,1.7],
+        labels: ["14","","16","","18","","20","","22","","00","01"], active: 11,
+        contextCount: 10, boundaryLabel: "TODAY",
+        bucket: i => {
+          const hour = i < 10 ? 14 + i : i - 10;
+          const day = i < 10 ? "Aug 3" : "Aug 4";
+          return `${day}, ${String(hour).padStart(2,"0")}:00–${String(hour).padStart(2,"0")}:59`;
+        }
+      },
+      "7d": {
+        grain: "DAILY", subtitle: "Jul 29–Aug 4 · 7 calendar days", y: 14,
+        values: [5.2,8.1,6.4,10.8,9.7,12.4,7.3], labels: ["WED","THU","FRI","SAT","SUN","MON","TODAY"], active: 6,
+        bucket: i => ["Jul 29","Jul 30","Jul 31","Aug 1","Aug 2","Aug 3","Aug 4"][i]
+      },
+      "30d": {
+        grain: "WEEKLY", subtitle: "Jul 6–Aug 4 · natural weeks", y: 48,
+        values: [14,31,38,44,21], labels: ["JUL 6","JUL 13","JUL 20","JUL 27","AUG 3"], active: 4,
+        bucket: i => ["Jul 6–12","Jul 13–19","Jul 20–26","Jul 27–Aug 2","Aug 3–4 · incomplete"][i]
+      },
+      "1y": {
+        grain: "MONTHLY", subtitle: "Sep 2025–Aug 2026 · calendar months", y: 180,
+        values: [82,96,75,104,118,121,139,128,151,144,166,74], labels: ["SEP","","NOV","","JAN","","MAR","","MAY","","JUL","AUG"], active: 11,
+        bucket: i => ["Sep 2025","Oct 2025","Nov 2025","Dec 2025","Jan 2026","Feb 2026","Mar 2026","Apr 2026","May 2026","Jun 2026","Jul 2026","Aug 1–4 · incomplete"][i]
+      }
+    };
+
+    const state = {
+      variant: new URLSearchParams(location.search).get("variant")?.toUpperCase() || "B",
+      preset: "today",
+      custom: false,
+      editorOpen: false,
+      rangeStart: 29,
+      rangeEnd: 3,
+      selectingEnd: false,
+      demo: "1d"
+    };
+    if (!variants[state.variant]) state.variant = "A";
+
+    const panel = document.getElementById("panel");
+    const trigger = document.getElementById("custom-trigger");
+    const inlineSlot = document.getElementById("inline-editor-slot");
+    const overlaySlot = document.getElementById("overlay-editor-slot");
+    const tooltip = document.getElementById("tooltip");
+
+    function compactRange() {
+      if (!state.custom) return '<span class="calendar-icon">▣</span>';
+      if (state.rangeStart === state.rangeEnd) return `08/${String(state.rangeStart).padStart(2,"0")}`;
+      const startMonth = state.rangeStart > state.rangeEnd ? "07" : "08";
+      return `${startMonth}/${String(state.rangeStart).padStart(2,"0")}–08/${String(state.rangeEnd).padStart(2,"0")}`;
+    }
+
+    function dateText(day, isStart) {
+      const month = isStart && state.rangeStart > state.rangeEnd ? "JUL" : "AUG";
+      return `${month} ${String(day).padStart(2,"0")}, 2026`;
+    }
+
+    function renderCalendar(editor) {
+      editor.querySelector("[data-start]").textContent = dateText(state.rangeStart, true);
+      editor.querySelector("[data-end]").textContent = dateText(state.rangeEnd, false);
+      editor.querySelector("[data-editor-help]").textContent = state.selectingEnd
+        ? "Start selected · now choose the inclusive end date."
+        : "Choose start, then end · choose the same day twice for one day.";
+      const grid = editor.querySelector("[data-calendar]");
+      grid.innerHTML = "";
+      ["M","T","W","T","F","S","S"].forEach(w => {
+        const el = document.createElement("div"); el.className = "weekday"; el.textContent = w; grid.appendChild(el);
+      });
+      const days = [27,28,29,30,31,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,1,2,3,4,5,6];
+      days.forEach((day, idx) => {
+        const outside = idx < 5 || idx > 35;
+        const nextMonth = idx > 35;
+        const future = nextMonth || (!outside && day > 4);
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "day" + (outside ? " outside" : "") + (future ? " future" : "");
+        b.textContent = day;
+        b.disabled = future;
+        const monthName = idx < 5 ? "July" : nextMonth ? "September" : "August";
+        b.setAttribute("aria-label", `${monthName} ${day}, 2026${future ? ", unavailable future date" : ""}`);
+        const serial = idx < 5 ? day - 31 : nextMonth ? 31 + day : day;
+        const startSerial = state.rangeStart > state.rangeEnd ? state.rangeStart - 31 : state.rangeStart;
+        if (!future && serial >= startSerial && serial <= state.rangeEnd) b.classList.add("in-range");
+        if (!future && day === state.rangeStart && !(state.rangeStart > state.rangeEnd && !outside)) b.classList.add("range-start");
+        if (!future && day === state.rangeEnd && !outside) b.classList.add("range-end");
+        b.addEventListener("click", () => {
+          if (!state.selectingEnd) {
+            state.rangeStart = day;
+            state.rangeEnd = day;
+            state.selectingEnd = true;
+          } else {
+            if (day < state.rangeStart) { state.rangeEnd = state.rangeStart; state.rangeStart = day; }
+            else state.rangeEnd = day;
+            state.selectingEnd = false;
+          }
+          render();
+        });
+        grid.appendChild(b);
+      });
+      editor.querySelector(".editor-close").onclick = closeEditor;
+      editor.querySelector(".apply").onclick = () => { state.custom = true; state.preset = null; closeEditor(); state.demo = state.rangeStart === state.rangeEnd ? "1d" : "30d"; render(); };
+      editor.querySelector(".single-day").onclick = () => { state.rangeStart = 3; state.rangeEnd = 3; state.selectingEnd = false; render(); };
+    }
+
+    function createEditor() {
+      const editor = document.getElementById("calendar-template").content.firstElementChild.cloneNode(true);
+      renderCalendar(editor);
+      return editor;
+    }
+
+    function openEditor() { state.editorOpen = true; render(); setTimeout(() => document.querySelector(".calendar-editor .day:not([disabled])")?.focus(), 0); }
+    function closeEditor() { state.editorOpen = false; render(); trigger.focus(); }
+
+    function renderEditor() {
+      inlineSlot.innerHTML = ""; overlaySlot.innerHTML = "";
+      if (!state.editorOpen) return;
+      const editor = createEditor();
+      if (state.variant === "A") inlineSlot.appendChild(editor);
+      else overlaySlot.appendChild(editor);
+    }
+
+    function renderChart() {
+      const d = datasets[state.demo];
+      document.getElementById("grain-title").textContent = d.grain;
+      document.getElementById("chart-subtitle").textContent = d.subtitle;
+      document.getElementById("y-max").textContent = `$${d.y}`;
+      document.getElementById("y-mid").textContent = `$${Math.round(d.y/2)}`;
+      const bars = document.getElementById("bars"); bars.innerHTML = "";
+      if (d.contextCount) {
+        const boundary = document.createElement("div");
+        boundary.className = "selection-boundary";
+        boundary.style.left = `${d.contextCount / d.values.length * 100}%`;
+        boundary.innerHTML = `<span>${d.boundaryLabel}</span>`;
+        boundary.setAttribute("aria-label", "Today starts here; earlier bars are prior-day context excluded from Today totals");
+        bars.appendChild(boundary);
+      }
+      d.values.forEach((value, i) => {
+        const cell = document.createElement("div"); cell.className = "bar-cell";
+        const bar = document.createElement("div");
+        const isContext = i < (d.contextCount || 0);
+        bar.className = "bar" + (isContext ? " context" : "") + (i === d.active ? " active" : "");
+        bar.style.setProperty("--h", `${Math.max(2, value / d.y * 100)}%`);
+        bar.setAttribute("role", "img");
+        bar.setAttribute("aria-label", `${d.bucket(i)}: $${value.toFixed(2)}${isContext ? ", prior-day context excluded from Today totals" : ""}${i === d.active ? ", active incomplete bucket" : ""}`);
+        cell.appendChild(bar);
+        if (d.labels[i]) { const label = document.createElement("span"); label.className = "x-label"; label.textContent = d.labels[i]; cell.appendChild(label); }
+        cell.addEventListener("pointerenter", () => {
+          tooltip.innerHTML = `<strong>${d.bucket(i)}</strong><span>$${value.toFixed(2)} · ${(value*18420).toLocaleString()} tokens${isContext ? " · CONTEXT ONLY" : ""}${i === d.active ? " · INCOMPLETE" : ""}</span>`;
+          tooltip.style.left = `${cell.offsetLeft + cell.offsetWidth/2 + 34}px`;
+          tooltip.style.top = `${cell.offsetTop + Math.max(8, cell.offsetHeight - bar.offsetHeight)}px`;
+          tooltip.style.opacity = "1";
+        });
+        cell.addEventListener("pointerleave", () => tooltip.style.opacity = "0");
+        bars.appendChild(cell);
+      });
+      document.getElementById("chart-legend").innerHTML = d.contextCount
+        ? '<span class="context-swatch"></span>Prior-day context · <span class="boundary-swatch"></span>Today starts · <span class="swatch"></span>Active hour'
+        : '<span class="swatch"></span>Striped mark = active, incomplete bucket';
+      document.querySelectorAll("[data-demo]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.demo === state.demo)));
+    }
+
+    function render() {
+      panel.className = `panel variant-${state.variant.toLowerCase()}${state.editorOpen ? " editor-open" : ""}`;
+      document.getElementById("variant-description").innerHTML = `<strong>${state.variant} · ${variants[state.variant].name}</strong>${variants[state.variant].detail}`;
+      document.getElementById("switcher-label").textContent = `${state.variant} — ${variants[state.variant].name}`;
+      document.querySelectorAll(".tab").forEach(tab => tab.setAttribute("aria-selected", String(!state.custom && tab.dataset.preset === state.preset)));
+      trigger.innerHTML = compactRange();
+      trigger.classList.toggle("is-custom", state.custom);
+      trigger.setAttribute("aria-expanded", String(state.editorOpen));
+      trigger.setAttribute("aria-label", state.custom ? `Custom range ${compactRange().replace(/<[^>]+>/g, "")}. Edit date range` : "Choose custom date range");
+      renderEditor();
+      renderChart();
+      document.getElementById("state-readout").innerHTML = `variant=${state.variant}<br>range=${state.custom ? compactRange() : state.preset}<br>grain=${datasets[state.demo].grain}<br>editor=${state.editorOpen ? "open" : "closed"}`;
+    }
+
+    document.querySelectorAll(".tab").forEach(tab => tab.addEventListener("click", () => {
+      state.custom = false; state.editorOpen = false; state.preset = tab.dataset.preset;
+      state.demo = tab.dataset.preset === "today" ? "1d" : tab.dataset.preset === "7d" ? "7d" : tab.dataset.preset === "30d" ? "30d" : "1y";
+      render();
+    }));
+    trigger.addEventListener("click", () => state.editorOpen ? closeEditor() : openEditor());
+    document.querySelectorAll("[data-demo]").forEach(b => b.addEventListener("click", () => { state.demo = b.dataset.demo; render(); }));
+
+    function setVariant(key) {
+      state.variant = key;
+      const url = new URL(location.href); url.searchParams.set("variant", key); history.replaceState(null, "", url);
+      render();
+    }
+    function cycle(delta) { const keys = Object.keys(variants); const i = keys.indexOf(state.variant); setVariant(keys[(i + delta + keys.length) % keys.length]); }
+    document.getElementById("prev-variant").onclick = () => cycle(-1);
+    document.getElementById("next-variant").onclick = () => cycle(1);
+    addEventListener("keydown", e => {
+      if (e.key === "Escape" && state.editorOpen) { closeEditor(); return; }
+      const focused = document.activeElement;
+      if (focused?.matches?.("button, input, textarea, select, [contenteditable]")) return;
+      if (e.key === "ArrowLeft") cycle(-1);
+      if (e.key === "ArrowRight") cycle(1);
+    });
+    render();
+  </script>
+</body>
+</html>

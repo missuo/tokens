@@ -4,25 +4,54 @@ import AppKit
 
 @MainActor
 public final class UsageStore: ObservableObject {
+    public typealias BinaryResolver = @Sendable (String?) -> String?
+    public typealias ReportFetcher = @Sendable (
+        UsageSelection,
+        UsageRefreshPolicy,
+        String
+    ) throws -> UsageReport
+
     @Published public private(set) var report: UsageReport?
     @Published public private(set) var isLoading = false
     @Published public private(set) var lastError: String?
     @Published public private(set) var binaryPath: String?
     @Published public private(set) var binaryMissing = false
-    @Published public var period: UsagePeriod
+    @Published public private(set) var selection: UsageSelection = .preset(.today)
     @Published public var showSettings = false
 
+    public var isShowingStaleReport: Bool {
+        guard let report else { return false }
+        return report.selection != selection
+    }
+
     public let settings: AppSettings
+    private let binaryResolver: BinaryResolver
+    private let reportFetcher: ReportFetcher
     private var timer: Timer?
     private var statusItem: NSStatusItem?
     /// Monotonic token so only the latest refresh may clear loading / write report.
     private var refreshGeneration = 0
     private var refreshTask: Task<Void, Never>?
 
-    public init(settings: AppSettings? = nil) {
-        let settings = settings ?? AppSettings()
-        self.settings = settings
-        self.period = settings.lastPeriod
+    public init(
+        settings: AppSettings? = nil,
+        binaryResolver: @escaping BinaryResolver = { override in
+            UsageService.resolveBinaryPath(override: override)
+        },
+        reportFetcher: @escaping ReportFetcher = { selection, refreshPolicy, binaryPath in
+            try UsageService().fetch(
+                selection: selection,
+                refreshPolicy: refreshPolicy,
+                binaryPath: binaryPath
+            )
+        }
+    ) {
+        self.settings = settings ?? AppSettings()
+        self.binaryResolver = binaryResolver
+        self.reportFetcher = reportFetcher
+        // Deliberately do not restore the legacy persisted period. Every process
+        // launch begins on Today; Custom and preset selection are session state.
+        self.selection = .preset(.today)
         resolveBinary()
     }
 
@@ -33,41 +62,48 @@ public final class UsageStore: ObservableObject {
 
     public func bootstrap() {
         resolveBinary()
-        // Warm snapshot path first if possible is still a real scan on first launch.
-        startRefresh(forceRescan: false, useSnapshot: false, showSpinner: true)
+        startRefresh(policy: .refresh, showSpinner: true)
         restartTimer()
     }
 
     public func resolveBinary() {
-        let path = UsageService.resolveBinaryPath(
-            override: settings.binaryOverride.isEmpty ? nil : settings.binaryOverride
+        let path = binaryResolver(
+            settings.binaryOverride.isEmpty ? nil : settings.binaryOverride
         )
         binaryPath = path
         binaryMissing = path == nil
         updateStatusTitle()
     }
 
-    public func setPeriod(_ newPeriod: UsagePeriod) {
-        // Same tab + report already matches → no-op.
-        // Same tab + stale report → still refresh (retry).
-        if newPeriod == period, report?.period == newPeriod.cliValue {
+    public func setPeriod(_ period: UsagePeriod) {
+        setSelection(.preset(period))
+    }
+
+    public func setCustomRange(_ range: DateSelectionRange) {
+        guard range.isOrdered else {
+            lastError = "Custom range start must be on or before its end."
+            updateStatusTitle()
             return
         }
-        period = newPeriod
-        settings.lastPeriod = newPeriod
-        // Period switches should hit Layer B snapshot (ms). Always allow replacing
-        // an in-flight scan so the spinner cannot stick on a superseded request.
-        // Never show spinner on period change when we already have data — spinner
-        // + body remount was eating the first click’s visual feedback.
-        startRefresh(forceRescan: false, useSnapshot: true, showSpinner: report == nil)
+        setSelection(.custom(range))
+    }
+
+    public func setSelection(_ newSelection: UsageSelection) {
+        if newSelection == selection, report?.selection == newSelection {
+            return
+        }
+        selection = newSelection
+        // Range switches reuse the same-day facts snapshot. Keep the previous
+        // report visible while the replacement is generated (stale-while-revalidate).
+        startRefresh(policy: .snapshot, showSpinner: report == nil)
     }
 
     public func manualRefresh() {
-        startRefresh(forceRescan: false, useSnapshot: false, showSpinner: true)
+        startRefresh(policy: .refresh, showSpinner: true)
     }
 
     public func fullRescan() {
-        startRefresh(forceRescan: true, useSnapshot: false, showSpinner: true)
+        startRefresh(policy: .forceRescan, showSpinner: true)
     }
 
     public func restartTimer() {
@@ -78,7 +114,7 @@ public final class UsageStore: ObservableObject {
         }
         timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                self?.startRefresh(forceRescan: false, useSnapshot: false, showSpinner: false)
+                self?.startRefresh(policy: .refresh, showSpinner: false)
             }
         }
     }
@@ -93,7 +129,7 @@ public final class UsageStore: ObservableObject {
         statusItem?.button?.title = " \(title)"
     }
 
-    private func startRefresh(forceRescan: Bool, useSnapshot: Bool, showSpinner: Bool) {
+    private func startRefresh(policy: UsageRefreshPolicy, showSpinner: Bool) {
         refreshTask?.cancel()
         refreshGeneration += 1
         let generation = refreshGeneration
@@ -102,31 +138,24 @@ public final class UsageStore: ObservableObject {
             isLoading = true
         }
 
-        let period = self.period
-        let refreshFlag = !useSnapshot && !forceRescan
+        let requestedSelection = selection
+        let fetcher = reportFetcher
 
         refreshTask = Task { [weak self] in
             guard let self else { return }
             defer {
                 Task { @MainActor in
-                    // Only the latest generation clears the spinner.
                     if self.refreshGeneration == generation {
                         self.isLoading = false
                     }
                 }
             }
 
-            await MainActor.run { self.resolveBinary() }
-
-            let binaryPath = await MainActor.run { self.binaryPath }
-            let missing = await MainActor.run { self.binaryMissing }
-
-            guard let binaryPath, !missing else {
-                await MainActor.run {
-                    guard self.refreshGeneration == generation else { return }
-                    self.lastError = UsageServiceError.binaryNotFound.localizedDescription
-                    self.updateStatusTitle()
-                }
+            self.resolveBinary()
+            guard let binaryPath = self.binaryPath, !self.binaryMissing else {
+                guard self.refreshGeneration == generation else { return }
+                self.lastError = UsageServiceError.binaryNotFound.localizedDescription
+                self.updateStatusTitle()
                 return
             }
 
@@ -134,31 +163,27 @@ public final class UsageStore: ObservableObject {
 
             do {
                 let report = try await Task.detached(priority: .userInitiated) {
-                    try UsageService().fetch(
-                        period: period,
-                        refresh: refreshFlag,
-                        forceRescan: forceRescan,
-                        binaryPath: binaryPath
-                    )
+                    try fetcher(requestedSelection, policy, binaryPath)
                 }.value
+                guard report.selection == requestedSelection else {
+                    throw UsageServiceError.invalidJSON(
+                        "report selection did not match the requested selection"
+                    )
+                }
 
                 if Task.isCancelled { return }
-                await MainActor.run {
-                    guard self.refreshGeneration == generation else { return }
-                    self.report = report
-                    self.lastError = nil
-                    self.updateStatusTitle()
-                }
+                guard self.refreshGeneration == generation else { return }
+                self.report = report
+                self.lastError = nil
+                self.updateStatusTitle()
             } catch is CancellationError {
                 return
             } catch {
                 if Task.isCancelled { return }
-                await MainActor.run {
-                    guard self.refreshGeneration == generation else { return }
-                    self.lastError =
-                        (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-                    self.updateStatusTitle()
-                }
+                guard self.refreshGeneration == generation else { return }
+                self.lastError =
+                    (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                self.updateStatusTitle()
             }
         }
     }
