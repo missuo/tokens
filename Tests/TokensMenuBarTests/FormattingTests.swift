@@ -172,6 +172,7 @@ private extension UsageReport {
                 buckets: [],
                 unplaced: UsageTotals(tokens: 0, cost: 0, messages: 0)
             ),
+            weekdayHour: nil,
             meta: UsageMeta(cliVersion: "test", timezone: "UTC", reportContract: "v3")
         )
     }

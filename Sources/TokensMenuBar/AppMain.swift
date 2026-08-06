@@ -34,8 +34,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem.button {
             button.title = " …"
-            button.action = #selector(togglePopover(_:))
+            button.action = #selector(statusItemClicked(_:))
             button.target = self
+            // Left click toggles the panel; right click pops the app menu.
+            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
         store.attachStatusItem(statusItem)
 
@@ -78,6 +80,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .store(in: &cancellables)
 
         store.bootstrap()
+    }
+
+    @objc private func statusItemClicked(_ sender: Any?) {
+        if NSApp.currentEvent?.type == .rightMouseUp {
+            presentStatusMenu()
+        } else {
+            togglePopover(sender)
+        }
+    }
+
+    /// Right-click status menu: app-level actions (Quit). Left click keeps
+    /// toggling the panel, so the menu is attached only for the pop moment.
+    private func presentStatusMenu() {
+        guard let button = statusItem.button else { return }
+        let menu = NSMenu()
+        let quitItem = NSMenuItem(
+            title: "Quit Tokens",
+            action: #selector(quitFromStatusMenu(_:)),
+            keyEquivalent: "q"
+        )
+        quitItem.target = self
+        menu.addItem(quitItem)
+        statusItem.menu = menu
+        button.performClick(nil)
+        statusItem.menu = nil
+    }
+
+    @objc private func quitFromStatusMenu(_ sender: Any?) {
+        store.quit()
     }
 
     @objc private func togglePopover(_ sender: Any?) {

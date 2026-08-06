@@ -133,6 +133,7 @@ final class UsageStoreTests: XCTestCase {
                 buckets: [],
                 unplaced: UsageTotals(tokens: totalTokens, cost: Double(totalTokens), messages: Int32(totalTokens))
             ),
+            weekdayHour: nil,
             meta: UsageMeta(cliVersion: "test", timezone: "UTC", reportContract: "v3")
         )
     }
