@@ -13,6 +13,7 @@ use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 use tokens_core::BucketTimezone;
 
+use super::cost_checks::{checked_cost_sum, cost_matches};
 use super::usage_report::{self, UsagePeriod, UsageReportSelection};
 use super::usage_snapshot::{
     self, UsageSnapshot, UsageSnapshotDay, UsageSnapshotTokenBreakdown, UsageSnapshotTotals,
@@ -244,7 +245,6 @@ struct ProjectRollup {
 
 const REPORT_SCHEMA_VERSION: u32 = 3;
 const REPORT_CONTRACT: &str = "v3";
-const COST_TOLERANCE: f64 = 1e-9;
 const MIN_TODAY_HOUR_BUCKETS: usize = 12;
 
 pub(crate) fn run(
@@ -927,17 +927,6 @@ fn add_rollup_totals(target: &mut RollupTotals, source: &RollupTotals, label: &s
     Ok(())
 }
 
-fn checked_cost_sum(left: f64, right: f64, label: &str) -> Result<f64> {
-    if !left.is_finite() || !right.is_finite() {
-        bail!("{label} cost operands must be finite");
-    }
-    let total = left + right;
-    if !total.is_finite() {
-        bail!("{label} cost accumulation overflow");
-    }
-    Ok(total)
-}
-
 fn sort_model_totals_by_tokens(rows: &mut [UsageReportModelTotal]) {
     rows.sort_by(|left, right| {
         right
@@ -986,15 +975,6 @@ fn require_summary_conservation(
     Ok(())
 }
 
-fn cost_matches(left: f64, right: f64) -> bool {
-    if !left.is_finite() || !right.is_finite() {
-        return false;
-    }
-    let difference = (left - right).abs();
-    let tolerance = COST_TOLERANCE * left.abs().max(right.abs()).max(1.0);
-    difference.is_finite() && tolerance.is_finite() && difference <= tolerance
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct InclusiveDateRange {
     start: NaiveDate,
@@ -1024,12 +1004,10 @@ pub(crate) fn plan_usage_range(
     let reporting_today = date_in_timezone(timezone, reporting_now);
     let range = resolve_range(selection, earliest_known_date, reporting_today)?;
     let granularity = choose_granularity(range);
-    let include_today_context = matches!(
-        selection,
-        UsageReportSelection::Preset {
-            period: UsagePeriod::Today
-        }
-    );
+    // Context fill keys on the resolved range (single day == reporting today),
+    // not the selection enum, so Custom[today,today] matches Preset Today.
+    let include_today_context =
+        range.start == reporting_today && range.end == reporting_today;
     let buckets = match granularity {
         BucketGranularity::Hour => hourly_buckets(
             range,
@@ -1662,6 +1640,63 @@ mod tests {
                 1
             );
         }
+    }
+
+    #[test]
+    fn custom_single_day_equal_to_reporting_today_gets_prior_day_context() {
+        let plan = plan_usage_range(
+            &custom("2026-08-04", "2026-08-04"),
+            None,
+            timezone("America/Los_Angeles"),
+            now("2026-08-04T01:30:00-07:00"),
+        )
+        .unwrap();
+
+        assert_eq!(plan.selection_start, "2026-08-04T00:00:00-07:00");
+        assert_eq!(plan.buckets.len(), 12);
+        assert_eq!(
+            plan.buckets
+                .iter()
+                .filter(|bucket| bucket.context_only)
+                .count(),
+            10
+        );
+        assert_eq!(plan.buckets[0].id, "2026-08-03T14:00:00-07:00");
+        assert_eq!(plan.buckets[10].id, "2026-08-04T00:00:00-07:00");
+        let active: Vec<_> = plan.buckets.iter().filter(|bucket| bucket.active).collect();
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].id, "2026-08-04T01:00:00-07:00");
+        assert_eq!(active[0].covered_end_exclusive, "2026-08-04T01:30:00-07:00");
+    }
+
+    #[test]
+    fn custom_ranges_other_than_reporting_today_get_no_context() {
+        // Historical single day: full day of hours, no context fill.
+        let historical = plan_usage_range(
+            &custom("2026-03-08", "2026-03-08"),
+            None,
+            timezone("America/Los_Angeles"),
+            now("2026-08-04T08:00:00-07:00"),
+        )
+        .unwrap();
+        assert!(historical
+            .buckets
+            .iter()
+            .all(|bucket| !bucket.context_only));
+
+        // Multi-day range ending today uses day granularity, not hourly context.
+        let multi_day = plan_usage_range(
+            &custom("2026-08-01", "2026-08-04"),
+            None,
+            timezone("America/Los_Angeles"),
+            now("2026-08-04T08:00:00-07:00"),
+        )
+        .unwrap();
+        assert_eq!(multi_day.granularity, BucketGranularity::Day);
+        assert!(multi_day
+            .buckets
+            .iter()
+            .all(|bucket| !bucket.context_only));
     }
 
     #[test]

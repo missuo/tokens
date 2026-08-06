@@ -87,10 +87,15 @@ tokens usage [OPTIONS]
 | Flag | Default | Meaning |
 |------|---------|---------|
 | `--json` | off (human text if TTY); **App always passes** | Machine-readable output |
-| `--period today\|7d\|30d\|all` | `today` | Aggregation window in configured bucket timezone |
+| `--period today\|7d\|30d\|all` | `today` | Aggregation window in configured bucket timezone (presets) |
+| `--since YYYY-MM-DD` / `--until YYYY-MM-DD` | none | Inclusive custom civil dates; require both and `--contract v3` (cannot combine with `--period`) |
+| `--contract v2\|v3` | omitted → v2 for presets; required `v3` for custom dates | External report contract. **The Menu Bar app requests v3.** |
 | `--force-rescan` | false | Full rescan; rebuild caches |
+| `--refresh` | false | Refresh path for the selected request (v3 uses snapshot reuse rules) |
 
 Human-readable non-JSON mode is optional nicety for terminal users; App only needs JSON.
+
+v2 remains supported for compatibility (preset-only, `schemaVersion: 2`). The app requests v3 for presets and custom ranges.
 
 ### JSON schema (`schemaVersion: 2`)
 
@@ -211,6 +216,73 @@ Error (non-zero exit preferred):
 - `today`: single local bucket day
 - `7d` / `30d`: inclusive rolling windows ending today
 - `all`: all contributions available after scan
+
+### JSON schema (`schemaVersion: 3`, report contract v3)
+
+The Menu Bar app always requests v3. Success (exit 0):
+
+```json
+{
+  "schemaVersion": 3,
+  "generatedAt": "ISO-8601",
+  "selection": { "kind": "preset", "preset": "today" }
+                 | { "kind": "custom", "startDate": "YYYY-MM-DD", "endDate": "YYYY-MM-DD" },
+  "dateRange": { "startDate": "YYYY-MM-DD", "endDate": "YYYY-MM-DD", "timezone": "..." },
+  "scan": {
+    "mode": "snapshot|incremental|...",
+    "forceRescan": false,
+    "durationMs": 0,
+    "cache": {
+      "sourceHits": 0,
+      "sourceMisses": 0,
+      "snapshotRebuilt": false,
+      "snapshotSchemaVersion": 3
+    }
+  },
+  "summary": {
+    "totalTokens": 0,
+    "totalCost": 0.0,
+    "messages": 0,
+    "activeDays": 0,
+    "clients": [],
+    "models": []
+  },
+  "tokenBreakdown": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "reasoning": 0 },
+  "byClient": [ /* same shape as v2 client rows */ ],
+  "byProject": [ /* same shape as v2 project rows */ ],
+  "byModel": [ /* same shape as v2 model rows */ ],
+  "timeSeries": {
+    "granularity": "hour" | "day" | "naturalWeek" | "naturalMonth",
+    "selectionStart": "ISO-8601",
+    "buckets": [
+      {
+        "id": "ISO-8601",
+        "nominalStart": "ISO-8601",
+        "nominalEndExclusive": "ISO-8601",
+        "coveredStart": "ISO-8601",
+        "coveredEndExclusive": "ISO-8601",
+        "totals": { "tokens": 0, "cost": 0.0, "messages": 0 },
+        "contextOnly": false,
+        "incompleteEdge": false,
+        "active": false
+      }
+    ],
+    "unplaced": { "tokens": 0, "cost": 0.0, "messages": 0 }
+  },
+  "meta": {
+    "cliVersion": "...",
+    "timezone": "...",
+    "reportContract": "v3"
+  }
+}
+```
+
+**v3 rules (locked):**
+
+- Totals (`summary`, breakdowns, byClient/byProject/byModel) cover the selected inclusive range only; `contextOnly` buckets are excluded from totals and may prepend prior-day hours so a single-day chart that is reporting today has at least 12 hourly marks.
+- Granularity is automatic from the inclusive day count: 1 → hour; 2–14 → day; 15–90 → natural week (Mon–Sun); >90 → natural month.
+- `unplaced` holds usage with a reliable day but no trustworthy hour so the chart never invents a false hour.
+- Layer B full-history snapshot: `usage-snapshot-v3.json` (`schemaVersion: 3`) under the tokens cache dir, with per-day totals, client/project rows, hour facts, and `unplacedForHourly`. Range switches reuse the snapshot without a full rescan when facts are still valid.
 
 ### Implementation notes (CLI)
 

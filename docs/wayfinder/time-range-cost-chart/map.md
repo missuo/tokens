@@ -2,7 +2,7 @@
 title: Make time ranges first-class across the dashboard and Cost chart
 tracker: local-markdown
 kind: wayfinder-map
-status: open
+status: closed
 labels:
   - wayfinder:map
 ---
@@ -13,7 +13,8 @@ An implementation-ready product and data specification for a first-class dashboa
 
 ## Notes
 
-- This map is planning-only. It produces decisions, prototypes, and research findings; it does not implement the feature.
+- This map was planning-only: it produced decisions, prototypes, and research findings. The feature implementation landed in PR #8.
+- Implementation pointers: `cli/tokens-cli/src/commands/usage_report_v3.rs`, `cli/tokens-cli/src/commands/usage_snapshot.rs`, `Sources/TokensMenuBarCore/{UsageStore,UsageService,DateRangePicker,CostChartView}.swift`; tests in `cli/tokens-cli/tests/usage_v3_cli.rs` and `Tests/TokensMenuBarTests/{ReportV3,DateRangePicker,CostChart,UsageStore,UsageService}Tests.swift`.
 - All repository artifacts for this effort must be created in a new worktree, never directly on `main`.
 - Consult `grilling` and `domain-modeling` for product decisions, `prototype` for interaction or contract prototypes, `dataviz` for chart behavior, and `research` for external platform facts.
 - Locked destination constraints from the initiating conversation:
