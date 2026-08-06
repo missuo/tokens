@@ -88,6 +88,41 @@ final class UsageStoreTests: XCTestCase {
         XCTAssertFalse(store.isLoading)
     }
 
+    func testLoadAdvancedReportAlwaysFetchesFixedThirtyDayWindow() async throws {
+        let thirtyDayReport = makeReport(selection: .preset(.days30), totalTokens: 30)
+        let store = UsageStore(
+            binaryResolver: { _ in "/tmp/tokens" },
+            reportFetcher: { selection, _, _ in
+                switch selection {
+                case .preset(.days30):
+                    return thirtyDayReport
+                default:
+                    throw TestError.unused
+                }
+            }
+        )
+
+        store.loadAdvancedReport()
+        try await Task.sleep(nanoseconds: 60_000_000)
+
+        XCTAssertEqual(store.advancedReport?.selection, .preset(.days30))
+        XCTAssertEqual(store.advancedReport?.summary.totalTokens, 30)
+        XCTAssertNil(store.report)
+    }
+
+    func testLoadAdvancedReportRejectsMismatchedSelection() async throws {
+        let wrongReport = makeReport(selection: .preset(.today), totalTokens: 1)
+        let store = UsageStore(
+            binaryResolver: { _ in "/tmp/tokens" },
+            reportFetcher: { _, _, _ in wrongReport }
+        )
+
+        store.loadAdvancedReport()
+        try await Task.sleep(nanoseconds: 60_000_000)
+
+        XCTAssertNil(store.advancedReport)
+    }
+
     private func makeReport(selection: UsageSelection, totalTokens: Int64) -> UsageReport {
         UsageReport(
             schemaVersion: 3,

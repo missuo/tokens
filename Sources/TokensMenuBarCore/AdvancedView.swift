@@ -1,12 +1,20 @@
 import SwiftUI
 
 /// ADVANCED page, first section — cost heatmap by reporting-timezone hour of
-/// day × ISO weekday over the selected range: "which evenings burn the most".
+/// day × ISO weekday over the report's range: "which evenings burn the most".
 public struct AdvancedHeatmapSection: View {
     public let report: UsageReport
+    /// Short note of the time range the heatmap charts (e.g. "LAST 30 DAYS"),
+    /// shown next to the header. Nil hides the note.
+    public let timeRangeLabel: String?
 
-    public init(report: UsageReport) {
+    /// Hovered cell drives the info line under the grid — instant, unlike the
+    /// system `.help` tooltip which waits out a multi-second delay.
+    @State private var hoveredCell: UsageWeekdayHourCell?
+
+    public init(report: UsageReport, timeRangeLabel: String? = nil) {
         self.report = report
+        self.timeRangeLabel = timeRangeLabel
     }
 
     private var cells: [UsageWeekdayHourCell] { report.weekdayHour ?? [] }
@@ -14,11 +22,19 @@ public struct AdvancedHeatmapSection: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("WEEKDAY × HOUR COST")
-                .font(.system(size: 10, design: .monospaced))
-                .foregroundStyle(.secondary)
-                .tracking(1.0)
-                .accessibilityAddTraits(.isHeader)
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("WEEKDAY × HOUR COST")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .tracking(1.0)
+                    .accessibilityAddTraits(.isHeader)
+                if let timeRangeLabel {
+                    Text("· \(timeRangeLabel)")
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                        .tracking(1.0)
+                }
+            }
 
             if cells.isEmpty {
                 Text("No hourly data for this range")
@@ -26,7 +42,7 @@ public struct AdvancedHeatmapSection: View {
                     .foregroundStyle(.secondary)
             } else {
                 grid
-                peakLine
+                infoLine
             }
         }
     }
@@ -78,7 +94,13 @@ public struct AdvancedHeatmapSection: View {
         return RoundedRectangle(cornerRadius: 2)
             .fill(Color.primary.opacity(cost > 0 ? opacity : 0.05))
             .frame(width: 11, height: 11)
-            .help(cell.map { cellTooltip($0) } ?? "")
+            .onHover { hovering in
+                if hovering {
+                    hoveredCell = cell
+                } else if hoveredCell == cell {
+                    hoveredCell = nil
+                }
+            }
             .accessibilityLabel(
                 cell.map { cellTooltip($0) } ?? "\(HeatmapMath.weekdayLabel(weekday)) \(hour):00, no usage"
             )
@@ -89,22 +111,36 @@ public struct AdvancedHeatmapSection: View {
             + "\(Formatting.cost(cell.cost)) · \(Formatting.compactTokens(cell.tokens)) tokens"
     }
 
-    // MARK: - Peak
+    // MARK: - Info line
 
-    @ViewBuilder
-    private var peakLine: some View {
-        if let peak = HeatmapMath.peak(in: cells) {
-            Text(
-                "PEAK · \(HeatmapMath.weekdayLabel(peak.weekday)) "
-                    + "\(HeatmapMath.hourRangeLabel(hour: peak.hour)) · \(Formatting.cost(peak.cost))"
-            )
+    /// One fixed-height line under the grid: the hovered cell's numbers while
+    /// hovering, the range peak otherwise. No system-tooltip delay.
+    private var infoLine: some View {
+        Group {
+            if let cell = hoveredCell {
+                infoText(cellTooltip(cell))
+                    .accessibilityLabel("Hovered cell: \(cellTooltip(cell))")
+            } else if let peak = HeatmapMath.peak(in: cells) {
+                infoText(
+                    "PEAK · \(HeatmapMath.weekdayLabel(peak.weekday)) "
+                        + "\(HeatmapMath.hourRangeLabel(hour: peak.hour)) · \(Formatting.cost(peak.cost))"
+                )
+                .accessibilityLabel(
+                    "Peak usage: \(HeatmapMath.weekdayLabel(peak.weekday)) "
+                        + "\(HeatmapMath.hourRangeLabel(hour: peak.hour)), \(Formatting.cost(peak.cost))"
+                )
+            } else {
+                // Reserve the line so the panel height never reflows on hover.
+                Color.clear
+            }
+        }
+        .frame(minHeight: 14, alignment: .topLeading)
+    }
+
+    private func infoText(_ text: String) -> some View {
+        Text(text)
             .font(.system(size: 10, design: .monospaced))
             .foregroundStyle(.secondary)
             .tracking(0.6)
-            .accessibilityLabel(
-                "Peak usage: \(HeatmapMath.weekdayLabel(peak.weekday)) "
-                    + "\(HeatmapMath.hourRangeLabel(hour: peak.hour)), \(Formatting.cost(peak.cost))"
-            )
-        }
     }
 }
