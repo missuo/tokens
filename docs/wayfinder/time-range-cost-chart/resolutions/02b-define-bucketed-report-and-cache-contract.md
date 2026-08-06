@@ -6,6 +6,7 @@ The human approved the candidate contract and added a 12-hour minimum for early 
 - [Early-Today chart screenshot](../assets/today-12h-context-boundary.png)
 - One report-building seam accepts range-independent facts, a selection, and reporting now, then returns the complete selected-range report.
 - Report v3 contains the canonical selection/range, every dashboard rollup, and one generic time series with explicit granularity, bounds, active state, incomplete-edge state, context membership, and unplaced totals.
+- Report v3 also carries a full 7 × 24 weekday × hour grid (`weekdayHour`, ISO weekday × reporting-timezone hour of day, zero-filled) aggregated from the selected days' exact hourly facts; unplaced usage is excluded by construction. It powers the Menu Bar Advanced page heatmap.
 - Today totals remain reporting-timezone 00:00 through now. Its Cost chart emits at least 12 hourly buckets; prior-day buckets are context only, visually muted, and excluded from every Today total.
 - `selectionStart` anchors the vertical dashed boundary between context and Today. No boundary is drawn when all displayed buckets are inside Today.
 - Layer B remains full-history and range-independent, retaining daily facts for all dashboard rollups, exact hourly facts for immediate single-day charts, and separate unplaced usage.
