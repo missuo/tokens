@@ -85,14 +85,6 @@ public struct MenuPanelView: View {
                         .zIndex(showCustomEditor ? 20 : 0)
                 }
 
-                if store.isShowingStaleReport {
-                    measuredChrome {
-                        staleRangeBanner
-                            .padding(.horizontal, MenuBarLayout.horizontalPadding)
-                            .padding(.top, 4)
-                    }
-                }
-
                 // Always ScrollView (even when short) so TODAY vs 30D does not
                 // flip layout structure and remeasure thrash the popover height.
                 reportBody(report)
@@ -221,8 +213,7 @@ public struct MenuPanelView: View {
     /// Height is content-driven: CLIENT/MODEL list length sets the body, no forced tween.
     /// Skip resize while the tab is ahead of the loaded report (TODAY short vs 30D tall).
     private func syncBodyHeightAndPublish() {
-        // Keep the previous body viewport while a different range is loading,
-        // but continue publishing chrome changes (for the stale-data banner).
+        // Keep the previous body viewport while a different range is loading.
         if !store.isShowingStaleReport,
            let target = targetBodyHeight,
            abs(target - bodyViewportHeight) > 0.5 {
@@ -274,11 +265,14 @@ public struct MenuPanelView: View {
 
             customRangeTrigger
 
-            if store.isLoading {
-                ProgressView()
-                    .controlSize(.mini)
-                    .padding(.leading, 4)
-            }
+            // Fixed slot: opacity toggles instead of insert/remove so the tab
+            // buttons never shift sideways while a range refresh runs.
+            ProgressView()
+                .controlSize(.mini)
+                .frame(width: 14)
+                .padding(.leading, 4)
+                .opacity(store.isLoading ? 1 : 0)
+                .accessibilityHidden(!store.isLoading)
         }
         .overlay(alignment: .topTrailing) {
             if showCustomEditor {
@@ -935,29 +929,6 @@ public struct MenuPanelView: View {
         Text(text)
             .font(.system(size: 11, design: .monospaced))
             .foregroundStyle(.secondary)
-    }
-
-    private var staleRangeBanner: some View {
-        Text(
-            store.lastError == nil
-                ? "UPDATING RANGE · SHOWING PREVIOUS DATA"
-                : "RANGE UPDATE FAILED · SHOWING PREVIOUS DATA"
-        )
-        .font(.system(size: 9, weight: .medium, design: .monospaced))
-        .foregroundStyle(.secondary)
-        .tracking(0.5)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, 7)
-        .padding(.horizontal, 9)
-        .background(
-            RoundedRectangle(cornerRadius: 4)
-                .fill(Color.primary.opacity(0.05))
-        )
-        .accessibilityLabel(
-            store.lastError == nil
-                ? "Updating selected range. Showing previous data."
-                : "Selected range update failed. Showing previous data."
-        )
     }
 
     private var missingCLI: some View {
