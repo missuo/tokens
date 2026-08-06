@@ -61,7 +61,8 @@ pub fn parse_codebuff_file(path: &Path) -> Vec<UnifiedMessage> {
         } else {
             None
         };
-        let ts = message_timestamp(msg)
+        let explicit_timestamp = message_timestamp(msg);
+        let ts = explicit_timestamp
             .or(chat_id_fallback)
             .unwrap_or(file_mtime_ms);
 
@@ -74,7 +75,7 @@ pub fn parse_codebuff_file(path: &Path) -> Vec<UnifiedMessage> {
         let dedup_key = upstream_message_id(msg)
             .unwrap_or_else(|| derive_dedup_key(&session_id, ts, &model, &usage, ordinal));
 
-        results.push(UnifiedMessage::new_with_dedup(
+        let mut message = UnifiedMessage::new_with_dedup(
             "codebuff",
             &model,
             provider,
@@ -89,7 +90,11 @@ pub fn parse_codebuff_file(path: &Path) -> Vec<UnifiedMessage> {
             },
             usage.credits.max(0.0),
             Some(dedup_key),
-        ));
+        );
+        if explicit_timestamp.is_none() {
+            message.set_timestamp_provenance(crate::TimestampProvenance::Fallback);
+        }
+        results.push(message);
     }
 
     results
@@ -408,4 +413,3 @@ fn pick_number(value: &Value, keys: &[&str]) -> Option<i64> {
     }
     None
 }
-

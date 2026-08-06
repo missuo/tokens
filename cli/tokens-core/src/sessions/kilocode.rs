@@ -9,4 +9,3 @@ use std::path::Path;
 pub fn parse_kilocode_file(path: &Path) -> Vec<UnifiedMessage> {
     parse_roo_kilo_file(path, "kilocode")
 }
-

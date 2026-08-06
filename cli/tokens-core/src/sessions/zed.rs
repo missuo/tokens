@@ -191,6 +191,7 @@ fn parse_thread_row(db_path: &Path, row: ZedThreadRow) -> Option<UnifiedMessage>
         Some(format!("zed:{}", row.id)),
     );
     message.message_count = message_count;
+    message.set_timestamp_provenance(crate::TimestampProvenance::Aggregate);
 
     if let Some(workspace_key) = workspace_key_from_folders(
         row.folder_paths.as_deref(),
@@ -349,4 +350,3 @@ fn first_ordered_path_index(order: &str, path_count: usize) -> Option<usize> {
         .min_by_key(|(_, order)| *order)
         .map(|(index, _)| index)
 }
-

@@ -309,9 +309,10 @@ pub fn parse_kimi_code_file(path: &Path) -> Vec<UnifiedMessage> {
             continue;
         };
 
+        let used_fallback_timestamp = wire_line.time.is_none();
         let timestamp_ms = wire_line.time.unwrap_or(fallback_timestamp);
 
-        messages.push(UnifiedMessage::new(
+        let mut message = UnifiedMessage::new(
             "kimi",
             model_id,
             provider_id,
@@ -319,7 +320,11 @@ pub fn parse_kimi_code_file(path: &Path) -> Vec<UnifiedMessage> {
             timestamp_ms,
             tokens,
             0.0,
-        ));
+        );
+        if used_fallback_timestamp {
+            message.set_timestamp_provenance(crate::TimestampProvenance::Fallback);
+        }
+        messages.push(message);
     }
 
     messages
@@ -382,10 +387,8 @@ pub fn parse_kimi_file(path: &Path) -> Vec<UnifiedMessage> {
         };
 
         // Convert Unix seconds (float) to milliseconds, fallback to file mtime
-        let timestamp_ms = wire_line
-            .timestamp
-            .map(|ts| (ts * 1000.0) as i64)
-            .unwrap_or_else(|| file_modified_timestamp_ms(path));
+        let explicit_timestamp = wire_line.timestamp.map(|ts| (ts * 1000.0) as i64);
+        let timestamp_ms = explicit_timestamp.unwrap_or_else(|| file_modified_timestamp_ms(path));
 
         // Skip entries with zero tokens
         let Some(tokens) = token_usage.to_breakdown() else {
@@ -394,7 +397,7 @@ pub fn parse_kimi_file(path: &Path) -> Vec<UnifiedMessage> {
 
         let dedup_key = payload.message_id;
 
-        let message = UnifiedMessage::new_with_dedup(
+        let mut message = UnifiedMessage::new_with_dedup(
             "kimi",
             model.clone(),
             DEFAULT_PROVIDER,
@@ -404,6 +407,9 @@ pub fn parse_kimi_file(path: &Path) -> Vec<UnifiedMessage> {
             0.0,
             dedup_key,
         );
+        if explicit_timestamp.is_none() {
+            message.set_timestamp_provenance(crate::TimestampProvenance::Fallback);
+        }
         push_or_replace_status_update(&mut messages, &mut keyed_indices, message);
     }
 
@@ -444,7 +450,11 @@ fn push_or_replace_status_update(
 
     if let Some(index) = keyed_indices.get(&dedup_key).copied() {
         if should_replace_status_update(&messages[index], &message) {
+            let mut message = message;
+            message.retain_best_timestamp_from(&messages[index]);
             messages[index] = message;
+        } else {
+            messages[index].retain_best_timestamp_from(&message);
         }
         return;
     }
@@ -953,6 +963,38 @@ mod tests {
 
         assert_eq!(messages.len(), 1);
         assert_identity(&messages[0], "__secondary__", "unknown");
+    }
+
+    #[test]
+    fn dedup_keeps_exact_timestamp_independent_of_usage_winner() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("wire.jsonl");
+        fs::write(
+            &path,
+            concat!(
+                "{\"timestamp\":1700000000.0,\"message\":{\"type\":\"StatusUpdate\",\"payload\":{\"message_id\":\"fallback-correction\",\"token_usage\":{\"input_other\":5}}}}\n",
+                "{\"message\":{\"type\":\"StatusUpdate\",\"payload\":{\"message_id\":\"fallback-correction\",\"token_usage\":{\"input_other\":9}}}}\n",
+                "{\"message\":{\"type\":\"StatusUpdate\",\"payload\":{\"message_id\":\"exact-lower-usage\",\"token_usage\":{\"input_other\":11}}}}\n",
+                "{\"timestamp\":1700003600.0,\"message\":{\"type\":\"StatusUpdate\",\"payload\":{\"message_id\":\"exact-lower-usage\",\"token_usage\":{\"input_other\":3}}}}\n"
+            ),
+        )
+        .unwrap();
+
+        let messages = parse_kimi_file(&path);
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].tokens.input, 9);
+        assert_eq!(messages[0].timestamp, 1_700_000_000_000);
+        assert_eq!(
+            messages[0].timestamp_provenance,
+            crate::TimestampProvenance::Exact
+        );
+        assert_eq!(messages[1].tokens.input, 11);
+        assert_eq!(messages[1].timestamp, 1_700_003_600_000);
+        assert_eq!(
+            messages[1].timestamp_provenance,
+            crate::TimestampProvenance::Exact
+        );
     }
 
     #[test]

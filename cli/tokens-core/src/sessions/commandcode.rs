@@ -150,11 +150,8 @@ pub fn parse_commandcode_file(path: &Path) -> Vec<UnifiedMessage> {
                 let resolved_session = session_id
                     .clone()
                     .unwrap_or_else(|| session_id_from_path.clone());
-                let timestamp = entry
-                    .timestamp
-                    .as_deref()
-                    .and_then(parse_rfc3339_ms)
-                    .unwrap_or(fallback_timestamp);
+                let explicit_timestamp = entry.timestamp.as_deref().and_then(parse_rfc3339_ms);
+                let timestamp = explicit_timestamp.unwrap_or(fallback_timestamp);
 
                 let mut message = UnifiedMessage::new_with_dedup(
                     CLIENT_ID,
@@ -173,6 +170,9 @@ pub fn parse_commandcode_file(path: &Path) -> Vec<UnifiedMessage> {
                     Some(format!("{}:{}", resolved_session, assistant_index)),
                 );
                 message.message_count = 1;
+                if explicit_timestamp.is_none() {
+                    message.set_timestamp_provenance(crate::TimestampProvenance::Fallback);
+                }
                 message.is_turn_start = pending_turn_start;
                 message.set_workspace(workspace_key.clone(), workspace_label.clone());
                 messages.push(message);
@@ -291,4 +291,3 @@ fn workspace_key_from_path(path: &Path) -> Option<String> {
         .and_then(|name| name.to_str())
         .and_then(normalize_workspace_key)
 }
-

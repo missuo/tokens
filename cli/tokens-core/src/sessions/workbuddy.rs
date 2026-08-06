@@ -145,6 +145,7 @@ fn usage_row_to_message(row: WorkBuddyUsageRow) -> UnifiedMessage {
         },
         0.0,
     );
+    message.set_timestamp_provenance(crate::TimestampProvenance::Aggregate);
     // Include `updated_at` so distinct usage rows for the same session (e.g.
     // per-date or incremental writes) are not collapsed by the dedup key.
     message.dedup_key = Some(format!("workbuddy:{}:{}", row.session_id, row.updated_at));
@@ -164,4 +165,3 @@ fn normalize_timestamp_ms(timestamp: i64) -> i64 {
         timestamp.saturating_mul(1000)
     }
 }
-

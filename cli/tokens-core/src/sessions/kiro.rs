@@ -290,6 +290,9 @@ pub fn parse_kiro_file(path: &Path) -> Vec<UnifiedMessage> {
                 Some(format!("{}:{}", session_id, index)),
             );
             message.message_count = turn.total_request_count.unwrap_or(1).max(1);
+            if prompt_timestamp_ms.is_none() && end_timestamp_ms.is_none() {
+                message.set_timestamp_provenance(crate::TimestampProvenance::Fallback);
+            }
             message.duration_ms = duration_ms;
             message.is_turn_start = true;
             message.set_workspace(workspace_key.clone(), workspace_label.clone());
@@ -655,6 +658,9 @@ fn parse_kiro_ide_session_file(path: &Path) -> Vec<UnifiedMessage> {
                     Some(format!("{}:ide:{}", session_id, index)),
                 );
                 message.message_count = 1;
+                if turn.prompt_timestamp_ms.is_none() && turn.end_timestamp_ms.is_none() {
+                    message.set_timestamp_provenance(crate::TimestampProvenance::Fallback);
+                }
                 message.is_turn_start = true;
                 message.duration_ms = duration_ms;
                 message.set_workspace(workspace_key.clone(), workspace_label.clone());
@@ -705,6 +711,7 @@ fn parse_kiro_ide_session_file(path: &Path) -> Vec<UnifiedMessage> {
         Some(format!("{}:ide-session", session_id)),
     );
     message.message_count = flat_assistant_turns.max(1);
+    message.set_timestamp_provenance(crate::TimestampProvenance::Aggregate);
     message.duration_ms = duration_ms;
     message.is_turn_start = true;
     message.set_workspace(workspace_key, workspace_label);
@@ -951,6 +958,7 @@ fn parse_kiro_global_storage_file(path: &Path) -> Vec<UnifiedMessage> {
         Some(dedup_key),
     );
     message.message_count = 1;
+    message.set_timestamp_provenance(crate::TimestampProvenance::Aggregate);
     message.is_turn_start = true;
     message.set_workspace(workspace_key, workspace_label);
     vec![message]
@@ -1096,6 +1104,7 @@ fn try_parse_kiro_execution_file(value: &Value, path: &Path) -> Option<Vec<Unifi
         Some(format!("execution:{}", execution_id)),
     );
     message.message_count = 1;
+    message.set_timestamp_provenance(crate::TimestampProvenance::Aggregate);
     message.is_turn_start = true;
     message.duration_ms = duration_ms;
     message.set_workspace(workspace_key, workspace_label);
@@ -1185,6 +1194,7 @@ fn try_parse_kiro_workspace_session(
         Some(format!("{}:workspace-session", session_id)),
     );
     message.message_count = prompt_log_count.max(1);
+    message.set_timestamp_provenance(crate::TimestampProvenance::Aggregate);
     message.is_turn_start = true;
     message.set_workspace(workspace_key, workspace_label);
     Some(vec![message])
@@ -1315,6 +1325,7 @@ pub fn parse_kiro_sqlite(db_path: &Path) -> Vec<UnifiedMessage> {
         }
     };
 
+    let fallback_timestamp = file_modified_timestamp_ms(db_path);
     let mut messages = Vec::new();
 
     for row in rows.flatten() {
@@ -1364,14 +1375,14 @@ pub fn parse_kiro_sqlite(db_path: &Path) -> Vec<UnifiedMessage> {
                 continue;
             }
 
-            let duration_ms = duration_between_ms(
-                meta.request_start_timestamp_ms,
-                meta.stream_end_timestamp_ms,
-            );
-            let timestamp = meta
-                .request_start_timestamp_ms
-                .or(meta.stream_end_timestamp_ms)
-                .unwrap_or(0);
+            let request_start_timestamp_ms =
+                meta.request_start_timestamp_ms.filter(|value| *value > 0);
+            let stream_end_timestamp_ms = meta.stream_end_timestamp_ms.filter(|value| *value > 0);
+            let duration_ms =
+                duration_between_ms(request_start_timestamp_ms, stream_end_timestamp_ms);
+            let timestamp = request_start_timestamp_ms
+                .or(stream_end_timestamp_ms)
+                .unwrap_or(fallback_timestamp);
 
             let mut message = UnifiedMessage::new_with_dedup(
                 CLIENT_ID,
@@ -1392,6 +1403,9 @@ pub fn parse_kiro_sqlite(db_path: &Path) -> Vec<UnifiedMessage> {
             message.message_count = 1;
             message.duration_ms = duration_ms;
             message.is_turn_start = true;
+            if request_start_timestamp_ms.is_none() && stream_end_timestamp_ms.is_none() {
+                message.set_timestamp_provenance(crate::TimestampProvenance::Fallback);
+            }
             message.set_workspace(workspace_key.clone(), workspace_label.clone());
             messages.push(message);
         }
@@ -1419,3 +1433,42 @@ struct KiroDbRequestMetadata {
     stream_end_timestamp_ms: Option<i64>,
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn conversations_v2_without_timestamps_use_untrusted_file_day() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let conn = Connection::open(file.path()).unwrap();
+        conn.execute(
+            "CREATE TABLE conversations_v2 (key TEXT, conversation_id TEXT, value TEXT)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO conversations_v2 (key, conversation_id, value) VALUES (?1, ?2, ?3)",
+            rusqlite::params![
+                "/tmp/project",
+                "conversation",
+                r#"{"model_info":{"context_window_tokens":1000,"model_id":"model"},"history":[{"request_metadata":{"context_usage_percentage":10.0,"response_size":40}}]}"#,
+            ],
+        )
+        .unwrap();
+        drop(conn);
+
+        let messages = parse_kiro_sqlite(file.path());
+
+        assert_eq!(messages.len(), 1);
+        assert!(messages[0].timestamp > 0);
+        assert_eq!(
+            messages[0].timestamp_provenance,
+            crate::TimestampProvenance::Fallback
+        );
+        assert_eq!(
+            messages[0].date,
+            crate::bucket_tz::bucket_timezone().date_of_ms(messages[0].timestamp)
+        );
+        assert!(!messages[0].is_trustworthy_for_hourly());
+    }
+}

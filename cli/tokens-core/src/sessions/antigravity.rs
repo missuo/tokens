@@ -119,4 +119,3 @@ fn to_safe_i64(value: Option<&Value>) -> i64 {
         .unwrap_or(0)
         .max(0)
 }
-

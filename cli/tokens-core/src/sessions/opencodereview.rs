@@ -118,6 +118,9 @@ pub fn parse_opencodereview_file(path: &Path) -> Vec<UnifiedMessage> {
         );
         msg.dedup_key = Some(dedup_key);
         msg.duration_ms = duration_ms;
+        if explicit_timestamp.is_none() {
+            msg.set_timestamp_provenance(crate::TimestampProvenance::Fallback);
+        }
 
         if let Some(ws) = &workspace {
             if let Some(key) = super::normalize_workspace_key(ws) {
@@ -160,4 +163,3 @@ fn number_field(value: &Value, field: &str) -> i64 {
         .unwrap_or(0)
         .max(0)
 }
-

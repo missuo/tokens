@@ -150,6 +150,9 @@ pub fn parse_junie_file(path: &Path) -> Vec<UnifiedMessage> {
             );
             message.dedup_key = Some(dedup_key);
             message.duration_ms = duration_ms;
+            if explicit_timestamp.is_none() {
+                message.set_timestamp_provenance(crate::TimestampProvenance::Fallback);
+            }
             if pending_turn_start && !turn_start_assigned {
                 message.is_turn_start = true;
                 turn_start_assigned = true;
@@ -292,4 +295,3 @@ fn float_field(value: &Value, field: &str) -> Option<f64> {
     }
     value.as_str()?.trim().parse().ok()
 }
-

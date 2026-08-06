@@ -210,10 +210,10 @@ pub fn parse_goose_sqlite(db_path: &Path) -> Vec<UnifiedMessage> {
                 },
                 0.0,
             );
+            msg.set_timestamp_provenance(crate::TimestampProvenance::Aggregate);
             msg.dedup_key = Some(session_id);
             Some(msg)
         },
     )
     .collect()
 }
-

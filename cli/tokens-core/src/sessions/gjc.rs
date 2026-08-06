@@ -193,13 +193,15 @@ pub fn parse_gjc_file(path: &Path) -> Vec<UnifiedMessage> {
 
         // Prefer unix-ms message timestamp; fall back to entry ISO timestamp,
         // then the file mtime.
-        let timestamp = message.timestamp.unwrap_or_else(|| {
-            entry
-                .timestamp
-                .and_then(|ts| chrono::DateTime::parse_from_rfc3339(&ts).ok())
-                .map(|dt| dt.timestamp_millis())
-                .unwrap_or(fallback_timestamp)
-        });
+        let entry_timestamp = entry
+            .timestamp
+            .and_then(|ts| chrono::DateTime::parse_from_rfc3339(&ts).ok())
+            .map(|dt| dt.timestamp_millis());
+        let used_fallback_timestamp = message.timestamp.is_none() && entry_timestamp.is_none();
+        let timestamp = message
+            .timestamp
+            .or(entry_timestamp)
+            .unwrap_or(fallback_timestamp);
 
         let tokens = TokenBreakdown {
             input: usage.input.unwrap_or(0).max(0),
@@ -250,10 +252,12 @@ pub fn parse_gjc_file(path: &Path) -> Vec<UnifiedMessage> {
         if cost_source == CostSource::ProviderReported {
             unified.mark_provider_reported_cost();
         }
+        if used_fallback_timestamp {
+            unified.set_timestamp_provenance(crate::TimestampProvenance::Fallback);
+        }
         unified.set_workspace(workspace_key.clone(), workspace_label.clone());
         messages.push(unified);
     }
 
     messages
 }
-

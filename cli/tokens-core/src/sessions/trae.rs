@@ -90,7 +90,7 @@ fn parse_session(client: &str, session: &serde_json::Value) -> Option<UnifiedMes
 
     let dedup_key = Some(format!("trae:{}:{}", session_id, usage_time));
 
-    Some(UnifiedMessage::new_with_dedup(
+    let mut message = UnifiedMessage::new_with_dedup(
         client,
         model_id,
         provider,
@@ -105,7 +105,9 @@ fn parse_session(client: &str, session: &serde_json::Value) -> Option<UnifiedMes
         },
         cost,
         dedup_key,
-    ))
+    );
+    message.set_timestamp_provenance(crate::TimestampProvenance::Aggregate);
+    Some(message)
 }
 
 /// Parse a cache file containing an array of sessions as returned by the API.
@@ -128,3 +130,34 @@ pub fn parse_trae_file(client: &str, path: &std::path::Path) -> Vec<UnifiedMessa
         .collect()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn trae_session_snapshots_are_untrusted_aggregate_usage() {
+        let message = parse_session(
+            "trae",
+            &serde_json::json!({
+                "model_name": "GPT-5.4",
+                "mode": "",
+                "session_id": "session",
+                "usage_time": 1_700_000_000,
+                "dollar_float": 1.5,
+                "extra_info": {
+                    "input_token": 10,
+                    "output_token": 5,
+                    "cache_read_token": 2,
+                    "cache_write_token": 1
+                }
+            }),
+        )
+        .unwrap();
+
+        assert_eq!(
+            message.timestamp_provenance,
+            crate::TimestampProvenance::Aggregate
+        );
+        assert!(!message.is_trustworthy_for_hourly());
+    }
+}

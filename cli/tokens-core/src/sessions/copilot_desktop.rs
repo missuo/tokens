@@ -159,6 +159,8 @@ fn session_row_to_message(db_path: &Path, row: CopilotDesktopSessionRow) -> Unif
         Some(format!("copilot-desktop:{}", row.id)),
     );
 
+    message.set_timestamp_provenance(crate::TimestampProvenance::Aggregate);
+
     if let Some(workspace_key) = metadata.cwd.as_deref().and_then(normalize_workspace_key) {
         let workspace_label = workspace_label_from_key(&workspace_key);
         message.set_workspace(Some(workspace_key), workspace_label);
@@ -258,4 +260,3 @@ fn parse_iso8601_timestamp_ms(value: &str) -> Option<i64> {
             }
         })
 }
-

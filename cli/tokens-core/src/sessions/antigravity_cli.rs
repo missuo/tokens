@@ -94,11 +94,11 @@ fn parse_gen_metadata(
     // rather than at conversation start. Fall back to the session-created
     // `session_timestamp` when the field is absent or zero (older databases or
     // malformed rows).
-    let timestamp = message_field(chat_model, 9)
+    let generation_timestamp = message_field(chat_model, 9)
         .and_then(|gen| message_field(gen, 4))
         .and_then(proto_timestamp_ms)
-        .filter(|&ms| ms > 0)
-        .unwrap_or(session_timestamp);
+        .filter(|&ms| ms > 0);
+    let timestamp = generation_timestamp.unwrap_or(session_timestamp);
 
     // input = fixed system prompt (#1) + newly-processed input (#2). The
     // constant #1 is, to the best of our reverse-engineering, the agent's fixed
@@ -136,7 +136,7 @@ fn parse_gen_metadata(
         .unwrap_or("antigravity")
         .to_string();
 
-    Some(UnifiedMessage::new_with_dedup(
+    let mut message = UnifiedMessage::new_with_dedup(
         "antigravity-cli",
         model_id,
         provider_id,
@@ -151,7 +151,11 @@ fn parse_gen_metadata(
         },
         0.0,
         dedup_key,
-    ))
+    );
+    if generation_timestamp.is_none() {
+        message.set_timestamp_provenance(crate::TimestampProvenance::Fallback);
+    }
+    Some(message)
 }
 
 /// Read the session-level created-at timestamp and workspace from the single
@@ -374,4 +378,3 @@ fn varint_field(buf: &[u8], field: u64) -> Option<u64> {
 fn string_field(buf: &[u8], field: u64) -> Option<&str> {
     message_field(buf, field).and_then(|bytes| std::str::from_utf8(bytes).ok())
 }
-

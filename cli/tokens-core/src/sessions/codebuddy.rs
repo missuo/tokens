@@ -16,4 +16,3 @@ pub fn parse_codebuddy_file(path: &Path) -> Vec<UnifiedMessage> {
 
     super::tencent_buddy::parse_jsonl_file("codebuddy", DEFAULT_MODEL, path)
 }
-

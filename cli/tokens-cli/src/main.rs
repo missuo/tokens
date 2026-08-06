@@ -11,7 +11,7 @@ mod warp;
 
 use anyhow::Result;
 use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
-use std::io::{IsTerminal};
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -139,13 +139,22 @@ enum Commands {
     Usage {
         #[arg(long, help = "Output as JSON")]
         json: bool,
+        #[arg(long, value_enum, help = "External report contract: v2 or v3")]
+        contract: Option<commands::usage_report::UsageContract>,
+        #[arg(long, value_enum, help = "Aggregation window: today, 7d, 30d, or all")]
+        period: Option<commands::usage_report::UsagePeriod>,
         #[arg(
             long,
-            value_enum,
-            default_value_t = commands::usage_report::UsagePeriod::Today,
-            help = "Aggregation window: today, 7d, 30d, or all"
+            value_name = "YYYY-MM-DD",
+            help = "Custom range start date (v3 only)"
         )]
-        period: commands::usage_report::UsagePeriod,
+        since: Option<String>,
+        #[arg(
+            long,
+            value_name = "YYYY-MM-DD",
+            help = "Custom range end date (v3 only)"
+        )]
+        until: Option<String>,
         #[arg(
             long,
             help = "Rescan sessions (incremental cache) instead of reusing the usage snapshot"
@@ -316,26 +325,16 @@ fn main() -> Result<()> {
     timezone::install();
 
     match cli.command {
-        Some(Commands::Login { token }) => {
-            run_login_command(token)
-        }
-        Some(Commands::Logout) => {
-            run_logout_command()
-        }
-        Some(Commands::Whoami) => {
-            run_whoami_command()
-        }
-        Some(Commands::Status { json }) => {
-            commands::status::run(json)
-        }
+        Some(Commands::Login { token }) => run_login_command(token),
+        Some(Commands::Logout) => run_logout_command(),
+        Some(Commands::Whoami) => run_whoami_command(),
+        Some(Commands::Status { json }) => commands::status::run(json),
         Some(Commands::Import {
             file,
             format,
             output,
             dry_run,
-        }) => {
-            run_import_command(file, format, output, dry_run)
-        }
+        }) => run_import_command(file, format, output, dry_run),
         Some(Commands::Submit {
             clients,
             date,
@@ -365,42 +364,47 @@ fn main() -> Result<()> {
             let clients = build_client_filter_with_defaults(clients, &[]);
             run_serve(interval, clients)
         }
-        Some(Commands::Autosubmit { subcommand }) => {
-            run_autosubmit_command(subcommand)
-        }
+        Some(Commands::Autosubmit { subcommand }) => run_autosubmit_command(subcommand),
         Some(Commands::Headless {
             source,
             args,
             format,
             output,
             no_auto_flags,
-        }) => {
-            run_headless_command(&source, args, format, output, no_auto_flags)
-        }
-        Some(Commands::Cursor { subcommand }) => {
-            run_cursor_command(subcommand)
-        }
-        Some(Commands::Antigravity { subcommand }) => {
-            run_antigravity_command(subcommand)
-        }
-        Some(Commands::Codex { subcommand }) => {
-            run_codex_command(subcommand)
-        }
-        Some(Commands::Trae { subcommand }) => {
-            run_trae_command(subcommand)
-        }
-        Some(Commands::Warp { subcommand }) => {
-            run_warp_command(subcommand)
-        }
+        }) => run_headless_command(&source, args, format, output, no_auto_flags),
+        Some(Commands::Cursor { subcommand }) => run_cursor_command(subcommand),
+        Some(Commands::Antigravity { subcommand }) => run_antigravity_command(subcommand),
+        Some(Commands::Codex { subcommand }) => run_codex_command(subcommand),
+        Some(Commands::Trae { subcommand }) => run_trae_command(subcommand),
+        Some(Commands::Warp { subcommand }) => run_warp_command(subcommand),
         Some(Commands::Usage {
             json,
+            contract,
             period,
+            since,
+            until,
             refresh,
             force_rescan,
-        }) => commands::usage_report::run(json, period, refresh, force_rescan),
-        Some(Commands::DeleteSubmittedData) => {
-            run_delete_data_command()
+        }) => {
+            let action = commands::usage_report::resolve_usage_action(
+                commands::usage_report::UsageRequestArgs {
+                    contract,
+                    period,
+                    since,
+                    until,
+                },
+                tokens_core::bucket_timezone().today(),
+            )?;
+            match action {
+                commands::usage_report::UsageReportAction::LegacyV2 { period } => {
+                    commands::usage_report::run(json, period, refresh, force_rescan)
+                }
+                commands::usage_report::UsageReportAction::V3 { selection } => {
+                    commands::usage_report_v3::run(json, selection, refresh, force_rescan)
+                }
+            }
         }
+        Some(Commands::DeleteSubmittedData) => run_delete_data_command(),
         None => {
             // The dashboard and the report commands are gone, so a bare
             // `tokens` prints usage rather than rendering anything.
@@ -836,7 +840,6 @@ fn default_submit_clients() -> Vec<String> {
     clients.push("synthetic".to_string());
     clients
 }
-
 
 fn build_date_filter(date: &DateRangeFlags) -> (Option<String>, Option<String>) {
     build_date_filter_for_date(date, tokens_core::bucket_timezone().today())
@@ -2204,8 +2207,8 @@ fn run_submit_command(
 ) -> Result<()> {
     use colored::Colorize;
     use std::io::IsTerminal;
-    use tokio::runtime::Runtime;
     use tokens_core::{generate_graph, GroupBy, ReportOptions};
+    use tokio::runtime::Runtime;
 
     let auth_token = match auth::resolve_api_token() {
         Some(token) => token,
@@ -2390,9 +2393,7 @@ fn run_submit_command(
     match response {
         Ok(resp) => {
             let status = resp.status();
-            let raw = rt
-                .block_on(async { resp.text().await })
-                .unwrap_or_default();
+            let raw = rt.block_on(async { resp.text().await }).unwrap_or_default();
             // Keep the parse failure rather than swallowing it: a 2xx whose body
             // we cannot read still means we are showing the user nothing the
             // server said, including its warnings. That must be loud.
@@ -2505,7 +2506,6 @@ fn run_submit_command(
 
     Ok(())
 }
-
 
 fn run_cursor_command(subcommand: CursorSubcommand) -> Result<()> {
     match subcommand {
@@ -2903,3 +2903,57 @@ fn run_headless_command(
     Ok(())
 }
 
+#[cfg(test)]
+mod cli_parser_tests {
+    use super::*;
+
+    #[test]
+    fn usage_parser_preserves_omitted_period_for_validation() {
+        let cli = Cli::try_parse_from(["tokens", "usage", "--json"]).unwrap();
+
+        let Some(Commands::Usage {
+            contract,
+            period,
+            since,
+            until,
+            ..
+        }) = cli.command
+        else {
+            panic!("expected usage command");
+        };
+        assert_eq!(contract, None);
+        assert_eq!(period, None);
+        assert_eq!(since, None);
+        assert_eq!(until, None);
+    }
+
+    #[test]
+    fn usage_parser_accepts_explicit_v3_custom_range() {
+        let cli = Cli::try_parse_from([
+            "tokens",
+            "usage",
+            "--contract",
+            "v3",
+            "--since",
+            "2026-07-01",
+            "--until",
+            "2026-08-04",
+        ])
+        .unwrap();
+
+        let Some(Commands::Usage {
+            contract,
+            period,
+            since,
+            until,
+            ..
+        }) = cli.command
+        else {
+            panic!("expected usage command");
+        };
+        assert_eq!(contract, Some(commands::usage_report::UsageContract::V3));
+        assert_eq!(period, None);
+        assert_eq!(since.as_deref(), Some("2026-07-01"));
+        assert_eq!(until.as_deref(), Some("2026-08-04"));
+    }
+}

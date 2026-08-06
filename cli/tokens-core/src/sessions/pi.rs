@@ -214,11 +214,11 @@ pub fn parse_pi_file(path: &Path) -> Vec<UnifiedMessage> {
                 .to_string(),
         };
 
-        let timestamp = entry
+        let explicit_timestamp = entry
             .timestamp
             .and_then(|ts| chrono::DateTime::parse_from_rfc3339(&ts).ok())
-            .map(|dt| dt.timestamp_millis())
-            .unwrap_or(fallback_timestamp);
+            .map(|dt| dt.timestamp_millis());
+        let timestamp = explicit_timestamp.unwrap_or(fallback_timestamp);
 
         let mut unified = UnifiedMessage::new_with_agent(
             "pi",
@@ -236,10 +236,12 @@ pub fn parse_pi_file(path: &Path) -> Vec<UnifiedMessage> {
             0.0,
             agent.clone(),
         );
+        if explicit_timestamp.is_none() {
+            unified.set_timestamp_provenance(crate::TimestampProvenance::Fallback);
+        }
         unified.set_workspace(workspace_key.clone(), workspace_label.clone());
         messages.push(unified);
     }
 
     messages
 }
-
