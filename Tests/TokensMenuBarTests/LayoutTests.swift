@@ -45,4 +45,30 @@ final class LayoutTests: XCTestCase {
         XCTAssertEqual(state.maxHeight, next)
         XCTAssertGreaterThan(state.maxHeight, 100)
     }
+
+    @MainActor
+    func testPanelLayoutStateRefreshWithExplicitScreen() {
+        // Multi-monitor: the click handler sizes against the display under the
+        // mouse, passed explicitly — not the status item’s (possibly migrated)
+        // window screen.
+        guard let screen = NSScreen.screens.last else {
+            XCTFail("Need at least one screen for layout tests")
+            return
+        }
+        let state = PanelLayoutState(maxHeight: 100)
+        let next = state.refresh(screen: screen)
+        let expected = floor(screen.visibleFrame.height * 0.80)
+        XCTAssertEqual(next, expected)
+        XCTAssertEqual(state.maxHeight, expected)
+        // Refreshing again against the same screen is a stable no-op.
+        XCTAssertEqual(state.refresh(screen: screen), expected)
+    }
+
+    func testMouseScreenResolvesToAnAttachedScreen() {
+        // The cursor is always inside some attached display’s frame; the helper
+        // must return one of them (never a detached / stale screen).
+        if let screen = MenuBarLayout.mouseScreen() {
+            XCTAssertTrue(NSScreen.screens.contains(screen))
+        }
+    }
 }
