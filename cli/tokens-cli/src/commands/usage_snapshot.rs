@@ -12,13 +12,14 @@ use tokens_core::{
     ProjectContribution, ProjectModelContribution, TokenBreakdown,
 };
 
+use super::cost_checks::{checked_cost_sum, cost_matches};
+
 pub(crate) const SNAPSHOT_SCHEMA_VERSION: u32 = 3;
 pub(crate) const SNAPSHOT_FILENAME: &str = "usage-snapshot-v3.json";
 pub(crate) const V2_SNAPSHOT_FILENAME: &str = "usage-snapshot-v2.json";
 pub(crate) const V1_SNAPSHOT_FILENAME: &str = "usage-snapshot-v1.json";
 const OPERATION_LOCK_FILENAME: &str = "usage-snapshot-operation.lock";
 
-const COST_TOLERANCE: f64 = 1e-9;
 static SNAPSHOT_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -560,17 +561,6 @@ fn add_totals_checked(
     Ok(())
 }
 
-fn checked_cost_sum(left: f64, right: f64, label: &str) -> Result<f64> {
-    if !left.is_finite() || !right.is_finite() {
-        bail!("{label} cost operands must be finite");
-    }
-    let sum = left + right;
-    if !sum.is_finite() {
-        bail!("{label} cost accumulation overflow");
-    }
-    Ok(sum)
-}
-
 fn require_totals_match(
     actual: &UsageSnapshotTotals,
     expected: &UsageSnapshotTotals,
@@ -590,15 +580,6 @@ fn validate_totals(totals: &UsageSnapshotTotals, label: &str) -> Result<()> {
         bail!("{label} must be finite and nonnegative");
     }
     Ok(())
-}
-
-fn cost_matches(left: f64, right: f64) -> bool {
-    if !left.is_finite() || !right.is_finite() || !COST_TOLERANCE.is_finite() {
-        return false;
-    }
-    let difference = (left - right).abs();
-    let tolerance = COST_TOLERANCE * left.abs().max(right.abs()).max(1.0);
-    difference.is_finite() && tolerance.is_finite() && difference <= tolerance
 }
 
 fn parse_date(value: &str) -> Result<NaiveDate> {
