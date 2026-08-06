@@ -2,54 +2,6 @@ import XCTest
 @testable import TokensMenuBarCore
 
 final class DateRangePickerTests: XCTestCase {
-    func testSingleDateRoundTripsAsZeroDuration() throws {
-        let timezone = try XCTUnwrap(TimeZone(identifier: "America/Los_Angeles"))
-        let range = DateSelectionRange(startDate: "2026-08-04", endDate: "2026-08-04")
-
-        let picker = try DateRangePickerConversion.pickerValues(for: range, timeZone: timezone)
-        XCTAssertEqual(picker.timeInterval, 0, accuracy: 0.001)
-        XCTAssertEqual(
-            DateRangePickerConversion.selection(
-                dateValue: picker.dateValue,
-                timeInterval: picker.timeInterval,
-                timeZone: timezone
-            ),
-            range
-        )
-    }
-
-    func testSpringForwardRangeUsesCalendarDaysNot86400SecondAssumption() throws {
-        let timezone = try XCTUnwrap(TimeZone(identifier: "America/Los_Angeles"))
-        let range = DateSelectionRange(startDate: "2026-03-07", endDate: "2026-03-09")
-
-        let picker = try DateRangePickerConversion.pickerValues(for: range, timeZone: timezone)
-        XCTAssertEqual(picker.timeInterval, 47 * 60 * 60, accuracy: 0.001)
-        XCTAssertEqual(
-            DateRangePickerConversion.selection(
-                dateValue: picker.dateValue,
-                timeInterval: picker.timeInterval,
-                timeZone: timezone
-            ),
-            range
-        )
-    }
-
-    func testFallBackRangePreservesRepeatedHourDay() throws {
-        let timezone = try XCTUnwrap(TimeZone(identifier: "America/Los_Angeles"))
-        let range = DateSelectionRange(startDate: "2026-10-31", endDate: "2026-11-02")
-
-        let picker = try DateRangePickerConversion.pickerValues(for: range, timeZone: timezone)
-        XCTAssertEqual(picker.timeInterval, 49 * 60 * 60, accuracy: 0.001)
-        XCTAssertEqual(
-            DateRangePickerConversion.selection(
-                dateValue: picker.dateValue,
-                timeInterval: picker.timeInterval,
-                timeZone: timezone
-            ),
-            range
-        )
-    }
-
     func testPresetDraftRangesUseInclusiveReportingDates() throws {
         let timezone = try XCTUnwrap(TimeZone(identifier: "America/Los_Angeles"))
         let now = ISO8601DateFormatter().date(from: "2026-08-05T19:00:00Z")!
@@ -71,16 +23,6 @@ final class DateRangePickerTests: XCTestCase {
         )
     }
 
-    func testTodayMaximumIsEndOfReportingDay() throws {
-        let timezone = try XCTUnwrap(TimeZone(identifier: "Asia/Tokyo"))
-        let now = ISO8601DateFormatter().date(from: "2026-08-04T16:30:00Z")!
-        let maxDate = try XCTUnwrap(DateRangePickerConversion.maximumDate(now: now, timeZone: timezone))
-        let calendar = DateRangePickerConversion.calendar(timeZone: timezone)
-
-        XCTAssertEqual(calendar.component(.day, from: maxDate), 5)
-        XCTAssertEqual(calendar.component(.hour, from: maxDate), 23)
-    }
-
     // MARK: - Two-click selection cycle
 
     private typealias CyclePhase = DateRangeSelectionCycle.Phase
@@ -100,44 +42,11 @@ final class DateRangePickerTests: XCTestCase {
         )
     }
 
-    func testFirstClickPlacesStartPoint() {
-        let previous = DateSelectionRange(startDate: "2026-08-01", endDate: "2026-08-01")
-        let reported = DateSelectionRange(startDate: "2026-08-03", endDate: "2026-08-03")
-
-        let result = DateRangeSelectionCycle.reduce(
-            reported: reported,
-            previous: previous,
-            phase: .awaitingEnd
-        )
-
-        XCTAssertEqual(result.selection, reported)
-        XCTAssertEqual(result.phase, .awaitingEnd)
-        XCTAssertFalse(result.reanchor)
-    }
-
-    func testSecondClickCompletesRange() {
-        let start = DateSelectionRange(startDate: "2026-08-03", endDate: "2026-08-03")
-        let reported = DateSelectionRange(startDate: "2026-08-03", endDate: "2026-08-07")
-
-        let result = DateRangeSelectionCycle.reduce(
-            reported: reported,
-            previous: start,
-            phase: .awaitingEnd
-        )
-
-        XCTAssertEqual(result.selection, reported)
-        XCTAssertEqual(result.phase, .complete)
-        XCTAssertFalse(result.reanchor)
-    }
-
-    func testThirdClickRestartsFromClickedDayWhenNativeControlExtends() {
+    func testFirstClickAfterCompleteRangeRestartsAtClickedDay() {
         let completed = DateSelectionRange(startDate: "2026-08-03", endDate: "2026-08-07")
-        // Native control kept the old anchor and extended the range instead of
-        // restarting: the cycle must restart at the moved endpoint.
-        let reported = DateSelectionRange(startDate: "2026-08-03", endDate: "2026-08-10")
 
         let result = DateRangeSelectionCycle.reduce(
-            reported: reported,
+            clicked: "2026-08-10",
             previous: completed,
             phase: .complete
         )
@@ -147,54 +56,149 @@ final class DateRangePickerTests: XCTestCase {
             DateSelectionRange(startDate: "2026-08-10", endDate: "2026-08-10")
         )
         XCTAssertEqual(result.phase, .awaitingEnd)
-        XCTAssertTrue(result.reanchor)
     }
 
-    func testThirdClickBeforeOldAnchorRestartsAtEarlierDay() {
-        let completed = DateSelectionRange(startDate: "2026-08-03", endDate: "2026-08-07")
-        let reported = DateSelectionRange(startDate: "2026-08-01", endDate: "2026-08-07")
+    func testSecondClickCompletesRangeForward() {
+        let start = DateSelectionRange(startDate: "2026-08-03", endDate: "2026-08-03")
 
         let result = DateRangeSelectionCycle.reduce(
-            reported: reported,
-            previous: completed,
-            phase: .complete
+            clicked: "2026-08-07",
+            previous: start,
+            phase: .awaitingEnd
         )
 
         XCTAssertEqual(
             result.selection,
-            DateSelectionRange(startDate: "2026-08-01", endDate: "2026-08-01")
+            DateSelectionRange(startDate: "2026-08-03", endDate: "2026-08-07")
         )
-        XCTAssertEqual(result.phase, .awaitingEnd)
-        XCTAssertTrue(result.reanchor)
+        XCTAssertEqual(result.phase, .complete)
     }
 
-    func testThirdClickPassesThroughWhenNativeControlAlreadyReanchors() {
-        let completed = DateSelectionRange(startDate: "2026-08-03", endDate: "2026-08-07")
-        let reported = DateSelectionRange(startDate: "2026-08-10", endDate: "2026-08-10")
+    func testSecondClickBeforeAnchorSwapsEndpoints() {
+        let start = DateSelectionRange(startDate: "2026-08-07", endDate: "2026-08-07")
 
         let result = DateRangeSelectionCycle.reduce(
-            reported: reported,
-            previous: completed,
-            phase: .complete
+            clicked: "2026-08-03",
+            previous: start,
+            phase: .awaitingEnd
         )
 
-        XCTAssertEqual(result.selection, reported)
-        XCTAssertEqual(result.phase, .awaitingEnd)
-        XCTAssertFalse(result.reanchor)
+        XCTAssertEqual(
+            result.selection,
+            DateSelectionRange(startDate: "2026-08-03", endDate: "2026-08-07")
+        )
+        XCTAssertEqual(result.phase, .complete)
+        XCTAssertTrue(result.selection.isOrdered)
     }
 
-    func testClickingSameDayTwiceStaysSingleDay() {
+    func testSecondClickOnSameDayCompletesSingleDayRange() {
         let start = DateSelectionRange(startDate: "2026-08-03", endDate: "2026-08-03")
 
         let result = DateRangeSelectionCycle.reduce(
-            reported: start,
+            clicked: "2026-08-03",
             previous: start,
             phase: .awaitingEnd
         )
 
         XCTAssertEqual(result.selection, start)
+        XCTAssertEqual(result.phase, .complete)
+    }
+
+    func testThirdClickStartsOverFromClickedDay() {
+        // Click 1 restarts at the clicked day, click 2 completes, click 3 restarts.
+        var selection = DateSelectionRange(startDate: "2026-08-03", endDate: "2026-08-07")
+        var phase: CyclePhase = .complete
+
+        var result = DateRangeSelectionCycle.reduce(
+            clicked: "2026-08-20",
+            previous: selection,
+            phase: phase
+        )
+        selection = result.selection
+        phase = result.phase
+        XCTAssertEqual(selection, DateSelectionRange(startDate: "2026-08-20", endDate: "2026-08-20"))
+        XCTAssertEqual(phase, .awaitingEnd)
+
+        result = DateRangeSelectionCycle.reduce(
+            clicked: "2026-08-15",
+            previous: selection,
+            phase: phase
+        )
+        selection = result.selection
+        phase = result.phase
+        XCTAssertEqual(selection, DateSelectionRange(startDate: "2026-08-15", endDate: "2026-08-20"))
+        XCTAssertEqual(phase, .complete)
+
+        result = DateRangeSelectionCycle.reduce(
+            clicked: "2026-08-01",
+            previous: selection,
+            phase: phase
+        )
+        XCTAssertEqual(result.selection, DateSelectionRange(startDate: "2026-08-01", endDate: "2026-08-01"))
         XCTAssertEqual(result.phase, .awaitingEnd)
-        XCTAssertFalse(result.reanchor)
+    }
+
+    // MARK: - Month grid
+
+    func testMonthGridAlignsDaysToWeekStart() throws {
+        let timezone = try XCTUnwrap(TimeZone(identifier: "America/Los_Angeles"))
+        let august = try DateRangePickerConversion.date(from: "2026-08-15", timeZone: timezone)
+
+        let grid = DateRangePickerConversion.monthGrid(
+            for: august,
+            timeZone: timezone,
+            locale: Locale(identifier: "en_US")
+        )
+
+        // 2026-08-01 is a Saturday; with a Sunday week start the grid opens on
+        // 2026-07-26 and needs six rows (42 cells) to cover the month.
+        XCTAssertEqual(grid.days.count, 42)
+        XCTAssertEqual(grid.days[0].civilDate, "2026-07-26")
+        XCTAssertFalse(grid.days[0].isInMonth)
+        XCTAssertEqual(grid.days[6].civilDate, "2026-08-01")
+        XCTAssertTrue(grid.days[6].isInMonth)
+        XCTAssertEqual(grid.days[6].dayNumber, 1)
+        XCTAssertEqual(grid.days.last?.civilDate, "2026-09-05")
+        XCTAssertEqual(grid.title, "August 2026")
+        XCTAssertEqual(grid.weekdaySymbols.first, "S")
+        XCTAssertEqual(
+            grid.monthStart,
+            try DateRangePickerConversion.date(from: "2026-08-01", timeZone: timezone)
+        )
+    }
+
+    func testMonthGridFitsExactWeeksWithoutPaddingRows() throws {
+        let timezone = try XCTUnwrap(TimeZone(identifier: "UTC"))
+        // 2026-02-01 is a Sunday and February has 28 days: exactly four rows.
+        let february = try DateRangePickerConversion.date(from: "2026-02-10", timeZone: timezone)
+
+        let grid = DateRangePickerConversion.monthGrid(
+            for: february,
+            timeZone: timezone,
+            locale: Locale(identifier: "en_US")
+        )
+
+        XCTAssertEqual(grid.days.count, 28)
+        XCTAssertEqual(grid.days.first?.civilDate, "2026-02-01")
+        XCTAssertEqual(grid.days.last?.civilDate, "2026-02-28")
+        XCTAssertTrue(grid.days.allSatisfy(\.isInMonth))
+    }
+
+    func testMonthShiftCrossesYearBoundary() throws {
+        let timezone = try XCTUnwrap(TimeZone(identifier: "Asia/Tokyo"))
+        let january = try DateRangePickerConversion.date(from: "2026-01-01", timeZone: timezone)
+
+        let forward = DateRangePickerConversion.shiftingMonth(january, by: 1, timeZone: timezone)
+        let backward = DateRangePickerConversion.shiftingMonth(january, by: -1, timeZone: timezone)
+
+        XCTAssertEqual(
+            DateRangePickerConversion.civilDate(from: forward, timeZone: timezone),
+            "2026-02-01"
+        )
+        XCTAssertEqual(
+            DateRangePickerConversion.civilDate(from: backward, timeZone: timezone),
+            "2025-12-01"
+        )
     }
 
     // MARK: - Committed draft selection

@@ -1,5 +1,3 @@
-import AppKit
-import Foundation
 import SwiftUI
 
 public enum DateRangePickerConversion {
@@ -36,31 +34,6 @@ public enum DateRangePickerConversion {
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd"
         return formatter.string(from: date)
-    }
-
-    public static func pickerValues(
-        for range: DateSelectionRange,
-        timeZone: TimeZone
-    ) throws -> (dateValue: Date, timeInterval: TimeInterval) {
-        let start = try date(from: range.startDate, timeZone: timeZone)
-        let end = try date(from: range.endDate, timeZone: timeZone)
-        guard end >= start else { throw ConversionError.invalidCivilDate(range.endDate) }
-        return (start, end.timeIntervalSince(start))
-    }
-
-    public static func selection(
-        dateValue: Date,
-        timeInterval: TimeInterval,
-        timeZone: TimeZone
-    ) -> DateSelectionRange {
-        let calendar = calendar(timeZone: timeZone)
-        let start = calendar.startOfDay(for: dateValue)
-        let endInstant = dateValue.addingTimeInterval(max(0, timeInterval))
-        let end = calendar.startOfDay(for: endInstant)
-        return DateSelectionRange(
-            startDate: civilDate(from: start, timeZone: timeZone),
-            endDate: civilDate(from: max(start, end), timeZone: timeZone)
-        )
     }
 
     public static func today(now: Date = Date(), timeZone: TimeZone) -> DateSelectionRange {
@@ -108,21 +81,96 @@ public enum DateRangePickerConversion {
         )
     }
 
-    public static func maximumDate(now: Date = Date(), timeZone: TimeZone) -> Date? {
+    // MARK: - Month grid math
+
+    /// Start of the month containing `date`, in `timeZone`.
+    public static func monthStart(containing date: Date, timeZone: TimeZone) -> Date {
         let calendar = calendar(timeZone: timeZone)
-        let start = calendar.startOfDay(for: now)
-        guard let tomorrow = calendar.date(byAdding: .day, value: 1, to: start) else { return nil }
-        return tomorrow.addingTimeInterval(-1)
+        let components = calendar.dateComponents([.year, .month], from: date)
+        return calendar.date(from: components) ?? date
+    }
+
+    /// First day of the month `months` away from `monthStart`.
+    public static func shiftingMonth(
+        _ monthStart: Date,
+        by months: Int,
+        timeZone: TimeZone
+    ) -> Date {
+        let calendar = calendar(timeZone: timeZone)
+        return calendar.date(byAdding: .month, value: months, to: monthStart) ?? monthStart
+    }
+
+    /// One month of grid cells for the picker: a localized title, weekday
+    /// headers ordered by the system's first weekday, and whole-week rows of
+    /// days (leading/trailing cells spill from adjacent months).
+    public static func monthGrid(
+        for month: Date,
+        timeZone: TimeZone,
+        locale: Locale
+    ) -> CalendarMonthGrid {
+        var calendar = calendar(timeZone: timeZone)
+        calendar.locale = locale
+        let monthStart = monthStart(containing: month, timeZone: timeZone)
+
+        let titleFormatter = DateFormatter()
+        titleFormatter.calendar = calendar
+        titleFormatter.timeZone = timeZone
+        titleFormatter.locale = locale
+        titleFormatter.dateFormat = "LLLL yyyy"
+
+        let firstWeekday = Calendar.current.firstWeekday
+        let weekdaySymbols = (0..<7).map {
+            calendar.veryShortWeekdaySymbols[(firstWeekday - 1 + $0) % 7]
+        }
+
+        let monthWeekday = calendar.component(.weekday, from: monthStart)
+        let leading = (monthWeekday - firstWeekday + 7) % 7
+        let daysInMonth = calendar.range(of: .day, in: .month, for: monthStart)?.count ?? 30
+        let totalCells = Int(ceil(Double(leading + daysInMonth) / 7.0)) * 7
+        let gridStart = calendar.date(byAdding: .day, value: -leading, to: monthStart) ?? monthStart
+
+        let days = (0..<totalCells).map { offset -> CalendarMonthGrid.Day in
+            let date = calendar.date(byAdding: .day, value: offset, to: gridStart) ?? gridStart
+            return CalendarMonthGrid.Day(
+                civilDate: civilDate(from: date, timeZone: timeZone),
+                dayNumber: calendar.component(.day, from: date),
+                isInMonth: offset >= leading && offset < leading + daysInMonth
+            )
+        }
+
+        return CalendarMonthGrid(
+            title: titleFormatter.string(from: monthStart),
+            weekdaySymbols: weekdaySymbols,
+            days: days,
+            monthStart: monthStart
+        )
     }
 }
 
+/// One month of calendar cells for the range picker grid. Pure data so the
+/// grid math is unit-testable without a view.
+public struct CalendarMonthGrid: Equatable {
+    public struct Day: Equatable, Identifiable {
+        public let civilDate: String
+        public let dayNumber: Int
+        public let isInMonth: Bool
+        public var id: String { civilDate }
+    }
+
+    public let title: String
+    public let weekdaySymbols: [String]
+    public let days: [Day]
+    /// First day of the visible month, start of day in the picker's time zone.
+    public let monthStart: Date
+}
+
 /// Two-click range selection cycle: the first click places the start point, the
-/// second click places the end point, and any click after a completed range
-/// starts over with a new start point. Pure mapping so it can be unit-tested
-/// without an `NSDatePicker`.
+/// second click places the end point (an earlier day swaps the endpoints so the
+/// range stays ordered), and any click after a completed range starts over with
+/// a new start point. Pure mapping so it can be unit-tested without a view.
 public enum DateRangeSelectionCycle {
     public enum Phase: Equatable {
-        /// No complete range yet; the next click finishes or restarts the range.
+        /// Only a start point is in place; the next click finishes the range.
         case awaitingEnd
         /// A start+end range is in place; the next click starts over.
         case complete
@@ -133,177 +181,271 @@ public enum DateRangeSelectionCycle {
         public let selection: DateSelectionRange
         /// Phase the cycle is in after the click.
         public let phase: Phase
-        /// Whether the picker control must be re-anchored to `selection`
-        /// (the native control extended the old range instead of restarting).
-        public let reanchor: Bool
     }
 
     public static func initialPhase(for selection: DateSelectionRange) -> Phase {
         selection.startDate == selection.endDate ? .awaitingEnd : .complete
     }
 
-    /// Maps a raw picker report into the two-click cycle.
-    /// - `reported`: the range the control currently shows.
-    /// - `previous`: the last selection handed to the store.
+    /// Maps a clicked day into the two-click cycle.
+    /// - `clicked`: civil date (yyyy-MM-dd) of the day the user tapped.
+    /// - `previous`: the selection before this click; in `.awaitingEnd` its
+    ///   `startDate` is the anchor the range extends from.
     /// - `phase`: the cycle phase before this click.
     public static func reduce(
-        reported: DateSelectionRange,
+        clicked: String,
         previous: DateSelectionRange,
         phase: Phase
     ) -> Result {
         switch phase {
         case .awaitingEnd:
-            let next: Phase = reported.startDate == reported.endDate ? .awaitingEnd : .complete
-            return Result(selection: reported, phase: next, reanchor: false)
+            let anchor = previous.startDate
+            return Result(
+                selection: DateSelectionRange(
+                    startDate: min(anchor, clicked),
+                    endDate: max(anchor, clicked)
+                ),
+                phase: .complete
+            )
         case .complete:
-            // A click after a completed range restarts at the clicked day. When
-            // the native control already collapsed to a single day, nothing to
-            // fix; otherwise pick the endpoint that moved and re-anchor there.
-            if reported.startDate == reported.endDate {
-                return Result(selection: reported, phase: .awaitingEnd, reanchor: false)
-            }
-            let clicked = reported.startDate != previous.startDate
-                ? reported.startDate
-                : reported.endDate
             return Result(
                 selection: DateSelectionRange(startDate: clicked, endDate: clicked),
-                phase: .awaitingEnd,
-                reanchor: true
+                phase: .awaitingEnd
             )
         }
     }
 }
 
-/// Native contiguous AppKit date range selection hosted in SwiftUI.
-public struct AppKitDateRangePicker: NSViewRepresentable {
+/// Month-grid date range picker: tap once for the start day, again for the end
+/// day, and a third tap starts over. Clicking outside the picker applies the
+/// draft (handled by the panel).
+public struct RangeCalendarPicker: View {
     @Binding private var selection: DateSelectionRange
-    @Binding private var requestFocus: Bool
     private let timeZone: TimeZone
     private let locale: Locale
-    private let maximumDate: Date
+    /// Inclusive maximum selectable day (yyyy-MM-dd); later days are disabled.
+    private let maximumCivilDate: String
+
+    @State private var visibleMonth: Date
+    @State private var phase: DateRangeSelectionCycle.Phase
+    @FocusState private var isFocused: Bool
+
+    private static let cellWidth: CGFloat = 44
+    private static let cellHeight: CGFloat = 34
+    private static let gridSpacing: CGFloat = 2
 
     public init(
         selection: Binding<DateSelectionRange>,
-        requestFocus: Binding<Bool>,
         timeZone: TimeZone,
         locale: Locale = .current,
-        maximumDate: Date = Date()
+        maximumCivilDate: String
     ) {
         _selection = selection
-        _requestFocus = requestFocus
         self.timeZone = timeZone
         self.locale = locale
-        self.maximumDate = maximumDate
+        self.maximumCivilDate = maximumCivilDate
+        let anchor = (try? DateRangePickerConversion.date(
+            from: selection.wrappedValue.endDate,
+            timeZone: timeZone
+        )) ?? Date()
+        _visibleMonth = State(initialValue: DateRangePickerConversion.monthStart(
+            containing: anchor,
+            timeZone: timeZone
+        ))
+        _phase = State(initialValue: DateRangeSelectionCycle.initialPhase(
+            for: selection.wrappedValue
+        ))
     }
 
-    public func makeCoordinator() -> Coordinator {
-        Coordinator(parent: self)
+    public var body: some View {
+        let grid = DateRangePickerConversion.monthGrid(
+            for: visibleMonth,
+            timeZone: timeZone,
+            locale: locale
+        )
+        VStack(spacing: 8) {
+            monthHeader(grid)
+            weekdayHeader(grid)
+            dayGrid(grid)
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color(nsColor: .windowBackgroundColor))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(Color.primary.opacity(0.15), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.25), radius: 10, y: 3)
+        // Swallow taps on padding/background so the panel's commit-tap only
+        // fires for clicks truly outside the picker.
+        .contentShape(Rectangle())
+        .onTapGesture { }
+        .focusable(true)
+        .focused($isFocused)
+        .onAppear { isFocused = true }
+        .accessibilityLabel("Custom usage date range")
     }
 
-    public func makeNSView(context: Context) -> NSDatePicker {
-        let picker = NSDatePicker()
-        picker.datePickerStyle = .clockAndCalendar
-        picker.datePickerMode = .range
-        picker.datePickerElements = .yearMonthDay
-        picker.calendar = DateRangePickerConversion.calendar(timeZone: timeZone)
-        picker.timeZone = timeZone
-        picker.locale = locale
-        picker.maxDate = maximumDate
-        picker.target = context.coordinator
-        picker.action = #selector(Coordinator.selectionChanged(_:))
-        apply(selection, to: picker)
-        picker.setAccessibilityLabel("Custom usage date range")
-        return picker
+    // MARK: - Sections
+
+    private func monthHeader(_ grid: CalendarMonthGrid) -> some View {
+        HStack {
+            Button { shiftMonth(by: -1) } label: {
+                Image(systemName: "chevron.left")
+            }
+            .accessibilityLabel("Previous month")
+
+            Text(grid.title)
+                .font(.system(size: 13, weight: .medium, design: .monospaced))
+                .frame(maxWidth: .infinity)
+
+            Button { shiftMonth(by: 1) } label: {
+                Image(systemName: "chevron.right")
+            }
+            .disabled(!canShiftForward(grid))
+            .opacity(canShiftForward(grid) ? 1 : 0.3)
+            .accessibilityLabel("Next month")
+        }
+        .buttonStyle(.plain)
+        .font(.system(size: 12, weight: .semibold))
+        .frame(width: gridWidth)
     }
 
-    public func updateNSView(_ picker: NSDatePicker, context: Context) {
-        context.coordinator.parent = self
-        picker.calendar = DateRangePickerConversion.calendar(timeZone: timeZone)
-        picker.timeZone = timeZone
-        picker.locale = locale
-        picker.maxDate = maximumDate
+    private func weekdayHeader(_ grid: CalendarMonthGrid) -> some View {
+        LazyVGrid(columns: gridColumns, spacing: Self.gridSpacing) {
+            ForEach(Array(grid.weekdaySymbols.enumerated()), id: \.offset) { _, symbol in
+                Text(symbol)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .frame(width: Self.cellWidth, height: 16)
+            }
+        }
+    }
 
-        let current = DateRangePickerConversion.selection(
-            dateValue: picker.dateValue,
-            timeInterval: picker.timeInterval,
+    private func dayGrid(_ grid: CalendarMonthGrid) -> some View {
+        LazyVGrid(columns: gridColumns, spacing: Self.gridSpacing) {
+            ForEach(grid.days) { day in
+                dayCell(day)
+            }
+        }
+    }
+
+    private func dayCell(_ day: CalendarMonthGrid.Day) -> some View {
+        let isFuture = day.civilDate > maximumCivilDate
+        let hasRange = selection.isOrdered && selection.startDate != selection.endDate
+        let inRange = selection.isOrdered
+            && day.civilDate >= selection.startDate
+            && day.civilDate <= selection.endDate
+        let isStart = inRange && day.civilDate == selection.startDate
+        let isEnd = inRange && day.civilDate == selection.endDate
+        let isToday = day.civilDate == todayCivilDate
+
+        return Button {
+            pick(day)
+        } label: {
+            ZStack {
+                // Range band: full width for days inside the range, half width
+                // at the endpoints so the band connects across cells.
+                HStack(spacing: 0) {
+                    bandHalf(hasRange && inRange && !isStart)
+                    bandHalf(hasRange && inRange && !isEnd)
+                }
+                Text("\(day.dayNumber)")
+                    .font(.system(size: 13, design: .monospaced))
+                    .monospacedDigit()
+                    .foregroundStyle(cellForeground(
+                        isEndpoint: isStart || isEnd,
+                        isFuture: isFuture,
+                        isInMonth: day.isInMonth
+                    ))
+                    .frame(width: 30, height: 30)
+                    .background {
+                        if isStart || isEnd {
+                            Circle().fill(Color.primary)
+                        } else if isToday {
+                            Circle().stroke(Color.primary.opacity(0.45), lineWidth: 1)
+                        }
+                    }
+            }
+            .frame(width: Self.cellWidth, height: Self.cellHeight)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(isFuture)
+        .accessibilityLabel(day.civilDate)
+        .accessibilityAddTraits((isStart || isEnd) ? .isSelected : [])
+    }
+
+    // MARK: - Interaction
+
+    private func pick(_ day: CalendarMonthGrid.Day) {
+        let result = DateRangeSelectionCycle.reduce(
+            clicked: day.civilDate,
+            previous: selection,
+            phase: phase
+        )
+        selection = result.selection
+        phase = result.phase
+        // Tapping an adjacent-month spillover cell navigates to that month.
+        if !day.isInMonth,
+           let date = try? DateRangePickerConversion.date(from: day.civilDate, timeZone: timeZone) {
+            visibleMonth = DateRangePickerConversion.monthStart(
+                containing: date,
+                timeZone: timeZone
+            )
+        }
+    }
+
+    private func shiftMonth(by delta: Int) {
+        visibleMonth = DateRangePickerConversion.shiftingMonth(
+            visibleMonth,
+            by: delta,
             timeZone: timeZone
         )
-        if current != selection {
-            apply(selection, to: picker)
-            context.coordinator.syncCycle(with: selection)
-        }
-
-        if requestFocus, picker.window?.firstResponder !== picker {
-            context.coordinator.requestFocus(in: picker)
-        }
     }
 
-    private func apply(_ range: DateSelectionRange, to picker: NSDatePicker) {
-        guard let values = try? DateRangePickerConversion.pickerValues(
-            for: range,
+    private func canShiftForward(_ grid: CalendarMonthGrid) -> Bool {
+        guard let cap = try? DateRangePickerConversion.date(
+            from: maximumCivilDate,
             timeZone: timeZone
-        ) else { return }
-        picker.dateValue = values.dateValue
-        picker.timeInterval = values.timeInterval
+        ) else { return true }
+        return DateRangePickerConversion.monthStart(containing: cap, timeZone: timeZone)
+            > grid.monthStart
     }
 
-    public final class Coordinator: NSObject {
-        fileprivate var parent: AppKitDateRangePicker
-        private var focusAttemptScheduled = false
-        private var phase: DateRangeSelectionCycle.Phase
-        private var lastSelection: DateSelectionRange
+    // MARK: - Presentation helpers
 
-        fileprivate init(parent: AppKitDateRangePicker) {
-            self.parent = parent
-            self.phase = DateRangeSelectionCycle.initialPhase(for: parent.selection)
-            self.lastSelection = parent.selection
-        }
+    private var gridColumns: [GridItem] {
+        Array(repeating: GridItem(.fixed(Self.cellWidth), spacing: Self.gridSpacing), count: 7)
+    }
 
-        fileprivate func requestFocus(in picker: NSDatePicker, remainingAttempts: Int = 20) {
-            guard parent.requestFocus, !focusAttemptScheduled else { return }
-            focusAttemptScheduled = true
-            DispatchQueue.main.async { [weak self, weak picker] in
-                guard let self, let picker else { return }
-                self.focusAttemptScheduled = false
-                guard self.parent.requestFocus else { return }
-                if let window = picker.window, window.makeFirstResponder(picker) {
-                    self.parent.requestFocus = false
-                } else if remainingAttempts > 0 {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) { [weak self, weak picker] in
-                        guard let self, let picker else { return }
-                        self.requestFocus(
-                            in: picker,
-                            remainingAttempts: remainingAttempts - 1
-                        )
-                    }
-                }
-            }
-        }
+    private var gridWidth: CGFloat {
+        Self.cellWidth * 7 + Self.gridSpacing * 6
+    }
 
-        fileprivate func syncCycle(with selection: DateSelectionRange) {
-            phase = DateRangeSelectionCycle.initialPhase(for: selection)
-            lastSelection = selection
-        }
+    private var todayCivilDate: String {
+        DateRangePickerConversion.today(timeZone: timeZone).startDate
+    }
 
-        @objc fileprivate func selectionChanged(_ sender: NSDatePicker) {
-            let reported = DateRangePickerConversion.selection(
-                dateValue: sender.dateValue,
-                timeInterval: sender.timeInterval,
-                timeZone: parent.timeZone
-            )
-            let result = DateRangeSelectionCycle.reduce(
-                reported: reported,
-                previous: lastSelection,
-                phase: phase
-            )
-            phase = result.phase
-            lastSelection = result.selection
-            if result.reanchor {
-                // Force the control to restart from the clicked day instead of
-                // extending the completed range.
-                parent.apply(result.selection, to: sender)
-            }
-            parent.selection = result.selection
+    private func bandHalf(_ filled: Bool) -> some View {
+        Rectangle()
+            .fill(filled ? Color.primary.opacity(0.12) : Color.clear)
+            .frame(height: 30)
+    }
+
+    private func cellForeground(
+        isEndpoint: Bool,
+        isFuture: Bool,
+        isInMonth: Bool
+    ) -> Color {
+        if isEndpoint {
+            return Color(nsColor: .windowBackgroundColor)
         }
+        if isFuture {
+            return Color.secondary.opacity(0.35)
+        }
+        return isInMonth ? Color.primary : Color.secondary.opacity(0.6)
     }
 }

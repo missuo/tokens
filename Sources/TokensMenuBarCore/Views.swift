@@ -25,7 +25,6 @@ public struct MenuPanelView: View {
     @State private var page: PanelPage = .main
     /// While the pages slide, measurement mixes both pages — hold popover size.
     @State private var isPagingBetweenPages = false
-    @State private var requestDatePickerFocus = false
     @State private var draftCustomRange = DateRangePickerConversion.today(timeZone: .current)
     @FocusState private var customTriggerFocused: Bool
 
@@ -367,18 +366,16 @@ public struct MenuPanelView: View {
     }
 
     private var customRangeEditor: some View {
-        // Bare picker, no wrapper chrome: range selection is a two-click cycle
-        // (start, end, then restart) and clicking outside the picker applies.
-        AppKitDateRangePicker(
+        // Opaque month-grid picker: first click sets the start day, second the
+        // end day, a third restarts; clicking outside the picker applies.
+        RangeCalendarPicker(
             selection: $draftCustomRange,
-            requestFocus: $requestDatePickerFocus,
             timeZone: reportingTimeZone,
             locale: .current,
-            maximumDate: DateRangePickerConversion.maximumDate(
+            maximumCivilDate: DateRangePickerConversion.today(
                 timeZone: reportingTimeZone
-            ) ?? Date()
+            ).endDate
         )
-        .fixedSize()
         .onExitCommand { dismissCustomEditor(committing: true, restoreFocus: true) }
         .accessibilityElement(children: .contain)
     }
@@ -406,7 +403,6 @@ public struct MenuPanelView: View {
             }
         }
         showCustomEditor = true
-        requestDatePickerFocus = true
     }
 
     private func dismissCustomEditor(committing: Bool, restoreFocus: Bool) {
@@ -415,7 +411,6 @@ public struct MenuPanelView: View {
             commitCustomRangeDraft()
         }
         showCustomEditor = false
-        requestDatePickerFocus = false
         if restoreFocus {
             DispatchQueue.main.async { customTriggerFocused = true }
         }
