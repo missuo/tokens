@@ -14,7 +14,7 @@ public final class UsageStore: ObservableObject {
     @Published public private(set) var report: UsageReport?
     /// Trailing-30d report powering the Advanced page heatmap. Weekday × hour
     /// patterns are meaningless over the dashboard's default Today range, so
-    /// the Advanced page always aggregates its own fixed 30-day window.
+    /// the Advanced page always aggregates its own fixed trailing-30d time range.
     @Published public private(set) var advancedReport: UsageReport?
     @Published public private(set) var isLoading = false
     @Published public private(set) var lastError: String?
