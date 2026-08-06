@@ -175,6 +175,1184 @@
       "messages": 0
     }
   },
+  "weekdayHour": [
+    {
+      "weekday": 1,
+      "hour": 0,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 1,
+      "hour": 1,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 1,
+      "hour": 2,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 1,
+      "hour": 3,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 1,
+      "hour": 4,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 1,
+      "hour": 5,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 1,
+      "hour": 6,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 1,
+      "hour": 7,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 1,
+      "hour": 8,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 1,
+      "hour": 9,
+      "tokens": 100000,
+      "cost": 1.25,
+      "messages": 40
+    },
+    {
+      "weekday": 1,
+      "hour": 10,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 1,
+      "hour": 11,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 1,
+      "hour": 12,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 1,
+      "hour": 13,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 1,
+      "hour": 14,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 1,
+      "hour": 15,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 1,
+      "hour": 16,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 1,
+      "hour": 17,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 1,
+      "hour": 18,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 1,
+      "hour": 19,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 1,
+      "hour": 20,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 1,
+      "hour": 21,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 1,
+      "hour": 22,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 1,
+      "hour": 23,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 2,
+      "hour": 0,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 2,
+      "hour": 1,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 2,
+      "hour": 2,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 2,
+      "hour": 3,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 2,
+      "hour": 4,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 2,
+      "hour": 5,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 2,
+      "hour": 6,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 2,
+      "hour": 7,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 2,
+      "hour": 8,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 2,
+      "hour": 9,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 2,
+      "hour": 10,
+      "tokens": 110000,
+      "cost": 1.5,
+      "messages": 41
+    },
+    {
+      "weekday": 2,
+      "hour": 11,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 2,
+      "hour": 12,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 2,
+      "hour": 13,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 2,
+      "hour": 14,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 2,
+      "hour": 15,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 2,
+      "hour": 16,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 2,
+      "hour": 17,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 2,
+      "hour": 18,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 2,
+      "hour": 19,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 2,
+      "hour": 20,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 2,
+      "hour": 21,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 2,
+      "hour": 22,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 2,
+      "hour": 23,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 3,
+      "hour": 0,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 3,
+      "hour": 1,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 3,
+      "hour": 2,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 3,
+      "hour": 3,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 3,
+      "hour": 4,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 3,
+      "hour": 5,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 3,
+      "hour": 6,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 3,
+      "hour": 7,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 3,
+      "hour": 8,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 3,
+      "hour": 9,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 3,
+      "hour": 10,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 3,
+      "hour": 11,
+      "tokens": 120000,
+      "cost": 1.75,
+      "messages": 42
+    },
+    {
+      "weekday": 3,
+      "hour": 12,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 3,
+      "hour": 13,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 3,
+      "hour": 14,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 3,
+      "hour": 15,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 3,
+      "hour": 16,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 3,
+      "hour": 17,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 3,
+      "hour": 18,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 3,
+      "hour": 19,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 3,
+      "hour": 20,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 3,
+      "hour": 21,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 3,
+      "hour": 22,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 3,
+      "hour": 23,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 4,
+      "hour": 0,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 4,
+      "hour": 1,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 4,
+      "hour": 2,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 4,
+      "hour": 3,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 4,
+      "hour": 4,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 4,
+      "hour": 5,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 4,
+      "hour": 6,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 4,
+      "hour": 7,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 4,
+      "hour": 8,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 4,
+      "hour": 9,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 4,
+      "hour": 10,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 4,
+      "hour": 11,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 4,
+      "hour": 12,
+      "tokens": 130000,
+      "cost": 2.0,
+      "messages": 43
+    },
+    {
+      "weekday": 4,
+      "hour": 13,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 4,
+      "hour": 14,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 4,
+      "hour": 15,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 4,
+      "hour": 16,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 4,
+      "hour": 17,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 4,
+      "hour": 18,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 4,
+      "hour": 19,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 4,
+      "hour": 20,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 4,
+      "hour": 21,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 4,
+      "hour": 22,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 4,
+      "hour": 23,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 5,
+      "hour": 0,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 5,
+      "hour": 1,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 5,
+      "hour": 2,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 5,
+      "hour": 3,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 5,
+      "hour": 4,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 5,
+      "hour": 5,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 5,
+      "hour": 6,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 5,
+      "hour": 7,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 5,
+      "hour": 8,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 5,
+      "hour": 9,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 5,
+      "hour": 10,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 5,
+      "hour": 11,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 5,
+      "hour": 12,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 5,
+      "hour": 13,
+      "tokens": 140000,
+      "cost": 2.25,
+      "messages": 44
+    },
+    {
+      "weekday": 5,
+      "hour": 14,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 5,
+      "hour": 15,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 5,
+      "hour": 16,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 5,
+      "hour": 17,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 5,
+      "hour": 18,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 5,
+      "hour": 19,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 5,
+      "hour": 20,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 5,
+      "hour": 21,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 5,
+      "hour": 22,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 5,
+      "hour": 23,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 6,
+      "hour": 0,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 6,
+      "hour": 1,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 6,
+      "hour": 2,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 6,
+      "hour": 3,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 6,
+      "hour": 4,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 6,
+      "hour": 5,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 6,
+      "hour": 6,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 6,
+      "hour": 7,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 6,
+      "hour": 8,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 6,
+      "hour": 9,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 6,
+      "hour": 10,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 6,
+      "hour": 11,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 6,
+      "hour": 12,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 6,
+      "hour": 13,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 6,
+      "hour": 14,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 6,
+      "hour": 15,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 6,
+      "hour": 16,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 6,
+      "hour": 17,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 6,
+      "hour": 18,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 6,
+      "hour": 19,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 6,
+      "hour": 20,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 6,
+      "hour": 21,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 6,
+      "hour": 22,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 6,
+      "hour": 23,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 7,
+      "hour": 0,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 7,
+      "hour": 1,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 7,
+      "hour": 2,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 7,
+      "hour": 3,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 7,
+      "hour": 4,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 7,
+      "hour": 5,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 7,
+      "hour": 6,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 7,
+      "hour": 7,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 7,
+      "hour": 8,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 7,
+      "hour": 9,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 7,
+      "hour": 10,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 7,
+      "hour": 11,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 7,
+      "hour": 12,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 7,
+      "hour": 13,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 7,
+      "hour": 14,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 7,
+      "hour": 15,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 7,
+      "hour": 16,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 7,
+      "hour": 17,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 7,
+      "hour": 18,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 7,
+      "hour": 19,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 7,
+      "hour": 20,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 7,
+      "hour": 21,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 7,
+      "hour": 22,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    },
+    {
+      "weekday": 7,
+      "hour": 23,
+      "tokens": 0,
+      "cost": 0.0,
+      "messages": 0
+    }
+  ],
   "meta": {
     "cliVersion": "prototype",
     "timezone": "America/Los_Angeles",

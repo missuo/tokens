@@ -308,6 +308,9 @@ public struct UsageReport: Codable, Equatable {
     public let byProject: [ProjectUsage]
     public let byModel: [ModelUsage]
     public let timeSeries: UsageTimeSeries
+    /// Full 7 × 24 weekday × hour grid over the selected range (zero-filled).
+    /// Nil when the CLI predates the heatmap contract field.
+    public let weekdayHour: [UsageWeekdayHourCell]?
     public let meta: UsageMeta
 }
 
@@ -455,6 +458,19 @@ public struct UsageTimeSeries: Codable, Equatable {
     public let selectionStart: String
     public let buckets: [UsageTimeBucket]
     public let unplaced: UsageTotals
+}
+
+/// One cell of the weekday × hour heatmap: usage placed at this ISO weekday
+/// and reporting-timezone hour of day across the selected range.
+public struct UsageWeekdayHourCell: Codable, Equatable, Identifiable {
+    public var id: String { "\(weekday)-\(hour)" }
+    /// ISO-8601 weekday in the reporting timezone: 1 = Monday … 7 = Sunday.
+    public let weekday: Int
+    /// Reporting-timezone hour of day: 0…23.
+    public let hour: Int
+    public let tokens: Int64
+    public let cost: Double
+    public let messages: Int32
 }
 
 public struct UsageMeta: Codable, Equatable {

@@ -177,6 +177,18 @@ struct TimeSeries {
     unplaced: Totals,
 }
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WeekdayHourCell {
+    /// ISO-8601 weekday in the reporting timezone: 1 = Monday … 7 = Sunday.
+    weekday: u8,
+    /// Reporting-timezone hour of day: 0…23.
+    hour: u8,
+    tokens: i64,
+    cost: f64,
+    messages: i32,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct UsageMeta {
@@ -199,6 +211,7 @@ struct UsageReportV3 {
     by_project: Vec<ProjectRow>,
     by_model: Vec<ModelRow>,
     time_series: TimeSeries,
+    weekday_hour: Vec<WeekdayHourCell>,
     meta: UsageMeta,
 }
 
@@ -383,6 +396,18 @@ fn validate_report(report: &UsageReportV3) -> Result<()> {
             "summary does not equal placed buckets plus unplaced usage"
         ));
     }
+    if report.weekday_hour.len() != 7 * 24 {
+        return Err(anyhow!("weekday-hour grid must contain all 168 cells"));
+    }
+    for (index, cell) in report.weekday_hour.iter().enumerate() {
+        let expected_weekday = (index / 24) as u8 + 1;
+        let expected_hour = (index % 24) as u8;
+        if cell.weekday != expected_weekday || cell.hour != expected_hour {
+            return Err(anyhow!(
+                "weekday-hour grid cells must be ordered weekday-major"
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -457,6 +482,7 @@ fn sample_reports() -> Vec<(&'static str, UsageReportV3)> {
                 Granularity::Hour,
                 today_hour_buckets(),
                 1,
+                today_weekday_hour_grid(),
             ),
         ),
         (
@@ -471,6 +497,7 @@ fn sample_reports() -> Vec<(&'static str, UsageReportV3)> {
                 Granularity::NaturalWeek,
                 thirty_day_week_buckets(),
                 30,
+                thirty_day_weekday_hour_grid(),
             ),
         ),
         (
@@ -486,9 +513,73 @@ fn sample_reports() -> Vec<(&'static str, UsageReportV3)> {
                 Granularity::Day,
                 custom_day_buckets(),
                 5,
+                // Same filled totals as the 30d sample so cells + unplaced
+                // conserve the fixture summary (600000 / $8.75 / 210).
+                thirty_day_weekday_hour_grid(),
             ),
         ),
     ]
+}
+
+/// Full 7 × 24 grid, zero-filled — the report always emits every cell.
+fn zero_weekday_hour_grid() -> Vec<WeekdayHourCell> {
+    (1u8..=7)
+        .flat_map(|weekday| {
+            (0u8..24).map(move |hour| WeekdayHourCell {
+                weekday,
+                hour,
+                ..WeekdayHourCell::default()
+            })
+        })
+        .collect()
+}
+
+fn set_weekday_hour_cell(grid: &mut [WeekdayHourCell], weekday: u8, hour: u8, totals: Totals) {
+    let index = (usize::from(weekday) - 1) * 24 + usize::from(hour);
+    grid[index].tokens = totals.tokens;
+    grid[index].cost = totals.cost;
+    grid[index].messages = totals.messages;
+}
+
+/// Today (2026-08-04, a Tuesday) carries its two placed hours only.
+fn today_weekday_hour_grid() -> Vec<WeekdayHourCell> {
+    let mut grid = zero_weekday_hour_grid();
+    set_weekday_hour_cell(
+        &mut grid,
+        2,
+        0,
+        Totals {
+            tokens: 120_000,
+            cost: 1.82,
+            messages: 45,
+        },
+    );
+    set_weekday_hour_cell(
+        &mut grid,
+        2,
+        1,
+        Totals {
+            tokens: 180_000,
+            cost: 2.62,
+            messages: 69,
+        },
+    );
+    grid
+}
+
+/// Typed 30d fixture has no underlying hourly facts; spread one cell per week
+/// so the grid still conserves the summary totals.
+fn thirty_day_weekday_hour_grid() -> Vec<WeekdayHourCell> {
+    let mut grid = zero_weekday_hour_grid();
+    for index in 0..5 {
+        set_weekday_hour_cell(
+            &mut grid,
+            (index + 1) as u8,
+            (9 + index) as u8,
+            fixture_totals(index),
+        );
+    }
+    grid
 }
 
 fn report_fixture(
@@ -499,6 +590,7 @@ fn report_fixture(
     granularity: Granularity,
     buckets: Vec<TimeBucket>,
     active_days: i32,
+    weekday_hour: Vec<WeekdayHourCell>,
 ) -> UsageReportV3 {
     let unplaced = if matches!(granularity, Granularity::Hour) {
         Totals {
@@ -587,6 +679,7 @@ fn report_fixture(
             buckets,
             unplaced,
         },
+        weekday_hour,
         meta: UsageMeta {
             cli_version: "prototype".into(),
             timezone: "America/Los_Angeles".into(),

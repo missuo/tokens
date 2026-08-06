@@ -163,6 +163,11 @@ public enum Formatting {
             + "\(compactTokens(bucket.totals.tokens, locale: locale)) tokens\(state)"
     }
 
+    /// Compact covered-range label for the cost chart tooltip. Ranges within
+    /// a single calendar day keep their hours (`Aug 5, 09:00 – 10:00`); a
+    /// full day collapses to the date alone; ranges spanning two or more days
+    /// drop the hours (`Aug 5 – 7`, `Aug 30 – Sep 1`). The covered end is
+    /// exclusive, so day boundaries are derived from the last covered moment.
     public static func chartBucketTooltipRange(
         _ bucket: UsageTimeBucket,
         timeZone: TimeZone,
@@ -172,13 +177,48 @@ public enum Formatting {
               let end = parseISO8601(bucket.coveredEndExclusive) else {
             return "\(bucket.coveredStart) – \(bucket.coveredEndExclusive)"
         }
+        let calendar = DateRangePickerConversion.calendar(timeZone: timeZone)
         let formatter = DateFormatter()
-        formatter.calendar = DateRangePickerConversion.calendar(timeZone: timeZone)
+        formatter.calendar = calendar
         formatter.timeZone = timeZone
         formatter.locale = locale
-        formatter.dateFormat = "MMM d, HH:mm XXXXX"
-        return "\(formatter.string(from: start)) – \(formatter.string(from: end))"
-            .replacingOccurrences(of: "-", with: "−")
+
+        // Date components follow the locale (month names / day order), matching
+        // chartLabel. Times stay fixed 24h HH:mm so the compact tooltip skeleton
+        // and locked en_US examples (`Aug 5, 09:00 – 10:00`) remain stable.
+        func dateString(from date: Date, template: String) -> String {
+            formatter.setLocalizedDateFormatFromTemplate(template)
+            return formatter.string(from: date)
+        }
+        func timeString(from date: Date) -> String {
+            formatter.dateFormat = "HH:mm"
+            return formatter.string(from: date)
+        }
+
+        // Step back an instant from the exclusive end to get the last
+        // covered moment for day-boundary decisions.
+        let lastCovered = end.addingTimeInterval(-0.001)
+
+        if calendar.isDate(start, inSameDayAs: lastCovered) {
+            if calendar.startOfDay(for: start) == start,
+               calendar.startOfDay(for: end) == end {
+                // Covers the whole day; the hours carry no information.
+                return dateString(from: start, template: "MMM d")
+            }
+            // Same calendar day (including hour buckets that end at the next
+            // midnight): `end` may be 00:00 of the following day while
+            // `lastCovered` is still today. Format the exclusive end as HH:mm
+            // so `23:00 – 00:00` means through midnight, not a reversed range.
+            return "\(dateString(from: start, template: "MMM d")), \(timeString(from: start)) – "
+                + timeString(from: end)
+        }
+
+        if calendar.isDate(start, equalTo: lastCovered, toGranularity: .month) {
+            return "\(dateString(from: start, template: "MMM d")) – "
+                + dateString(from: lastCovered, template: "d")
+        }
+        return "\(dateString(from: start, template: "MMM d")) – "
+            + dateString(from: lastCovered, template: "MMM d")
     }
 
     private static func chartLabel(
