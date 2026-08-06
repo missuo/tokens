@@ -272,6 +272,7 @@ public struct MenuPanelView: View {
                 .frame(width: 14)
                 .padding(.leading, 4)
                 .opacity(store.isLoading ? 1 : 0)
+                .accessibilityHidden(!store.isLoading)
         }
         .overlay(alignment: .topTrailing) {
             if showCustomEditor {
