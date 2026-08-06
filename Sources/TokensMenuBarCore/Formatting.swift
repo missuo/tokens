@@ -183,8 +183,15 @@ public enum Formatting {
         formatter.timeZone = timeZone
         formatter.locale = locale
 
-        func string(from date: Date, format: String) -> String {
-            formatter.dateFormat = format
+        // Date components follow the locale (month names / day order), matching
+        // chartLabel. Times stay fixed 24h HH:mm so the compact tooltip skeleton
+        // and locked en_US examples (`Aug 5, 09:00 – 10:00`) remain stable.
+        func dateString(from date: Date, template: String) -> String {
+            formatter.setLocalizedDateFormatFromTemplate(template)
+            return formatter.string(from: date)
+        }
+        func timeString(from date: Date) -> String {
+            formatter.dateFormat = "HH:mm"
             return formatter.string(from: date)
         }
 
@@ -196,18 +203,22 @@ public enum Formatting {
             if calendar.startOfDay(for: start) == start,
                calendar.startOfDay(for: end) == end {
                 // Covers the whole day; the hours carry no information.
-                return string(from: start, format: "MMM d")
+                return dateString(from: start, template: "MMM d")
             }
-            return "\(string(from: start, format: "MMM d, HH:mm")) – "
-                + string(from: end, format: "HH:mm")
+            // Same calendar day (including hour buckets that end at the next
+            // midnight): `end` may be 00:00 of the following day while
+            // `lastCovered` is still today. Format the exclusive end as HH:mm
+            // so `23:00 – 00:00` means through midnight, not a reversed range.
+            return "\(dateString(from: start, template: "MMM d")), \(timeString(from: start)) – "
+                + timeString(from: end)
         }
 
         if calendar.isDate(start, equalTo: lastCovered, toGranularity: .month) {
-            return "\(string(from: start, format: "MMM d")) – "
-                + string(from: lastCovered, format: "d")
+            return "\(dateString(from: start, template: "MMM d")) – "
+                + dateString(from: lastCovered, template: "d")
         }
-        return "\(string(from: start, format: "MMM d")) – "
-            + string(from: lastCovered, format: "MMM d")
+        return "\(dateString(from: start, template: "MMM d")) – "
+            + dateString(from: lastCovered, template: "MMM d")
     }
 
     private static func chartLabel(

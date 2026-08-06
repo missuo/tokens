@@ -236,6 +236,81 @@ final class FormattingTests: XCTestCase {
         )
     }
 
+    func testTooltipRangeMidnightExclusiveHourKeepsLastCoveredDay() throws {
+        let timezone = try XCTUnwrap(TimeZone(identifier: "UTC"))
+        let locale = Locale(identifier: "en_US")
+
+        // Exclusive end is the next day's midnight; last covered moment is still
+        // Aug 5, so the same-day branch formats end as 00:00 (not a reversed range).
+        XCTAssertEqual(
+            Formatting.chartBucketTooltipRange(
+                bucket(
+                    id: "midnight-exclusive",
+                    start: "2026-08-05T23:00:00Z",
+                    end: "2026-08-06T00:00:00Z"
+                ),
+                timeZone: timezone,
+                locale: locale
+            ),
+            "Aug 5, 23:00 – 00:00"
+        )
+    }
+
+    func testTooltipRangeNonUTCExclusiveEndBoundaries() throws {
+        let timezone = try XCTUnwrap(TimeZone(identifier: "America/Los_Angeles"))
+        let locale = Locale(identifier: "en_US")
+
+        // DST spring-forward day (23 real hours) still collapses to the date alone.
+        XCTAssertEqual(
+            Formatting.chartBucketTooltipRange(
+                bucket(
+                    id: "la-full-day-dst",
+                    start: "2026-03-08T00:00:00-08:00",
+                    end: "2026-03-09T00:00:00-07:00"
+                ),
+                timeZone: timezone,
+                locale: locale
+            ),
+            "Mar 8"
+        )
+
+        // Local midnight-crossing hour bucket: exclusive end is next local midnight.
+        XCTAssertEqual(
+            Formatting.chartBucketTooltipRange(
+                bucket(
+                    id: "la-midnight-hour",
+                    start: "2026-08-05T23:00:00-07:00",
+                    end: "2026-08-06T00:00:00-07:00"
+                ),
+                timeZone: timezone,
+                locale: locale
+            ),
+            "Aug 5, 23:00 – 00:00"
+        )
+    }
+
+    func testTooltipRangeDateComponentsFollowLocale() throws {
+        let timezone = try XCTUnwrap(TimeZone(identifier: "UTC"))
+        let locale = Locale(identifier: "fr_FR")
+
+        let label = Formatting.chartBucketTooltipRange(
+            bucket(
+                id: "fr-full-day",
+                start: "2026-08-05T00:00:00Z",
+                end: "2026-08-06T00:00:00Z"
+            ),
+            timeZone: timezone,
+            locale: locale
+        )
+
+        // Localized "MMM d" for fr_FR renders day-first month names (e.g. "5 août").
+        XCTAssertTrue(
+            label.localizedCaseInsensitiveContains("août"),
+            "expected French month name in \(label)"
+        )
+        XCTAssertTrue(label.contains("5"), "expected day 5 in \(label)")
+    }
+
     private func bucket(id: String, start: String, end: String) -> UsageTimeBucket {
         UsageTimeBucket(
             id: id,
