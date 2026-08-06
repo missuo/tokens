@@ -410,6 +410,7 @@ public struct MenuPanelView: View {
     }
 
     private func dismissCustomEditor(committing: Bool, restoreFocus: Bool) {
+        guard showCustomEditor else { return }
         if committing {
             commitCustomRangeDraft()
         }
@@ -423,11 +424,14 @@ public struct MenuPanelView: View {
     /// Apply the draft: a single day means that day 00:00–24:00, and picking
     /// today alone jumps straight to the Today preset instead of a custom range.
     private func commitCustomRangeDraft() {
-        guard draftCustomRange.isOrdered else { return }
-        if draftCustomRange == DateRangePickerConversion.today(timeZone: reportingTimeZone) {
+        guard let selection = DateRangePickerConversion.committedSelection(
+            for: draftCustomRange,
+            today: DateRangePickerConversion.today(timeZone: reportingTimeZone)
+        ) else { return }
+        if selection == .preset(.today) {
             store.setPeriod(.today)
-        } else {
-            store.setCustomRange(draftCustomRange)
+        } else if case .custom(let range) = selection {
+            store.setCustomRange(range)
         }
     }
 

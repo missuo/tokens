@@ -68,6 +68,18 @@ public enum DateRangePickerConversion {
         return DateSelectionRange(startDate: value, endDate: value)
     }
 
+    /// The selection a committed draft maps to: nil when the draft is unordered,
+    /// `.preset(.today)` when the draft is exactly today (a single picked day
+    /// jumps straight to the Today preset), otherwise `.custom(draft)` — a
+    /// single non-today day stays an inclusive single-day custom range.
+    public static func committedSelection(
+        for draft: DateSelectionRange,
+        today: DateSelectionRange
+    ) -> UsageSelection? {
+        guard draft.isOrdered else { return nil }
+        return draft == today ? .preset(.today) : .custom(draft)
+    }
+
     public static func range(
         for period: UsagePeriod,
         now: Date = Date(),

@@ -196,4 +196,41 @@ final class DateRangePickerTests: XCTestCase {
         XCTAssertEqual(result.phase, .awaitingEnd)
         XCTAssertFalse(result.reanchor)
     }
+
+    // MARK: - Committed draft selection
+
+    func testCommittedSelectionNilForUnorderedDraft() {
+        let draft = DateSelectionRange(startDate: "2026-08-10", endDate: "2026-08-01")
+        XCTAssertNil(DateRangePickerConversion.committedSelection(for: draft, today: draft))
+    }
+
+    func testCommittedSelectionMapsExactlyTodayToTodayPreset() {
+        let today = DateRangePickerConversion.today(
+            now: Date(timeIntervalSince1970: 1_700_000_000),
+            timeZone: TimeZone(identifier: "Asia/Shanghai")!
+        )
+        let draft = today
+        XCTAssertEqual(
+            DateRangePickerConversion.committedSelection(for: draft, today: today),
+            .preset(.today)
+        )
+    }
+
+    func testCommittedSelectionKeepsSingleNonTodayDayAsCustomRange() {
+        let draft = DateSelectionRange(startDate: "2026-08-05", endDate: "2026-08-05")
+        let today = DateSelectionRange(startDate: "2026-08-06", endDate: "2026-08-06")
+        XCTAssertEqual(
+            DateRangePickerConversion.committedSelection(for: draft, today: today),
+            .custom(draft)
+        )
+    }
+
+    func testCommittedSelectionKeepsMultiDayRangeAsCustom() {
+        let draft = DateSelectionRange(startDate: "2026-08-01", endDate: "2026-08-05")
+        let today = DateSelectionRange(startDate: "2026-08-06", endDate: "2026-08-06")
+        XCTAssertEqual(
+            DateRangePickerConversion.committedSelection(for: draft, today: today),
+            .custom(draft)
+        )
+    }
 }
