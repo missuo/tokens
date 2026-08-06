@@ -1,5 +1,6 @@
 pub mod autosubmit;
 pub mod codex_activity;
+pub(crate) mod cost_checks;
 pub mod import;
 pub mod status;
 pub(crate) mod unattributed_diagnostics;
