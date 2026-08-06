@@ -156,7 +156,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Snap only — panel height is driven by measured CLIENT/MODEL content, not a tween.
     private func applyPopoverSize(_ size: CGSize) {
         let width = max(size.width, MenuBarLayout.panelWidth)
-        // Prefer live layoutState (status-item screen); fall back to anchor resolve.
+        // Prefer live layoutState (presentation screen); fall back to anchor resolve.
         let maxH = layoutState?.maxHeight
             ?? MenuBarLayout.panelMaxHeight(anchor: statusItem?.button)
         let height = min(max(size.height, 120), maxH)

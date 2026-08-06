@@ -54,7 +54,8 @@ public enum MenuBarLayout {
 }
 
 /// Live max panel height for the display currently presenting the menu.
-/// AppDelegate refreshes this from the status-item screen on open / resize.
+/// AppDelegate sizes this from the clicked display (mouse screen) before show;
+/// the screen-parameters path re-clamps from the status-item anchor.
 @MainActor
 public final class PanelLayoutState: ObservableObject {
     @Published public private(set) var maxHeight: CGFloat
