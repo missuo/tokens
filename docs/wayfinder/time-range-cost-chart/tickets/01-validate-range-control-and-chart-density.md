@@ -2,7 +2,7 @@
 title: Validate the compact range control and chart density
 tracker: local-markdown
 kind: wayfinder-ticket
-status: resolved
+status: closed
 assignee: claude
 parent: ../map.md
 labels:
@@ -20,3 +20,7 @@ resolution_comment: ../resolutions/01-validate-range-control-and-chart-density.m
 ## Question
 
 Which compact layout and editor model—an AppKit one-control range picker or two explicit SwiftUI date pickers—keeps the four visible presets plus Custom legible, keyboard-accessible, and VoiceOver-clear at Menu Bar width, while keeping hour, day, natural-week, and natural-month Cost chart labels readable across representative ranges?
+
+## Resolution
+
+Decided in the linked resolution file; implementation landed in PR #8 (CLI v3 report/snapshot + Menu Bar DateRangePicker/CostChartView/UsageStore).
