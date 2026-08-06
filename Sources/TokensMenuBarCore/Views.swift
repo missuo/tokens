@@ -21,6 +21,10 @@ public struct MenuPanelView: View {
     /// Per-project nested model page counts keyed by `ProjectUsage.id`.
     @State private var projectModelVisibleCounts: [String: Int] = [:]
     @State private var showCustomEditor = false
+    /// Root page: main dashboard vs Advanced (slides horizontally).
+    @State private var page: PanelPage = .main
+    /// While the pages slide, measurement mixes both pages — hold popover size.
+    @State private var isPagingBetweenPages = false
     @State private var requestDatePickerFocus = false
     @State private var draftCustomRange = DateRangePickerConversion.today(timeZone: .current)
     @FocusState private var customTriggerFocused: Bool
@@ -63,6 +67,73 @@ public struct MenuPanelView: View {
     }
 
     public var body: some View {
+        ZStack(alignment: .top) {
+            if page == .main {
+                mainPage
+                    .transition(.asymmetric(
+                        insertion: .move(edge: .leading),
+                        removal: .move(edge: .leading)
+                    ))
+            } else {
+                advancedPage
+                    .transition(.asymmetric(
+                        insertion: .move(edge: .trailing),
+                        removal: .move(edge: .trailing)
+                    ))
+            }
+        }
+        .frame(width: MenuBarLayout.panelWidth)
+        .frame(maxHeight: panelMaxHeight)
+        .onPreferenceChange(ChromeHeightPreferenceKey.self) { height in
+            if abs(height - chromeHeight) > 0.5 {
+                chromeHeight = height
+            }
+            syncBodyHeightAndPublish()
+        }
+        .onPreferenceChange(BodyHeightPreferenceKey.self) { height in
+            if height > 0, abs(height - bodyContentHeight) > 0.5 {
+                bodyContentHeight = height
+            }
+            syncBodyHeightAndPublish()
+        }
+        .onAppear { syncBodyHeightAndPublish() }
+        .onDisappear { closeCustomEditor(restoreFocus: false) }
+        .onChange(of: layout.presentationGeneration) { _ in
+            closeCustomEditor(restoreFocus: false)
+            // Each popover open starts on the dashboard page.
+            page = .main
+            isPagingBetweenPages = false
+        }
+        .onChange(of: store.report?.generatedAt) { _ in syncBodyHeightAndPublish() }
+        .onChange(of: store.selection) { _ in
+            // Reset expand pages; keep prior panel height until new report lands.
+            clientVisibleCount = MenuBarLayout.listPageSize
+            projectVisibleCount = MenuBarLayout.listPageSize
+            modelVisibleCount = MenuBarLayout.listPageSize
+            projectModelVisibleCounts = [:]
+        }
+        .onChange(of: store.isLoading) { _ in syncBodyHeightAndPublish() }
+        .onChange(of: store.binaryMissing) { _ in syncBodyHeightAndPublish() }
+        .onChange(of: store.lastError) { _ in syncBodyHeightAndPublish() }
+        .onChange(of: clientVisibleCount) { _ in
+            DispatchQueue.main.async { syncBodyHeightAndPublish() }
+        }
+        .onChange(of: projectVisibleCount) { _ in
+            DispatchQueue.main.async { syncBodyHeightAndPublish() }
+        }
+        .onChange(of: modelVisibleCount) { _ in
+            DispatchQueue.main.async { syncBodyHeightAndPublish() }
+        }
+        .onChange(of: projectModelVisibleCounts) { _ in
+            DispatchQueue.main.async { syncBodyHeightAndPublish() }
+        }
+        .onChange(of: layout.maxHeight) { _ in
+            // Multi-monitor: opening on a smaller display must reclamp body + popover.
+            syncBodyHeightAndPublish()
+        }
+    }
+
+    private var mainPage: some View {
         VStack(alignment: .leading, spacing: 0) {
             if store.binaryMissing {
                 measuredChrome {
@@ -113,52 +184,6 @@ public struct MenuPanelView: View {
                 }
             }
         }
-        .frame(width: MenuBarLayout.panelWidth)
-        .frame(maxHeight: panelMaxHeight)
-        .onPreferenceChange(ChromeHeightPreferenceKey.self) { height in
-            if abs(height - chromeHeight) > 0.5 {
-                chromeHeight = height
-            }
-            syncBodyHeightAndPublish()
-        }
-        .onPreferenceChange(BodyHeightPreferenceKey.self) { height in
-            if height > 0, abs(height - bodyContentHeight) > 0.5 {
-                bodyContentHeight = height
-            }
-            syncBodyHeightAndPublish()
-        }
-        .onAppear { syncBodyHeightAndPublish() }
-        .onDisappear { closeCustomEditor(restoreFocus: false) }
-        .onChange(of: layout.presentationGeneration) { _ in
-            closeCustomEditor(restoreFocus: false)
-        }
-        .onChange(of: store.report?.generatedAt) { _ in syncBodyHeightAndPublish() }
-        .onChange(of: store.selection) { _ in
-            // Reset expand pages; keep prior panel height until new report lands.
-            clientVisibleCount = MenuBarLayout.listPageSize
-            projectVisibleCount = MenuBarLayout.listPageSize
-            modelVisibleCount = MenuBarLayout.listPageSize
-            projectModelVisibleCounts = [:]
-        }
-        .onChange(of: store.isLoading) { _ in syncBodyHeightAndPublish() }
-        .onChange(of: store.binaryMissing) { _ in syncBodyHeightAndPublish() }
-        .onChange(of: store.lastError) { _ in syncBodyHeightAndPublish() }
-        .onChange(of: clientVisibleCount) { _ in
-            DispatchQueue.main.async { syncBodyHeightAndPublish() }
-        }
-        .onChange(of: projectVisibleCount) { _ in
-            DispatchQueue.main.async { syncBodyHeightAndPublish() }
-        }
-        .onChange(of: modelVisibleCount) { _ in
-            DispatchQueue.main.async { syncBodyHeightAndPublish() }
-        }
-        .onChange(of: projectModelVisibleCounts) { _ in
-            DispatchQueue.main.async { syncBodyHeightAndPublish() }
-        }
-        .onChange(of: layout.maxHeight) { _ in
-            // Multi-monitor: opening on a smaller display must reclamp body + popover.
-            syncBodyHeightAndPublish()
-        }
     }
 
     @ViewBuilder
@@ -190,6 +215,7 @@ public struct MenuPanelView: View {
             clientSection(report)
             modelSection(report)
             projectSection(report)
+            advancedEntrySection
             if let error = store.lastError {
                 errorBanner(error)
             }
@@ -213,6 +239,8 @@ public struct MenuPanelView: View {
     /// Height is content-driven: CLIENT/MODEL list length sets the body, no forced tween.
     /// Skip resize while the tab is ahead of the loaded report (TODAY short vs 30D tall).
     private func syncBodyHeightAndPublish() {
+        // Mid-slide both pages are mounted; publishing now would mix heights.
+        guard !isPagingBetweenPages else { return }
         // Keep the previous body viewport while a different range is loading.
         if !store.isShowingStaleReport,
            let target = targetBodyHeight,
@@ -861,6 +889,128 @@ public struct MenuPanelView: View {
         }
     }
 
+    // MARK: - Advanced page
+
+    /// Last section of the dashboard: entry row that slides to the Advanced page.
+    private var advancedEntrySection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            sectionLabel("ADVANCED")
+            Button {
+                switchToPage(.advanced)
+            } label: {
+                HStack(alignment: .center, spacing: 12) {
+                    Text("WEEKDAY × HOUR HEATMAP")
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .tracking(0.4)
+                        .foregroundStyle(.primary)
+                    Spacer(minLength: 8)
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(Color.primary.opacity(0.04))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4)
+                        .strokeBorder(Color.primary.opacity(0.18), lineWidth: 1)
+                )
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Open Advanced page")
+            .accessibilityHint("Slides to the weekday by hour cost heatmap")
+        }
+    }
+
+    @ViewBuilder
+    private var advancedPage: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            measuredChrome {
+                advancedHeader
+                    .padding(.horizontal, MenuBarLayout.horizontalPadding)
+                    .padding(.top, 14)
+                    .padding(.bottom, 6)
+            }
+
+            if let report = store.report {
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(alignment: .leading, spacing: MenuBarLayout.sectionSpacing) {
+                        AdvancedHeatmapSection(report: report)
+                    }
+                    .padding(.horizontal, MenuBarLayout.horizontalPadding)
+                    .padding(.top, 18)
+                    .padding(.bottom, 12)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .background(
+                        GeometryReader { geo in
+                            Color.clear.preference(
+                                key: BodyHeightPreferenceKey.self,
+                                value: geo.size.height
+                            )
+                        }
+                    )
+                }
+                .opacity(store.isShowingStaleReport ? 0.55 : 1)
+                .frame(height: bodyViewportHeight, alignment: .top)
+                .clipped()
+
+                measuredChrome {
+                    footer(report)
+                        .padding(.horizontal, MenuBarLayout.horizontalPadding)
+                        .padding(.top, 4)
+                        .padding(.bottom, 14)
+                }
+            } else {
+                measuredChrome {
+                    Text("NO DATA YET")
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .tracking(0.8)
+                        .frame(maxWidth: .infinity, minHeight: 160)
+                        .padding(MenuBarLayout.horizontalPadding)
+                }
+            }
+        }
+    }
+
+    /// Back arrow (top-left) + page label.
+    private var advancedHeader: some View {
+        HStack(spacing: 8) {
+            Button {
+                switchToPage(.main)
+            } label: {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Color.primary)
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Back to dashboard")
+            sectionLabel("ADVANCED")
+            Spacer()
+        }
+    }
+
+    /// Horizontal slide between dashboard and Advanced. The popover never
+    /// tweens height; hold size publishing until the slide settles, then snap.
+    private func switchToPage(_ next: PanelPage) {
+        guard next != page else { return }
+        isPagingBetweenPages = true
+        withAnimation(.easeInOut(duration: 0.24)) {
+            page = next
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.28) {
+            isPagingBetweenPages = false
+            syncBodyHeightAndPublish()
+        }
+    }
+
     // MARK: - Footer
 
     private func footer(_ report: UsageReport) -> some View {
@@ -880,9 +1030,6 @@ public struct MenuPanelView: View {
             }
             footerButton("SETTINGS") {
                 store.showSettings = true
-            }
-            footerButton("QUIT") {
-                store.quit()
             }
         }
         .font(.system(size: 11, design: .monospaced))
@@ -949,9 +1096,6 @@ public struct MenuPanelView: View {
                     store.showSettings = true
                 }
                 Spacer()
-                footerButton("QUIT") {
-                    store.quit()
-                }
             }
             .font(.system(size: 11, design: .monospaced))
             .tracking(0.4)
@@ -971,6 +1115,12 @@ public struct MenuPanelView: View {
                     .fill(Color.red.opacity(0.08))
             )
     }
+}
+
+/// Root pages of the menu panel.
+private enum PanelPage {
+    case main
+    case advanced
 }
 
 /// Additive height of non-scroll chrome pieces (header, tabs, footer, error shells).

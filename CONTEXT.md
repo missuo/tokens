@@ -55,3 +55,7 @@ _Avoid_: Today line, cutoff line
 **Unplaced usage**:
 Usage included in a time range whose date is known but whose timestamp is not trustworthy enough to assign it to an hourly chart bucket.
 _Avoid_: Unknown usage, missing usage
+
+**Weekday × hour heatmap**:
+A 7 × 24 grid that aggregates cost (and token/message totals) by ISO weekday and reporting-timezone hour of day over the time range, zero-filled for empty cells; unplaced usage is excluded. Shown on the Advanced page.
+_Avoid_: Activity matrix, time-of-day chart

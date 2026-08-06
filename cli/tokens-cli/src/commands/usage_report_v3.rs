@@ -7,7 +7,7 @@
 use anyhow::{bail, Context, Result};
 use chrono::{
     DateTime, Datelike, Duration, FixedOffset, Local, LocalResult, NaiveDate, NaiveDateTime,
-    Offset, TimeZone, Utc,
+    Offset, TimeZone, Timelike, Utc,
 };
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
@@ -187,6 +187,20 @@ pub(crate) struct UsageReportTimeSeries {
     pub(crate) unplaced: UsageReportTotals,
 }
 
+/// One cell of the weekday × hour heatmap: usage placed at this ISO weekday
+/// and reporting-timezone hour of day across the selected range.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct UsageReportWeekdayHourCell {
+    /// ISO-8601 weekday in the reporting timezone: 1 = Monday … 7 = Sunday.
+    weekday: u8,
+    /// Reporting-timezone hour of day: 0…23.
+    hour: u8,
+    tokens: i64,
+    cost: f64,
+    messages: i32,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct UsageReportMeta {
@@ -209,6 +223,10 @@ pub(crate) struct UsageReportV3 {
     by_project: Vec<UsageReportProjectRow>,
     by_model: Vec<UsageReportModelRow>,
     pub(crate) time_series: UsageReportTimeSeries,
+    /// Full 7 × 24 weekday × hour grid over the selected range, zero-filled so
+    /// the Menu Bar Advanced heatmap can render empty cells explicitly.
+    /// Unplaced usage (no reliable hour) is excluded by construction.
+    weekday_hour: Vec<UsageReportWeekdayHourCell>,
     meta: UsageReportMeta,
 }
 
@@ -332,7 +350,9 @@ pub(crate) fn build_usage_report(
     let selected_days = selected_snapshot_days(snapshot, plan.start_date, plan.end_date)?;
     let rollups = build_rollups(&selected_days)?;
     let time_series = build_time_series(snapshot, &plan, timezone)?;
+    let weekday_hour = build_weekday_hour_cells(&selected_days, timezone)?;
     require_summary_conservation(&rollups.summary, &time_series)?;
+    require_weekday_hour_conservation(&rollups.summary, &selected_days, &weekday_hour)?;
 
     Ok(UsageReportV3 {
         schema_version: REPORT_SCHEMA_VERSION,
@@ -350,6 +370,7 @@ pub(crate) fn build_usage_report(
         by_project: rollups.by_project,
         by_model: rollups.by_model,
         time_series,
+        weekday_hour,
         meta: UsageReportMeta {
             cli_version: env!("CARGO_PKG_VERSION").to_string(),
             timezone: snapshot.timezone.clone(),
@@ -629,6 +650,92 @@ fn build_time_series(
         buckets,
         unplaced,
     })
+}
+
+/// Aggregate the selected days' exact hourly facts into the full 7 × 24
+/// (ISO weekday × reporting-timezone hour) grid. Cells are zero-filled so
+/// empty weekday/hour combinations are explicit, matching the chart contract.
+fn build_weekday_hour_cells(
+    days: &[&UsageSnapshotDay],
+    timezone: BucketTimezone,
+) -> Result<Vec<UsageReportWeekdayHourCell>> {
+    let mut totals = vec![RollupTotals::default(); 7 * 24];
+    for day in days {
+        for hour in &day.hours {
+            let (weekday, hour_of_day) = weekday_hour_of_ms(timezone, hour.start_ms)?;
+            let index = (usize::from(weekday) - 1) * 24 + usize::from(hour_of_day);
+            add_snapshot_totals(&mut totals[index], &hour.totals, "weekday-hour cell")?;
+        }
+    }
+
+    let mut cells = Vec::with_capacity(7 * 24);
+    for weekday in 1u8..=7 {
+        for hour in 0u8..24 {
+            let cell = &totals[(usize::from(weekday) - 1) * 24 + usize::from(hour)];
+            cells.push(UsageReportWeekdayHourCell {
+                weekday,
+                hour,
+                tokens: cell.tokens,
+                cost: cell.cost,
+                messages: cell.messages,
+            });
+        }
+    }
+    Ok(cells)
+}
+
+/// Reporting-timezone (ISO weekday, hour of day) for an absolute instant.
+fn weekday_hour_of_ms(timezone: BucketTimezone, timestamp_ms: i64) -> Result<(u8, u8)> {
+    let local = match timezone {
+        BucketTimezone::Local => chrono::Local
+            .timestamp_millis_opt(timestamp_ms)
+            .single()
+            .map(|instant| instant.naive_local()),
+        BucketTimezone::Named(tz) => tz
+            .timestamp_millis_opt(timestamp_ms)
+            .single()
+            .map(|instant| instant.naive_local()),
+    }
+    .with_context(|| format!("invalid weekday-hour instant {timestamp_ms}"))?;
+    let weekday =
+        u8::try_from(local.weekday().number_from_monday()).context("ISO weekday out of range")?;
+    let hour = u8::try_from(local.hour()).context("local hour out of range")?;
+    Ok((weekday, hour))
+}
+
+/// The heatmap covers exactly the placed hourly usage of the selected range:
+/// cells plus unplaced-for-hourly must conserve the selected-range summary.
+fn require_weekday_hour_conservation(
+    summary: &UsageReportSummary,
+    days: &[&UsageSnapshotDay],
+    cells: &[UsageReportWeekdayHourCell],
+) -> Result<()> {
+    let mut totals = RollupTotals::default();
+    for cell in cells {
+        add_rollup_totals(
+            &mut totals,
+            &RollupTotals {
+                tokens: cell.tokens,
+                cost: cell.cost,
+                messages: cell.messages,
+            },
+            "weekday-hour conservation",
+        )?;
+    }
+    for day in days {
+        add_snapshot_totals(
+            &mut totals,
+            &day.unplaced_for_hourly,
+            "weekday-hour unplaced conservation",
+        )?;
+    }
+    if totals.tokens != summary.total_tokens
+        || totals.messages != summary.messages
+        || !cost_matches(totals.cost, summary.total_cost)
+    {
+        bail!("weekday-hour cells plus unplaced usage do not conserve the selected-range summary");
+    }
+    Ok(())
 }
 
 fn hour_bucket_totals(
@@ -1265,8 +1372,9 @@ mod tests {
     use tokens_core::BucketTimezone;
 
     use crate::commands::usage_snapshot::{
-        UsageSnapshot, UsageSnapshotClient, UsageSnapshotProject, UsageSnapshotProjectModel,
-        UsageSnapshotTokenBreakdown, UsageSnapshotTotals, SNAPSHOT_SCHEMA_VERSION,
+        UsageSnapshot, UsageSnapshotClient, UsageSnapshotHour, UsageSnapshotProject,
+        UsageSnapshotProjectModel, UsageSnapshotTokenBreakdown, UsageSnapshotTotals,
+        SNAPSHOT_SCHEMA_VERSION,
     };
 
     fn date(value: &str) -> NaiveDate {
@@ -1730,8 +1838,18 @@ mod tests {
     }
 
     fn approved_custom_snapshot() -> UsageSnapshot {
+        // One placed hour per day, matching the prototype fixture grid
+        // (weekday 1..5 at hours 9..13) so weekdayHour conserves the summary.
+        const HOUR_START_MS: [i64; 5] = [
+            1_780_329_600_000, // 2026-06-01 09:00 PDT
+            1_780_419_600_000, // 2026-06-02 10:00 PDT
+            1_780_509_600_000, // 2026-06-03 11:00 PDT
+            1_780_599_600_000, // 2026-06-04 12:00 PDT
+            1_780_689_600_000, // 2026-06-05 13:00 PDT
+        ];
         let days = (1..=5)
             .map(|day| {
+                let index = (day - 1) as usize;
                 let tokens = 100_000 + i64::from(day - 1) * 10_000;
                 let totals = UsageSnapshotTotals {
                     tokens,
@@ -1745,6 +1863,7 @@ mod tests {
                     cache_write: tokens * 5 / 100,
                     reasoning: tokens * 10 / 100,
                 };
+                let start_ms = HOUR_START_MS[index];
                 UsageSnapshotDay {
                     date: format!("2026-06-{day:02}"),
                     totals: totals.clone(),
@@ -1767,8 +1886,12 @@ mod tests {
                             totals: totals.clone(),
                         }],
                     }],
-                    hours: vec![],
-                    unplaced_for_hourly: totals,
+                    hours: vec![UsageSnapshotHour {
+                        start_ms,
+                        end_ms: start_ms + 3_600_000,
+                        totals: totals.clone(),
+                    }],
+                    unplaced_for_hourly: UsageSnapshotTotals::default(),
                 }
             })
             .collect();
@@ -2139,5 +2262,110 @@ mod tests {
         assert_eq!(report.summary.messages, 263);
         assert!((report.summary.total_cost - 14.12).abs() <= 1e-12);
         assert_eq!(report.time_series.unplaced, UsageReportTotals::default());
+    }
+
+    fn weekday_hour_cell(
+        report: &UsageReportV3,
+        weekday: u8,
+        hour: u8,
+    ) -> &UsageReportWeekdayHourCell {
+        report
+            .weekday_hour
+            .iter()
+            .find(|cell| cell.weekday == weekday && cell.hour == hour)
+            .expect("grid covers every weekday × hour cell")
+    }
+
+    #[test]
+    fn weekday_hour_grid_is_full_ordered_and_zero_filled() {
+        let report = build_usage_report(
+            &approved_snapshot(),
+            &custom("2026-08-03", "2026-08-04"),
+            now("2026-08-04T01:30:00-07:00"),
+            snapshot_scan_info(),
+        )
+        .unwrap();
+
+        assert_eq!(report.weekday_hour.len(), 7 * 24);
+        for (index, cell) in report.weekday_hour.iter().enumerate() {
+            let expected_weekday = u8::try_from(index / 24).unwrap() + 1;
+            let expected_hour = u8::try_from(index % 24).unwrap();
+            assert_eq!((cell.weekday, cell.hour), (expected_weekday, expected_hour));
+        }
+
+        // 2026-08-03 is a Monday with placed hours 14:00–23:00 (LA).
+        assert_eq!(weekday_hour_cell(&report, 1, 14).tokens, 40_000);
+        assert_eq!(weekday_hour_cell(&report, 1, 21).cost, 1.2000000000000002);
+        assert_eq!(weekday_hour_cell(&report, 1, 23).messages, 19);
+        // 2026-08-04 is a Tuesday with placed hours 00:00 and 01:00.
+        assert_eq!(weekday_hour_cell(&report, 2, 0).tokens, 120_000);
+        assert_eq!(weekday_hour_cell(&report, 2, 1).cost, 2.62);
+        // Empty combinations stay explicit zero cells.
+        assert_eq!(
+            weekday_hour_cell(&report, 7, 12),
+            &UsageReportWeekdayHourCell {
+                weekday: 7,
+                hour: 12,
+                ..UsageReportWeekdayHourCell::default()
+            }
+        );
+    }
+
+    #[test]
+    fn weekday_hour_grid_respects_the_selected_range() {
+        let report = build_usage_report(
+            &approved_snapshot(),
+            &preset(UsagePeriod::Today),
+            now("2026-08-04T01:30:00-07:00"),
+            snapshot_scan_info(),
+        )
+        .unwrap();
+
+        // Today (2026-08-04) is Tuesday-only: Monday cells are zero …
+        assert!(report
+            .weekday_hour
+            .iter()
+            .filter(|cell| cell.weekday == 1)
+            .all(|cell| cell.tokens == 0 && cell.cost == 0.0 && cell.messages == 0));
+        // … and Tuesday carries only its placed hours (unplaced stays out).
+        assert_eq!(weekday_hour_cell(&report, 2, 0).tokens, 120_000);
+        assert_eq!(weekday_hour_cell(&report, 2, 1).tokens, 180_000);
+        assert!(report
+            .weekday_hour
+            .iter()
+            .filter(|cell| cell.weekday == 2 && cell.hour >= 2)
+            .all(|cell| cell.tokens == 0));
+    }
+
+    #[test]
+    fn weekday_hour_cells_plus_unplaced_conserve_the_summary() {
+        let report = build_usage_report(
+            &approved_snapshot(),
+            &preset(UsagePeriod::Today),
+            now("2026-08-04T01:30:00-07:00"),
+            snapshot_scan_info(),
+        )
+        .unwrap();
+
+        let placed_tokens: i64 = report.weekday_hour.iter().map(|cell| cell.tokens).sum();
+        let placed_cost: f64 = report.weekday_hour.iter().map(|cell| cell.cost).sum();
+        let placed_messages: i32 = report.weekday_hour.iter().map(|cell| cell.messages).sum();
+        assert_eq!(
+            placed_tokens + report.time_series.unplaced.tokens,
+            report.summary.total_tokens
+        );
+        assert!(
+            cost_matches(
+                placed_cost + report.time_series.unplaced.cost,
+                report.summary.total_cost
+            ),
+            "weekday-hour cost conservation failed: placed={placed_cost} unplaced={} summary={}",
+            report.time_series.unplaced.cost,
+            report.summary.total_cost
+        );
+        assert_eq!(
+            placed_messages + report.time_series.unplaced.messages,
+            report.summary.messages
+        );
     }
 }

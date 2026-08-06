@@ -19,6 +19,14 @@ final class ReportV3Tests: XCTestCase {
         XCTAssertEqual(report.timeSeries.buckets.last?.active, true)
         XCTAssertEqual(report.timeSeries.unplaced.tokens, 12_000)
         XCTAssertEqual(report.timeSeries.unplaced.cost, 0.18, accuracy: 0.000_001)
+
+        // Weekday × hour grid: 2026-08-04 is a Tuesday with two placed hours.
+        XCTAssertEqual(report.weekdayHour?.count, 168)
+        let tuesdayZero = report.weekdayHour?.first { $0.weekday == 2 && $0.hour == 0 }
+        XCTAssertEqual(tuesdayZero?.tokens, 120_000)
+        XCTAssertEqual(tuesdayZero?.cost ?? -1, 1.82, accuracy: 0.000_001)
+        let placedTokens = report.weekdayHour?.reduce(Int64(0)) { $0 + $1.tokens } ?? -1
+        XCTAssertEqual(placedTokens + report.timeSeries.unplaced.tokens, report.summary.totalTokens)
     }
 
     func testDecodesApprovedNaturalWeekAndCustomFixtures() throws {
@@ -36,6 +44,19 @@ final class ReportV3Tests: XCTestCase {
         XCTAssertEqual(custom.timeSeries.granularity, .day)
         XCTAssertEqual(custom.timeSeries.buckets.count, 5)
         XCTAssertTrue(custom.timeSeries.buckets.allSatisfy { !$0.contextOnly })
+        // Custom fixture weekdayHour conserves the summary (same filled totals as 30d).
+        XCTAssertEqual(custom.weekdayHour?.count, 168)
+        let customPlacedTokens = custom.weekdayHour?.reduce(Int64(0)) { $0 + $1.tokens } ?? -1
+        XCTAssertEqual(
+            customPlacedTokens + custom.timeSeries.unplaced.tokens,
+            custom.summary.totalTokens
+        )
+        XCTAssertEqual(thirtyDays.weekdayHour?.count, 168)
+        let thirtyPlacedTokens = thirtyDays.weekdayHour?.reduce(Int64(0)) { $0 + $1.tokens } ?? -1
+        XCTAssertEqual(
+            thirtyPlacedTokens + thirtyDays.timeSeries.unplaced.tokens,
+            thirtyDays.summary.totalTokens
+        )
     }
 
     func testSelectedRollupExcludesContextAndIncludesUnplaced() throws {
