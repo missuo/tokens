@@ -57,5 +57,5 @@ Usage included in a time range whose date is known but whose timestamp is not tr
 _Avoid_: Unknown usage, missing usage
 
 **Weekday × hour heatmap**:
-A 7 × 24 grid that aggregates cost (and token/message totals) by ISO weekday and reporting-timezone hour of day over the time range, zero-filled for empty cells; unplaced usage is excluded. Shown on the Advanced page.
+A 7 × 24 grid that aggregates cost (and token/message totals) by ISO weekday and reporting-timezone hour of day over the time range, zero-filled for empty cells; unplaced usage is excluded. Shown on the Advanced page, which always charts its own fixed trailing-30-day report independent of the dashboard selection and falls back to the dashboard report until that report is ready.
 _Avoid_: Activity matrix, time-of-day chart

@@ -930,7 +930,7 @@ public struct MenuPanelView: View {
                     VStack(alignment: .leading, spacing: MenuBarLayout.sectionSpacing) {
                         AdvancedHeatmapSection(
                             report: report,
-                            windowLabel: report == store.advancedReport ? "LAST 30 DAYS" : nil
+                            timeRangeLabel: report == store.advancedReport ? "LAST 30 DAYS" : nil
                         )
                     }
                     .padding(.horizontal, MenuBarLayout.horizontalPadding)
@@ -946,12 +946,15 @@ public struct MenuPanelView: View {
                         }
                     )
                 }
-                .opacity(store.isShowingStaleReport ? 0.55 : 1)
+                .opacity(store.advancedReport == nil && store.isShowingStaleReport ? 0.55 : 1)
                 .frame(height: bodyViewportHeight, alignment: .top)
                 .clipped()
 
                 measuredChrome {
-                    footer(report)
+                    footer(report) {
+                        store.manualRefresh()
+                        store.loadAdvancedReport()
+                    }
                         .padding(.horizontal, MenuBarLayout.horizontalPadding)
                         .padding(.top, 4)
                         .padding(.bottom, 14)
@@ -1005,7 +1008,7 @@ public struct MenuPanelView: View {
 
     // MARK: - Footer
 
-    private func footer(_ report: UsageReport) -> some View {
+    private func footer(_ report: UsageReport, onRefresh: (() -> Void)? = nil) -> some View {
         HStack(spacing: 10) {
             Text(
                 "UPDATED \(Formatting.relativeTime(fromISO8601: report.generatedAt).uppercased())"
@@ -1018,7 +1021,11 @@ public struct MenuPanelView: View {
             .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
 
             footerButton("REFRESH", disabled: store.isLoading) {
-                store.manualRefresh()
+                if let onRefresh {
+                    onRefresh()
+                } else {
+                    store.manualRefresh()
+                }
             }
             footerButton("SETTINGS") {
                 store.showSettings = true

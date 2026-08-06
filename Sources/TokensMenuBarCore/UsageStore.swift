@@ -108,7 +108,7 @@ public final class UsageStore: ObservableObject {
         startRefresh(policy: .refresh, showSpinner: true)
     }
 
-    /// Fixed window the Advanced page heatmap always charts.
+    /// Fixed trailing-30d time range the Advanced page heatmap always charts.
     public static let advancedSelection: UsageSelection = .preset(.days30)
 
     /// Load (or reload) the Advanced page's trailing-30d report. Reuses the
