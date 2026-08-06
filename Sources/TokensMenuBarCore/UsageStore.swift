@@ -12,6 +12,10 @@ public final class UsageStore: ObservableObject {
     ) throws -> UsageReport
 
     @Published public private(set) var report: UsageReport?
+    /// Trailing-30d report powering the Advanced page heatmap. Weekday × hour
+    /// patterns are meaningless over the dashboard's default Today range, so
+    /// the Advanced page always aggregates its own fixed trailing-30d time range.
+    @Published public private(set) var advancedReport: UsageReport?
     @Published public private(set) var isLoading = false
     @Published public private(set) var lastError: String?
     @Published public private(set) var binaryPath: String?
@@ -32,6 +36,8 @@ public final class UsageStore: ObservableObject {
     /// Monotonic token so only the latest refresh may clear loading / write report.
     private var refreshGeneration = 0
     private var refreshTask: Task<Void, Never>?
+    /// Monotonic token so only the latest Advanced fetch may write `advancedReport`.
+    private var advancedGeneration = 0
 
     public init(
         settings: AppSettings? = nil,
@@ -100,6 +106,30 @@ public final class UsageStore: ObservableObject {
 
     public func manualRefresh() {
         startRefresh(policy: .refresh, showSpinner: true)
+    }
+
+    /// Fixed trailing-30d time range the Advanced page heatmap always charts.
+    public static let advancedSelection: UsageSelection = .preset(.days30)
+
+    /// Load (or reload) the Advanced page's trailing-30d report. Reuses the
+    /// same-day facts snapshot, so this is cheap; failures keep the previous
+    /// report and the page falls back to the dashboard report.
+    public func loadAdvancedReport() {
+        advancedGeneration += 1
+        let generation = advancedGeneration
+        resolveBinary()
+        guard let binaryPath = binaryPath, !binaryMissing else { return }
+        let fetcher = reportFetcher
+        let selection = UsageStore.advancedSelection
+        Task.detached(priority: .userInitiated) { [weak self] in
+            guard let report = try? fetcher(selection, .snapshot, binaryPath),
+                  report.selection == selection
+            else { return }
+            await MainActor.run { [weak self] in
+                guard let self, self.advancedGeneration == generation else { return }
+                self.advancedReport = report
+            }
+        }
     }
 
     public func fullRescan() {
