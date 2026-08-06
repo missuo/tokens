@@ -243,9 +243,9 @@
     {
       "weekday": 1,
       "hour": 9,
-      "tokens": 0,
-      "cost": 0.0,
-      "messages": 0
+      "tokens": 100000,
+      "cost": 1.25,
+      "messages": 40
     },
     {
       "weekday": 1,
@@ -418,9 +418,9 @@
     {
       "weekday": 2,
       "hour": 10,
-      "tokens": 0,
-      "cost": 0.0,
-      "messages": 0
+      "tokens": 110000,
+      "cost": 1.5,
+      "messages": 41
     },
     {
       "weekday": 2,
@@ -593,9 +593,9 @@
     {
       "weekday": 3,
       "hour": 11,
-      "tokens": 0,
-      "cost": 0.0,
-      "messages": 0
+      "tokens": 120000,
+      "cost": 1.75,
+      "messages": 42
     },
     {
       "weekday": 3,
@@ -768,9 +768,9 @@
     {
       "weekday": 4,
       "hour": 12,
-      "tokens": 0,
-      "cost": 0.0,
-      "messages": 0
+      "tokens": 130000,
+      "cost": 2.0,
+      "messages": 43
     },
     {
       "weekday": 4,
@@ -943,9 +943,9 @@
     {
       "weekday": 5,
       "hour": 13,
-      "tokens": 0,
-      "cost": 0.0,
-      "messages": 0
+      "tokens": 140000,
+      "cost": 2.25,
+      "messages": 44
     },
     {
       "weekday": 5,

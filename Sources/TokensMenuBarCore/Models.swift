@@ -462,7 +462,6 @@ public struct UsageTimeSeries: Codable, Equatable {
 
 /// One cell of the weekday × hour heatmap: usage placed at this ISO weekday
 /// and reporting-timezone hour of day across the selected range.
-/// Nil on reports from older CLIs that predate the heatmap contract field.
 public struct UsageWeekdayHourCell: Codable, Equatable, Identifiable {
     public var id: String { "\(weekday)-\(hour)" }
     /// ISO-8601 weekday in the reporting timezone: 1 = Monday … 7 = Sunday.

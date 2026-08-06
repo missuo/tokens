@@ -513,7 +513,9 @@ fn sample_reports() -> Vec<(&'static str, UsageReportV3)> {
                 Granularity::Day,
                 custom_day_buckets(),
                 5,
-                zero_weekday_hour_grid(),
+                // Same filled totals as the 30d sample so cells + unplaced
+                // conserve the fixture summary (600000 / $8.75 / 210).
+                thirty_day_weekday_hour_grid(),
             ),
         ),
     ]

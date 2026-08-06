@@ -42,12 +42,19 @@ final class HeatmapTests: XCTestCase {
         XCTAssertNil(HeatmapMath.peak(in: [makeCell(1, 0), makeCell(7, 23)]))
     }
 
-    func testPeakTieResolvesToEarliestWeekdayHour() {
-        let cells = [makeCell(4, 10, tokens: 10, cost: 2.0), makeCell(2, 21, tokens: 10, cost: 2.0)]
+    func testPeakTieBreaksByHigherTokensThenGridOrder() {
+        // Equal cost + equal tokens → first maximum in array/grid order wins.
+        let equal = [makeCell(4, 10, tokens: 10, cost: 2.0), makeCell(2, 21, tokens: 10, cost: 2.0)]
+        let equalPeak = HeatmapMath.peak(in: equal)
+        XCTAssertEqual(equalPeak?.weekday, 4)
+        XCTAssertEqual(equalPeak?.hour, 10)
 
-        let peak = HeatmapMath.peak(in: cells)
-        XCTAssertEqual(peak?.weekday, 4)
-        XCTAssertEqual(peak?.hour, 10)
+        // Equal cost + higher tokens → the higher-token cell wins even if later.
+        let tokens = [makeCell(4, 10, tokens: 10, cost: 2.0), makeCell(2, 21, tokens: 20, cost: 2.0)]
+        let tokensPeak = HeatmapMath.peak(in: tokens)
+        XCTAssertEqual(tokensPeak?.weekday, 2)
+        XCTAssertEqual(tokensPeak?.hour, 21)
+        XCTAssertEqual(tokensPeak?.tokens, 20)
     }
 
     func testIntensityIsSquareRootScaledAndZeroSafe() {

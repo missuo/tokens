@@ -44,10 +44,19 @@ final class ReportV3Tests: XCTestCase {
         XCTAssertEqual(custom.timeSeries.granularity, .day)
         XCTAssertEqual(custom.timeSeries.buckets.count, 5)
         XCTAssertTrue(custom.timeSeries.buckets.allSatisfy { !$0.contextOnly })
-        // The custom fixture has no hourly facts: the grid is all zero cells.
+        // Custom fixture weekdayHour conserves the summary (same filled totals as 30d).
         XCTAssertEqual(custom.weekdayHour?.count, 168)
-        XCTAssertTrue(custom.weekdayHour?.allSatisfy { $0.tokens == 0 && $0.cost == 0 } ?? false)
+        let customPlacedTokens = custom.weekdayHour?.reduce(Int64(0)) { $0 + $1.tokens } ?? -1
+        XCTAssertEqual(
+            customPlacedTokens + custom.timeSeries.unplaced.tokens,
+            custom.summary.totalTokens
+        )
         XCTAssertEqual(thirtyDays.weekdayHour?.count, 168)
+        let thirtyPlacedTokens = thirtyDays.weekdayHour?.reduce(Int64(0)) { $0 + $1.tokens } ?? -1
+        XCTAssertEqual(
+            thirtyPlacedTokens + thirtyDays.timeSeries.unplaced.tokens,
+            thirtyDays.summary.totalTokens
+        )
     }
 
     func testSelectedRollupExcludesContextAndIncludesUnplaced() throws {

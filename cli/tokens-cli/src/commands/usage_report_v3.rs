@@ -1372,8 +1372,9 @@ mod tests {
     use tokens_core::BucketTimezone;
 
     use crate::commands::usage_snapshot::{
-        UsageSnapshot, UsageSnapshotClient, UsageSnapshotProject, UsageSnapshotProjectModel,
-        UsageSnapshotTokenBreakdown, UsageSnapshotTotals, SNAPSHOT_SCHEMA_VERSION,
+        UsageSnapshot, UsageSnapshotClient, UsageSnapshotHour, UsageSnapshotProject,
+        UsageSnapshotProjectModel, UsageSnapshotTokenBreakdown, UsageSnapshotTotals,
+        SNAPSHOT_SCHEMA_VERSION,
     };
 
     fn date(value: &str) -> NaiveDate {
@@ -1837,8 +1838,18 @@ mod tests {
     }
 
     fn approved_custom_snapshot() -> UsageSnapshot {
+        // One placed hour per day, matching the prototype fixture grid
+        // (weekday 1..5 at hours 9..13) so weekdayHour conserves the summary.
+        const HOUR_START_MS: [i64; 5] = [
+            1_780_329_600_000, // 2026-06-01 09:00 PDT
+            1_780_419_600_000, // 2026-06-02 10:00 PDT
+            1_780_509_600_000, // 2026-06-03 11:00 PDT
+            1_780_599_600_000, // 2026-06-04 12:00 PDT
+            1_780_689_600_000, // 2026-06-05 13:00 PDT
+        ];
         let days = (1..=5)
             .map(|day| {
+                let index = (day - 1) as usize;
                 let tokens = 100_000 + i64::from(day - 1) * 10_000;
                 let totals = UsageSnapshotTotals {
                     tokens,
@@ -1852,6 +1863,7 @@ mod tests {
                     cache_write: tokens * 5 / 100,
                     reasoning: tokens * 10 / 100,
                 };
+                let start_ms = HOUR_START_MS[index];
                 UsageSnapshotDay {
                     date: format!("2026-06-{day:02}"),
                     totals: totals.clone(),
@@ -1874,8 +1886,12 @@ mod tests {
                             totals: totals.clone(),
                         }],
                     }],
-                    hours: vec![],
-                    unplaced_for_hourly: totals,
+                    hours: vec![UsageSnapshotHour {
+                        start_ms,
+                        end_ms: start_ms + 3_600_000,
+                        totals: totals.clone(),
+                    }],
+                    unplaced_for_hourly: UsageSnapshotTotals::default(),
                 }
             })
             .collect();
@@ -2332,10 +2348,20 @@ mod tests {
         .unwrap();
 
         let placed_tokens: i64 = report.weekday_hour.iter().map(|cell| cell.tokens).sum();
+        let placed_cost: f64 = report.weekday_hour.iter().map(|cell| cell.cost).sum();
         let placed_messages: i32 = report.weekday_hour.iter().map(|cell| cell.messages).sum();
         assert_eq!(
             placed_tokens + report.time_series.unplaced.tokens,
             report.summary.total_tokens
+        );
+        assert!(
+            cost_matches(
+                placed_cost + report.time_series.unplaced.cost,
+                report.summary.total_cost
+            ),
+            "weekday-hour cost conservation failed: placed={placed_cost} unplaced={} summary={}",
+            report.time_series.unplaced.cost,
+            report.summary.total_cost
         );
         assert_eq!(
             placed_messages + report.time_series.unplaced.messages,

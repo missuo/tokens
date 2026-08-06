@@ -18,8 +18,9 @@ public enum HeatmapMath {
     }
 
     /// Peak cell by cost — the answer to "which evening burns the most".
-    /// Nil when the grid is empty or every cell is zero. First maximum wins
-    /// so ties resolve deterministically to the earliest weekday/hour.
+    /// Nil when the grid is empty or every cell is zero. Equal cost breaks
+    /// by higher tokens; otherwise the first maximum in grid order wins.
+    /// That is deterministic for the weekday-major ordered grid the CLI emits.
     public static func peak(in cells: [UsageWeekdayHourCell]) -> UsageWeekdayHourCell? {
         var best: UsageWeekdayHourCell?
         for cell in cells where cell.cost > 0 {
