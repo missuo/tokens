@@ -891,44 +891,32 @@ public struct MenuPanelView: View {
 
     // MARK: - Advanced page
 
-    /// Last section of the dashboard: entry row that slides to the Advanced page.
+    /// Last section of the dashboard: the ADVANCED section title doubles as
+    /// the entry row — the trailing arrow slides to the Advanced page. No
+    /// preview of the page contents; the page speaks for itself.
     private var advancedEntrySection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            sectionLabel("ADVANCED")
-            Button {
-                switchToPage(.advanced)
-            } label: {
-                HStack(alignment: .center, spacing: 12) {
-                    Text("WEEKDAY × HOUR HEATMAP")
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
-                        .tracking(0.4)
-                        .foregroundStyle(.primary)
-                    Spacer(minLength: 8)
-                    Image(systemName: "arrow.right")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    RoundedRectangle(cornerRadius: 4)
-                        .fill(Color.primary.opacity(0.04))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 4)
-                        .strokeBorder(Color.primary.opacity(0.18), lineWidth: 1)
-                )
-                .contentShape(Rectangle())
+        Button {
+            switchToPage(.advanced)
+        } label: {
+            HStack(alignment: .center, spacing: 8) {
+                sectionLabel("ADVANCED")
+                Spacer(minLength: 8)
+                Image(systemName: "arrow.right")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.secondary)
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Open Advanced page")
-            .accessibilityHint("Slides to the weekday by hour cost heatmap")
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Open Advanced page")
+        .accessibilityHint("Slides to the weekday by hour cost heatmap")
     }
 
     @ViewBuilder
     private var advancedPage: some View {
+        // The heatmap charts the trailing-30d report once loaded; until then
+        // fall back to the dashboard report so the page is never empty.
+        let pageReport = store.advancedReport ?? store.report
         VStack(alignment: .leading, spacing: 0) {
             measuredChrome {
                 advancedHeader
@@ -937,10 +925,13 @@ public struct MenuPanelView: View {
                     .padding(.bottom, 6)
             }
 
-            if let report = store.report {
+            if let report = pageReport {
                 ScrollView(.vertical, showsIndicators: false) {
                     VStack(alignment: .leading, spacing: MenuBarLayout.sectionSpacing) {
-                        AdvancedHeatmapSection(report: report)
+                        AdvancedHeatmapSection(
+                            report: report,
+                            windowLabel: report == store.advancedReport ? "LAST 30 DAYS" : nil
+                        )
                     }
                     .padding(.horizontal, MenuBarLayout.horizontalPadding)
                     .padding(.top, 18)
@@ -976,6 +967,7 @@ public struct MenuPanelView: View {
                 }
             }
         }
+        .onAppear { store.loadAdvancedReport() }
     }
 
     /// Back arrow (top-left) + page label.
