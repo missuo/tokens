@@ -84,6 +84,13 @@ public struct MenuPanelView: View {
         }
         .frame(width: MenuBarLayout.panelWidth)
         .frame(maxHeight: panelMaxHeight)
+        // A tap anywhere outside the picker (empty areas, list rows) applies
+        // the draft range; buttons and the picker itself consume their own taps.
+        .onTapGesture {
+            if showCustomEditor {
+                dismissCustomEditor(committing: true, restoreFocus: false)
+            }
+        }
         .onPreferenceChange(ChromeHeightPreferenceKey.self) { height in
             if abs(height - chromeHeight) > 0.5 {
                 chromeHeight = height
@@ -97,9 +104,10 @@ public struct MenuPanelView: View {
             syncBodyHeightAndPublish()
         }
         .onAppear { syncBodyHeightAndPublish() }
-        .onDisappear { closeCustomEditor(restoreFocus: false) }
+        // Popover dismissed while the editor is open = user is done picking.
+        .onDisappear { dismissCustomEditor(committing: true, restoreFocus: false) }
         .onChange(of: layout.presentationGeneration) { _ in
-            closeCustomEditor(restoreFocus: false)
+            dismissCustomEditor(committing: false, restoreFocus: false)
             // Each popover open starts on the dashboard page.
             page = .main
             isPagingBetweenPages = false
@@ -269,7 +277,7 @@ public struct MenuPanelView: View {
             ForEach(UsagePeriod.allCases) { period in
                 let selected = store.selection == .preset(period)
                 Button {
-                    closeCustomEditor(restoreFocus: false)
+                    dismissCustomEditor(committing: false, restoreFocus: false)
                     store.setPeriod(period)
                 } label: {
                     Text(period.monoTitle)
@@ -359,66 +367,25 @@ public struct MenuPanelView: View {
     }
 
     private var customRangeEditor: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("CUSTOM RANGE")
-                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                    .tracking(0.8)
-                Spacer()
-                Button("Cancel") { closeCustomEditor(restoreFocus: true) }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 10, design: .monospaced))
-            }
-
-            AppKitDateRangePicker(
-                selection: $draftCustomRange,
-                requestFocus: $requestDatePickerFocus,
-                timeZone: reportingTimeZone,
-                locale: .current,
-                maximumDate: DateRangePickerConversion.maximumDate(
-                    timeZone: reportingTimeZone
-                ) ?? Date()
-            )
-            .frame(width: 300, height: 210)
-
-            HStack {
-                Text(
-                    Formatting.compactDateRange(
-                        draftCustomRange,
-                        timeZone: reportingTimeZone
-                    )
-                )
-                .font(.system(size: 10, design: .monospaced))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                Spacer()
-                Button("APPLY RANGE") {
-                    store.setCustomRange(draftCustomRange)
-                    closeCustomEditor(restoreFocus: true)
-                }
-                .buttonStyle(.plain)
-                .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                .disabled(!draftCustomRange.isOrdered)
-            }
-        }
-        .padding(12)
-        .frame(width: 324)
-        .background(
-            RoundedRectangle(cornerRadius: 6)
-                .fill(Color(nsColor: .windowBackgroundColor))
-                .shadow(color: .black.opacity(0.24), radius: 10, y: 4)
+        // Bare picker, no wrapper chrome: range selection is a two-click cycle
+        // (start, end, then restart) and clicking outside the picker applies.
+        AppKitDateRangePicker(
+            selection: $draftCustomRange,
+            requestFocus: $requestDatePickerFocus,
+            timeZone: reportingTimeZone,
+            locale: .current,
+            maximumDate: DateRangePickerConversion.maximumDate(
+                timeZone: reportingTimeZone
+            ) ?? Date()
         )
-        .overlay(
-            RoundedRectangle(cornerRadius: 6)
-                .strokeBorder(Color.primary.opacity(0.18), lineWidth: 1)
-        )
-        .onExitCommand { closeCustomEditor(restoreFocus: true) }
+        .fixedSize()
+        .onExitCommand { dismissCustomEditor(committing: true, restoreFocus: true) }
         .accessibilityElement(children: .contain)
     }
 
     private func openCustomEditor() {
         if showCustomEditor {
-            closeCustomEditor(restoreFocus: true)
+            dismissCustomEditor(committing: true, restoreFocus: true)
             return
         }
         switch store.selection {
@@ -442,11 +409,25 @@ public struct MenuPanelView: View {
         requestDatePickerFocus = true
     }
 
-    private func closeCustomEditor(restoreFocus: Bool) {
+    private func dismissCustomEditor(committing: Bool, restoreFocus: Bool) {
+        if committing {
+            commitCustomRangeDraft()
+        }
         showCustomEditor = false
         requestDatePickerFocus = false
         if restoreFocus {
             DispatchQueue.main.async { customTriggerFocused = true }
+        }
+    }
+
+    /// Apply the draft: a single day means that day 00:00–24:00, and picking
+    /// today alone jumps straight to the Today preset instead of a custom range.
+    private func commitCustomRangeDraft() {
+        guard draftCustomRange.isOrdered else { return }
+        if draftCustomRange == DateRangePickerConversion.today(timeZone: reportingTimeZone) {
+            store.setPeriod(.today)
+        } else {
+            store.setCustomRange(draftCustomRange)
         }
     }
 
