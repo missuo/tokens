@@ -244,7 +244,18 @@ jobs:
           PRERELEASE=""
           case "${{ inputs.version }}" in *-*) PRERELEASE="--prerelease" ;; esac
 
+          # Tag the commit this release was actually built from. Without
+          # --target, `gh release create` creates the tag on the repository's
+          # DEFAULT branch, which is only correct while releases are cut from
+          # main. Releasing from any other branch would otherwise tag a tree
+          # whose Cargo.toml still carries the previous version, and the
+          # tarballs would describe a commit that does not contain them.
+          # HEAD here is the version-bump commit pushed by the step above.
+          TARGET="$(git rev-parse HEAD)"
+          echo "tagging v${{ inputs.version }} at ${TARGET} (${{ github.ref_name }})"
+
           gh release create "v${{ inputs.version }}" \
+            --target "$TARGET" \
             --title "v${{ inputs.version }}" \
             --generate-notes \
             $PRERELEASE \
