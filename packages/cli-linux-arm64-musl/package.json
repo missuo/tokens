@@ -1,6 +1,6 @@
 {
   "name": "tokens-cli-linux-arm64-musl",
-  "version": "27.0.1",
+  "version": "27.0.2",
   "description": "tokens CLI binary for linux arm64 musl",
   "license": "MIT",
   "type": "module",

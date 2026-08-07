@@ -1774,7 +1774,7 @@ dependencies = [
 
 [[package]]
 name = "tokens-cli"
-version = "27.0.1"
+version = "27.0.2"
 dependencies = [
  "aes",
  "anyhow",
@@ -1805,7 +1805,7 @@ dependencies = [
 
 [[package]]
 name = "tokens-core"
-version = "27.0.1"
+version = "27.0.2"
 dependencies = [
  "bincode",
  "chrono",

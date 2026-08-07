@@ -1,6 +1,6 @@
 {
   "name": "tokens-cli-win32-arm64-msvc",
-  "version": "27.0.1",
+  "version": "27.0.2",
   "description": "tokens CLI binary for win32 arm64 msvc",
   "license": "MIT",
   "type": "module",
