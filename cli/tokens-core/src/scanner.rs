@@ -383,6 +383,9 @@ pub fn scan_directory(root: &str, pattern: &str) -> Vec<PathBuf> {
                 "updates.jsonl" => file_name == "updates.jsonl",
                 "events.jsonl" => file_name == "events.jsonl",
                 "ui_messages.json" => file_name == "ui_messages.json",
+                // Cline CLI transcripts are `<id>.messages.json`; the suffix
+                // cannot collide with the VS Code `ui_messages.json` format.
+                "cline-cli-messages" => file_name.ends_with(".messages.json"),
                 "session-usage.json" => file_name == "session-usage.json",
                 "chat-messages.json" => file_name == "chat-messages.json",
                 "workbuddy.db" => file_name == "workbuddy.db",
@@ -860,6 +863,36 @@ fn cline_additional_vscode_task_roots(home_dir: &str, use_env_roots: bool) -> Ve
     );
 
     roots
+}
+
+/// Session roots for the Cline CLI / desktop runtime
+/// (`~/.cline/data/sessions/<id>/<id>.messages.json`). Env overrides are
+/// honoured in priority order so CI or non-standard installs can relocate the
+/// data dir without symlinks.
+fn cline_cli_session_roots(home_dir: &str, use_env_roots: bool) -> Vec<PathBuf> {
+    let home_fallback = || PathBuf::from(home_dir).join(".cline/data/sessions");
+
+    if !use_env_roots {
+        return vec![home_fallback()];
+    }
+
+    let non_blank_env_path = |name: &str| {
+        std::env::var_os(name)
+            .filter(|value| !value.to_string_lossy().trim().is_empty())
+            .map(PathBuf::from)
+    };
+
+    if let Some(path) = non_blank_env_path("CLINE_SESSION_DATA_DIR") {
+        return vec![path];
+    }
+    if let Some(path) = non_blank_env_path("CLINE_DATA_DIR") {
+        return vec![path.join("sessions")];
+    }
+    if let Some(path) = non_blank_env_path("CLINE_DIR") {
+        return vec![path.join("data/sessions")];
+    }
+
+    vec![home_fallback()]
 }
 
 pub fn devin_desktop_additional_roots(home_dir: &str, use_env_roots: bool) -> Vec<PathBuf> {
@@ -1571,6 +1604,16 @@ fn scan_all_clients_with_env_strategy_inner(
         for root in cline_additional_vscode_task_roots(home_dir, use_env_roots) {
             push_unique_scan_task(&mut tasks, &mut seen_scan_roots, ClientId::Cline, root);
         }
+
+        for root in cline_cli_session_roots(home_dir, use_env_roots) {
+            push_unique_scan_task_with_pattern(
+                &mut tasks,
+                &mut seen_scan_roots,
+                ClientId::Cline,
+                root,
+                "cline-cli-messages",
+            );
+        }
     }
 
     if enabled.contains(&ClientId::DevinDesktop) {
@@ -1913,4 +1956,3 @@ fn scan_all_clients_with_env_strategy_inner(
 pub fn scan_all_clients(home_dir: &str, clients: &[String]) -> ScanResult {
     scan_all_clients_with_env_strategy(home_dir, clients, true)
 }
-

@@ -85,7 +85,7 @@ written sessions, it is counted.
 | [Qwen CLI](https://github.com/QwenLM/qwen-cli) | `~/.qwen/projects/` |
 | [Amp](https://ampcode.com/) | `~/.local/share/amp/threads/` |
 | [Droid](https://factory.ai/) | `~/.factory/sessions/` |
-| [Cline](https://github.com/cline/cline) | VS Code globalStorage tasks |
+| [Cline](https://github.com/cline/cline) | VS Code globalStorage tasks, or `~/.cline/data/sessions/` for the Cline CLI / desktop |
 | [Roo Code](https://github.com/RooCodeInc/Roo-Code) | VS Code globalStorage tasks |
 | [Kilo](https://github.com/Kilo-Org/kilocode) | VS Code globalStorage tasks |
 | [Kilo CLI](https://github.com/nicepkg/kilo) | `~/.local/share/kilo/kilo.db` |

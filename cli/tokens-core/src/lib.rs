@@ -1548,13 +1548,23 @@ fn parse_all_messages_with_pricing_with_env_strategy(
                 path,
                 &source_cache,
                 pricing,
-                message_cache::SourceFingerprint::check_roo_path_samples_only,
+                message_cache::SourceFingerprint::check_cline_path_samples_only,
                 sessions::cline::parse_cline_file,
             )
         })
         .collect();
+    // CLI sessions fan out into per-subagent `<id>.messages.json` files that
+    // may share a sessionId with the parent transcript; drop dedup_key
+    // collisions across files so the same assistant message isn't counted
+    // twice when both files are scanned.
+    let mut cline_seen: HashSet<String> = HashSet::new();
     for outcome in cline_outcomes {
-        all_messages.extend(outcome.messages);
+        all_messages.extend(
+            outcome
+                .messages
+                .into_iter()
+                .filter(|message| should_keep_deduped_message(&mut cline_seen, message)),
+        );
         if let Some(entry) = outcome.cache_entry {
             source_cache.insert(entry);
         }
