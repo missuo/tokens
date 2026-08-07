@@ -10,6 +10,7 @@ import {
   usernameEqualsIgnoreCase,
 } from "@/lib/db/usernameLookup";
 import { buildSubmissionFreshness } from "@/lib/submissionFreshness";
+import { SOCIAL_VERIFIED_THRESHOLD } from "@/lib/socialVerification";
 
 const LEGACY_CLIENT_ALIASES: Record<string, string> = { kilocode: "kilo" };
 function normalizeClientId(id: string): string {
@@ -112,6 +113,7 @@ export async function getPublicProfileResponse(
         displayName: users.displayName,
         avatarUrl: users.avatarUrl,
         createdAt: users.createdAt,
+        socialLinks: users.socialLinks,
         bannedAt: users.bannedAt,
         banReason: users.banReason,
       })
@@ -613,6 +615,12 @@ export async function getPublicProfileResponse(
         avatarUrl: user.avatarUrl,
         createdAt: user.createdAt,
         rank: isPeriodFiltered ? null : rank ? Number(rank) : null,
+        // Same rule as the leaderboard's verifiedExpr(): two or more social
+        // links marks a profile verified. Exposed here so clients that only
+        // hit this endpoint (the iOS app) can show the badge too.
+        verified:
+          Array.isArray(user.socialLinks) &&
+          user.socialLinks.length >= SOCIAL_VERIFIED_THRESHOLD,
       },
       stats: {
         totalTokens: isPeriodFiltered
