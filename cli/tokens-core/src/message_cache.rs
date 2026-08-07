@@ -274,6 +274,35 @@ impl SourceFingerprint {
         Self::check_path_with_related_mode(path, related_paths, cached, mode)
     }
 
+    /// Fingerprint for either Cline layout. The CLI transcript is paired with
+    /// its sibling `<id>.json` manifest (provider/model/workspace can change
+    /// there independently of the messages file); the VS Code task log keeps
+    /// the existing `api_conversation_history.json` pairing.
+    pub(crate) fn check_cline_path_samples_only(
+        path: &Path,
+        cached: Option<&Self>,
+    ) -> Option<FingerprintStatus> {
+        let related_paths = if crate::sessions::cline::is_cline_cli_messages_path(path) {
+            std::iter::once((
+                "manifest.json".to_string(),
+                crate::sessions::cline::cline_cli_manifest_path(path),
+            ))
+            .collect::<Vec<_>>()
+        } else {
+            let history = path
+                .parent()
+                .unwrap_or_else(|| Path::new("."))
+                .join("api_conversation_history.json");
+            vec![("api_conversation_history.json".to_string(), history)]
+        };
+        Self::check_path_with_related_mode(
+            path,
+            related_paths,
+            cached,
+            ContentHashMode::SamplesOnly,
+        )
+    }
+
     pub(crate) fn check_claude_code_path_with_home_samples_only(
         path: &Path,
         cached: Option<&Self>,
@@ -1476,4 +1505,3 @@ pub(crate) fn codex_cache_entry_matches_fingerprint(
         && codex_incremental.ends_with_newline
         && codex_incremental.prefix_hash == fingerprint.content_hash
 }
-
