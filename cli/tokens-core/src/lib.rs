@@ -1902,6 +1902,29 @@ fn parse_all_messages_with_pricing_with_env_strategy(
         workbuddy_fallback_messages,
     ));
 
+    // Reasonix writes authoritative per-call usage to append-only daily JSONL,
+    // so cache by file (samples-only fingerprint catches appends) and rely on
+    // the parser's namespaced dedup key instead of a separate seen-set.
+    let reasonix_outcomes: Vec<CachedParseOutcome> = scan_result
+        .get(ClientId::Reasonix)
+        .par_iter()
+        .map(|path| {
+            load_or_parse_source(
+                message_cache::CacheIdentity::for_client(ClientId::Reasonix),
+                path,
+                &source_cache,
+                pricing,
+                sessions::reasonix::parse_reasonix_file,
+            )
+        })
+        .collect();
+    for outcome in reasonix_outcomes {
+        all_messages.extend(outcome.messages);
+        if let Some(entry) = outcome.cache_entry {
+            source_cache.insert(entry);
+        }
+    }
+
     if include_synthetic {
         if let Some(db_path) = &scan_result.synthetic_db {
             let outcome = load_or_parse_sqlite_source(
