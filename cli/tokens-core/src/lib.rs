@@ -1203,22 +1203,16 @@ fn parse_all_messages_with_pricing_with_env_strategy(
                 &source_cache,
                 pricing,
                 message_cache::SourceFingerprint::check_grok_path_samples_only,
-                sessions::grok::parse_grok_file,
+                sessions::grok::parse_grok_updates_file,
             )
         })
         .collect();
-    // Grok now exposes two layouts — legacy per-session `updates.jsonl` and the
-    // unified per-inference `logs/unified.jsonl`. Drop legacy activity rows that
-    // the unified log already covers so a partially migrated session is not
-    // double-counted, while keeping any older legacy rows the unified log omits.
-    let mut grok_messages: Vec<UnifiedMessage> = Vec::new();
     for outcome in grok_outcomes {
-        grok_messages.extend(outcome.messages);
+        all_messages.extend(outcome.messages);
         if let Some(entry) = outcome.cache_entry {
             source_cache.insert(entry);
         }
     }
-    all_messages.extend(sessions::grok::prefer_unified_log_messages(grok_messages));
 
     let jcode_outcomes: Vec<CachedParseOutcome> = scan_result
         .get(ClientId::Jcode)
