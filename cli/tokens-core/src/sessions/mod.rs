@@ -18,6 +18,7 @@ pub mod crush;
 pub mod cursor;
 pub mod devin;
 pub mod droid;
+pub mod fx;
 pub mod gemini;
 pub mod gjc;
 pub mod goose;

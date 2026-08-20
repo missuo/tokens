@@ -54,7 +54,7 @@ We are not asking anyone to run their own copy. This repo exists to be read.
 
 ## Supported clients
 
-All 40 are detected automatically — if it is installed and has
+All 41 are detected automatically — if it is installed and has
 written sessions, it is counted.
 
 |  |  |  |  |
@@ -62,7 +62,7 @@ written sessions, it is counted.
 | <img src=".github/assets/client-amp.png" width="16" height="16" alt="" /> Amp | <img src=".github/assets/client-antigravity.png" width="16" height="16" alt="" /> Antigravity | <img src=".github/assets/client-antigravity.png" width="16" height="16" alt="" /> Antigravity CLI | <img src=".github/assets/client-claude.jpg" width="16" height="16" alt="" /> Claude Code |
 | <img src=".github/assets/client-cline.png" width="16" height="16" alt="" /> Cline | <img src=".github/assets/client-codebuddy.png" width="16" height="16" alt="" /> CodeBuddy | <img src=".github/assets/client-codebuff.png" width="16" height="16" alt="" /> Codebuff | <img src=".github/assets/client-openai.jpg" width="16" height="16" alt="" /> Codex CLI |
 | <img src=".github/assets/client-commandcode.png" width="16" height="16" alt="" /> Command Code | <img src=".github/assets/client-copilot.jpg" width="16" height="16" alt="" /> Copilot | <img src=".github/assets/client-crush.png" width="16" height="16" alt="" /> Crush | <img src=".github/assets/client-cursor.jpg" width="16" height="16" alt="" /> Cursor |
-| <img src=".github/assets/client-devin.jpg" width="16" height="16" alt="" /> Devin CLI | <img src=".github/assets/client-devin.jpg" width="16" height="16" alt="" /> Devin Desktop | <img src=".github/assets/client-droid.png" width="16" height="16" alt="" /> Droid | <img src=".github/assets/client-generic.svg" width="16" height="16" alt="" /> Gajae Code |
+| <img src=".github/assets/client-devin.jpg" width="16" height="16" alt="" /> Devin CLI | <img src=".github/assets/client-devin.jpg" width="16" height="16" alt="" /> Devin Desktop | <img src=".github/assets/client-droid.png" width="16" height="16" alt="" /> Droid | <img src=".github/assets/client-fx.png" width="16" height="16" alt="" /> Fx | <img src=".github/assets/client-generic.svg" width="16" height="16" alt="" /> Gajae Code |
 | <img src=".github/assets/client-gemini.png" width="16" height="16" alt="" /> Gemini CLI | <img src=".github/assets/client-goose.png" width="16" height="16" alt="" /> Goose | <img src=".github/assets/client-grok.png" width="16" height="16" alt="" /> Grok Build | <img src=".github/assets/client-hermes.png" width="16" height="16" alt="" /> Hermes Agent |
 | <img src=".github/assets/client-jcode.png" width="16" height="16" alt="" /> Jcode | <img src=".github/assets/client-junie.png" width="16" height="16" alt="" /> Junie | <img src=".github/assets/client-kilocode.png" width="16" height="16" alt="" /> Kilo | <img src=".github/assets/client-generic.svg" width="16" height="16" alt="" /> Kilo CLI |
 | <img src=".github/assets/client-kimi.png" width="16" height="16" alt="" /> Kimi | <img src=".github/assets/client-kiro.jpg" width="16" height="16" alt="" /> Kiro | <img src=".github/assets/client-micode.jpg" width="16" height="16" alt="" /> MiMo Code | <img src=".github/assets/client-mux.png" width="16" height="16" alt="" /> Mux |
@@ -102,6 +102,7 @@ written sessions, it is counted.
 | [Codebuff](https://codebuff.com/) | `~/.config/manicode/` |
 | [Hermes](https://github.com/NousResearch/hermes-agent) | `$HERMES_HOME/state.db` |
 | [Synthetic](https://synthetic.new/) | Re-attributed via `hf:` model prefix or `synthetic` provider |
+| [Fx](https://github.com/vercel-labs/fx) | `~/.fx/sessions/<sessionId>/usage-v2.json` (per-session aggregates) |
 
 </details>
 

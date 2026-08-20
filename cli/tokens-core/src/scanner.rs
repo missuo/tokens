@@ -387,6 +387,7 @@ pub fn scan_directory(root: &str, pattern: &str) -> Vec<PathBuf> {
                 // cannot collide with the VS Code `ui_messages.json` format.
                 "cline-cli-messages" => file_name.ends_with(".messages.json"),
                 "session-usage.json" => file_name == "session-usage.json",
+                "usage-v2.json" => file_name == "usage-v2.json",
                 "chat-messages.json" => file_name == "chat-messages.json",
                 "workbuddy.db" => file_name == "workbuddy.db",
                 "sessions.db" => file_name == "sessions.db",

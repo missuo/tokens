@@ -550,6 +550,15 @@ define_clients!(
         headless: false,
         parse_local: true,
         submit_default: true
+    },
+    Fx = 39 => {
+        id: "fx",
+        root: PathRoot::Home,
+        relative: ".fx/sessions",
+        pattern: "usage-v2.json",
+        headless: false,
+        parse_local: true,
+        submit_default: true
     }
 );
 

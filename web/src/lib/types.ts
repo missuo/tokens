@@ -40,6 +40,7 @@ export const SUPPORTED_CLIENT_TYPES = [
   "workbuddy",
   "devin-cli",
   "devin-desktop",
+  "fx",
 ] as const;
 
 export type CcMirrorClientType = `cc-mirror/${string}`;
