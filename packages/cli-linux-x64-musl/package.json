@@ -1,6 +1,6 @@
 {
   "name": "tokens-cli-linux-x64-musl",
-  "version": "27.0.3",
+  "version": "27.0.4",
   "description": "tokens CLI binary for linux x64 musl",
   "license": "MIT",
   "type": "module",
