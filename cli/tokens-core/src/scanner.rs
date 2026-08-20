@@ -391,6 +391,7 @@ pub fn scan_directory(root: &str, pattern: &str) -> Vec<PathBuf> {
                 // specific enough to avoid colliding with other `.jsonl` files.
                 "unified.jsonl" => file_name == "unified.jsonl",
                 "session-usage.json" => file_name == "session-usage.json",
+                "usage-v2.json" => file_name == "usage-v2.json",
                 "chat-messages.json" => file_name == "chat-messages.json",
                 "workbuddy.db" => file_name == "workbuddy.db",
                 "sessions.db" => file_name == "sessions.db",

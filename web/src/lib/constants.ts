@@ -69,6 +69,7 @@ export const SOURCE_DISPLAY_NAMES: Record<ClientType, string> = {
   "devin-cli": "Devin CLI",
   "devin-desktop": "Devin Desktop",
   reasonix: "Reasonix",
+  fx: "Fx",
 };
 
 // Client logos, served from this deployment rather than hotlinked.
@@ -130,6 +131,7 @@ export const SOURCE_LOGOS: Record<ClientType, string> = {
   "devin-cli": `${GITHUB_CDN_BASE}/client-devin.jpg`,
   "devin-desktop": `${GITHUB_CDN_BASE}/client-devin.jpg`,
   reasonix: `${GITHUB_CDN_BASE}/client-generic.svg`,
+  fx: `${GITHUB_CDN_BASE}/client-fx.png`,
 };
 
 export const SOURCE_COLORS: Record<ClientType, string> = {
@@ -176,6 +178,7 @@ export const SOURCE_COLORS: Record<ClientType, string> = {
   "devin-cli": "#334155",
   "devin-desktop": "#334155",
   reasonix: "#6366F1",
+  fx: "#0070F3",
 };
 
 /**
@@ -203,6 +206,7 @@ export const SUPPORTED_CLIENTS: readonly ClientType[] = [
   "devin-cli",
   "devin-desktop",
   "droid",
+  "fx",
   "gjc",
   "gemini",
   "goose",

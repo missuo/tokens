@@ -1635,6 +1635,26 @@ fn parse_all_messages_with_pricing_with_env_strategy(
         }
     }
 
+    let fx_outcomes: Vec<CachedParseOutcome> = scan_result
+        .get(ClientId::Fx)
+        .par_iter()
+        .map(|path| {
+            load_or_parse_source(
+                message_cache::CacheIdentity::for_client(ClientId::Fx),
+                path,
+                &source_cache,
+                pricing,
+                sessions::fx::parse_fx_file,
+            )
+        })
+        .collect();
+    for outcome in fx_outcomes {
+        all_messages.extend(outcome.messages);
+        if let Some(entry) = outcome.cache_entry {
+            source_cache.insert(entry);
+        }
+    }
+
     // Kilo CLI: SQLite database
     if let Some(db_path) = &scan_result.kilo_db {
         let kilo_messages: Vec<UnifiedMessage> = sessions::kilo::parse_kilo_sqlite(db_path)

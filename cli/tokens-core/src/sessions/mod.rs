@@ -19,6 +19,7 @@ pub mod cursor;
 pub mod devin;
 pub mod droid;
 pub mod freebuff;
+pub mod fx;
 pub mod gemini;
 pub mod gjc;
 pub mod goose;

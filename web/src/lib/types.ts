@@ -42,6 +42,7 @@ export const SUPPORTED_CLIENT_TYPES = [
   "devin-cli",
   "devin-desktop",
   "reasonix",
+  "fx",
 ] as const;
 
 export type CcMirrorClientType = `cc-mirror/${string}`;
