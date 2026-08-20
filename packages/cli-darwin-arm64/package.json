@@ -1,6 +1,6 @@
 {
   "name": "tokens-cli-darwin-arm64",
-  "version": "27.0.2",
+  "version": "27.0.3",
   "description": "tokens CLI binary for darwin arm64",
   "license": "MIT",
   "type": "module",
