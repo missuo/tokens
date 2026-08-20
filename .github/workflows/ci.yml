@@ -120,13 +120,41 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
 
+      # Cache bun's global download cache and the installed node_modules, keyed
+      # by the lockfile. A hit means install only has to verify the lockfile
+      # matches — no tarball downloads, no extractions — which both speeds up
+      # the job and removes the surface that produced the transient
+      # `Fail extracting tarball for "next"` flake. Mirrors the cargo cache in
+      # the build job above.
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/.bun/install/cache
+            web/node_modules
+          key: web-bun-${{ hashFiles('web/bun.lock') }}
+          restore-keys: web-bun-
+
       # --frozen-lockfile, unlike the release workflow, which deliberately does
       # not use it. Here a lockfile that disagrees with package.json is exactly
       # the kind of thing a PR should fail on: the styled-components removal
       # changed both, and a stale lock would have installed the packages it had
       # just dropped.
+      #
+      # Retry loop: `bun install` occasionally fails mid-extraction on a
+      # transient registry/network error (`Fail extracting tarball for "next"`),
+      # which has nothing to do with the PR. `--frozen-lockfile` is safe to
+      # retry — it never mutates the lockfile — so a plain bash loop with linear
+      # backoff recovers without human intervention. Zero overhead on the
+      # success path (exits on attempt 1).
       - name: Install
-        run: cd web && bun install --frozen-lockfile
+        run: |
+          cd web
+          for attempt in 1 2 3; do
+            if bun install --frozen-lockfile; then exit 0; fi
+            echo "bun install attempt $attempt failed; retrying in $((attempt * 5))s" >&2
+            sleep $((attempt * 5))
+          done
+          exit 1
 
       # No --max-warnings 0. The tree carries a handful of long-standing
       # warnings that have nothing to do with any given PR, and failing on them
