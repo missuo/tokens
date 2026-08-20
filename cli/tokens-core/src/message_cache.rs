@@ -365,10 +365,11 @@ impl SourceFingerprint {
         cached: Option<&Self>,
         mode: ContentHashMode,
     ) -> Option<FingerprintStatus> {
-        let parent = path.parent().unwrap_or_else(|| Path::new("."));
-        let related_paths = ["signals.json", "summary.json", "events.jsonl"]
-            .into_iter()
-            .map(|name| (name.to_string(), parent.join(name)));
+        // Delegate to the parser for the related-file list: the unified log
+        // reads every session under the Grok home, so its fingerprint must fold
+        // in the whole session tree, while the legacy per-session updates only
+        // depend on their sibling metadata files.
+        let related_paths = crate::sessions::grok::grok_related_paths(path);
         Self::check_path_with_related_mode(path, related_paths, cached, mode)
     }
 
