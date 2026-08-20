@@ -67,6 +67,7 @@ export const SOURCE_DISPLAY_NAMES: Record<ClientType, string> = {
   workbuddy: "WorkBuddy",
   "devin-cli": "Devin CLI",
   "devin-desktop": "Devin Desktop",
+  reasonix: "Reasonix",
 };
 
 // Client logos, served from this deployment rather than hotlinked.
@@ -126,6 +127,7 @@ export const SOURCE_LOGOS: Record<ClientType, string> = {
     `${GITHUB_CDN_BASE}/client-workbuddy.png`,
   "devin-cli": `${GITHUB_CDN_BASE}/client-devin.jpg`,
   "devin-desktop": `${GITHUB_CDN_BASE}/client-devin.jpg`,
+  reasonix: `${GITHUB_CDN_BASE}/client-generic.svg`,
 };
 
 export const SOURCE_COLORS: Record<ClientType, string> = {
@@ -170,12 +172,13 @@ export const SOURCE_COLORS: Record<ClientType, string> = {
   workbuddy: "#2563EB",
   "devin-cli": "#334155",
   "devin-desktop": "#334155",
+  reasonix: "#6366F1",
 };
 
 /**
  * Every client the CLI scans, in display order.
  *
- * Mirrors `define_clients!` in `cli/tokens-core/src/clients.rs` — 39 entries,
+ * Mirrors `define_clients!` in `cli/tokens-core/src/clients.rs` — 40 entries,
  * excluding the two filter-only aliases (`synthetic`, `9router`) that have no
  * scan path of their own. Kept as an explicit list rather than derived from
  * SOURCE_DISPLAY_NAMES, which also carries those aliases and legacy keys.
@@ -214,6 +217,7 @@ export const SUPPORTED_CLIENTS: readonly ClientType[] = [
   "opencodereview",
   "pi",
   "qwen",
+  "reasonix",
   "roocode",
   "trae",
   "warp",

@@ -36,6 +36,7 @@ pub mod opencode;
 pub mod opencodereview;
 pub mod pi;
 pub mod qwen;
+pub mod reasonix;
 pub mod roocode;
 pub mod synthetic;
 pub(crate) mod tencent_buddy;
@@ -444,4 +445,3 @@ pub fn workspace_label_from_key(key: &str) -> Option<String> {
 fn timestamp_to_date(timestamp_ms: i64) -> String {
     crate::bucket_tz::bucket_timezone().date_of_ms(timestamp_ms)
 }
-
