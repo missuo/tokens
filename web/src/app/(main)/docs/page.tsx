@@ -20,7 +20,7 @@ import { cn } from "@/lib/utils";
 export const metadata: Metadata = {
   title: "Docs - Tokens",
   description:
-    "Install the Tokens CLI on macOS, Linux or Windows, and get the iOS app on TestFlight.",
+    "Install the Tokens CLI on macOS, Linux or Windows, and get the iOS app on the App Store.",
   openGraph: {
     title: "Docs — Tokens",
     description: "Install the Tokens CLI, or get the iOS app.",
@@ -37,7 +37,9 @@ export const metadata: Metadata = {
   twitter: { card: "summary_large_image" },
 };
 
-const TESTFLIGHT_URL = "https://testflight.apple.com/join/NWmvqqTX";
+// Storefront-agnostic App Store link: Apple redirects it to the visitor's own
+// region, so it works everywhere without hardcoding /us/ or /cn/.
+const APP_STORE_URL = "https://apps.apple.com/app/id6793029466";
 
 /**
  * What the Supported clients grid renders.
@@ -150,7 +152,7 @@ function Feature({
 }
 
 /** Apple's mark. lucide's `AppleIcon` is the fruit, which is not the same
- *  thing and reads as a mistake next to "TestFlight". */
+ *  thing and reads as a mistake next to "App Store". */
 function AppleMark(props: React.SVGProps<SVGSVGElement>) {
   return (
     <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" {...props}>
@@ -236,7 +238,7 @@ export default function DocsPage() {
             <CardHeader className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
               <div className="flex flex-wrap items-center gap-2">
                 <CardTitle className="text-base">Tokens for iOS</CardTitle>
-                <Badge variant="secondary">TestFlight beta</Badge>
+                <Badge variant="secondary">App Store</Badge>
               </div>
               {/* Base UI composes via `render`, not Radix's `asChild`.
                   Styled the way Apple's own install buttons are — black with
@@ -245,11 +247,11 @@ export default function DocsPage() {
               <Button
                 className="w-full shrink-0 border border-transparent bg-black text-white hover:bg-black/85 sm:w-auto dark:bg-white dark:text-black dark:hover:bg-white/90"
                 render={
-                  <a href={TESTFLIGHT_URL} target="_blank" rel="noopener noreferrer" />
+                  <a href={APP_STORE_URL} target="_blank" rel="noopener noreferrer" />
                 }
               >
                 <AppleMark data-icon="inline-start" />
-                Join the TestFlight
+                Download on the App Store
               </Button>
             </CardHeader>
             <CardContent className="flex flex-col gap-5">
@@ -277,13 +279,12 @@ export default function DocsPage() {
               <Separator />
 
               <ol className="flex list-decimal flex-col gap-2 pl-5 text-sm leading-relaxed text-muted-foreground">
-                <li>Install Apple&apos;s TestFlight app from the App Store.</li>
                 <li>
-                  Open the invitation link above on the same device and tap
-                  Accept.
+                  Open the App Store link above on your iPhone and install
+                  Tokens.
                 </li>
                 <li>
-                  Install Tokens from TestFlight, then enter a GitHub username.
+                  Open the app, then enter a GitHub username.
                   There is no sign-in: every profile on Tokens is public, so the
                   app just reads the one you name. Enter your own username or
                   the widgets will show someone else&apos;s usage.

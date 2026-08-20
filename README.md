@@ -21,8 +21,8 @@ bunx tokens-cli@latest login
 
 ## iOS app
 
-<a href="https://testflight.apple.com/join/NWmvqqTX">
-  <img src="https://img.shields.io/badge/TestFlight-Join%20the%20beta-000000?style=for-the-badge&logo=apple&logoColor=white" alt="Join the TestFlight beta" height="34" />
+<a href="https://apps.apple.com/app/id6793029466">
+  <img src="https://img.shields.io/badge/App%20Store-Download-000000?style=for-the-badge&logo=apple&logoColor=white" alt="Download on the App Store" height="34" />
 </a>
 
 Your rank and usage on your phone, without opening a browser — share cards
