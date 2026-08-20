@@ -30,6 +30,7 @@ export const SOURCE_DISPLAY_NAMES: Record<ClientType, string> = {
   cursor: "Cursor",
   amp: "Amp",
   codebuff: "Codebuff",
+  freebuff: "Freebuff",
   droid: "Droid",
   openclaw: "OpenClaw",
   hermes: "Hermes Agent",
@@ -67,6 +68,8 @@ export const SOURCE_DISPLAY_NAMES: Record<ClientType, string> = {
   workbuddy: "WorkBuddy",
   "devin-cli": "Devin CLI",
   "devin-desktop": "Devin Desktop",
+  reasonix: "Reasonix",
+  fx: "Fx",
 };
 
 // Client logos, served from this deployment rather than hotlinked.
@@ -85,6 +88,7 @@ export const SOURCE_LOGOS: Record<ClientType, string> = {
   cursor: `${GITHUB_CDN_BASE}/client-cursor.jpg`,
   amp: `${GITHUB_CDN_BASE}/client-amp.png`,
   codebuff: `${GITHUB_CDN_BASE}/client-codebuff.png`,
+  freebuff: `${GITHUB_CDN_BASE}/client-freebuff.png`,
   droid: `${GITHUB_CDN_BASE}/client-droid.png`,
   openclaw: `${GITHUB_CDN_BASE}/client-openclaw.jpg`,
   hermes: `${GITHUB_CDN_BASE}/client-hermes.png`,
@@ -126,6 +130,8 @@ export const SOURCE_LOGOS: Record<ClientType, string> = {
     `${GITHUB_CDN_BASE}/client-workbuddy.png`,
   "devin-cli": `${GITHUB_CDN_BASE}/client-devin.jpg`,
   "devin-desktop": `${GITHUB_CDN_BASE}/client-devin.jpg`,
+  reasonix: `${GITHUB_CDN_BASE}/client-generic.svg`,
+  fx: `${GITHUB_CDN_BASE}/client-fx.png`,
 };
 
 export const SOURCE_COLORS: Record<ClientType, string> = {
@@ -137,6 +143,7 @@ export const SOURCE_COLORS: Record<ClientType, string> = {
   cursor: "#22c55e",
   amp: "#EC4899",
   codebuff: "#7C3AED",
+  freebuff: "#38BDF8",
   droid: "#1F1D1C",
   openclaw: "#EF4444",
   hermes: "#FFD700",
@@ -170,12 +177,14 @@ export const SOURCE_COLORS: Record<ClientType, string> = {
   workbuddy: "#2563EB",
   "devin-cli": "#334155",
   "devin-desktop": "#334155",
+  reasonix: "#6366F1",
+  fx: "#0070F3",
 };
 
 /**
  * Every client the CLI scans, in display order.
  *
- * Mirrors `define_clients!` in `cli/tokens-core/src/clients.rs` — 39 entries,
+ * Mirrors `define_clients!` in `cli/tokens-core/src/clients.rs` — 40 entries,
  * excluding the two filter-only aliases (`synthetic`, `9router`) that have no
  * scan path of their own. Kept as an explicit list rather than derived from
  * SOURCE_DISPLAY_NAMES, which also carries those aliases and legacy keys.
@@ -188,6 +197,7 @@ export const SUPPORTED_CLIENTS: readonly ClientType[] = [
   "cline",
   "codebuddy",
   "codebuff",
+  "freebuff",
   "codex",
   "commandcode",
   "copilot",
@@ -196,6 +206,7 @@ export const SUPPORTED_CLIENTS: readonly ClientType[] = [
   "devin-cli",
   "devin-desktop",
   "droid",
+  "fx",
   "gjc",
   "gemini",
   "goose",
@@ -214,6 +225,7 @@ export const SUPPORTED_CLIENTS: readonly ClientType[] = [
   "opencodereview",
   "pi",
   "qwen",
+  "reasonix",
   "roocode",
   "trae",
   "warp",

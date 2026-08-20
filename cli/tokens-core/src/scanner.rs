@@ -386,7 +386,12 @@ pub fn scan_directory(root: &str, pattern: &str) -> Vec<PathBuf> {
                 // Cline CLI transcripts are `<id>.messages.json`; the suffix
                 // cannot collide with the VS Code `ui_messages.json` format.
                 "cline-cli-messages" => file_name.ends_with(".messages.json"),
+                // Grok's per-inference telemetry log lives at
+                // `<grok_home>/logs/unified.jsonl`; the exact filename is
+                // specific enough to avoid colliding with other `.jsonl` files.
+                "unified.jsonl" => file_name == "unified.jsonl",
                 "session-usage.json" => file_name == "session-usage.json",
+                "usage-v2.json" => file_name == "usage-v2.json",
                 "chat-messages.json" => file_name == "chat-messages.json",
                 "workbuddy.db" => file_name == "workbuddy.db",
                 "sessions.db" => file_name == "sessions.db",
@@ -933,6 +938,53 @@ fn push_unique_scan_task(
     push_unique_scan_task_with_pattern(tasks, seen, client_id, raw_path, client_id.data().pattern);
 }
 
+/// Derive the Grok home directory from a scanned root path.
+///
+/// The primary resolution (`ClientDef::resolve_path_with_env_strategy`) returns
+/// `<home>/sessions`, so a configured alternate root may point at the home
+/// itself, its `sessions` directory, or any nested workspace/session directory.
+/// The nearest ancestor named `sessions` (case-insensitively) is treated as the
+/// home's child in all of those cases.
+fn grok_home_from_scan_root(path: &Path) -> PathBuf {
+    if let Some(sessions_dir) = path.ancestors().find(|candidate| {
+        candidate
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(|name| name.eq_ignore_ascii_case("sessions"))
+            .unwrap_or(false)
+    }) {
+        if let Some(grok_home) = sessions_dir.parent() {
+            return grok_home.to_path_buf();
+        }
+    }
+
+    path.to_path_buf()
+}
+
+/// Register the dual-source scan tasks for one Grok root.
+///
+/// A Grok root contributes both the legacy per-session rollups
+/// (`sessions/**/updates.jsonl`) and the per-inference token breakdowns
+/// (`logs/unified.jsonl`). The original root is always registered for
+/// `updates.jsonl` — `extraScanPaths` rows are recursive roots, so arbitrary
+/// nested layouts must keep matching — and the sibling `<home>/logs/unified.jsonl`
+/// task is derived from the root via [`grok_home_from_scan_root`].
+fn push_grok_dual_source_scan_tasks(
+    tasks: &mut Vec<(ClientId, String, &'static str)>,
+    seen: &mut HashSet<(ClientId, PathBuf)>,
+    root: &Path,
+) {
+    push_unique_scan_task(tasks, seen, ClientId::Grok, root);
+    let grok_home = grok_home_from_scan_root(root);
+    push_unique_scan_task_with_pattern(
+        tasks,
+        seen,
+        ClientId::Grok,
+        grok_home.join("logs").join("unified.jsonl"),
+        "unified.jsonl",
+    );
+}
+
 /// Additional Codex-compatible homes owned by desktop wrappers that isolate
 /// their runtime from the shell's `CODEX_HOME`. Orca stores standard Codex
 /// rollout JSONL under this macOS application-support path, so a standalone
@@ -1216,10 +1268,14 @@ fn scan_all_clients_with_env_strategy_inner(
                 | ClientId::Zed
                 | ClientId::Crush
                 | ClientId::Codebuff
+                | ClientId::Freebuff
                 | ClientId::Kimi
                 | ClientId::Gjc
                 | ClientId::MiMoCode
                 | ClientId::DevinCli
+                // Grok has a dual-source discovery (sessions/ + logs/) handled
+                // below so the unified log is registered alongside updates.jsonl.
+                | ClientId::Grok
         ) {
             continue;
         }
@@ -1229,10 +1285,23 @@ fn scan_all_clients_with_env_strategy_inner(
         push_unique_scan_task(&mut tasks, &mut seen_scan_roots, *client_id, path);
     }
 
+    if enabled.contains(&ClientId::Grok) {
+        let grok_sessions = PathBuf::from(
+            ClientId::Grok
+                .data()
+                .resolve_path_with_env_strategy(home_dir, use_env_roots),
+        );
+        // The resolved path is `<home>/sessions`; `push_grok_dual_source_scan_tasks`
+        // keeps it registered for `updates.jsonl` and derives `logs/unified.jsonl`.
+        push_grok_dual_source_scan_tasks(&mut tasks, &mut seen_scan_roots, &grok_sessions);
+    }
+
     for (client_id, path) in extra_scan_paths_for(scanner_settings, &enabled_with_devin_lookup) {
         warn_if_escapes_home(Path::new(home_dir), client_id, &path);
         if client_id == ClientId::DevinCli {
             devin_cli_roots.push(path);
+        } else if client_id == ClientId::Grok {
+            push_grok_dual_source_scan_tasks(&mut tasks, &mut seen_scan_roots, &path);
         } else {
             push_unique_scan_task(&mut tasks, &mut seen_scan_roots, client_id, path);
         }
@@ -1330,6 +1399,12 @@ fn scan_all_clients_with_env_strategy_inner(
             warn_if_escapes_home(Path::new(home_dir), client_id, &PathBuf::from(&path));
             if client_id == ClientId::DevinCli {
                 devin_cli_roots.push(PathBuf::from(path));
+            } else if client_id == ClientId::Grok {
+                push_grok_dual_source_scan_tasks(
+                    &mut tasks,
+                    &mut seen_scan_roots,
+                    &PathBuf::from(path),
+                );
             } else {
                 push_unique_scan_task(&mut tasks, &mut seen_scan_roots, client_id, path);
             }
@@ -1824,35 +1899,68 @@ fn scan_all_clients_with_env_strategy_inner(
         }
     }
 
-    if enabled.contains(&ClientId::Codebuff) {
+    if enabled.contains(&ClientId::Codebuff) || enabled.contains(&ClientId::Freebuff) {
         // Codebuff persists per-channel chat history under
         // ~/.config/<channel>/projects/<project>/chats/<chatId>/chat-messages.json.
-        // When CODEBUFF_DATA_DIR is set to a non-empty value (via
-        // PathRoot::EnvVar), scan only that root; otherwise — including when
-        // the env var is unset *or* set to an empty/whitespace string — walk
-        // the three known channel roots:
+        // Freebuff is built on the same runtime and shares this exact directory
+        // and file layout, so the two clients are fed from a single scan of the
+        // same roots and the parsers partition the result. Running the scan
+        // whenever either client is enabled lets a freebuff-only filter work
+        // without a physical Codebuff install.
+        //
+        // Root resolution: an override set to a non-empty value (via
+        // PathRoot::EnvVar) wins for the client that owns it; otherwise —
+        // including when the env var is unset *or* set to an empty/whitespace
+        // string — the three known channel roots are walked:
         //   - ~/.config/manicode (primary / legacy name — Codebuff was "Manicode")
         //   - ~/.config/manicode-dev
         //   - ~/.config/manicode-staging
-        let trimmed_override = if use_env_roots {
-            std::env::var("CODEBUFF_DATA_DIR")
+        fn env_override(var: &str, use_env_roots: bool) -> Option<String> {
+            if !use_env_roots {
+                return None;
+            }
+            std::env::var(var)
                 .ok()
                 .map(|v| v.trim().to_string())
                 .filter(|v| !v.is_empty())
-        } else {
-            None
-        };
-
-        let mut codebuff_roots: Vec<String> = Vec::new();
-        if let Some(root) = trimmed_override {
-            codebuff_roots.push(format!("{}/projects", root.trim_end_matches('/')));
-        } else {
-            let config_dir = format!("{}/.config", home_dir);
-            for channel in ["manicode", "manicode-dev", "manicode-staging"] {
-                codebuff_roots.push(format!("{}/{}/projects", config_dir, channel));
+        }
+        fn manicode_roots(home_dir: &str, override_root: Option<&str>) -> Vec<String> {
+            match override_root {
+                // No `trim_end_matches('/')`: `format!` already collapses a
+                // trailing separator here, and trimming empties a root of `/`
+                // — after which `format!` produces a cwd-relative `projects`
+                // instead of `/projects`.
+                Some(root) => vec![format!("{}/projects", root)],
+                None => {
+                    let config_dir = format!("{}/.config", home_dir);
+                    ["manicode", "manicode-dev", "manicode-staging"]
+                        .iter()
+                        .map(|channel| format!("{}/{}/projects", config_dir, channel))
+                        .collect()
+                }
             }
         }
 
+        let codebuff_override = env_override("CODEBUFF_DATA_DIR", use_env_roots);
+        // Freebuff falls back to the location Codebuff resolves to, not to the
+        // default channel roots. The two products share one tree, so
+        // CODEBUFF_DATA_DIR redirects it for both; re-deriving the defaults
+        // here would re-scan ~/.config/manicode behind a user who deliberately
+        // pointed CODEBUFF_DATA_DIR elsewhere, defeating its exclusivity in any
+        // run that has both clients enabled.
+        let freebuff_override = env_override("FREEBUFF_DATA_DIR", use_env_roots)
+            .or_else(|| codebuff_override.clone());
+
+        let mut codebuff_roots: Vec<String> = Vec::new();
+        if enabled.contains(&ClientId::Codebuff) {
+            codebuff_roots.extend(manicode_roots(home_dir, codebuff_override.as_deref()));
+        }
+        if enabled.contains(&ClientId::Freebuff) {
+            codebuff_roots.extend(manicode_roots(home_dir, freebuff_override.as_deref()));
+        }
+
+        // `push_unique_scan_task` dedups by canonicalized path, which collapses
+        // the overlap between the two clients' root lists.
         for root in codebuff_roots {
             push_unique_scan_task(&mut tasks, &mut seen_scan_roots, ClientId::Codebuff, root);
         }

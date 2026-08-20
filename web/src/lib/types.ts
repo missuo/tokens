@@ -7,6 +7,7 @@ export const SUPPORTED_CLIENT_TYPES = [
   "cursor",
   "amp",
   "codebuff",
+  "freebuff",
   "droid",
   "openclaw",
   "hermes",
@@ -40,6 +41,8 @@ export const SUPPORTED_CLIENT_TYPES = [
   "workbuddy",
   "devin-cli",
   "devin-desktop",
+  "reasonix",
+  "fx",
 ] as const;
 
 export type CcMirrorClientType = `cc-mirror/${string}`;

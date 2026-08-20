@@ -871,6 +871,12 @@ fn parse_all_messages_with_pricing_with_env_strategy(
     let include_synthetic = include_all || clients.iter().any(|c| c == "synthetic");
     let include_devin_cli = include_synthetic || clients.iter().any(|c| c == "devin-cli");
     let include_devin_desktop = include_synthetic || clients.iter().any(|c| c == "devin-desktop");
+    // Freebuff and Codebuff share the manicode scan bucket in the scanner (the
+    // two parsers partition the same file set). Each product parses and counts
+    // only when it was actually requested, so a codebuff-only filter cannot
+    // pick up estimated Freebuff rows and vice versa.
+    let include_codebuff = include_all || clients.iter().any(|c| c == "codebuff");
+    let include_freebuff = include_all || clients.iter().any(|c| c == "freebuff");
 
     // Parse OpenCode: prefer SQLite, collapse forked SQLite history there, then
     // suppress legacy JSON overlap by message identity.
@@ -1197,16 +1203,22 @@ fn parse_all_messages_with_pricing_with_env_strategy(
                 &source_cache,
                 pricing,
                 message_cache::SourceFingerprint::check_grok_path_samples_only,
-                sessions::grok::parse_grok_updates_file,
+                sessions::grok::parse_grok_file,
             )
         })
         .collect();
+    // Grok now exposes two layouts — legacy per-session `updates.jsonl` and the
+    // unified per-inference `logs/unified.jsonl`. Drop legacy activity rows that
+    // the unified log already covers so a partially migrated session is not
+    // double-counted, while keeping any older legacy rows the unified log omits.
+    let mut grok_messages: Vec<UnifiedMessage> = Vec::new();
     for outcome in grok_outcomes {
-        all_messages.extend(outcome.messages);
+        grok_messages.extend(outcome.messages);
         if let Some(entry) = outcome.cache_entry {
             source_cache.insert(entry);
         }
     }
+    all_messages.extend(sessions::grok::prefer_unified_log_messages(grok_messages));
 
     let jcode_outcomes: Vec<CachedParseOutcome> = scan_result
         .get(ClientId::Jcode)
@@ -1255,20 +1267,53 @@ fn parse_all_messages_with_pricing_with_env_strategy(
         }
     }
 
-    let codebuff_outcomes: Vec<CachedParseOutcome> = scan_result
-        .get(ClientId::Codebuff)
-        .par_iter()
-        .map(|path| {
-            load_or_parse_source(
-                message_cache::CacheIdentity::for_client(ClientId::Codebuff),
-                path,
-                &source_cache,
-                pricing,
-                sessions::codebuff::parse_codebuff_file,
-            )
-        })
-        .collect();
+    let codebuff_outcomes: Vec<CachedParseOutcome> = if include_codebuff {
+        scan_result
+            .get(ClientId::Codebuff)
+            .par_iter()
+            .map(|path| {
+                load_or_parse_source(
+                    message_cache::CacheIdentity::for_client(ClientId::Codebuff),
+                    path,
+                    &source_cache,
+                    pricing,
+                    sessions::codebuff::parse_codebuff_file,
+                )
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
     for outcome in codebuff_outcomes {
+        all_messages.extend(outcome.messages);
+        if let Some(entry) = outcome.cache_entry {
+            source_cache.insert(entry);
+        }
+    }
+
+    // Freebuff shares Codebuff's ~/.config/manicode scan (same layout, same
+    // directory — a separate product built on the same runtime). The two
+    // parsers partition the shared file set under distinct cache identities:
+    // codebuff emits chats with authoritative usage, freebuff emits estimated
+    // rows for the rest.
+    let freebuff_outcomes: Vec<CachedParseOutcome> = if include_freebuff {
+        scan_result
+            .get(ClientId::Codebuff)
+            .par_iter()
+            .map(|path| {
+                load_or_parse_source(
+                    message_cache::CacheIdentity::for_client(ClientId::Freebuff),
+                    path,
+                    &source_cache,
+                    pricing,
+                    sessions::freebuff::parse_freebuff_file,
+                )
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    for outcome in freebuff_outcomes {
         all_messages.extend(outcome.messages);
         if let Some(entry) = outcome.cache_entry {
             source_cache.insert(entry);
@@ -1590,6 +1635,26 @@ fn parse_all_messages_with_pricing_with_env_strategy(
         }
     }
 
+    let fx_outcomes: Vec<CachedParseOutcome> = scan_result
+        .get(ClientId::Fx)
+        .par_iter()
+        .map(|path| {
+            load_or_parse_source(
+                message_cache::CacheIdentity::for_client(ClientId::Fx),
+                path,
+                &source_cache,
+                pricing,
+                sessions::fx::parse_fx_file,
+            )
+        })
+        .collect();
+    for outcome in fx_outcomes {
+        all_messages.extend(outcome.messages);
+        if let Some(entry) = outcome.cache_entry {
+            source_cache.insert(entry);
+        }
+    }
+
     // Kilo CLI: SQLite database
     if let Some(db_path) = &scan_result.kilo_db {
         let kilo_messages: Vec<UnifiedMessage> = sessions::kilo::parse_kilo_sqlite(db_path)
@@ -1901,6 +1966,29 @@ fn parse_all_messages_with_pricing_with_env_strategy(
         workbuddy_detailed_messages,
         workbuddy_fallback_messages,
     ));
+
+    // Reasonix writes authoritative per-call usage to append-only daily JSONL,
+    // so cache by file (samples-only fingerprint catches appends) and rely on
+    // the parser's namespaced dedup key instead of a separate seen-set.
+    let reasonix_outcomes: Vec<CachedParseOutcome> = scan_result
+        .get(ClientId::Reasonix)
+        .par_iter()
+        .map(|path| {
+            load_or_parse_source(
+                message_cache::CacheIdentity::for_client(ClientId::Reasonix),
+                path,
+                &source_cache,
+                pricing,
+                sessions::reasonix::parse_reasonix_file,
+            )
+        })
+        .collect();
+    for outcome in reasonix_outcomes {
+        all_messages.extend(outcome.messages);
+        if let Some(entry) = outcome.cache_entry {
+            source_cache.insert(entry);
+        }
+    }
 
     if include_synthetic {
         if let Some(db_path) = &scan_result.synthetic_db {

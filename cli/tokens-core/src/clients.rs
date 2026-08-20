@@ -7,6 +7,13 @@ pub enum PathRoot {
         var: &'static str,
         fallback_relative: &'static str,
     },
+    /// Reasonix resolves its state directory from two optional env vars
+    /// (`REASONIX_STATE_HOME` taking precedence over `REASONIX_HOME`) before
+    /// falling back to the platform default (`~/.reasonix` on Unix,
+    /// `%APPDATA%/reasonix` on Windows). This is richer than `EnvVar`'s
+    /// single-var shape but kept self-contained here rather than introducing a
+    /// separate resolver helper, mirroring how `Config` inlines its logic.
+    ReasonixHome,
 }
 
 impl PathRoot {
@@ -65,6 +72,29 @@ impl PathRoot {
                     }
                 } else {
                     format!("{}/{}", home_dir, fallback_relative)
+                }
+            }
+            PathRoot::ReasonixHome => {
+                if use_env_roots {
+                    for var in ["REASONIX_STATE_HOME", "REASONIX_HOME"] {
+                        if let Ok(val) = std::env::var(var) {
+                            let trimmed = val.trim();
+                            if !trimmed.is_empty() {
+                                return trimmed.to_string();
+                            }
+                        }
+                    }
+                }
+                #[cfg(target_os = "windows")]
+                {
+                    std::path::Path::new(home_dir)
+                        .join("AppData/Roaming/reasonix")
+                        .to_string_lossy()
+                        .into_owned()
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    format!("{home_dir}/.reasonix")
                 }
             }
         }
@@ -550,6 +580,44 @@ define_clients!(
         headless: false,
         parse_local: true,
         submit_default: true
+    },
+    // Reasonix stores authoritative per-call provider usage as daily append-only
+    // JSONL records under `<state root>/stats/`. Transcript JSONL is excluded:
+    // it lacks exact token counters and would overlap these stats records.
+    Reasonix = 39 => {
+        id: "reasonix",
+        root: PathRoot::ReasonixHome,
+        relative: "stats",
+        pattern: "*.jsonl",
+        headless: false,
+        parse_local: true,
+        submit_default: true
+    },
+    // Freebuff is a compile-time build variant of the Codebuff CLI, so it
+    // writes to the same `~/.config/manicode*` tree and the same
+    // `projects/<project>/chats/<chatId>/chat-messages.json` layout. The two
+    // products are told apart per chat by the persisted root agent id, not by
+    // location (see `sessions::freebuff`).
+    Freebuff = 40 => {
+        id: "freebuff",
+        root: PathRoot::EnvVar {
+            var: "FREEBUFF_DATA_DIR",
+            fallback_relative: ".config/manicode",
+        },
+        relative: "projects",
+        pattern: "chat-messages.json",
+        headless: false,
+        parse_local: true,
+        submit_default: true
+    },
+    Fx = 41 => {
+        id: "fx",
+        root: PathRoot::Home,
+        relative: ".fx/sessions",
+        pattern: "usage-v2.json",
+        headless: false,
+        parse_local: true,
+        submit_default: true
     }
 );
 
@@ -582,4 +650,3 @@ impl Default for ClientCounts {
         Self::new()
     }
 }
-
