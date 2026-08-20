@@ -109,8 +109,12 @@ Clients that expose usage only through an account API need a sync step first —
 `tokens cursor sync`, `tokens antigravity sync`, `tokens trae sync`,
 `tokens warp sync` — after which they submit like everything else.
 
-Pricing comes from [LiteLLM's pricing data](https://github.com/BerriAI/litellm),
-including tiered rates and cache discounts.
+Pricing comes from a combination of
+[LiteLLM](https://github.com/BerriAI/litellm),
+[OpenRouter](https://openrouter.ai) and
+[models.dev](https://github.com/anomalyco/models.dev),
+with the best matching rate used per model. Built-in overrides handle tiered
+rates and cache discounts where the upstream feeds do not.
 
 ## What makes it different
 

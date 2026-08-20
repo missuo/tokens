@@ -141,7 +141,8 @@ export default function TermsPage() {
       <Clause heading="Accuracy">
         <p>
           Cost figures are estimates. They are computed from public pricing data
-          and the token counts your tools recorded; they are not invoices, they
+          (LiteLLM, OpenRouter and models.dev) and the token counts your tools
+          recorded; they are not invoices, they
           do not account for your plan, discounts or credits, and they will not
           match what a provider actually bills you. Rankings depend on
           self-reported data and may be wrong or incomplete. Do not rely on any
