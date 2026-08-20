@@ -478,6 +478,7 @@ pub enum ClientFilter {
     #[value(name = "devin-desktop")]
     DevinDesktop,
     Reasonix,
+    Freebuff,
     Synthetic,
 }
 
@@ -528,6 +529,7 @@ impl ClientFilter {
             Self::DevinCli => "devin-cli",
             Self::DevinDesktop => "devin-desktop",
             Self::Reasonix => "reasonix",
+            Self::Freebuff => "freebuff",
             Self::Synthetic => "synthetic",
         }
     }
@@ -581,6 +583,7 @@ impl ClientFilter {
             Self::DevinCli => Some(ClientId::DevinCli),
             Self::DevinDesktop => Some(ClientId::DevinDesktop),
             Self::Reasonix => Some(ClientId::Reasonix),
+            Self::Freebuff => Some(ClientId::Freebuff),
             Self::Synthetic => None,
         }
     }
@@ -630,6 +633,7 @@ impl ClientFilter {
             ClientId::DevinCli => Self::DevinCli,
             ClientId::DevinDesktop => Self::DevinDesktop,
             ClientId::Reasonix => Self::Reasonix,
+            ClientId::Freebuff => Self::Freebuff,
         }
     }
 
