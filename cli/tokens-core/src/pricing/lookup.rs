@@ -1189,6 +1189,13 @@ fn is_openai_full_request_272k_model(model_id: &str) -> bool {
         "gpt-5.6-sol",
         "gpt-5.6-terra",
         "gpt-5.6-luna",
+        // Same full-request 272k semantics as the GPT-5.x flagship family
+        // (2x input/cache, 1.5x output for the whole request). Also keeps
+        // openai-hinted lookups on LiteLLM's Standard rates instead of
+        // OpenRouter's first author endpoint, which is currently Flex (50%).
+        // Source: https://developers.openai.com/api/docs/models/gpt-6-astra
+        "gpt-6-astra",
+        "gpt-6-astra-pro",
     ]
     .into_iter()
     .any(|base| matches_model_or_snapshot(model_id, base))
@@ -2348,3 +2355,56 @@ fn exact_match_with_provider_prefixes(
     select_best_match(&matches, dataset, source, Some(provider_id))
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn openai_272k_pricing(input: f64, output: f64) -> ModelPricing {
+        ModelPricing {
+            input_cost_per_token: Some(input),
+            output_cost_per_token: Some(output),
+            cache_read_input_token_cost: Some(input / 10.0),
+            cache_creation_input_token_cost: Some(input * 1.25),
+            input_cost_per_token_above_272k_tokens: Some(input * 2.0),
+            output_cost_per_token_above_272k_tokens: Some(output * 1.5),
+            cache_read_input_token_cost_above_272k_tokens: Some(input / 5.0),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn gpt6_astra_openai_hint_prefers_litellm_standard_over_openrouter_flex() {
+        let mut litellm = HashMap::new();
+        litellm.insert("gpt-6-astra".to_string(), openai_272k_pricing(1e-5, 5e-5));
+        let mut openrouter = HashMap::new();
+        openrouter.insert(
+            "openai/gpt-6-astra".to_string(),
+            openai_272k_pricing(5e-6, 2.5e-5),
+        );
+
+        let lookup = PricingLookup::new_with_models_dev(
+            litellm,
+            openrouter,
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        );
+        let result = lookup
+            .lookup_with_provider("gpt-6-astra", Some("openai"))
+            .expect("gpt-6-astra should resolve");
+
+        assert_eq!(result.source, "LiteLLM");
+        assert_eq!(result.matched_key, "gpt-6-astra");
+        assert_eq!(result.pricing.input_cost_per_token, Some(1e-5));
+        assert_eq!(result.pricing.output_cost_per_token, Some(5e-5));
+    }
+
+    #[test]
+    fn gpt6_astra_snapshot_is_openai_full_request_272k_model() {
+        assert!(is_openai_full_request_272k_model("gpt-6-astra"));
+        assert!(is_openai_full_request_272k_model("openai/gpt-6-astra"));
+        assert!(is_openai_full_request_272k_model("gpt-6-astra-20260903"));
+        assert!(is_openai_full_request_272k_model("gpt-6-astra-pro"));
+        assert!(!is_openai_full_request_272k_model("gpt-5.3"));
+    }
+}

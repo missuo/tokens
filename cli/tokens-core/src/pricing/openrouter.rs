@@ -45,6 +45,8 @@ struct EndpointPricing {
 #[derive(Deserialize)]
 struct Endpoint {
     provider_name: String,
+    #[serde(default)]
+    tag: String,
     pricing: EndpointPricing,
 }
 
@@ -137,12 +139,13 @@ async fn fetch_author_pricing(
         }
     };
 
-    // Find the endpoint from the author provider
-    let author_endpoint = match data
-        .data
-        .endpoints
-        .iter()
-        .find(|e| e.provider_name == author_name)
+    // Author providers (especially OpenAI) expose several service-tier
+    // endpoints under the same provider_name: Standard (`openai`), Flex
+    // (`openai/flex`, 50%), Fast (`openai/fast`, 2x). `.find()` would take
+    // whichever OpenRouter lists first — currently Flex — and silently
+    // half-price every Standard lookup. Prefer the Standard tag, or the
+    // tag that matches an explicit `:batch`/`:flex`/`:fast` model suffix.
+    let author_endpoint = match select_author_endpoint(&data.data.endpoints, author_name, &model_id)
     {
         Some(ep) => ep,
         None => {
@@ -317,4 +320,122 @@ pub async fn fetch_all_models() -> HashMap<String, ModelPricing> {
 
 pub async fn fetch_all_mapped() -> HashMap<String, ModelPricing> {
     fetch_all_models().await
+}
+
+fn select_author_endpoint<'a>(
+    endpoints: &'a [Endpoint],
+    author_name: &str,
+    model_id: &str,
+) -> Option<&'a Endpoint> {
+    let author_eps: Vec<&'a Endpoint> = endpoints
+        .iter()
+        .filter(|endpoint| endpoint.provider_name == author_name)
+        .collect();
+    if author_eps.is_empty() {
+        return None;
+    }
+
+    if let Some(tier) = model_service_tier(model_id) {
+        let suffix = format!("/{tier}");
+        if let Some(endpoint) = author_eps.iter().copied().find(|endpoint| {
+            let tag = endpoint.tag.to_ascii_lowercase();
+            tag == tier || tag.ends_with(&suffix)
+        }) {
+            return Some(endpoint);
+        }
+        return Some(author_eps[0]);
+    }
+
+    let standard_tag = model_id
+        .split('/')
+        .next()
+        .unwrap_or(model_id)
+        .to_ascii_lowercase();
+    if let Some(endpoint) = author_eps
+        .iter()
+        .copied()
+        .find(|endpoint| endpoint.tag.eq_ignore_ascii_case(&standard_tag))
+    {
+        return Some(endpoint);
+    }
+
+    if let Some(endpoint) = author_eps
+        .iter()
+        .copied()
+        .find(|endpoint| !is_service_tier_tag(&endpoint.tag))
+    {
+        return Some(endpoint);
+    }
+
+    Some(author_eps[0])
+}
+
+fn model_service_tier(model_id: &str) -> Option<String> {
+    let tier = model_id.rsplit_once(':')?.1.to_ascii_lowercase();
+    matches!(tier.as_str(), "flex" | "fast" | "batch" | "priority").then_some(tier)
+}
+
+fn is_service_tier_tag(tag: &str) -> bool {
+    tag.to_ascii_lowercase()
+        .rsplit_once('/')
+        .is_some_and(|(_, suffix)| matches!(suffix, "flex" | "fast" | "batch" | "priority"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn endpoint(provider_name: &str, tag: &str, prompt: &str, completion: &str) -> Endpoint {
+        Endpoint {
+            provider_name: provider_name.to_string(),
+            tag: tag.to_string(),
+            pricing: EndpointPricing {
+                prompt: prompt.to_string(),
+                completion: completion.to_string(),
+                input_cache_read: None,
+                input_cache_write: None,
+            },
+        }
+    }
+
+    #[test]
+    fn select_author_endpoint_prefers_openai_standard_over_flex() {
+        let endpoints = [
+            endpoint("OpenAI", "openai/flex", "0.000005", "0.000025"),
+            endpoint("Azure", "azure", "0.00001", "0.00005"),
+            endpoint("OpenAI", "openai", "0.00001", "0.00005"),
+            endpoint("OpenAI", "openai/fast", "0.00002", "0.0001"),
+        ];
+
+        let selected = select_author_endpoint(&endpoints, "OpenAI", "openai/gpt-6-astra").unwrap();
+        assert_eq!(selected.tag, "openai");
+        assert_eq!(selected.pricing.prompt, "0.00001");
+        assert_eq!(selected.pricing.completion, "0.00005");
+    }
+
+    #[test]
+    fn select_author_endpoint_keeps_batch_tier_for_batch_model_ids() {
+        let endpoints = [
+            endpoint("OpenAI", "openai/flex", "0.000005", "0.000025"),
+            endpoint("OpenAI", "openai", "0.00001", "0.00005"),
+            endpoint("OpenAI", "openai/batch", "0.000005", "0.000025"),
+        ];
+
+        let selected =
+            select_author_endpoint(&endpoints, "OpenAI", "openai/gpt-6-astra:batch").unwrap();
+        assert_eq!(selected.tag, "openai/batch");
+        assert_eq!(selected.pricing.prompt, "0.000005");
+    }
+
+    #[test]
+    fn select_author_endpoint_skips_service_tiers_when_standard_tag_missing() {
+        let endpoints = [
+            endpoint("OpenAI", "openai/flex", "0.000005", "0.000025"),
+            endpoint("OpenAI", "", "0.00001", "0.00005"),
+        ];
+
+        let selected = select_author_endpoint(&endpoints, "OpenAI", "openai/gpt-6-astra").unwrap();
+        assert_eq!(selected.tag, "");
+        assert_eq!(selected.pricing.prompt, "0.00001");
+    }
 }
