@@ -28,6 +28,11 @@ on:
 
 permissions:
   contents: write
+  # npm Trusted Publishing: the publish job exchanges a GitHub OIDC token for
+  # a short-lived npm credential, so there is no NPM_TOKEN to rotate every
+  # 90 days (which is what took 27.0.5 down twice). Each package on npmjs.com
+  # must list this repository + workflow filename as a trusted publisher.
+  id-token: write
 
 env:
   CARGO_TERM_COLOR: always
@@ -139,10 +144,13 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      # No registry-url: that option writes an .npmrc pointing at
+      # NODE_AUTH_TOKEN, which trusted publishing does not use. The registry
+      # comes from each package's publishConfig. Node 24 bundles npm 11, and
+      # trusted publishing needs npm >= 11.5.1.
       - uses: actions/setup-node@v6
         with:
-          node-version: 22
-          registry-url: https://registry.npmjs.org
+          node-version: 24
 
       - uses: oven-sh/setup-bun@v2
 
@@ -182,11 +190,14 @@ jobs:
           bun install
           bun run --cwd packages/cli build
 
+      # Authenticated by OIDC (see `id-token: write` above), not a token.
+      # npm also attaches provenance automatically on this path, which
+      # requires each package.json `repository.url` to name this repository.
       - name: Publish to npm
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
+          npm --version
+          node -e 'const [a,b,c]=require("child_process").execSync("npm --version").toString().trim().split(".").map(Number); if (a<11 || (a===11 && (b<5 || (b===5 && c<1)))) { console.error("npm >= 11.5.1 required for trusted publishing"); process.exit(1) }'
           # A prerelease must never land on the `latest` dist-tag, or every
           # plain `npm i tokens-cli` would pull it.
           V="${{ inputs.version }}"
