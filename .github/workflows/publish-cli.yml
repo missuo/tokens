@@ -59,13 +59,13 @@ jobs:
           - { target: aarch64-pc-windows-msvc,     os: windows-latest, pkg: cli-win32-arm64-msvc, bin: tokens.exe }
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
 
-      - uses: actions/cache@v5
+      - uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry/index/
@@ -142,13 +142,13 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       # No registry-url: that option writes an .npmrc pointing at
       # NODE_AUTH_TOKEN, which trusted publishing does not use. The registry
       # comes from each package's publishConfig. Node 24 bundles npm 11, and
       # trusted publishing needs npm >= 11.5.1.
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
 
