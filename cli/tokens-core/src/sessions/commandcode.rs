@@ -582,6 +582,54 @@ mod tests {
     }
 
     #[test]
+    fn test_commandcode_missing_cost_usd_is_not_authoritative() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = fixture(
+            dir.path(),
+            "users-alice-repo",
+            "sess-nocost",
+            None,
+            &[
+                r#"{"type":"session","version":3,"id":"sess-nocost","timestamp":"2026-09-10T03:10:55Z"}"#,
+                r#"{"type":"message","id":"m1","parentId":null,"timestamp":"2026-09-10T03:10:56Z","message":{"role":"user","content":[{"type":"text","text":"hi"}]}}"#,
+                r#"{"type":"message","id":"m2","parentId":"m1","timestamp":"2026-09-10T03:11:06Z","message":{"role":"assistant","content":[{"type":"text","text":"hello"}]},"usage":{"inputTokens":100,"outputTokens":10,"cacheReadTokens":50,"cacheWriteTokens":0},"model":"org/m"}"#,
+            ],
+        );
+
+        let messages = parse_commandcode_file(&path);
+        assert_eq!(messages.len(), 1);
+        // Real token counts stay verbatim; an absent costUsd must not mark
+        // the cost authoritative, or local pricing would never fill it in.
+        assert_eq!(messages[0].tokens.input, 100);
+        assert_eq!(messages[0].tokens.output, 10);
+        assert_eq!(messages[0].cost, 0.0);
+        assert_eq!(messages[0].cost_source, CostSource::Unknown);
+    }
+
+    #[test]
+    fn test_commandcode_reported_zero_cost_stays_authoritative() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = fixture(
+            dir.path(),
+            "users-alice-repo",
+            "sess-free",
+            None,
+            &[
+                r#"{"type":"session","version":3,"id":"sess-free","timestamp":"2026-09-10T03:10:55Z"}"#,
+                r#"{"type":"message","id":"m1","parentId":null,"timestamp":"2026-09-10T03:10:56Z","message":{"role":"user","content":[{"type":"text","text":"hi"}]}}"#,
+                r#"{"type":"message","id":"m2","parentId":"m1","timestamp":"2026-09-10T03:11:06Z","message":{"role":"assistant","content":[{"type":"text","text":"hello"}]},"usage":{"inputTokens":100,"outputTokens":10,"cacheReadTokens":0,"cacheWriteTokens":0,"costUsd":0.0},"model":"org/free-model"}"#,
+            ],
+        );
+
+        let messages = parse_commandcode_file(&path);
+        assert_eq!(messages.len(), 1);
+        // A reported 0.0 (free model) is real pricing; local pricing must not
+        // overwrite it.
+        assert_eq!(messages[0].cost, 0.0);
+        assert_eq!(messages[0].cost_source, CostSource::ProviderReported);
+    }
+
+    #[test]
     fn test_commandcode_skips_checkpoint_files() {
         let dir = tempfile::tempdir().unwrap();
         let projects = dir
