@@ -2260,3 +2260,144 @@ fn should_keep_deduped_message(seen_keys: &mut HashSet<String>, message: &Unifie
         .is_none_or(|key| seen_keys.insert(key.clone()))
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_commandcode_usage_report() {
+        // The report dispatcher also loads/persists the process-wide source
+        // cache. Run in a child with an isolated config/home rather than
+        // touching the user's cache or racing other tests' environment.
+        const TEST_HOME: &str = "TOKENS_COMMANDCODE_REPORT_TEST_HOME";
+        let home = match std::env::var_os(TEST_HOME) {
+            Some(home) => PathBuf::from(home),
+            None => {
+                let dir = tempfile::tempdir().unwrap();
+                let output = std::process::Command::new(std::env::current_exe().unwrap())
+                    .args([
+                        "--exact",
+                        "tests::test_commandcode_usage_report",
+                        "--nocapture",
+                    ])
+                    .env(TEST_HOME, dir.path())
+                    .env("HOME", dir.path())
+                    .env("TOKENS_CONFIG_DIR", dir.path().join("config"))
+                    .output()
+                    .unwrap();
+                assert!(
+                    output.status.success(),
+                    "isolated report test failed:\n{}\n{}",
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                return;
+            }
+        };
+        set_bucket_timezone(BucketTimezone::Named(chrono_tz::UTC));
+
+        let project = home.join(".commandcode/projects/test-project");
+        std::fs::create_dir_all(&project).unwrap();
+        // First usage is captured from Command Code 1.52.0 (not a saved
+        // transcript). The other requests exercise both cache buckets, with
+        // absent, positive, and explicitly zero costUsd on the same model.
+        std::fs::write(
+            project.join("usage.jsonl"),
+            concat!(
+                "{\"type\":\"session\",\"version\":3,\"id\":\"usage\"}\n",
+                r#"{"type":"message","timestamp":"2026-09-10T12:00:00Z","message":{"role":"assistant","content":[{"type":"text","text":"OK"}]},"model":"Qwen/Qwen3.8-27B","usage":{"inputTokens":11988,"outputTokens":48,"cacheReadTokens":64,"cacheWriteTokens":0}}"#, "\n",
+                r#"{"type":"message","timestamp":"2026-09-10T12:01:00Z","message":{"role":"assistant","content":[{"type":"text","text":"OK"}]},"model":"Qwen/Qwen3.8-27B","usage":{"inputTokens":1000,"outputTokens":100,"cacheReadTokens":800,"cacheWriteTokens":100}}"#, "\n",
+                r#"{"type":"message","timestamp":"2026-09-11T12:00:00Z","message":{"role":"assistant","content":[{"type":"text","text":"OK"}]},"model":"Qwen/Qwen3.8-27B","usage":{"inputTokens":1000,"outputTokens":100,"cacheReadTokens":800,"cacheWriteTokens":100,"costUsd":0.125}}"#, "\n",
+                r#"{"type":"message","timestamp":"2026-09-12T12:00:00Z","message":{"role":"assistant","content":[{"type":"text","text":"OK"}]},"model":"Qwen/Qwen3.8-27B","usage":{"inputTokens":1000,"outputTokens":100,"cacheReadTokens":800,"cacheWriteTokens":100,"costUsd":0.0}}"#, "\n",
+            ),
+        )
+        .unwrap();
+
+        // Deliberately synthetic prices, not today's Qwen catalog: distinct
+        // rates ensure charging a cache bucket as fresh input cannot pass.
+        // Per million tokens: input $2, output $8, read $0.50, write $3.
+        let pricing = pricing::PricingService::new(
+            HashMap::from([(
+                "qwen3.8-27b".to_string(),
+                pricing::ModelPricing {
+                    input_cost_per_token: Some(2e-6),
+                    output_cost_per_token: Some(8e-6),
+                    cache_read_input_token_cost: Some(0.5e-6),
+                    cache_creation_input_token_cost: Some(3e-6),
+                    ..Default::default()
+                },
+            )]),
+            HashMap::new(),
+        );
+        let report = generate_graph_with_loaded_pricing(
+            ReportOptions {
+                home_dir: Some(home.to_str().unwrap().to_string()),
+                clients: Some(vec!["commandcode".to_string()]),
+                use_env_roots: false,
+                ..Default::default()
+            },
+            Some(&pricing),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(report.contributions.len(), 3);
+        let estimated = &report.contributions[0];
+        assert_eq!(estimated.date, "2026-09-10");
+        assert_eq!(estimated.totals.messages, 2);
+        // 12,036 from the captured request + 1,100 from the both-cache request.
+        assert_eq!(estimated.totals.tokens, 13_136);
+        assert_eq!(
+            estimated.token_breakdown,
+            TokenBreakdown {
+                input: 12_024,
+                output: 148,
+                cache_read: 864,
+                cache_write: 100,
+                reasoning: 0,
+            }
+        );
+        // Captured request $0.024264 + both-cache request $0.001700.
+        assert!((estimated.totals.cost - 0.025964).abs() < 1e-12);
+        assert_eq!(estimated.clients.len(), 1);
+        assert_eq!(estimated.clients[0].client, "commandcode");
+        assert_eq!(estimated.clients[0].model_id, "qwen3.8-27b");
+        assert_eq!(estimated.clients[0].messages, 2);
+        assert_eq!(estimated.clients[0].tokens, estimated.token_breakdown);
+        assert!((estimated.clients[0].cost - 0.025964).abs() < 1e-12);
+
+        // Both would cost $0.0017 locally. Neither the positive provider
+        // estimate nor a free request may be overwritten by that price.
+        for (day, date, cost) in [
+            (&report.contributions[1], "2026-09-11", 0.125),
+            (&report.contributions[2], "2026-09-12", 0.0),
+        ] {
+            assert_eq!(day.date, date);
+            assert_eq!(day.totals.messages, 1);
+            assert_eq!(day.totals.tokens, 1_100);
+            assert_eq!(day.totals.cost, cost);
+            assert_eq!(
+                day.token_breakdown,
+                TokenBreakdown {
+                    input: 100,
+                    output: 100,
+                    cache_read: 800,
+                    cache_write: 100,
+                    reasoning: 0,
+                }
+            );
+            assert_eq!(day.clients.len(), 1);
+            assert_eq!(day.clients[0].cost, cost);
+        }
+
+        assert_eq!(report.summary.total_tokens, 15_336);
+        assert!((report.summary.total_cost - 0.150964).abs() < 1e-12);
+        assert_eq!(report.summary.total_days, 3);
+        assert_eq!(report.summary.active_days, 3);
+        assert_eq!(report.summary.clients, ["commandcode"]);
+        assert_eq!(report.summary.models, ["qwen3.8-27b"]);
+        assert_eq!(report.years.len(), 1);
+        assert_eq!(report.years[0].total_tokens, 15_336);
+        assert!((report.years[0].total_cost - 0.150964).abs() < 1e-12);
+    }
+}
