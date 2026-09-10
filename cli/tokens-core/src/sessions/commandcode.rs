@@ -2,20 +2,27 @@
 //!
 //! Parses JSONL transcripts from `~/.commandcode/projects/<slug>/<session>.jsonl`.
 //!
-//! Unlike most sources, Command Code does NOT persist token usage locally: the
-//! CLI computes per-request usage in memory and ships it to its backend
-//! (`api.commandcode.ai`, surfaced in the web Usage dashboard). The on-disk
-//! transcript only contains message text (one JSON object per line with
-//! `role`/`content`/`timestamp`/`sessionId`), so token counts are ESTIMATED
-//! from message text at ~4 characters per token, consistent with this crate's
-//! other estimated sources (see Kiro).
+//! v1/v2 store flat role/content records without usage; those retain per-turn
+//! text estimation. v2 identifies itself with metadata.version = 2. v3 uses a
+//! versioned session header and wrapped message entries.
+//!
+//! v3 assistant entries persist the real per-request token usage and embedded cost
+//! on the line itself (`usage` with `inputTokens`/`outputTokens`/`cacheReadTokens`/
+//! `cacheWriteTokens`/`costUsd`, plus `model`). `inputTokens` includes both cache
+//! buckets, so they are subtracted to obtain non-cached input. A valid embedded
+//! `costUsd` (finite, non-negative — the same bar cline and gjc apply) is marked
+//! authoritative so local pricing does not overwrite Command Code's estimate.
+//! Transcripts without `usage` (older versions or truncated turns) only contain
+//! message text, so token
+//! counts are ESTIMATED from message text at ~4 characters per token,
+//! consistent with this crate's other estimated sources (see Kiro).
 //!
 //! These estimates approximate tokens processed; they will not match Command
 //! Code's server-reported usage, which reflects tool-output truncation and
 //! auxiliary model runs (e.g. tool-desc, taste-1) absent from the transcript.
 //!
 //! **Input estimation is per-turn, not cumulative.**
-//! Command Code stores no local token counts and re-sends prior context on each
+//! Command Code re-sends prior context on each
 //! request, but the on-disk transcript does not say how much of that context is
 //! cached versus re-billed. Each assistant turn's input is therefore estimated
 //! from only the *new* context that turn introduced — the user prompt plus any
@@ -28,13 +35,14 @@
 //! whole session, which is the same accounting other estimated clients use.
 //! Whether re-sent context should be attributed to `cache_read` remains a
 //! maintainer decision requiring Command Code's real billing model, which is not
-//! available from the transcript. Do not silently change the estimation model
-//! without a corresponding update to this doc-comment and the pinning test
-//! `test_commandcode_input_is_per_turn_delta`.
+//! available for turns without `usage`. Do not silently change the estimation
+//! model without a corresponding update to this doc-comment and the pinning
+//! test `test_commandcode_input_is_per_turn_delta`.
 //!
-//! Output is estimated from the assistant message's own content. The model id
-//! is not stored per message, so it is read from `~/.commandcode/config.json`
-//! (the configured agent model), falling back to "unknown".
+//! Output (for usage-less turns) is estimated from the assistant message's own
+//! content. The model id is read from the entry, falling back to the last
+//! `model_change` entry, then `~/.commandcode/config.json` (the configured
+//! agent model), and finally "unknown".
 
 use super::utils::file_modified_timestamp_ms;
 use super::{normalize_workspace_key, workspace_label_from_key, UnifiedMessage};
@@ -49,11 +57,47 @@ const UNKNOWN_MODEL: &str = "unknown";
 
 #[derive(Debug, Deserialize)]
 struct CommandCodeEntry {
+    #[serde(rename = "type")]
+    entry_type: Option<String>,
+    version: Option<u32>,
+    id: Option<String>,
+    timestamp: Option<String>,
+    /// The message is wrapped in a `message` object; assistant entries carry
+    /// the real usage and the model on the line itself.
+    message: Option<CommandCodeMessage>,
+    usage: Option<CommandCodeUsage>,
+    model: Option<String>,
+    // v1/v2 store message fields directly; v2 adds metadata.version = 2.
     role: Option<String>,
     content: Option<serde_json::Value>,
-    timestamp: Option<String>,
     #[serde(rename = "sessionId")]
     session_id: Option<String>,
+    metadata: Option<CommandCodeMetadata>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CommandCodeMetadata {
+    version: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CommandCodeMessage {
+    role: Option<String>,
+    content: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CommandCodeUsage {
+    #[serde(rename = "inputTokens")]
+    input_tokens: Option<i64>,
+    #[serde(rename = "outputTokens")]
+    output_tokens: Option<i64>,
+    #[serde(rename = "cacheReadTokens")]
+    cache_read_tokens: Option<i64>,
+    #[serde(rename = "cacheWriteTokens")]
+    cache_write_tokens: Option<i64>,
+    #[serde(rename = "costUsd")]
+    cost_usd: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -79,25 +123,17 @@ pub fn parse_commandcode_file(path: &Path) -> Vec<UnifiedMessage> {
     };
 
     let fallback_timestamp = file_modified_timestamp_ms(path);
-    let raw_model = model_from_config(path);
-    // Recover the real provider from the configured gateway id (e.g.
-    // `MiniMaxAI/MiniMax-M3-Free` -> `minimax`) so pricing resolves to that
-    // provider's catalog. The client's own `command-code` provider is not a
-    // pricing provider, so without this a MiniMax model would never reach a
-    // `minimax/...` key. Falls back to `command-code` when nothing is inferred.
-    let provider_id = raw_model
-        .as_deref()
-        .and_then(provider_hint_for_model)
-        .unwrap_or(PROVIDER_ID);
-    let model_id = raw_model
-        .map(|model| canonicalize_model(&model))
-        .unwrap_or_else(|| UNKNOWN_MODEL.to_string());
+    let config_model = model_from_config(path);
     let session_id_from_path = session_id_from_path(path);
     let workspace_key = workspace_key_from_path(path);
     let workspace_label = workspace_key.as_deref().and_then(workspace_label_from_key);
 
     let mut messages = Vec::new();
     let mut session_id: Option<String> = None;
+    let mut transcript_version: Option<u32> = None;
+    // Model from the most recent `model_change` entry; used when a message
+    // entry does not carry its own `model` field.
+    let mut last_changed_model: Option<String> = None;
     // Char count of the *new* context added since the previous assistant
     // response (the user prompt plus any tool results for this turn). This
     // stands in for the input (prompt) tokens of the current request without
@@ -125,31 +161,139 @@ pub fn parse_commandcode_file(path: &Path) -> Vec<UnifiedMessage> {
             Err(_) => continue,
         };
 
-        if session_id.is_none() {
-            if let Some(id) = entry.session_id.as_deref().filter(|id| !id.is_empty()) {
-                session_id = Some(id.to_string());
-            }
+        // The header line carries the session id.
+        if entry.entry_type.as_deref() == Some("session") {
+            transcript_version = entry.version;
+            session_id = session_id
+                .or_else(|| entry.id.clone())
+                .filter(|id| !id.is_empty());
+            continue;
         }
 
-        let chars = entry.content.as_ref().map(content_chars).unwrap_or(0);
+        if matches!(transcript_version, None | Some(3))
+            && entry.entry_type.as_deref() == Some("model_change")
+        {
+            last_changed_model = entry.model.clone().filter(|model| !model.trim().is_empty());
+            continue;
+        }
 
-        match entry.role.as_deref() {
+        let (role, content, usage, model) = match (transcript_version, entry.entry_type.as_deref())
+        {
+            // v3 can also be read without a header using the filename as ID.
+            (None | Some(3), Some("message")) => {
+                let Some(message) = entry.message.as_ref() else {
+                    continue;
+                };
+                (
+                    message.role.as_deref(),
+                    message.content.as_ref(),
+                    entry.usage.as_ref(),
+                    entry.model.as_ref(),
+                )
+            }
+            (None, None)
+                if matches!(
+                    entry
+                        .metadata
+                        .as_ref()
+                        .and_then(|metadata| metadata.version),
+                    None | Some(1 | 2)
+                ) =>
+            {
+                if session_id.is_none() {
+                    session_id = entry.session_id.clone().filter(|id| !id.is_empty());
+                }
+                // Native v1/v2 writers do not persist per-request usage/model.
+                (entry.role.as_deref(), entry.content.as_ref(), None, None)
+            }
+            // Do not reinterpret unknown versions or malformed v3 as legacy.
+            _ => continue,
+        };
+        let chars = content.map(content_chars).unwrap_or(0);
+
+        match role {
             Some("assistant") => {
-                let input = estimate_tokens(turn_input_chars);
-                let output = estimate_tokens(chars);
+                // Preserve Command Code's embedded `costUsd`, including 0.0
+                // for free models, when finite and non-negative (the same bar
+                // cline and gjc apply). Otherwise local pricing should fill
+                // it in from the normalized token counts.
+                let (tokens, cost, cost_is_authoritative) = match usage {
+                    Some(usage) => {
+                        let cache_read = usage.cache_read_tokens.unwrap_or(0).max(0);
+                        let cache_write = usage.cache_write_tokens.unwrap_or(0).max(0);
+                        // Command Code's toSessionUsage preserves inclusive input;
+                        // its estimateSessionCostUsd subtracts both cache buckets.
+                        // Normalize here so totals and local pricing stay additive.
+                        let input = usage
+                            .input_tokens
+                            .unwrap_or(0)
+                            .max(0)
+                            .saturating_sub(cache_read)
+                            .saturating_sub(cache_write)
+                            .max(0);
+                        let reported_cost = usage
+                            .cost_usd
+                            .filter(|cost| cost.is_finite() && *cost >= 0.0);
+                        (
+                            TokenBreakdown {
+                                input,
+                                output: usage.output_tokens.unwrap_or(0).max(0),
+                                cache_read,
+                                cache_write,
+                                reasoning: 0,
+                            },
+                            reported_cost.unwrap_or(0.0),
+                            reported_cost.is_some(),
+                        )
+                    }
+                    None => (
+                        TokenBreakdown {
+                            input: estimate_tokens(turn_input_chars),
+                            output: estimate_tokens(chars),
+                            cache_read: 0,
+                            cache_write: 0,
+                            reasoning: 0,
+                        },
+                        0.0,
+                        false,
+                    ),
+                };
                 // This turn's input has been consumed; the next turn's input is
                 // only the *new* context that follows this response. The
                 // assistant's own output is not part of any input estimate.
                 turn_input_chars = 0;
 
-                if input + output == 0 {
+                if tokens.total() == 0 {
                     pending_turn_start = false;
                     continue;
                 }
 
+                // Per-entry model, falling back to the most recent model
+                // change, then to the configured agent model.
+                let raw_model = model
+                    .cloned()
+                    .or(last_changed_model.clone())
+                    .or_else(|| config_model.clone())
+                    .filter(|model| !model.trim().is_empty());
+                // Recover the real provider from the gateway id (e.g.
+                // `MiniMaxAI/MiniMax-M3-Free` -> `minimax`) so pricing resolves
+                // to that provider's catalog. The client's own `command-code`
+                // provider is not a pricing provider, so without this a
+                // MiniMax model would never reach a `minimax/...` key.
+                // Falls back to `command-code` when nothing is inferred.
+                let provider_id = raw_model
+                    .as_deref()
+                    .and_then(provider_hint_for_model)
+                    .unwrap_or(PROVIDER_ID)
+                    .to_string();
+                let model_id = raw_model
+                    .map(|model| canonicalize_model(&model))
+                    .unwrap_or_else(|| UNKNOWN_MODEL.to_string());
+
                 let resolved_session = session_id
                     .clone()
                     .unwrap_or_else(|| session_id_from_path.clone());
+                let dedup_key = format!("{}:{}", resolved_session, assistant_index);
                 let timestamp = entry
                     .timestamp
                     .as_deref()
@@ -158,20 +302,19 @@ pub fn parse_commandcode_file(path: &Path) -> Vec<UnifiedMessage> {
 
                 let mut message = UnifiedMessage::new_with_dedup(
                     CLIENT_ID,
-                    model_id.clone(),
+                    model_id,
                     provider_id,
-                    resolved_session.clone(),
+                    resolved_session,
                     timestamp,
-                    TokenBreakdown {
-                        input,
-                        output,
-                        cache_read: 0,
-                        cache_write: 0,
-                        reasoning: 0,
-                    },
-                    0.0,
-                    Some(format!("{}:{}", resolved_session, assistant_index)),
+                    tokens,
+                    cost,
+                    Some(dedup_key),
                 );
+                if cost_is_authoritative {
+                    // Preserve Command Code's embedded cost rather than
+                    // replacing it with our local pricing estimate.
+                    message.mark_provider_reported_cost();
+                }
                 message.message_count = 1;
                 message.is_turn_start = pending_turn_start;
                 message.set_workspace(workspace_key.clone(), workspace_label.clone());
@@ -292,3 +435,438 @@ fn workspace_key_from_path(path: &Path) -> Option<String> {
         .and_then(normalize_workspace_key)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::CostSource;
+
+    /// Build a transcript at `<root>/.commandcode/projects/<slug>/<id>.jsonl`
+    /// plus an optional `<root>/.commandcode/config.json`.
+    fn fixture(
+        root: &std::path::Path,
+        slug: &str,
+        session_id: &str,
+        config_model: Option<&str>,
+        lines: &[&str],
+    ) -> std::path::PathBuf {
+        let cc_root = root.join(".commandcode");
+        let projects = cc_root.join("projects").join(slug);
+        std::fs::create_dir_all(&projects).unwrap();
+        if let Some(model) = config_model {
+            std::fs::write(
+                cc_root.join("config.json"),
+                format!("{{\"model\": {model:?}}}"),
+            )
+            .unwrap();
+        }
+        let path = projects.join(format!("{session_id}.jsonl"));
+        std::fs::write(&path, lines.join("\n") + "\n").unwrap();
+        path
+    }
+
+    #[test]
+    fn test_released_v3_writer_fixtures() {
+        // Files were emitted by the released writers, not hand-written to
+        // match this parser. See tests/fixtures/commandcode/README.md.
+        for version in ["1.0.0", "1.20.0", "1.50.0", "1.52.0", "1.53.0"] {
+            let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/commandcode")
+                .join(format!("{version}.jsonl"));
+            let messages = parse_commandcode_file(&path);
+            assert_eq!(messages.len(), 3, "Command Code {version}");
+            for (message, model, cost) in [
+                (&messages[0], "claude-sonnet-4-6", 0.25),
+                (&messages[1], "MiniMax-M3", 0.0),
+            ] {
+                assert_eq!(message.session_id, "native-v3");
+                assert_eq!(message.model_id, model, "Command Code {version}");
+                assert_eq!(
+                    message.tokens,
+                    TokenBreakdown {
+                        input: 1100,
+                        output: 50,
+                        cache_read: 700,
+                        cache_write: 200,
+                        reasoning: 0,
+                    },
+                    "Command Code {version}"
+                );
+                assert_eq!(message.tokens.total(), 2050);
+                assert_eq!(message.cost, cost);
+                assert_eq!(message.cost_source, CostSource::ProviderReported);
+                assert!(message.is_turn_start);
+            }
+            // No usage event: use the most recent model_change and estimate
+            // only the new prompt (66 serialized chars) and answer (58 chars).
+            let estimated = &messages[2];
+            assert_eq!(estimated.model_id, "MiniMax-M3", "Command Code {version}");
+            assert_eq!(
+                estimated.tokens,
+                TokenBreakdown {
+                    input: 17,
+                    output: 15,
+                    ..Default::default()
+                }
+            );
+            assert_eq!(estimated.cost_source, CostSource::Unknown);
+            assert!(estimated.is_turn_start);
+        }
+    }
+
+    #[test]
+    fn test_native_v1_v2_transcripts_are_estimated_without_migration() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/commandcode");
+        for version in ["0.17.18", "0.50.0", "0.52.5"] {
+            let dir = tempfile::tempdir().unwrap();
+            let source = std::fs::read_to_string(root.join(format!("{version}.jsonl"))).unwrap();
+            let path = fixture(
+                dir.path(),
+                "legacy-project",
+                "filename-id",
+                Some("org/Config-Model"),
+                &source.lines().collect::<Vec<_>>(),
+            );
+            let messages = parse_commandcode_file(&path);
+            assert_eq!(messages.len(), 1, "Command Code {version}");
+            assert_eq!(messages[0].session_id, "native-v2");
+            assert_eq!(messages[0].model_id, "Config-Model");
+            assert_eq!(messages[0].timestamp, 1_784_548_800_000);
+            assert_eq!(
+                messages[0].tokens,
+                TokenBreakdown {
+                    input: 13,
+                    output: 13,
+                    ..Default::default()
+                },
+                "Command Code {version}"
+            );
+            assert_eq!(messages[0].cost_source, CostSource::Unknown);
+            assert!(messages[0].is_turn_start);
+        }
+    }
+
+    #[test]
+    fn test_migrated_v2_transcript_is_estimated() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/commandcode");
+        // Produced by 1.0.0's migration of the 0.52.5 writer fixture. Migration
+        // preserves content/model but cannot recover absent historical usage.
+        let messages = parse_commandcode_file(&root.join("0.52.5-migrated-by-1.0.0.jsonl"));
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].session_id, "migrated-v2");
+        assert_eq!(messages[0].model_id, "claude-sonnet-4-6");
+        assert_eq!(
+            messages[0].tokens,
+            TokenBreakdown {
+                input: 13,
+                output: 13,
+                ..Default::default()
+            }
+        );
+        assert_eq!(messages[0].cost_source, CostSource::Unknown);
+        assert!(messages[0].is_turn_start);
+    }
+
+    #[test]
+    fn test_unknown_versions_and_malformed_v3_do_not_fall_back_to_legacy() {
+        for lines in [
+            vec![
+                r#"{"role":"assistant","content":"must not be estimated","metadata":{"version":4}}"#,
+            ],
+            vec![r#"{"type":"message","role":"assistant","content":"must not be estimated"}"#],
+            vec![
+                r#"{"type":"session","version":4,"id":"future"}"#,
+                r#"{"type":"message","message":{"role":"assistant","content":"unknown format"},"usage":{"inputTokens":100}}"#,
+            ],
+            vec![
+                r#"{"type":"session","version":3,"id":"v3"}"#,
+                r#"{"role":"assistant","content":"malformed v3"}"#,
+            ],
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = fixture(dir.path(), "project", "invalid", None, &lines);
+            assert!(parse_commandcode_file(&path).is_empty(), "{lines:?}");
+        }
+    }
+
+    const TS: &str = "2026-09-10T03:11:06.582Z";
+    const TS_MS: i64 = 1_789_009_866_582;
+
+    #[test]
+    fn test_commandcode_normalizes_real_usage_and_preserves_cost() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = fixture(
+            dir.path(),
+            "users-alice-repo",
+            "sess-1",
+            None,
+            &[
+                r#"{"type":"session","version":3,"id":"sess-1","timestamp":"2026-09-10T03:10:55.728Z","cwd":"/Users/alice/repo"}"#,
+                r#"{"type":"message","id":"m1","parentId":null,"timestamp":"2026-09-10T03:10:56Z","message":{"role":"user","content":[{"type":"text","text":"hi"}]}}"#,
+                r#"{"type":"message","id":"m2","parentId":"m1","timestamp":"2026-09-10T03:11:06.582Z","message":{"role":"assistant","content":[{"type":"text","text":"hello"}]},"usage":{"inputTokens":20783,"outputTokens":59,"cacheReadTokens":7296,"cacheWriteTokens":128,"costUsd":0.003057152},"model":"deepseek/deepseek-v4-flash"}"#,
+            ],
+        );
+        assert_eq!(parse_rfc3339_ms(TS), Some(TS_MS));
+
+        let messages = parse_commandcode_file(&path);
+        assert_eq!(messages.len(), 1);
+        let msg = &messages[0];
+        assert_eq!(msg.client, "commandcode");
+        assert_eq!(msg.session_id, "sess-1");
+        assert_eq!(msg.model_id, "deepseek-v4-flash");
+        assert_eq!(msg.provider_id, "deepseek");
+        assert_eq!(msg.timestamp, TS_MS);
+        assert_eq!(
+            msg.tokens,
+            TokenBreakdown {
+                input: 13359,
+                output: 59,
+                cache_read: 7296,
+                cache_write: 128,
+                reasoning: 0,
+            }
+        );
+        assert_eq!(msg.tokens.total(), 20842);
+        assert!((msg.cost - 0.003057152).abs() < 1e-9);
+        assert_eq!(msg.cost_source, CostSource::ProviderReported);
+        assert!(msg.is_turn_start);
+        assert_eq!(msg.workspace_key.as_deref(), Some("users-alice-repo"));
+    }
+
+    #[test]
+    fn test_commandcode_zero_input_all_cache_read_is_not_skipped() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = fixture(
+            dir.path(),
+            "users-alice-repo",
+            "sess-cache",
+            None,
+            &[
+                r#"{"type":"session","version":3,"id":"sess-cache","timestamp":"2026-09-10T03:10:55Z"}"#,
+                r#"{"type":"message","id":"m1","parentId":null,"timestamp":"2026-09-10T03:10:56Z","message":{"role":"user","content":[{"type":"text","text":"hello there"}]}}"#,
+                r#"{"type":"message","id":"m2","parentId":"m1","timestamp":"2026-09-10T03:11:06Z","message":{"role":"assistant","content":[{"type":"text","text":"hi"}]},"usage":{"inputTokens":9999,"outputTokens":0,"cacheReadTokens":9999,"cacheWriteTokens":0,"costUsd":0.001},"model":"org/model-x"}"#,
+            ],
+        );
+
+        let messages = parse_commandcode_file(&path);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].tokens.input, 0);
+        assert_eq!(messages[0].tokens.cache_read, 9999);
+    }
+
+    #[test]
+    fn test_commandcode_clamps_invalid_token_counts_without_overflow() {
+        // Valid cached requests are covered through pricing and reporting in
+        // lib.rs. Here, preserve the parser's safety contract for corrupt counts.
+        for (input, output, cache_read, cache_write, expected_input, expected_total) in [
+            (100, 10, 0, 0, 100, 110),
+            (100, 10, 80, 70, 0, 160),
+            (100, 10, -80, -70, 100, 110),
+            (-100, 10, 80, 70, 0, 160),
+            (i64::MAX, 10, i64::MAX, i64::MAX, 0, i64::MAX),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let entry = serde_json::json!({
+                "type": "message",
+                "timestamp": TS,
+                "message": {"role": "assistant", "content": [{"type": "text", "text": "OK"}]},
+                "model": "Qwen/Qwen3.8-27B",
+                "usage": {
+                    "inputTokens": input,
+                    "outputTokens": output,
+                    "cacheReadTokens": cache_read,
+                    "cacheWriteTokens": cache_write,
+                },
+            })
+            .to_string();
+            let path = fixture(dir.path(), "test-project", "sess-boundary", None, &[&entry]);
+            let messages = parse_commandcode_file(&path);
+            assert_eq!(messages.len(), 1);
+            assert_eq!(messages[0].tokens.input, expected_input, "{entry}");
+            assert_eq!(messages[0].tokens.output, output);
+            assert_eq!(messages[0].tokens.cache_read, cache_read.max(0));
+            assert_eq!(messages[0].tokens.cache_write, cache_write.max(0));
+            assert_eq!(messages[0].tokens.total(), expected_total, "{entry}");
+            assert_eq!(messages[0].cost_source, CostSource::Unknown);
+        }
+    }
+
+    #[test]
+    fn test_commandcode_input_is_per_turn_delta() {
+        // Pinning test for the estimation fallback: with no `usage` fields,
+        // each assistant turn's input is estimated from only the new context
+        // that turn introduced (the user prompt), never the cumulative
+        // conversation.
+        let user_content = serde_json::json!([{"type": "text", "text": "aaaa"}]);
+        let expected = estimate_tokens(content_chars(&user_content));
+        let user_line = format!(
+            r#"{{"type":"message","id":"m","parentId":null,"timestamp":"2026-09-10T03:10:56Z","message":{{"role":"user","content":{content}}}}}"#,
+            content = user_content
+        );
+        let assistant_line = r#"{"type":"message","id":"a","parentId":"m","timestamp":"2026-09-10T03:11:06Z","message":{"role":"assistant","content":[{"type":"text","text":"bbbb"}]}}"#;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = fixture(
+            dir.path(),
+            "users-alice-repo",
+            "sess-est",
+            None,
+            &[
+                r#"{"type":"session","version":3,"id":"sess-est","timestamp":"2026-09-10T03:10:55Z"}"#,
+                &user_line,
+                assistant_line,
+                &user_line,
+                assistant_line,
+            ],
+        );
+
+        let messages = parse_commandcode_file(&path);
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].tokens.input, expected);
+        assert_eq!(messages[1].tokens.input, expected);
+        assert!(messages[0].is_turn_start);
+        assert!(messages[1].is_turn_start);
+        assert_eq!(messages[0].cost_source, CostSource::Unknown);
+    }
+
+    #[test]
+    fn test_commandcode_model_falls_back_to_model_change_then_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = fixture(
+            dir.path(),
+            "users-alice-repo",
+            "sess-model",
+            Some("Config/Config-Model"),
+            &[
+                r#"{"type":"session","version":3,"id":"sess-model","timestamp":"2026-09-10T03:10:55Z"}"#,
+                r#"{"type":"model_change","id":"mc1","parentId":null,"timestamp":"2026-09-10T03:11:00Z","model":"org/changed-model"}"#,
+                r#"{"type":"message","id":"m1","parentId":null,"timestamp":"2026-09-10T03:10:56Z","message":{"role":"user","content":[{"type":"text","text":"hi"}]}}"#,
+                // No `model` on this entry -> falls back to model_change.
+                r#"{"type":"message","id":"m2","parentId":"m1","timestamp":"2026-09-10T03:11:06Z","message":{"role":"assistant","content":[{"type":"text","text":"hello"}]},"usage":{"inputTokens":10,"outputTokens":5,"cacheReadTokens":0,"cacheWriteTokens":0,"costUsd":0.001}}"#,
+            ],
+        );
+
+        let messages = parse_commandcode_file(&path);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].model_id, "changed-model");
+    }
+
+    #[test]
+    fn test_commandcode_config_model_used_when_entry_has_no_model() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = fixture(
+            dir.path(),
+            "users-alice-repo",
+            "sess-config",
+            Some("org/Config-Model-Free"),
+            &[
+                r#"{"type":"session","version":3,"id":"sess-config","timestamp":"2026-09-10T03:10:55Z"}"#,
+                r#"{"type":"message","id":"m1","parentId":null,"timestamp":"2026-09-10T03:10:56Z","message":{"role":"user","content":[{"type":"text","text":"hi"}]}}"#,
+                r#"{"type":"message","id":"m2","parentId":"m1","timestamp":"2026-09-10T03:11:06Z","message":{"role":"assistant","content":[{"type":"text","text":"hello"}]},"usage":{"inputTokens":10,"outputTokens":5,"cacheReadTokens":0,"cacheWriteTokens":0,"costUsd":0.0}}"#,
+            ],
+        );
+
+        let messages = parse_commandcode_file(&path);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].model_id, "Config-Model");
+    }
+
+    #[test]
+    fn test_commandcode_session_id_from_header_beats_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = fixture(
+            dir.path(),
+            "users-alice-repo",
+            "path-id",
+            None,
+            &[
+                r#"{"type":"session","version":3,"id":"header-id","timestamp":"2026-09-10T03:10:55Z"}"#,
+                r#"{"type":"message","id":"m1","parentId":null,"timestamp":"2026-09-10T03:10:56Z","message":{"role":"user","content":[{"type":"text","text":"hi"}]}}"#,
+                r#"{"type":"message","id":"m2","parentId":"m1","timestamp":"2026-09-10T03:11:06Z","message":{"role":"assistant","content":[{"type":"text","text":"hello"}]},"usage":{"inputTokens":10,"outputTokens":5,"cacheReadTokens":0,"cacheWriteTokens":0,"costUsd":0.001},"model":"org/m"}"#,
+            ],
+        );
+
+        let messages = parse_commandcode_file(&path);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].session_id, "header-id");
+        assert_eq!(messages[0].dedup_key.as_deref(), Some("header-id:0"));
+    }
+
+    #[test]
+    fn test_commandcode_session_id_from_path_when_no_header() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = fixture(
+            dir.path(),
+            "users-alice-repo",
+            "path-fallback",
+            None,
+            &[
+                r#"{"type":"message","id":"m1","parentId":null,"timestamp":"2026-09-10T03:10:56Z","message":{"role":"user","content":[{"type":"text","text":"hi"}]}}"#,
+                r#"{"type":"message","id":"m2","parentId":"m1","timestamp":"2026-09-10T03:11:06Z","message":{"role":"assistant","content":[{"type":"text","text":"hello"}]},"usage":{"inputTokens":10,"outputTokens":5,"cacheReadTokens":0,"cacheWriteTokens":0,"costUsd":0.001},"model":"org/m"}"#,
+            ],
+        );
+
+        let messages = parse_commandcode_file(&path);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].session_id, "path-fallback");
+    }
+
+    #[test]
+    fn test_commandcode_invalid_cost_usd_is_not_authoritative() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = fixture(
+            dir.path(),
+            "users-alice-repo",
+            "sess-badcost",
+            None,
+            &[
+                r#"{"type":"session","version":3,"id":"sess-badcost","timestamp":"2026-09-10T03:10:55Z"}"#,
+                r#"{"type":"message","id":"m1","parentId":null,"timestamp":"2026-09-10T03:10:56Z","message":{"role":"user","content":[{"type":"text","text":"hi"}]}}"#,
+                r#"{"type":"message","id":"m2","parentId":"m1","timestamp":"2026-09-10T03:11:06Z","message":{"role":"assistant","content":[{"type":"text","text":"hello"}]},"usage":{"inputTokens":100,"outputTokens":10,"cacheReadTokens":0,"cacheWriteTokens":0,"costUsd":-1.0},"model":"org/m"}"#,
+            ],
+        );
+
+        let messages = parse_commandcode_file(&path);
+        assert_eq!(messages.len(), 1);
+        // A negative costUsd is not a valid provider price (same validity bar
+        // as cline/gjc embedded costs); local pricing should fill it in.
+        assert_eq!(messages[0].cost, 0.0);
+        assert_eq!(messages[0].cost_source, CostSource::Unknown);
+    }
+
+    #[test]
+    fn test_commandcode_skips_checkpoint_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let projects = dir
+            .path()
+            .join(".commandcode")
+            .join("projects")
+            .join("users-alice-repo");
+        std::fs::create_dir_all(&projects).unwrap();
+        let path = projects.join("sess-1.checkpoints.jsonl");
+        std::fs::write(
+            &path,
+            r#"{"id":"x","messageId":"x","turnNumber":1,"createdAt":"2026-09-10T03:11:03Z","prompt":"hi"}"#,
+        )
+        .unwrap();
+
+        assert!(parse_commandcode_file(&path).is_empty());
+    }
+
+    #[test]
+    fn test_commandcode_skips_contentless_assistant_turns() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = fixture(
+            dir.path(),
+            "users-alice-repo",
+            "sess-empty",
+            None,
+            &[
+                r#"{"type":"session","version":3,"id":"sess-empty","timestamp":"2026-09-10T03:10:55Z"}"#,
+                r#"{"type":"message","id":"m1","parentId":null,"timestamp":"2026-09-10T03:10:56Z","message":{"role":"user","content":[{"type":"text","text":"hi"}]}}"#,
+                r#"{"type":"message","id":"m2","parentId":"m1","timestamp":"2026-09-10T03:11:06Z","message":{"role":"assistant","content":[]},"usage":{"inputTokens":0,"outputTokens":0,"cacheReadTokens":0,"cacheWriteTokens":0,"costUsd":0.0},"model":"org/m"}"#,
+            ],
+        );
+
+        assert!(parse_commandcode_file(&path).is_empty());
+    }
+}
