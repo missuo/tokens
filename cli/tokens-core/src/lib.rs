@@ -1375,10 +1375,10 @@ fn parse_all_messages_with_pricing_with_env_strategy(
         }
     }
 
-    // Command Code does not persist token usage or cost locally, so tokens are
-    // estimated and priced. The model id comes from ~/.commandcode/config.json
-    // (canonicalized, e.g. "MiniMaxAI/MiniMax-M3-Free" -> "MiniMax-M3"), not the
-    // transcript, so the source cache — which fingerprints only the transcript
+    // Command Code assistant entries carry real usage and cost (marked
+    // authoritative), so only usage-less turns are estimated and priced. The
+    // model id can still come from ~/.commandcode/config.json (the last-resort
+    // fallback), so the source cache — which fingerprints only the transcript
     // file — is bypassed: otherwise a config.json model change would leave stale
     // cached pricing until the transcript itself changed.
     let commandcode_messages: Vec<UnifiedMessage> = scan_result
