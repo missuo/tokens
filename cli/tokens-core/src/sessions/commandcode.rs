@@ -4,8 +4,9 @@
 //!
 //! Assistant entries persist the real per-request token usage and cost on the
 //! line itself (`usage` with `inputTokens`/`outputTokens`/`cacheReadTokens`/
-//! `cacheWriteTokens`/`costUsd`, plus `model`); when present, they are used
-//! verbatim and the cost is marked authoritative. Transcripts without `usage`
+//! `cacheWriteTokens`/`costUsd`, plus `model`); when present, the token counts
+//! are used verbatim, and a reported `costUsd` is marked authoritative so local
+//! pricing does not overwrite it. Transcripts without `usage`
 //! (older versions or truncated turns) only contain message text, so token
 //! counts are ESTIMATED from message text at ~4 characters per token,
 //! consistent with this crate's other estimated sources (see Kiro).
@@ -54,14 +55,8 @@ struct CommandCodeEntry {
     entry_type: Option<String>,
     id: Option<String>,
     timestamp: Option<String>,
-    /// Flat (legacy) shape: one JSON object per line with the message fields
-    /// at the top level.
-    role: Option<String>,
-    content: Option<serde_json::Value>,
-    #[serde(rename = "sessionId")]
-    session_id: Option<String>,
-    /// v3 tree shape: the message is wrapped in a `message` object, and
-    /// assistant entries carry real usage and the model on the line itself.
+    /// The message is wrapped in a `message` object; assistant entries carry
+    /// the real usage and the model on the line itself.
     message: Option<CommandCodeMessage>,
     usage: Option<CommandCodeUsage>,
     model: Option<String>,
@@ -160,26 +155,18 @@ pub fn parse_commandcode_file(path: &Path) -> Vec<UnifiedMessage> {
             continue;
         }
 
-        if session_id.is_none() {
-            if let Some(id) = entry.session_id.as_deref().filter(|id| !id.is_empty()) {
-                session_id = Some(id.to_string());
-            }
-        }
+        let (role, content) = match entry.message.as_ref() {
+            Some(message) => (message.role.as_deref(), message.content.as_ref()),
+            None => continue,
+        };
+        let chars = content.map(content_chars).unwrap_or(0);
 
-        // Resolve role/content from whichever shape the entry uses.
-        let role = entry
-            .role
-            .clone()
-            .or_else(|| entry.message.as_ref().and_then(|m| m.role.clone()));
-        let content = entry
-            .content
-            .clone()
-            .or_else(|| entry.message.as_ref().and_then(|m| m.content.clone()));
-        let chars = content.as_ref().map(content_chars).unwrap_or(0);
-
-        match role.as_deref() {
+        match role {
             Some("assistant") => {
-                let (tokens, cost, has_real_usage) = match entry.usage.as_ref() {
+                // `costUsd` present (even as 0.0, which free models really do
+                // cost) means the provider priced the request; absent means
+                // local pricing should still fill it in from the real tokens.
+                let (tokens, cost, cost_is_authoritative) = match entry.usage.as_ref() {
                     Some(usage) => (
                         TokenBreakdown {
                             input: usage.input_tokens.unwrap_or(0),
@@ -189,7 +176,7 @@ pub fn parse_commandcode_file(path: &Path) -> Vec<UnifiedMessage> {
                             reasoning: 0,
                         },
                         usage.cost_usd.unwrap_or(0.0),
-                        true,
+                        usage.cost_usd.is_some(),
                     ),
                     None => (
                         TokenBreakdown {
@@ -256,7 +243,7 @@ pub fn parse_commandcode_file(path: &Path) -> Vec<UnifiedMessage> {
                     cost,
                     Some(dedup_key),
                 );
-                if has_real_usage {
+                if cost_is_authoritative {
                     // The provider reported both the tokens and the cost;
                     // local pricing must not overwrite either.
                     message.mark_provider_reported_cost();
@@ -592,31 +579,6 @@ mod tests {
         let messages = parse_commandcode_file(&path);
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].session_id, "path-fallback");
-    }
-
-    #[test]
-    fn test_commandcode_flat_legacy_shape_still_parses() {
-        let dir = tempfile::tempdir().unwrap();
-        let user_content = serde_json::json!([{"type": "text", "text": "hello there world"}]);
-        let expected = estimate_tokens(content_chars(&user_content));
-        let path = fixture(
-            dir.path(),
-            "users-alice-repo",
-            "sess-legacy",
-            Some("org/Legacy-Model"),
-            &[
-                r#"{"role":"user","content":[{"type":"text","text":"hello there world"}],"timestamp":"2026-09-10T03:10:56Z","sessionId":"legacy-id"}"#,
-                r#"{"role":"assistant","content":[{"type":"text","text":"hi there"}],"timestamp":"2026-09-10T03:11:06Z","sessionId":"legacy-id"}"#,
-            ],
-        );
-
-        let messages = parse_commandcode_file(&path);
-        assert_eq!(messages.len(), 1);
-        let msg = &messages[0];
-        assert_eq!(msg.session_id, "legacy-id");
-        assert_eq!(msg.model_id, "Legacy-Model");
-        assert_eq!(msg.tokens.input, expected);
-        assert_eq!(msg.cost_source, CostSource::Unknown);
     }
 
     #[test]
