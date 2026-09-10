@@ -1,0 +1,9 @@
+{"type":"session","version":3,"id":"native-v3","timestamp":"2026-07-20T12:00:00.000Z","cwd":"/synthetic/commandcode-compatibility"}
+{"type":"model_change","id":"entry-1","parentId":null,"timestamp":"2026-07-20T12:00:00.000Z","model":"anthropic/claude-sonnet-4-6"}
+{"type":"message","id":"entry-2","parentId":"entry-1","timestamp":"2026-07-20T12:00:00.000Z","message":{"role":"user","content":[{"type":"text","text":"First synthetic prompt."}]}}
+{"type":"message","id":"entry-3","parentId":"entry-2","timestamp":"2026-07-20T12:00:00.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Synthetic answer with measured usage."}]},"usage":{"inputTokens":2000,"outputTokens":50,"cacheReadTokens":700,"cacheWriteTokens":200,"costUsd":0.25},"model":"anthropic/claude-sonnet-4-6"}
+{"type":"model_change","id":"entry-4","parentId":"entry-3","timestamp":"2026-07-20T12:00:00.000Z","model":"MiniMaxAI/MiniMax-M3-Free"}
+{"type":"message","id":"entry-5","parentId":"entry-4","timestamp":"2026-07-20T12:00:00.000Z","message":{"role":"user","content":[{"type":"text","text":"Free-model synthetic prompt."}]}}
+{"type":"message","id":"entry-6","parentId":"entry-5","timestamp":"2026-07-20T12:00:00.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Free synthetic answer."}]},"usage":{"inputTokens":2000,"outputTokens":50,"cacheReadTokens":700,"cacheWriteTokens":200,"cacheWriteTokens1h":100,"costUsd":0},"model":"MiniMaxAI/MiniMax-M3-Free"}
+{"type":"message","id":"entry-7","parentId":"entry-6","timestamp":"2026-07-20T12:00:00.000Z","message":{"role":"user","content":[{"type":"text","text":"Synthetic prompt without a usage event."}]}}
+{"type":"message","id":"entry-8","parentId":"entry-7","timestamp":"2026-07-20T12:00:00.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Usage-missing synthetic answer."}]}}

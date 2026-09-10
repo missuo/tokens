@@ -2298,6 +2298,21 @@ mod tests {
 
         let project = home.join(".commandcode/projects/test-project");
         std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(
+            home.join(".commandcode/config.json"),
+            r#"{"model":"Qwen/Qwen3.8-27B"}"#,
+        )
+        .unwrap();
+        for version in ["0.17.18", "0.52.5"] {
+            let legacy_project = home.join(format!(".commandcode/projects/legacy-{version}"));
+            std::fs::create_dir_all(&legacy_project).unwrap();
+            std::fs::copy(
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join(format!("tests/fixtures/commandcode/{version}.jsonl")),
+                legacy_project.join(format!("{version}.jsonl")),
+            )
+            .unwrap();
+        }
         // First usage is captured from Command Code 1.52.0 (not a saved
         // transcript). The other requests exercise both cache buckets, with
         // absent, positive, and explicitly zero costUsd on the same model.
@@ -2341,8 +2356,32 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(report.contributions.len(), 3);
-        let estimated = &report.contributions[0];
+        let [legacy, estimated, embedded_cost, free] = report.contributions.as_slice() else {
+            panic!("expected four daily contributions");
+        };
+        // Native v1 and v2 each estimate 13 input + 13 output tokens from
+        // their serialized content, and use the configured model for pricing.
+        assert_eq!(legacy.date, "2026-07-20");
+        assert_eq!(legacy.totals.messages, 2);
+        assert_eq!(legacy.totals.tokens, 52);
+        assert_eq!(
+            legacy.token_breakdown,
+            TokenBreakdown {
+                input: 26,
+                output: 26,
+                cache_read: 0,
+                cache_write: 0,
+                reasoning: 0,
+            }
+        );
+        assert!((legacy.totals.cost - 0.000260).abs() < 1e-12);
+        assert_eq!(legacy.clients.len(), 1);
+        assert_eq!(legacy.clients[0].client, "commandcode");
+        assert_eq!(legacy.clients[0].model_id, "qwen3.8-27b");
+        assert_eq!(legacy.clients[0].messages, 2);
+        assert_eq!(legacy.clients[0].tokens, legacy.token_breakdown);
+        assert!((legacy.clients[0].cost - 0.000260).abs() < 1e-12);
+
         assert_eq!(estimated.date, "2026-09-10");
         assert_eq!(estimated.totals.messages, 2);
         // 12,036 from the captured request + 1,100 from the both-cache request.
@@ -2369,8 +2408,8 @@ mod tests {
         // Both would cost $0.0017 locally. Neither the positive provider
         // estimate nor a free request may be overwritten by that price.
         for (day, date, cost) in [
-            (&report.contributions[1], "2026-09-11", 0.125),
-            (&report.contributions[2], "2026-09-12", 0.0),
+            (embedded_cost, "2026-09-11", 0.125),
+            (free, "2026-09-12", 0.0),
         ] {
             assert_eq!(day.date, date);
             assert_eq!(day.totals.messages, 1);
@@ -2390,14 +2429,14 @@ mod tests {
             assert_eq!(day.clients[0].cost, cost);
         }
 
-        assert_eq!(report.summary.total_tokens, 15_336);
-        assert!((report.summary.total_cost - 0.150964).abs() < 1e-12);
-        assert_eq!(report.summary.total_days, 3);
-        assert_eq!(report.summary.active_days, 3);
+        assert_eq!(report.summary.total_tokens, 15_388);
+        assert!((report.summary.total_cost - 0.151224).abs() < 1e-12);
+        assert_eq!(report.summary.total_days, 4);
+        assert_eq!(report.summary.active_days, 4);
         assert_eq!(report.summary.clients, ["commandcode"]);
         assert_eq!(report.summary.models, ["qwen3.8-27b"]);
         assert_eq!(report.years.len(), 1);
-        assert_eq!(report.years[0].total_tokens, 15_336);
-        assert!((report.years[0].total_cost - 0.150964).abs() < 1e-12);
+        assert_eq!(report.years[0].total_tokens, 15_388);
+        assert!((report.years[0].total_cost - 0.151224).abs() < 1e-12);
     }
 }

@@ -2,7 +2,11 @@
 //!
 //! Parses JSONL transcripts from `~/.commandcode/projects/<slug>/<session>.jsonl`.
 //!
-//! Assistant entries persist the real per-request token usage and embedded cost
+//! v1/v2 store flat role/content records without usage; those retain per-turn
+//! text estimation. v2 identifies itself with metadata.version = 2. v3 uses a
+//! versioned session header and wrapped message entries.
+//!
+//! v3 assistant entries persist the real per-request token usage and embedded cost
 //! on the line itself (`usage` with `inputTokens`/`outputTokens`/`cacheReadTokens`/
 //! `cacheWriteTokens`/`costUsd`, plus `model`). `inputTokens` includes both cache
 //! buckets, so they are subtracted to obtain non-cached input. A valid embedded
@@ -55,6 +59,7 @@ const UNKNOWN_MODEL: &str = "unknown";
 struct CommandCodeEntry {
     #[serde(rename = "type")]
     entry_type: Option<String>,
+    version: Option<u32>,
     id: Option<String>,
     timestamp: Option<String>,
     /// The message is wrapped in a `message` object; assistant entries carry
@@ -62,6 +67,17 @@ struct CommandCodeEntry {
     message: Option<CommandCodeMessage>,
     usage: Option<CommandCodeUsage>,
     model: Option<String>,
+    // v1/v2 store message fields directly; v2 adds metadata.version = 2.
+    role: Option<String>,
+    content: Option<serde_json::Value>,
+    #[serde(rename = "sessionId")]
+    session_id: Option<String>,
+    metadata: Option<CommandCodeMetadata>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CommandCodeMetadata {
+    version: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -114,6 +130,7 @@ pub fn parse_commandcode_file(path: &Path) -> Vec<UnifiedMessage> {
 
     let mut messages = Vec::new();
     let mut session_id: Option<String> = None;
+    let mut transcript_version: Option<u32> = None;
     // Model from the most recent `model_change` entry; used when a message
     // entry does not carry its own `model` field.
     let mut last_changed_model: Option<String> = None;
@@ -146,20 +163,51 @@ pub fn parse_commandcode_file(path: &Path) -> Vec<UnifiedMessage> {
 
         // The header line carries the session id.
         if entry.entry_type.as_deref() == Some("session") {
+            transcript_version = entry.version;
             session_id = session_id
                 .or_else(|| entry.id.clone())
                 .filter(|id| !id.is_empty());
             continue;
         }
 
-        if entry.entry_type.as_deref() == Some("model_change") {
+        if matches!(transcript_version, None | Some(3))
+            && entry.entry_type.as_deref() == Some("model_change")
+        {
             last_changed_model = entry.model.clone().filter(|model| !model.trim().is_empty());
             continue;
         }
 
-        let (role, content) = match entry.message.as_ref() {
-            Some(message) => (message.role.as_deref(), message.content.as_ref()),
-            None => continue,
+        let (role, content, usage, model) = match (transcript_version, entry.entry_type.as_deref())
+        {
+            // v3 can also be read without a header using the filename as ID.
+            (None | Some(3), Some("message")) => {
+                let Some(message) = entry.message.as_ref() else {
+                    continue;
+                };
+                (
+                    message.role.as_deref(),
+                    message.content.as_ref(),
+                    entry.usage.as_ref(),
+                    entry.model.as_ref(),
+                )
+            }
+            (None, None)
+                if matches!(
+                    entry
+                        .metadata
+                        .as_ref()
+                        .and_then(|metadata| metadata.version),
+                    None | Some(1 | 2)
+                ) =>
+            {
+                if session_id.is_none() {
+                    session_id = entry.session_id.clone().filter(|id| !id.is_empty());
+                }
+                // Native v1/v2 writers do not persist per-request usage/model.
+                (entry.role.as_deref(), entry.content.as_ref(), None, None)
+            }
+            // Do not reinterpret unknown versions or malformed v3 as legacy.
+            _ => continue,
         };
         let chars = content.map(content_chars).unwrap_or(0);
 
@@ -169,7 +217,7 @@ pub fn parse_commandcode_file(path: &Path) -> Vec<UnifiedMessage> {
                 // for free models, when finite and non-negative (the same bar
                 // cline and gjc apply). Otherwise local pricing should fill
                 // it in from the normalized token counts.
-                let (tokens, cost, cost_is_authoritative) = match entry.usage.as_ref() {
+                let (tokens, cost, cost_is_authoritative) = match usage {
                     Some(usage) => {
                         let cache_read = usage.cache_read_tokens.unwrap_or(0).max(0);
                         let cache_write = usage.cache_write_tokens.unwrap_or(0).max(0);
@@ -222,9 +270,8 @@ pub fn parse_commandcode_file(path: &Path) -> Vec<UnifiedMessage> {
 
                 // Per-entry model, falling back to the most recent model
                 // change, then to the configured agent model.
-                let raw_model = entry
-                    .model
-                    .clone()
+                let raw_model = model
+                    .cloned()
                     .or(last_changed_model.clone())
                     .or_else(|| config_model.clone())
                     .filter(|model| !model.trim().is_empty());
@@ -415,6 +462,130 @@ mod tests {
         let path = projects.join(format!("{session_id}.jsonl"));
         std::fs::write(&path, lines.join("\n") + "\n").unwrap();
         path
+    }
+
+    #[test]
+    fn test_released_v3_writer_fixtures() {
+        // Files were emitted by the released writers, not hand-written to
+        // match this parser. See tests/fixtures/commandcode/README.md.
+        for version in ["1.0.0", "1.20.0", "1.50.0", "1.52.0", "1.53.0"] {
+            let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/commandcode")
+                .join(format!("{version}.jsonl"));
+            let messages = parse_commandcode_file(&path);
+            assert_eq!(messages.len(), 3, "Command Code {version}");
+            for (message, model, cost) in [
+                (&messages[0], "claude-sonnet-4-6", 0.25),
+                (&messages[1], "MiniMax-M3", 0.0),
+            ] {
+                assert_eq!(message.session_id, "native-v3");
+                assert_eq!(message.model_id, model, "Command Code {version}");
+                assert_eq!(
+                    message.tokens,
+                    TokenBreakdown {
+                        input: 1100,
+                        output: 50,
+                        cache_read: 700,
+                        cache_write: 200,
+                        reasoning: 0,
+                    },
+                    "Command Code {version}"
+                );
+                assert_eq!(message.tokens.total(), 2050);
+                assert_eq!(message.cost, cost);
+                assert_eq!(message.cost_source, CostSource::ProviderReported);
+                assert!(message.is_turn_start);
+            }
+            // No usage event: use the most recent model_change and estimate
+            // only the new prompt (66 serialized chars) and answer (58 chars).
+            let estimated = &messages[2];
+            assert_eq!(estimated.model_id, "MiniMax-M3", "Command Code {version}");
+            assert_eq!(
+                estimated.tokens,
+                TokenBreakdown {
+                    input: 17,
+                    output: 15,
+                    ..Default::default()
+                }
+            );
+            assert_eq!(estimated.cost_source, CostSource::Unknown);
+            assert!(estimated.is_turn_start);
+        }
+    }
+
+    #[test]
+    fn test_native_v1_v2_transcripts_are_estimated_without_migration() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/commandcode");
+        for version in ["0.17.18", "0.50.0", "0.52.5"] {
+            let dir = tempfile::tempdir().unwrap();
+            let source = std::fs::read_to_string(root.join(format!("{version}.jsonl"))).unwrap();
+            let path = fixture(
+                dir.path(),
+                "legacy-project",
+                "filename-id",
+                Some("org/Config-Model"),
+                &source.lines().collect::<Vec<_>>(),
+            );
+            let messages = parse_commandcode_file(&path);
+            assert_eq!(messages.len(), 1, "Command Code {version}");
+            assert_eq!(messages[0].session_id, "native-v2");
+            assert_eq!(messages[0].model_id, "Config-Model");
+            assert_eq!(messages[0].timestamp, 1_784_548_800_000);
+            assert_eq!(
+                messages[0].tokens,
+                TokenBreakdown {
+                    input: 13,
+                    output: 13,
+                    ..Default::default()
+                },
+                "Command Code {version}"
+            );
+            assert_eq!(messages[0].cost_source, CostSource::Unknown);
+            assert!(messages[0].is_turn_start);
+        }
+    }
+
+    #[test]
+    fn test_migrated_v2_transcript_is_estimated() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/commandcode");
+        // Produced by 1.0.0's migration of the 0.52.5 writer fixture. Migration
+        // preserves content/model but cannot recover absent historical usage.
+        let messages = parse_commandcode_file(&root.join("0.52.5-migrated-by-1.0.0.jsonl"));
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].session_id, "migrated-v2");
+        assert_eq!(messages[0].model_id, "claude-sonnet-4-6");
+        assert_eq!(
+            messages[0].tokens,
+            TokenBreakdown {
+                input: 13,
+                output: 13,
+                ..Default::default()
+            }
+        );
+        assert_eq!(messages[0].cost_source, CostSource::Unknown);
+        assert!(messages[0].is_turn_start);
+    }
+
+    #[test]
+    fn test_unknown_versions_and_malformed_v3_do_not_fall_back_to_legacy() {
+        for lines in [
+            vec![
+                r#"{"role":"assistant","content":"must not be estimated","metadata":{"version":4}}"#,
+            ],
+            vec![r#"{"type":"message","role":"assistant","content":"must not be estimated"}"#],
+            vec![
+                r#"{"type":"session","version":4,"id":"future"}"#,
+                r#"{"type":"message","message":{"role":"assistant","content":"unknown format"},"usage":{"inputTokens":100}}"#,
+            ],
+            vec![
+                r#"{"type":"session","version":3,"id":"v3"}"#,
+                r#"{"role":"assistant","content":"malformed v3"}"#,
+            ],
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = fixture(dir.path(), "project", "invalid", None, &lines);
+            assert!(parse_commandcode_file(&path).is_empty(), "{lines:?}");
+        }
     }
 
     const TS: &str = "2026-09-10T03:11:06.582Z";
