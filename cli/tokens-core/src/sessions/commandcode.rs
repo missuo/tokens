@@ -2,13 +2,14 @@
 //!
 //! Parses JSONL transcripts from `~/.commandcode/projects/<slug>/<session>.jsonl`.
 //!
-//! Assistant entries persist the real per-request token usage and cost on the
-//! line itself (`usage` with `inputTokens`/`outputTokens`/`cacheReadTokens`/
-//! `cacheWriteTokens`/`costUsd`, plus `model`); when present, the token counts
-//! are used verbatim, and a valid reported `costUsd` (finite, non-negative —
-//! the same bar cline and gjc apply) is marked authoritative so local pricing
-//! does not overwrite it. Transcripts without `usage`
-//! (older versions or truncated turns) only contain message text, so token
+//! Assistant entries persist the real per-request token usage and embedded cost
+//! on the line itself (`usage` with `inputTokens`/`outputTokens`/`cacheReadTokens`/
+//! `cacheWriteTokens`/`costUsd`, plus `model`). `inputTokens` includes both cache
+//! buckets, so they are subtracted to obtain non-cached input. A valid embedded
+//! `costUsd` (finite, non-negative — the same bar cline and gjc apply) is marked
+//! authoritative so local pricing does not overwrite Command Code's estimate.
+//! Transcripts without `usage` (older versions or truncated turns) only contain
+//! message text, so token
 //! counts are ESTIMATED from message text at ~4 characters per token,
 //! consistent with this crate's other estimated sources (see Kiro).
 //!
@@ -164,22 +165,33 @@ pub fn parse_commandcode_file(path: &Path) -> Vec<UnifiedMessage> {
 
         match role {
             Some("assistant") => {
-                // A valid reported `costUsd` (finite, non-negative — the same
-                // validity bar cline and gjc apply to embedded costs) means
-                // the provider priced the request, including a real 0.0 for
-                // free models; absent or invalid means local pricing should
-                // still fill it in from the real tokens.
+                // Preserve Command Code's embedded `costUsd`, including 0.0
+                // for free models, when finite and non-negative (the same bar
+                // cline and gjc apply). Otherwise local pricing should fill
+                // it in from the normalized token counts.
                 let (tokens, cost, cost_is_authoritative) = match entry.usage.as_ref() {
                     Some(usage) => {
+                        let cache_read = usage.cache_read_tokens.unwrap_or(0).max(0);
+                        let cache_write = usage.cache_write_tokens.unwrap_or(0).max(0);
+                        // Command Code's toSessionUsage preserves inclusive input;
+                        // its estimateSessionCostUsd subtracts both cache buckets.
+                        // Normalize here so totals and local pricing stay additive.
+                        let input = usage
+                            .input_tokens
+                            .unwrap_or(0)
+                            .max(0)
+                            .saturating_sub(cache_read)
+                            .saturating_sub(cache_write)
+                            .max(0);
                         let reported_cost = usage
                             .cost_usd
                             .filter(|cost| cost.is_finite() && *cost >= 0.0);
                         (
                             TokenBreakdown {
-                                input: usage.input_tokens.unwrap_or(0).max(0),
+                                input,
                                 output: usage.output_tokens.unwrap_or(0).max(0),
-                                cache_read: usage.cache_read_tokens.unwrap_or(0).max(0),
-                                cache_write: usage.cache_write_tokens.unwrap_or(0).max(0),
+                                cache_read,
+                                cache_write,
                                 reasoning: 0,
                             },
                             reported_cost.unwrap_or(0.0),
@@ -252,8 +264,8 @@ pub fn parse_commandcode_file(path: &Path) -> Vec<UnifiedMessage> {
                     Some(dedup_key),
                 );
                 if cost_is_authoritative {
-                    // The provider reported both the tokens and the cost;
-                    // local pricing must not overwrite either.
+                    // Preserve Command Code's embedded cost rather than
+                    // replacing it with our local pricing estimate.
                     message.mark_provider_reported_cost();
                 }
                 message.message_count = 1;
@@ -409,7 +421,7 @@ mod tests {
     const TS_MS: i64 = 1_789_009_866_582;
 
     #[test]
-    fn test_commandcode_parses_real_usage_and_cost_verbatim() {
+    fn test_commandcode_normalizes_real_usage_and_preserves_cost() {
         let dir = tempfile::tempdir().unwrap();
         let path = fixture(
             dir.path(),
@@ -435,13 +447,14 @@ mod tests {
         assert_eq!(
             msg.tokens,
             TokenBreakdown {
-                input: 20783,
+                input: 13359,
                 output: 59,
                 cache_read: 7296,
                 cache_write: 128,
                 reasoning: 0,
             }
         );
+        assert_eq!(msg.tokens.total(), 20842);
         assert!((msg.cost - 0.003057152).abs() < 1e-9);
         assert_eq!(msg.cost_source, CostSource::ProviderReported);
         assert!(msg.is_turn_start);
@@ -459,7 +472,7 @@ mod tests {
             &[
                 r#"{"type":"session","version":3,"id":"sess-cache","timestamp":"2026-09-10T03:10:55Z"}"#,
                 r#"{"type":"message","id":"m1","parentId":null,"timestamp":"2026-09-10T03:10:56Z","message":{"role":"user","content":[{"type":"text","text":"hello there"}]}}"#,
-                r#"{"type":"message","id":"m2","parentId":"m1","timestamp":"2026-09-10T03:11:06Z","message":{"role":"assistant","content":[{"type":"text","text":"hi"}]},"usage":{"inputTokens":0,"outputTokens":10,"cacheReadTokens":9999,"cacheWriteTokens":0,"costUsd":0.001},"model":"org/model-x"}"#,
+                r#"{"type":"message","id":"m2","parentId":"m1","timestamp":"2026-09-10T03:11:06Z","message":{"role":"assistant","content":[{"type":"text","text":"hi"}]},"usage":{"inputTokens":9999,"outputTokens":0,"cacheReadTokens":9999,"cacheWriteTokens":0,"costUsd":0.001},"model":"org/model-x"}"#,
             ],
         );
 
@@ -467,6 +480,46 @@ mod tests {
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].tokens.input, 0);
         assert_eq!(messages[0].tokens.cache_read, 9999);
+    }
+
+    #[test]
+    fn test_commandcode_normalizes_inclusive_input_boundaries() {
+        // The first row is real usage captured from Command Code 1.52.0.
+        // Clamp each bucket before subtraction and avoid overflowing when
+        // corrupt cache counts exceed the inclusive input or i64::MAX in sum.
+        for (input, output, cache_read, cache_write, expected_input, expected_total) in [
+            (11988, 48, 64, 0, 11924, 12036),
+            (1000, 100, 800, 100, 100, 1100),
+            (100, 10, 0, 0, 100, 110),
+            (100, 10, 80, 70, 0, 160),
+            (100, 10, -80, -70, 100, 110),
+            (-100, 10, 80, 70, 0, 160),
+            (i64::MAX, 10, i64::MAX, i64::MAX, 0, i64::MAX),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let entry = serde_json::json!({
+                "type": "message",
+                "timestamp": TS,
+                "message": {"role": "assistant", "content": [{"type": "text", "text": "OK"}]},
+                "model": "Qwen/Qwen3.8-27B",
+                "usage": {
+                    "inputTokens": input,
+                    "outputTokens": output,
+                    "cacheReadTokens": cache_read,
+                    "cacheWriteTokens": cache_write,
+                },
+            })
+            .to_string();
+            let path = fixture(dir.path(), "test-project", "sess-boundary", None, &[&entry]);
+            let messages = parse_commandcode_file(&path);
+            assert_eq!(messages.len(), 1);
+            assert_eq!(messages[0].tokens.input, expected_input, "{entry}");
+            assert_eq!(messages[0].tokens.output, output);
+            assert_eq!(messages[0].tokens.cache_read, cache_read.max(0));
+            assert_eq!(messages[0].tokens.cache_write, cache_write.max(0));
+            assert_eq!(messages[0].tokens.total(), expected_total, "{entry}");
+            assert_eq!(messages[0].cost_source, CostSource::Unknown);
+        }
     }
 
     #[test]
@@ -606,9 +659,9 @@ mod tests {
 
         let messages = parse_commandcode_file(&path);
         assert_eq!(messages.len(), 1);
-        // Real token counts stay verbatim; an absent costUsd must not mark
-        // the cost authoritative, or local pricing would never fill it in.
-        assert_eq!(messages[0].tokens.input, 100);
+        // Local pricing must receive non-cached input, and an absent costUsd
+        // must not mark the cost authoritative or pricing would never fill it in.
+        assert_eq!(messages[0].tokens.input, 50);
         assert_eq!(messages[0].tokens.output, 10);
         assert_eq!(messages[0].cost, 0.0);
         assert_eq!(messages[0].cost_source, CostSource::Unknown);
