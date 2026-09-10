@@ -5,8 +5,9 @@
 //! Assistant entries persist the real per-request token usage and cost on the
 //! line itself (`usage` with `inputTokens`/`outputTokens`/`cacheReadTokens`/
 //! `cacheWriteTokens`/`costUsd`, plus `model`); when present, the token counts
-//! are used verbatim, and a reported `costUsd` is marked authoritative so local
-//! pricing does not overwrite it. Transcripts without `usage`
+//! are used verbatim, and a valid reported `costUsd` (finite, non-negative —
+//! the same bar cline and gjc apply) is marked authoritative so local pricing
+//! does not overwrite it. Transcripts without `usage`
 //! (older versions or truncated turns) only contain message text, so token
 //! counts are ESTIMATED from message text at ~4 characters per token,
 //! consistent with this crate's other estimated sources (see Kiro).
@@ -163,21 +164,28 @@ pub fn parse_commandcode_file(path: &Path) -> Vec<UnifiedMessage> {
 
         match role {
             Some("assistant") => {
-                // `costUsd` present (even as 0.0, which free models really do
-                // cost) means the provider priced the request; absent means
-                // local pricing should still fill it in from the real tokens.
+                // A valid reported `costUsd` (finite, non-negative — the same
+                // validity bar cline and gjc apply to embedded costs) means
+                // the provider priced the request, including a real 0.0 for
+                // free models; absent or invalid means local pricing should
+                // still fill it in from the real tokens.
                 let (tokens, cost, cost_is_authoritative) = match entry.usage.as_ref() {
-                    Some(usage) => (
-                        TokenBreakdown {
-                            input: usage.input_tokens.unwrap_or(0),
-                            output: usage.output_tokens.unwrap_or(0),
-                            cache_read: usage.cache_read_tokens.unwrap_or(0),
-                            cache_write: usage.cache_write_tokens.unwrap_or(0),
-                            reasoning: 0,
-                        },
-                        usage.cost_usd.unwrap_or(0.0),
-                        usage.cost_usd.is_some(),
-                    ),
+                    Some(usage) => {
+                        let reported_cost = usage
+                            .cost_usd
+                            .filter(|cost| cost.is_finite() && *cost >= 0.0);
+                        (
+                            TokenBreakdown {
+                                input: usage.input_tokens.unwrap_or(0),
+                                output: usage.output_tokens.unwrap_or(0),
+                                cache_read: usage.cache_read_tokens.unwrap_or(0),
+                                cache_write: usage.cache_write_tokens.unwrap_or(0),
+                                reasoning: 0,
+                            },
+                            reported_cost.unwrap_or(0.0),
+                            reported_cost.is_some(),
+                        )
+                    }
                     None => (
                         TokenBreakdown {
                             input: estimate_tokens(turn_input_chars),
@@ -627,6 +635,29 @@ mod tests {
         // overwrite it.
         assert_eq!(messages[0].cost, 0.0);
         assert_eq!(messages[0].cost_source, CostSource::ProviderReported);
+    }
+
+    #[test]
+    fn test_commandcode_invalid_cost_usd_is_not_authoritative() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = fixture(
+            dir.path(),
+            "users-alice-repo",
+            "sess-badcost",
+            None,
+            &[
+                r#"{"type":"session","version":3,"id":"sess-badcost","timestamp":"2026-09-10T03:10:55Z"}"#,
+                r#"{"type":"message","id":"m1","parentId":null,"timestamp":"2026-09-10T03:10:56Z","message":{"role":"user","content":[{"type":"text","text":"hi"}]}}"#,
+                r#"{"type":"message","id":"m2","parentId":"m1","timestamp":"2026-09-10T03:11:06Z","message":{"role":"assistant","content":[{"type":"text","text":"hello"}]},"usage":{"inputTokens":100,"outputTokens":10,"cacheReadTokens":0,"cacheWriteTokens":0,"costUsd":-1.0},"model":"org/m"}"#,
+            ],
+        );
+
+        let messages = parse_commandcode_file(&path);
+        assert_eq!(messages.len(), 1);
+        // A negative costUsd is not a valid provider price (same validity bar
+        // as cline/gjc embedded costs); local pricing should fill it in.
+        assert_eq!(messages[0].cost, 0.0);
+        assert_eq!(messages[0].cost_source, CostSource::Unknown);
     }
 
     #[test]
