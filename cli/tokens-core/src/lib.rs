@@ -1375,8 +1375,8 @@ fn parse_all_messages_with_pricing_with_env_strategy(
         }
     }
 
-    // Command Code assistant entries carry real usage and cost (marked
-    // authoritative), so only usage-less turns are estimated and priced. The
+    // Command Code assistant entries carry real usage, and a reported `costUsd`
+    // is marked authoritative, so only turns without one are priced here. The
     // model id can still come from ~/.commandcode/config.json (the last-resort
     // fallback), so the source cache — which fingerprints only the transcript
     // file — is bypassed: otherwise a config.json model change would leave stale

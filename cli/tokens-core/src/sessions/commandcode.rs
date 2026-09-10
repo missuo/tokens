@@ -176,10 +176,10 @@ pub fn parse_commandcode_file(path: &Path) -> Vec<UnifiedMessage> {
                             .filter(|cost| cost.is_finite() && *cost >= 0.0);
                         (
                             TokenBreakdown {
-                                input: usage.input_tokens.unwrap_or(0),
-                                output: usage.output_tokens.unwrap_or(0),
-                                cache_read: usage.cache_read_tokens.unwrap_or(0),
-                                cache_write: usage.cache_write_tokens.unwrap_or(0),
+                                input: usage.input_tokens.unwrap_or(0).max(0),
+                                output: usage.output_tokens.unwrap_or(0).max(0),
+                                cache_read: usage.cache_read_tokens.unwrap_or(0).max(0),
+                                cache_write: usage.cache_write_tokens.unwrap_or(0).max(0),
                                 reasoning: 0,
                             },
                             reported_cost.unwrap_or(0.0),
