@@ -388,6 +388,10 @@ pub fn scan_directory(root: &str, pattern: &str) -> Vec<PathBuf> {
                 "cline-cli-messages" => file_name.ends_with(".messages.json"),
                 "session-usage.json" => file_name == "session-usage.json",
                 "usage-v2.json" => file_name == "usage-v2.json",
+                // DSH writes one zstd-compressed JSONL transcript per session.
+                // Matching the full name keeps the sibling `session.jsonl` (were
+                // one ever written uncompressed) from being scanned twice.
+                "session.jsonl.zstd" => file_name == "session.jsonl.zstd",
                 "chat-messages.json" => file_name == "chat-messages.json",
                 "workbuddy.db" => file_name == "workbuddy.db",
                 "sessions.db" => file_name == "sessions.db",

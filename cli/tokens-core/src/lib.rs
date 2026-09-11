@@ -1488,6 +1488,25 @@ fn parse_all_messages_with_pricing_with_env_strategy(
         .collect();
     all_messages.extend(zcode_messages);
 
+    // DSH Desktop stores one zstd-compressed JSONL transcript per session. Usage
+    // arrives as per-call `assistant/chunk` records whose `cacheReadTokens` is a
+    // cumulative counter, so the parser aggregates per (turn, model) instead of
+    // summing every record; see `sessions::dsh` for the full semantics.
+    let dsh_messages: Vec<UnifiedMessage> = scan_result
+        .get(ClientId::Dsh)
+        .par_iter()
+        .flat_map(|path| {
+            sessions::dsh::parse_dsh_file(path)
+                .into_iter()
+                .map(|mut msg| {
+                    apply_pricing_if_available(&mut msg, pricing);
+                    msg
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    all_messages.extend(dsh_messages);
+
     let kimi_outcomes: Vec<CachedParseOutcome> = scan_result
         .get(ClientId::Kimi)
         .par_iter()
