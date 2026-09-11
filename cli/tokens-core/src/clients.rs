@@ -14,6 +14,15 @@ pub enum PathRoot {
     /// single-var shape but kept self-contained here rather than introducing a
     /// separate resolver helper, mirroring how `Config` inlines its logic.
     ReasonixHome,
+    /// WorkBuddy picks its data root at launch rather than compile time for the
+    /// scanner: `WORKBUDDY_CONFIG_DIR`, else `CODEBUDDY_CONFIG_DIR`, else
+    /// `<home>/<dataFolderName>` where `dataFolderName` is baked into the
+    /// Electron build's `product.json` — `.workbuddy` for the CN build,
+    /// `.workbuddy-ai` for the overseas one. Because the folder name is a build
+    /// artifact, this variant can only resolve the single highest-priority root;
+    /// every plausible root is enumerated by `scanner::workbuddy_home_candidates`
+    /// and callers that need full coverage must go through it.
+    WorkBuddyHome,
 }
 
 impl PathRoot {
@@ -96,6 +105,25 @@ impl PathRoot {
                 {
                     format!("{home_dir}/.reasonix")
                 }
+            }
+            // Mirrors the Electron app's own `resolveWorkbuddyConfigDir()`: an
+            // explicit env dir wins outright, otherwise the build-baked folder
+            // name is used. The macOS/Windows CN default is `.workbuddy`; the
+            // overseas build patches it to `.workbuddy-ai`, which this variant
+            // cannot see, hence the candidate enumeration in
+            // `scanner::workbuddy_home_candidates`.
+            PathRoot::WorkBuddyHome => {
+                if use_env_roots {
+                    for var in ["WORKBUDDY_CONFIG_DIR", "CODEBUDDY_CONFIG_DIR"] {
+                        if let Ok(val) = std::env::var(var) {
+                            let trimmed = val.trim();
+                            if !trimmed.is_empty() {
+                                return trimmed.to_string();
+                            }
+                        }
+                    }
+                }
+                format!("{home_dir}/.workbuddy")
             }
         }
     }
@@ -556,7 +584,7 @@ define_clients!(
     },
     WorkBuddy = 36 => {
         id: "workbuddy",
-        root: PathRoot::Home,
+        root: PathRoot::WorkBuddyHome,
         relative: ".workbuddy",
         pattern: "workbuddy.db",
         headless: false,
