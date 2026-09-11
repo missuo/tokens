@@ -480,6 +480,7 @@ pub enum ClientFilter {
     Reasonix,
     Freebuff,
     Fx,
+    Dsh,
     Synthetic,
 }
 
@@ -532,6 +533,7 @@ impl ClientFilter {
             Self::Reasonix => "reasonix",
             Self::Freebuff => "freebuff",
             Self::Fx => "fx",
+            Self::Dsh => "dsh",
             Self::Synthetic => "synthetic",
         }
     }
@@ -587,6 +589,7 @@ impl ClientFilter {
             Self::Reasonix => Some(ClientId::Reasonix),
             Self::Freebuff => Some(ClientId::Freebuff),
             Self::Fx => Some(ClientId::Fx),
+            Self::Dsh => Some(ClientId::Dsh),
             Self::Synthetic => None,
         }
     }
@@ -638,6 +641,7 @@ impl ClientFilter {
             ClientId::Reasonix => Self::Reasonix,
             ClientId::Freebuff => Self::Freebuff,
             ClientId::Fx => Self::Fx,
+            ClientId::Dsh => Self::Dsh,
         }
     }
 

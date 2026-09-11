@@ -70,6 +70,7 @@ export const SOURCE_DISPLAY_NAMES: Record<ClientType, string> = {
   "devin-desktop": "Devin Desktop",
   reasonix: "Reasonix",
   fx: "Fx",
+  dsh: "DSH",
 };
 
 // Client logos, served from this deployment rather than hotlinked.
@@ -132,6 +133,9 @@ export const SOURCE_LOGOS: Record<ClientType, string> = {
   "devin-desktop": `${GITHUB_CDN_BASE}/client-devin.jpg`,
   reasonix: `${GITHUB_CDN_BASE}/client-generic.svg`,
   fx: `${GITHUB_CDN_BASE}/client-fx.png`,
+  // No DSH mark is vendored yet; the generic placeholder is used the same way
+  // gjc, reasonix and 9router use it.
+  dsh: `${GITHUB_CDN_BASE}/client-generic.svg`,
 };
 
 export const SOURCE_COLORS: Record<ClientType, string> = {
@@ -179,6 +183,7 @@ export const SOURCE_COLORS: Record<ClientType, string> = {
   "devin-desktop": "#334155",
   reasonix: "#6366F1",
   fx: "#0070F3",
+  dsh: "#4D6BFE",
 };
 
 /**

@@ -618,6 +618,18 @@ define_clients!(
         headless: false,
         parse_local: true,
         submit_default: true
+    },
+    Dsh = 42 => {
+        id: "dsh",
+        root: PathRoot::EnvVar {
+            var: "DSH_HOME",
+            fallback_relative: ".dsh",
+        },
+        relative: "sessions",
+        pattern: "session.jsonl.zstd",
+        headless: false,
+        parse_local: true,
+        submit_default: true
     }
 );
 
