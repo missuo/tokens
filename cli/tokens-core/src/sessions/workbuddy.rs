@@ -1,8 +1,19 @@
 //! WorkBuddy session usage parser.
 //!
-//! WorkBuddy stores detailed token usage in `~/.workbuddy/projects/**/*.jsonl`.
-//! Older installs also expose an aggregate `~/.workbuddy/workbuddy.db`; that
-//! database is kept as a fallback when detailed token sources are unavailable.
+//! WorkBuddy stores detailed token usage in `<root>/projects/**/*.jsonl`.
+//! Older installs also expose an aggregate `<root>/workbuddy.db`; that database
+//! is kept as a fallback when detailed token sources are unavailable.
+//!
+//! `<root>` is not fixed: the Electron app resolves it from
+//! `WORKBUDDY_CONFIG_DIR`, else `CODEBUDDY_CONFIG_DIR`, else
+//! `<home>/<dataFolderName>` where `dataFolderName` is baked into the build's
+//! `product.json` — `.workbuddy` for the CN build, `.workbuddy-ai` for the
+//! overseas build. Discovery therefore goes through
+//! `scanner::workbuddy_home_candidates` rather than a single hardcoded path.
+//!
+//! This parser is also fed `logs/startup/*.jsonl` from an unrelated root when
+//! several candidate homes are scanned. Those records carry no `message` /
+//! `function_call` usage lines, so every one of them is filtered out below.
 
 use super::{normalize_workspace_key, workspace_label_from_key, UnifiedMessage};
 use crate::{provider_identity, TokenBreakdown};

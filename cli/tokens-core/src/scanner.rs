@@ -572,6 +572,60 @@ fn hermes_home_candidates(home_dir: &str, use_env_roots: bool) -> Vec<PathBuf> {
     homes
 }
 
+/// Every plausible WorkBuddy data root, highest priority first.
+///
+/// WorkBuddy is an Electron app that picks its data root at launch instead of
+/// having the scanner assume one: `WORKBUDDY_CONFIG_DIR`, else
+/// `CODEBUDDY_CONFIG_DIR`, else `<home>/<dataFolderName>` where
+/// `dataFolderName` comes from the build's `product.json`. Only the last case is
+/// ambiguous — it is `.workbuddy` for the CN build and `.workbuddy-ai` for the
+/// overseas build — so both names are enumerated here. An explicit env dir is
+/// authoritative (the app ignores every other root in that case, and it may
+/// point at a portable or profile-isolated install), so it is returned alone.
+///
+/// Callers must test for real session data under each candidate rather than
+/// taking the first directory that exists. A machine that has run the overseas
+/// build has BOTH directories: `~/.workbuddy` holds only `logs/`, `binaries/`,
+/// `connectors/` and `settings.json` while the sessions live in `~/.workbuddy-ai`.
+/// `logs/` even contains `*.jsonl` startup records, so the presence of a
+/// directory or of JSONL is not a usable signal — `projects/` (or the
+/// `workbuddy.db` file) is.
+fn workbuddy_home_candidates(home_dir: &str, use_env_roots: bool) -> Vec<PathBuf> {
+    if use_env_roots {
+        for var in ["WORKBUDDY_CONFIG_DIR", "CODEBUDDY_CONFIG_DIR"] {
+            let Ok(value) = std::env::var(var) else {
+                continue;
+            };
+            let trimmed = value.trim();
+            if !trimmed.is_empty() {
+                return vec![PathBuf::from(trimmed)];
+            }
+        }
+    }
+
+    let mut homes: Vec<PathBuf> = Vec::new();
+    // Push order carries the priority, so duplicates are skipped in place
+    // instead of via `sort` + `dedup`: sorting would replace the priority order
+    // with a byte-lexical one that merely happens to agree for these two names.
+    for candidate in [
+        // `WorkBuddyHome` resolves the root only, so both entries here are
+        // interchangeable root paths.
+        PathBuf::from(
+            ClientId::WorkBuddy
+                .data()
+                .root
+                .resolve_with_env_strategy(home_dir, use_env_roots),
+        ),
+        PathBuf::from(home_dir).join(".workbuddy-ai"),
+    ] {
+        if !homes.contains(&candidate) {
+            homes.push(candidate);
+        }
+    }
+
+    homes
+}
+
 #[derive(Debug, Deserialize, Default)]
 struct CrushProjectList {
     #[serde(default)]
@@ -1226,6 +1280,13 @@ fn scan_all_clients_with_env_strategy_inner(
             continue;
         }
 
+        // WorkBuddy owns no single data root, so its `workbuddy.db` is picked up
+        // from every candidate home below rather than from the default relative
+        // path this loop would otherwise build.
+        if *client_id == ClientId::WorkBuddy {
+            continue;
+        }
+
         let def = client_id.data();
         let path = def.resolve_path_with_env_strategy(home_dir, use_env_roots);
         push_unique_scan_task(&mut tasks, &mut seen_scan_roots, *client_id, path);
@@ -1314,14 +1375,31 @@ fn scan_all_clients_with_env_strategy_inner(
         }
     }
 
+    // WorkBuddy stores per-message usage in `<root>/projects/**/*.jsonl`. The
+    // root itself is chosen by the installed build, so every candidate is wired
+    // up here; only the one holding `projects/` contributes anything. The
+    // aggregate `<root>/workbuddy.db` is registered alongside it below, and
+    // `merge_workbuddy_messages` drops its rows for any session that the JSONL
+    // already covers, so scanning both never double-counts.
     if enabled.contains(&ClientId::WorkBuddy) {
-        push_unique_scan_task_with_pattern(
-            &mut tasks,
-            &mut seen_scan_roots,
-            ClientId::WorkBuddy,
-            PathBuf::from(home_dir).join(".workbuddy/projects"),
-            "*.jsonl",
-        );
+        for workbuddy_home in workbuddy_home_candidates(home_dir, use_env_roots) {
+            push_unique_scan_task_with_pattern(
+                &mut tasks,
+                &mut seen_scan_roots,
+                ClientId::WorkBuddy,
+                workbuddy_home.join("projects"),
+                "*.jsonl",
+            );
+            // The first call borrows `workbuddy_home` to build the child path,
+            // so the root itself has to be cloned for this second registration.
+            push_unique_scan_task_with_pattern(
+                &mut tasks,
+                &mut seen_scan_roots,
+                ClientId::WorkBuddy,
+                workbuddy_home.clone(),
+                "workbuddy.db",
+            );
+        }
     }
 
     // Extra scan directories are part of the caller's environment, so they are
