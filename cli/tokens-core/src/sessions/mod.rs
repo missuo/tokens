@@ -41,6 +41,7 @@ pub mod mcode;
 pub mod micode;
 pub mod mux;
 pub mod omp;
+pub mod craft_agent;
 pub mod openclaw;
 pub mod opencode;
 pub mod opencode_schema;

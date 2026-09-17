@@ -1056,6 +1056,21 @@ define_clients!(
         headless: false,
         parse_local: true,
         submit_default: true
+    },
+    // Fork (missuo/tokens#48): Craft Agent runs on the pi engine and keeps
+    // pi-format transcripts at
+    // `workspaces/<workspace>/sessions/<id>/.pi-sessions/*.jsonl`. The pattern
+    // admits only files directly under a `.pi-sessions` directory.
+    CraftAgent = 53 => {
+        id: "craft-agent",
+        display: "Craft Agent",
+        logo: Some("https://raw.githubusercontent.com/missuo/tokens/main/.github/assets/client-craft-agent.png"),
+        root: PathRoot::Home,
+        relative: ".craft-agent/workspaces",
+        pattern: "craft-agent-pi-session",
+        headless: false,
+        parse_local: true,
+        submit_default: true
     }
 );
 
@@ -1171,7 +1186,8 @@ mod tests {
 
     #[test]
     fn test_client_id_count() {
-        assert_eq!(ClientId::COUNT, 53);
+        // 53 upstream clients plus this fork's Craft Agent.
+        assert_eq!(ClientId::COUNT, 54);
     }
 
     #[test]

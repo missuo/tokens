@@ -1123,6 +1123,8 @@ const SHARED_PARSER_FAMILIES: &[SharedParserFamily] = &[
             // namespaced dedup keys (same behavior as Kimchi/Prime).
             (ClientId::Omp, 1),
             (ClientId::Senpi, 1),
+            // Fork (missuo/tokens#48): Craft Agent rides the standard lane.
+            (ClientId::CraftAgent, 1),
             // +3 for Prime Agent's independent history. v1->v2 strips a
             // leading BOM and recovers records containing undecodable
             // bytes; its accounting scan also continues past those records
@@ -1513,6 +1515,7 @@ fn parser_version(client: ClientId) -> u32 {
         | ClientId::Kimchi
         | ClientId::Omp
         | ClientId::Senpi
+        | ClientId::CraftAgent
         | ClientId::PrimeAgent
         | ClientId::RooCode
         | ClientId::KiloCode
@@ -4715,6 +4718,7 @@ mod tests {
                     (ClientId::Kimchi, 1),
                     (ClientId::Omp, 1),
                     (ClientId::Senpi, 1),
+                    (ClientId::CraftAgent, 1),
                     (ClientId::PrimeAgent, 3),
                 ],
             ),

@@ -2757,6 +2757,15 @@ fn parse_all_messages_streaming<S: MessageSink>(
         sessions::omp::parse_omp_file,
     );
 
+    parse_cached_lane_deduped(
+        &scan_result,
+        &mut source_cache,
+        pricing,
+        &mut all_messages,
+        ClientId::CraftAgent,
+        sessions::craft_agent::parse_craft_agent_file,
+    );
+
     let augment_outcomes: Vec<CachedParseOutcome> = scan_result
         .get(ClientId::Augment)
         .par_iter()
@@ -5712,6 +5721,21 @@ pub fn parse_local_clients(options: LocalParseOptions) -> Result<ParsedMessages,
     let omp_count = omp_msgs.len() as i32;
     counts.set(ClientId::Omp, omp_count);
     messages.extend(omp_msgs);
+
+    let craft_agent_msgs_raw: Vec<UnifiedMessage> = scan_result
+        .get(ClientId::CraftAgent)
+        .par_iter()
+        .flat_map(|path| sessions::craft_agent::parse_craft_agent_file(path))
+        .collect();
+    let mut craft_agent_seen: HashSet<String> = HashSet::new();
+    let craft_agent_msgs: Vec<ParsedMessage> = craft_agent_msgs_raw
+        .into_iter()
+        .filter(|message| should_keep_deduped_message(&mut craft_agent_seen, message))
+        .map(|message| unified_to_parsed(&message))
+        .collect();
+    let craft_agent_count = craft_agent_msgs.len() as i32;
+    counts.set(ClientId::CraftAgent, craft_agent_count);
+    messages.extend(craft_agent_msgs);
 
     let augment_msgs_raw: Vec<UnifiedMessage> = scan_result
         .get(ClientId::Augment)

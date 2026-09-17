@@ -528,6 +528,13 @@ pub fn scan_directory(root: &str, pattern: &str) -> Vec<PathBuf> {
                             _ => false,
                         }
                 }
+                "craft-agent-pi-session" => {
+                    file_name.ends_with(".jsonl")
+                        && path
+                            .parent()
+                            .and_then(Path::file_name)
+                            .is_some_and(|dir| dir == ".pi-sessions")
+                }
                 "*.csv" => file_name.ends_with(".csv"),
                 "usage*.csv" => {
                     if is_in_archive_dir {
@@ -3875,6 +3882,32 @@ mod tests {
             true,
         );
         assert!(result.get(ClientId::WorkBuddy).is_empty());
+    }
+
+    #[test]
+    fn test_scan_all_clients_reads_only_craft_agent_pi_sessions() {
+        let dir = TempDir::new().unwrap();
+        let session_dir = dir
+            .path()
+            .join(".craft-agent/workspaces/my-workspace/sessions/019fc54d");
+        let pi_sessions = session_dir.join(".pi-sessions");
+        fs::create_dir_all(&pi_sessions).unwrap();
+        let transcript = pi_sessions.join("019fc54d.jsonl");
+        File::create(&transcript).unwrap();
+        // Anything else in the workspace is not known to be pi-format.
+        File::create(session_dir.join("session.jsonl")).unwrap();
+        File::create(pi_sessions.join("notes.json")).unwrap();
+
+        let result = scan_all_clients_with_env_strategy(
+            dir.path().to_str().unwrap(),
+            &["craft-agent".to_string()],
+            false,
+        );
+
+        assert_eq!(
+            result.get(ClientId::CraftAgent).as_slice(),
+            std::slice::from_ref(&transcript)
+        );
     }
 
     #[test]

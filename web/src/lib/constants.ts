@@ -81,6 +81,7 @@ export const SOURCE_DISPLAY_NAMES: Record<ClientType, string> = {
   lmstudio: "LM Studio",
   unsloth: "Unsloth",
   hindsight: "Hindsight",
+  "craft-agent": "Craft Agent",
 };
 
 // Client logos, served from this deployment rather than hotlinked.
@@ -154,6 +155,7 @@ export const SOURCE_LOGOS: Record<ClientType, string> = {
   lmstudio: `${GITHUB_CDN_BASE}/client-lmstudio.png`,
   unsloth: `${GITHUB_CDN_BASE}/client-unsloth.png`,
   hindsight: `${GITHUB_CDN_BASE}/client-hindsight.png`,
+  "craft-agent": `${GITHUB_CDN_BASE}/client-craft-agent.png`,
 };
 
 export const SOURCE_COLORS: Record<ClientType, string> = {
@@ -212,12 +214,13 @@ export const SOURCE_COLORS: Record<ClientType, string> = {
   lmstudio: "#6C5CE7",
   unsloth: "#58CC02",
   hindsight: "#0891B2",
+  "craft-agent": "#F97316",
 };
 
 /**
  * Every client the CLI scans, in display order.
  *
- * Mirrors `define_clients!` in `cli/tokens-core/src/clients.rs` — 53 entries,
+ * Mirrors `define_clients!` in `cli/tokens-core/src/clients.rs` — 54 entries,
  * excluding the two filter-only aliases (`synthetic`, `9router`) that have no
  * scan path of their own. Kept as an explicit list rather than derived from
  * SOURCE_DISPLAY_NAMES, which also carries those aliases and legacy keys.
@@ -235,6 +238,7 @@ export const SUPPORTED_CLIENTS: readonly ClientType[] = [
   "codex",
   "commandcode",
   "copilot",
+  "craft-agent",
   "crush",
   "cursor",
   "devin-cli",
