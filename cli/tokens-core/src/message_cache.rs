@@ -1289,7 +1289,11 @@ fn parser_version(client: ClientId) -> u32 {
         // `session_is_subagent` and `session_is_guardian`. A v8 entry would keep
         // replaying one Agents row per nickname (or no agent at all), and its
         // parse state predates the new layout.
-        ClientId::Codex => 9,
+        // v9->v10 (fork, missuo/tokens): `codex exec --json` captures key
+        // their usage by the announced thread id, date it by the thread's
+        // UUIDv7 creation time instead of the capture file's mtime, and the
+        // parse state gained `headless_thread_id` / `headless_turn_ordinal`.
+        ClientId::Codex => 10,
         // v4->v5: jcode's assistant-message timestamp is now back-calculated
         // to the turn start (timestamp - tool_duration_ms) instead of using
         // the recorded (end-anchored) timestamp directly. Follow-up to #890.
@@ -3638,10 +3642,11 @@ mod tests {
         // bucket, v7->v8 retags rollouts OpenClaw originated as openclaw, and
         // v8->v9 buckets agent attribution into "Codex" / "Codex Subagent" /
         // "Codex Guardian" / "Codex Headless" instead of the per-thread random
-        // nickname.
+        // nickname, and v9->v10 (fork) keys and dates `codex exec --json`
+        // captures by their thread.
         // Each bump is what stops an existing cache from replaying the old
         // rows, so it has to be asserted rather than assumed.
-        assert_eq!(parser_version(ClientId::Codex), 9);
+        assert_eq!(parser_version(ClientId::Codex), 10);
         assert_eq!(parser_version(ClientId::Claude), 2);
     }
 
