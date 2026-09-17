@@ -2444,8 +2444,9 @@ fn antigravity_https_client() -> &'static reqwest::Client {
 /// and a server is free to understate it, so the loop enforces the same ceiling
 /// on what actually arrives.
 ///
-/// Shared with the `/usage` quota provider, which reaches the same language
-/// server over plain HTTP and needs the same ceiling for the same reason.
+/// Upstream shares this with its `/usage` quota provider, which this fork does
+/// not ship, so the only caller here is the non-Windows HTTPS path.
+#[cfg(not(target_os = "windows"))]
 pub(crate) async fn read_reqwest_response_with_cap(
     mut response: reqwest::Response,
     max_body_bytes: usize,
