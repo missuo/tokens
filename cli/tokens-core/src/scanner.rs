@@ -1867,6 +1867,17 @@ fn dedupe_cherrystudio_transcripts(files: Vec<(bool, String, PathBuf)>) -> Vec<P
     out
 }
 
+/// `WORKBUDDY_CONFIG_DIR`, when set and non-empty. Ignored when env roots are
+/// disabled (an explicit `--home` run must not read the caller's environment).
+fn workbuddy_config_dir_override(use_env_roots: bool) -> Option<PathBuf> {
+    if !use_env_roots {
+        return None;
+    }
+    let value = std::env::var("WORKBUDDY_CONFIG_DIR").ok()?;
+    let trimmed = value.trim();
+    (!trimmed.is_empty()).then(|| PathBuf::from(trimmed))
+}
+
 fn scan_all_clients_with_env_strategy_inner(
     home_dir: &str,
     clients: &[String],
@@ -2087,6 +2098,29 @@ fn scan_all_clients_with_env_strategy_inner(
             PathBuf::from(home_dir).join(".workbuddy-ai"),
             "workbuddy.db",
         );
+        // Fork (missuo/tokens#68): WorkBuddy resolves its data root from
+        // `WORKBUDDY_CONFIG_DIR` before falling back to a folder under home,
+        // so an install pointed elsewhere wrote nothing the roots above find.
+        // The app also falls back to `CODEBUDDY_CONFIG_DIR`, which is NOT
+        // honoured here: that is CodeBuddy's own root, CodeBuddy writes
+        // `projects/*.jsonl` there too, and scanning it for WorkBuddy would
+        // count those sessions under both clients.
+        if let Some(root) = workbuddy_config_dir_override(use_env_roots) {
+            push_unique_scan_task_with_pattern(
+                &mut tasks,
+                &mut seen_scan_roots,
+                ClientId::WorkBuddy,
+                root.join("projects"),
+                "*.jsonl",
+            );
+            push_unique_scan_task_with_pattern(
+                &mut tasks,
+                &mut seen_scan_roots,
+                ClientId::WorkBuddy,
+                root,
+                "workbuddy.db",
+            );
+        }
     }
 
     // Extra scan directories are part of the caller's environment, so they are
@@ -3771,6 +3805,76 @@ mod tests {
         assert!(files.contains(&session));
         assert!(files.contains(&legacy_session));
         assert!(files.contains(&dir.path().join(".workbuddy-ai/workbuddy.db")));
+    }
+
+    #[test]
+    #[serial]
+    fn test_scan_all_clients_honours_workbuddy_config_dir_only_with_env_roots() {
+        let custom = TempDir::new().unwrap();
+        let project = custom.path().join("projects/project-a");
+        fs::create_dir_all(&project).unwrap();
+        let session = project.join("session.jsonl");
+        File::create(&session).unwrap();
+        let db = custom.path().join("workbuddy.db");
+        File::create(&db).unwrap();
+
+        let mut env = EnvGuard::capture(&[
+            "WORKBUDDY_CONFIG_DIR",
+            "CODEBUDDY_CONFIG_DIR",
+            "TOKENS_EXTRA_DIRS",
+            "TOKENS_HEADLESS_DIR",
+        ]);
+        env.remove("TOKENS_EXTRA_DIRS");
+        env.remove("TOKENS_HEADLESS_DIR");
+        env.remove("CODEBUDDY_CONFIG_DIR");
+        env.set("WORKBUDDY_CONFIG_DIR", custom.path());
+        let home = TempDir::new().unwrap();
+
+        let with_env = scan_all_clients_with_env_strategy(
+            home.path().to_str().unwrap(),
+            &["workbuddy".to_string()],
+            true,
+        );
+        let files = with_env.get(ClientId::WorkBuddy);
+        assert!(files.contains(&session), "{files:?}");
+        assert!(files.contains(&db), "{files:?}");
+
+        let without_env = scan_all_clients_with_env_strategy(
+            home.path().to_str().unwrap(),
+            &["workbuddy".to_string()],
+            false,
+        );
+        assert!(without_env.get(ClientId::WorkBuddy).is_empty());
+    }
+
+    #[test]
+    #[serial]
+    fn test_scan_all_clients_ignores_codebuddy_config_dir_for_workbuddy() {
+        // CodeBuddy's own root: reading it as WorkBuddy would count the same
+        // sessions under two clients.
+        let custom = TempDir::new().unwrap();
+        let project = custom.path().join("projects/project-a");
+        fs::create_dir_all(&project).unwrap();
+        File::create(project.join("session.jsonl")).unwrap();
+
+        let mut env = EnvGuard::capture(&[
+            "WORKBUDDY_CONFIG_DIR",
+            "CODEBUDDY_CONFIG_DIR",
+            "TOKENS_EXTRA_DIRS",
+            "TOKENS_HEADLESS_DIR",
+        ]);
+        env.remove("TOKENS_EXTRA_DIRS");
+        env.remove("TOKENS_HEADLESS_DIR");
+        env.remove("WORKBUDDY_CONFIG_DIR");
+        env.set("CODEBUDDY_CONFIG_DIR", custom.path());
+        let home = TempDir::new().unwrap();
+
+        let result = scan_all_clients_with_env_strategy(
+            home.path().to_str().unwrap(),
+            &["workbuddy".to_string()],
+            true,
+        );
+        assert!(result.get(ClientId::WorkBuddy).is_empty());
     }
 
     #[test]
