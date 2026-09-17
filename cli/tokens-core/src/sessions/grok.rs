@@ -953,64 +953,45 @@ pub fn prefer_unified_log_messages(mut messages: Vec<UnifiedMessage>) -> Vec<Uni
         }
     }
 
-    // A unified row only proves that one legacy activity row is covered when
-    // both representations agree on the session, timestamp, and inclusive
-    // token total. Retain every unmatched legacy row so a partially migrated
-    // session cannot lose its older history.
-    let mut covered_activity = HashMap::new();
-    let mut covered_fallback_timestamps = HashMap::new();
+    // Fork (missuo/tokens): one representation per span of a session.
+    //
+    // Grok does not stop writing `updates.jsonl` once it starts writing
+    // `logs/unified.jsonl`; it writes both. A legacy `turn_completed` row is a
+    // rollup of the whole turn (one row, `modelCalls: 24`) stamped when the
+    // turn ends, while the unified log records each inference on its own. Row
+    // matching on (session, timestamp, total) therefore never pairs them, and
+    // the merge became additive: on a real ~/.grok the two sources summed to
+    // 736,368,151 tokens for 371,195,209 of activity, session by session
+    // identical on both sides. See missuo/tokens#54.
+    //
+    // So a session the unified log covers is taken from the unified log from
+    // its first unified row onwards. Legacy rows stamped before that row are
+    // history the unified log never saw and are kept, which is what a
+    // partially migrated session needs. Sessions the unified log does not
+    // mention keep all of their legacy rows. No span is ever counted twice; a
+    // turn that straddles the moment logging began is taken from the unified
+    // side alone and may undercount, which is the safe direction.
+    let mut unified_start: HashMap<String, i64> = HashMap::new();
     for message in messages
         .iter()
         .filter(|message| is_unified_log_message(message))
     {
-        *covered_activity
-            .entry((
-                message.session_id.clone(),
-                message.timestamp,
-                message.tokens.total(),
-            ))
-            .or_insert(0usize) += 1;
-        *covered_fallback_timestamps
-            .entry((message.session_id.clone(), message.timestamp))
-            .or_insert(0usize) += 1;
+        unified_start
+            .entry(message.session_id.clone())
+            .and_modify(|start| *start = (*start).min(message.timestamp))
+            .or_insert(message.timestamp);
     }
 
-    let mut selected = Vec::with_capacity(messages.len());
-    for message in messages {
-        if is_unified_log_message(&message) {
-            selected.push(message);
-            continue;
+    messages.retain(|message| {
+        if is_unified_log_message(message) {
+            return true;
         }
-
-        let key = (
-            message.session_id.clone(),
-            message.timestamp,
-            message.tokens.total(),
-        );
-        let covered = covered_activity.get_mut(&key).is_some_and(|count| {
-            if *count == 0 {
-                false
-            } else {
-                *count -= 1;
-                true
-            }
-        }) || (is_legacy_fallback_message(&message)
-            && covered_fallback_timestamps
-                .get_mut(&(message.session_id.clone(), message.timestamp))
-                .is_some_and(|count| {
-                    if *count == 0 {
-                        false
-                    } else {
-                        *count -= 1;
-                        true
-                    }
-                }));
-        if !covered {
-            selected.push(message);
+        match unified_start.get(&message.session_id) {
+            Some(start) => message.timestamp < *start,
+            None => true,
         }
-    }
-
-    selected
+    });
+    messages
 }
 
 fn is_unified_log_message(message: &UnifiedMessage) -> bool {
@@ -1018,13 +999,6 @@ fn is_unified_log_message(message: &UnifiedMessage) -> bool {
         .dedup_key
         .as_deref()
         .is_some_and(|key| key.starts_with(UNIFIED_LOG_DEDUP_PREFIX))
-}
-
-fn is_legacy_fallback_message(message: &UnifiedMessage) -> bool {
-    let Some(key) = message.dedup_key.as_deref() else {
-        return false;
-    };
-    key.starts_with("grok:") && !key.contains(":usage:") && !key.ends_with(":signals")
 }
 
 fn unified_log_process_start_pid(value: &Value) -> Option<i64> {
@@ -1827,6 +1801,32 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![Some("grok-unified:covered:event")]
         );
+    }
+
+    #[test]
+    fn selector_never_adds_a_turn_rollup_to_its_own_inferences() {
+        // The shape Grok actually writes: one legacy row summarising the turn,
+        // stamped when it ends, and the same turn's inferences in the unified
+        // log, stamped before it.
+        let mut rollup = test_message("session", "grok:session:usage:turn-1");
+        rollup.timestamp = 1_700_000_010_000;
+        rollup.tokens = TokenBreakdown { input: 30, ..TokenBreakdown::default() };
+
+        let mut inferences = Vec::new();
+        for (index, offset) in [0i64, 3_000, 6_000].into_iter().enumerate() {
+            let mut row = test_message("session", &format!("grok-unified:session:{index}"));
+            row.timestamp = 1_700_000_000_000 + offset;
+            row.tokens = TokenBreakdown { input: 10, ..TokenBreakdown::default() };
+            inferences.push(row);
+        }
+
+        let mut messages = inferences;
+        messages.push(rollup);
+        let selected = prefer_unified_log_messages(messages);
+
+        let total: i64 = selected.iter().map(|m| m.tokens.total()).sum();
+        assert_eq!(total, 30, "the turn must be counted once, not rollup + inferences");
+        assert!(selected.iter().all(is_unified_log_message));
     }
 
     #[test]
