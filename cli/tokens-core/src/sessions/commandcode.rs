@@ -19,11 +19,13 @@
 //! text), the v3 transcript DOES persist per-request usage and cost. When a
 //! message line carries a `usage` block, its token counts and `costUsd` are
 //! used verbatim and marked provider-reported, so the cost is not overwritten
-//! by tokens's estimated pricing. The usage buckets are DISJOINT:
-//! `inputTokens` is cache-exclusive and `cacheReadTokens`/`cacheWriteTokens`
-//! are billed on top of it — the vendor's own cost arithmetic reproduces the
-//! recorded `costUsd` exactly only when the full `inputTokens` is charged at
-//! the input rate plus the cache buckets, so no subtraction is applied. Lines
+//! by tokens's estimated pricing. `inputTokens` INCLUDES the cache buckets:
+//! Command Code records the Vercel AI SDK's `totalUsage.inputTokens`, which
+//! every AI SDK provider defines as the whole prompt (`@ai-sdk/anthropic`
+//! sets it to `input_tokens + cache_creation + cache_read`,
+//! `@ai-sdk/openai-compatible` to `prompt_tokens`), with
+//! `inputTokenDetails.cacheReadTokens`/`cacheWriteTokens` as parts of it.
+//! The cache buckets are therefore subtracted out of the input bucket. Lines
 //! without `usage` (user turns, tool results) contribute nothing themselves —
 //! the assistant turn that follows them carries the full request accounting.
 //!
@@ -112,15 +114,17 @@ struct CommandCodeUsage {
 impl CommandCodeUsage {
     /// Token breakdown with every field clamped at zero.
     ///
-    /// Command Code's buckets are DISJOINT: `inputTokens` is cache-exclusive
-    /// and `cacheReadTokens`/`cacheWriteTokens` are billed on top of it. The
-    /// vendor's own cost function charges the full `inputTokens` at the input
-    /// rate plus the cache buckets, and that arithmetic reproduces the
-    /// transcript's recorded `costUsd` exactly (verified: input 28534, output
-    /// 205, cacheRead 7424 at deepseek-v4-flash rates yields 0.006464748, the
-    /// exact recorded value; subtracting cache from input yields 0.004831468,
-    /// which does not). So the buckets are passed through verbatim, and
-    /// `total()` sums them without double-counting.
+    /// `inputTokens` is the AI SDK's whole-prompt total, so it already contains
+    /// `cacheReadTokens` and `cacheWriteTokens` (see the module docs). Passing
+    /// it through verbatim and adding the cache buckets on top counted every
+    /// cached token twice. The input bucket here is the uncached remainder,
+    /// clamped at zero for providers that report the parts inconsistently.
+    ///
+    /// Command Code's own embedded `costUsd` does not settle this: releases
+    /// before 1.50.0 priced the full `inputTokens` at the input rate AND the
+    /// cache buckets on top, so a recorded cost from those releases reproduces
+    /// the double-count arithmetic exactly. It is preserved as reported either
+    /// way; only the token buckets are corrected.
     ///
     /// Returns `None` ONLY when the block reports no counts at all (every
     /// bucket field absent) — the caller's signal that it may estimate. An
@@ -153,10 +157,11 @@ impl CommandCodeUsage {
         // real session by orders of magnitude, and four clamped buckets still
         // sum well inside i64.
         const TOKEN_CEILING: i64 = 1_000_000_000_000;
-        let input = self.input_tokens.unwrap_or(0).clamp(0, TOKEN_CEILING);
+        let total_input = self.input_tokens.unwrap_or(0).clamp(0, TOKEN_CEILING);
         let output = self.output_tokens.unwrap_or(0).clamp(0, TOKEN_CEILING);
         let cache_read = self.cache_read_tokens.unwrap_or(0).clamp(0, TOKEN_CEILING);
         let cache_write = self.cache_write_tokens.unwrap_or(0).clamp(0, TOKEN_CEILING);
+        let input = (total_input - cache_read - cache_write).max(0);
         Some(TokenBreakdown {
             input,
             output,
@@ -811,8 +816,8 @@ mod tests {
         let tool_call = &messages[0];
         assert_eq!(tool_call.model_id, "deepseek-v4-flash");
         assert_eq!(tool_call.provider_id, "deepseek");
-        // Disjoint buckets: input is the full inputTokens, cache on top.
-        assert_eq!(tool_call.tokens.input, 21000);
+        // inputTokens includes the cache read: 21000 - 4000 uncached.
+        assert_eq!(tool_call.tokens.input, 17000);
         assert_eq!(tool_call.tokens.output, 90);
         assert_eq!(tool_call.tokens.cache_read, 4000);
         assert!((tool_call.cost - 0.002).abs() < 1e-9);
@@ -824,9 +829,8 @@ mod tests {
         assert_eq!(msg.model_id, "deepseek-v4-flash");
         assert_eq!(msg.provider_id, "deepseek");
         assert_eq!(msg.session_id, "sess-1");
-        // Disjoint buckets: full inputTokens (28534) + output (205), cache on
-        // top, NOT subtracted.
-        assert_eq!(msg.tokens.input, 28534);
+        // inputTokens (28534) includes the cache read (7424).
+        assert_eq!(msg.tokens.input, 21110);
         assert_eq!(msg.tokens.output, 205);
         assert_eq!(msg.tokens.cache_read, 7424);
         assert!((msg.cost - 0.006464748).abs() < 1e-9);
@@ -881,7 +885,7 @@ mod tests {
         assert_eq!(messages.len(), 1, "orphaned branch entries must be dropped");
         let msg = &messages[0];
         assert_eq!(msg.model_id, "model-x");
-        assert_eq!(msg.tokens.input, 6000);
+        assert_eq!(msg.tokens.input, 4000);
         assert_eq!(msg.tokens.output, 300);
         assert_eq!(msg.tokens.cache_read, 2000);
         assert!((msg.cost - 0.02).abs() < 1e-9);
@@ -999,7 +1003,7 @@ mod tests {
             1,
             "a complete chain to a null root must still drop the abandoned branch"
         );
-        assert_eq!(messages[0].tokens.input, 6000);
+        assert_eq!(messages[0].tokens.input, 4000);
         assert!((messages[0].cost - 0.02).abs() < 1e-9);
     }
 
@@ -1173,16 +1177,14 @@ mod tests {
         assert_eq!(msg.provider_id, "deepseek");
         assert_eq!(msg.model_id, "deepseek-v4-flash");
         assert_eq!(msg.session_id, "sess-1");
-        // Authoritative counts, not estimates. Buckets are DISJOINT: input is
-        // the full inputTokens, cache on top (verified: charging full input +
-        // cache at deepseek-v4-flash rates reproduces the recorded costUsd
-        // exactly; subtracting cache does not).
-        assert_eq!(msg.tokens.input, 28534);
+        // Authoritative counts, not estimates. inputTokens is the whole prompt,
+        // so the cache read comes out of it.
+        assert_eq!(msg.tokens.input, 21110);
         assert_eq!(msg.tokens.output, 205);
         assert_eq!(msg.tokens.cache_read, 7424);
         assert_eq!(msg.tokens.cache_write, 0);
         assert_eq!(msg.tokens.reasoning, 0);
-        assert_eq!(msg.tokens.total(), 36163); // 28534 + 205 + 7424
+        assert_eq!(msg.tokens.total(), 28739); // 28534 prompt + 205 output
                                                // Authoritative cost is embedded and marked provider-reported.
         assert!((msg.cost - 0.006464748).abs() < 1e-9);
         assert!(msg.has_authoritative_cost());
@@ -1405,11 +1407,10 @@ mod tests {
         assert_eq!(msg.model_id, "minimax-m3-free");
     }
 
-    /// The usage buckets are DISJOINT: `inputTokens` is cache-exclusive and the
-    /// cache buckets are billed on top, so `total()` sums them without any
-    /// subtraction (verified against the recorded `costUsd` arithmetic).
+    /// `inputTokens` is the whole prompt, cache included, so the cache buckets
+    /// are carved out of it and `total()` counts each prompt token once.
     #[test]
-    fn test_usage_buckets_are_disjoint() {
+    fn test_input_tokens_include_the_cache_buckets() {
         let dir = TempDir::new().unwrap();
         write_config(&dir, "model-x");
         let jsonl = format!(
@@ -1437,12 +1438,11 @@ mod tests {
         let messages = parse_commandcode_file(&path);
         assert_eq!(messages.len(), 1);
         let msg = &messages[0];
-        // Full inputTokens passed through verbatim; cache on top.
-        assert_eq!(msg.tokens.input, 1000);
+        assert_eq!(msg.tokens.input, 90);
         assert_eq!(msg.tokens.cache_read, 900);
         assert_eq!(msg.tokens.cache_write, 10);
-        // total() is the sum of all buckets, no double-count and no subtraction.
-        assert_eq!(msg.tokens.total(), 1960);
+        // 1000 prompt tokens + 50 output, each counted once.
+        assert_eq!(msg.tokens.total(), 1050);
     }
 
     /// An all-zero `usage` block is a REPORTED zero, not an absent one:
@@ -1847,11 +1847,13 @@ mod tests {
         let messages = parse_commandcode_file(&path);
         assert_eq!(messages.len(), 1);
         let msg = &messages[0];
-        // Clamped to the ceiling; no overflow, no i64::MAX poisoning.
-        assert_eq!(msg.tokens.input, 1_000_000_000_000);
+        // Clamped to the ceiling; no overflow, no i64::MAX poisoning. The
+        // cache buckets exceed the clamped prompt, so the uncached remainder
+        // floors at zero rather than going negative.
+        assert_eq!(msg.tokens.input, 0);
         assert_eq!(msg.tokens.output, 1_000_000_000_000);
         assert_eq!(msg.tokens.cache_read, 1_000_000_000_000);
-        assert_eq!(msg.tokens.total(), 4_000_000_000_000);
+        assert_eq!(msg.tokens.total(), 3_000_000_000_000);
         // Absurd cost rejected: not provider-reported, so pricing applies.
         assert_eq!(msg.cost, 0.0);
         assert!(!msg.has_authoritative_cost());

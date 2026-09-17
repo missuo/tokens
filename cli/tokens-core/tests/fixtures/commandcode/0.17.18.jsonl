@@ -1,0 +1,2 @@
+{"id":"legacy-1","timestamp":"2026-07-20T12:00:00.000Z","sessionId":"native-v2","parentId":null,"role":"user","content":[{"type":"text","text":"Synthetic legacy prompt."}],"gitBranch":"synthetic","metadata":{"timestamp":"2026-07-20T12:00:00.000Z","source":"cli"}}
+{"id":"legacy-2","timestamp":"2026-07-20T12:00:00.000Z","sessionId":"native-v2","parentId":"legacy-1","role":"assistant","content":[{"type":"text","text":"Synthetic legacy answer."}],"gitBranch":"synthetic","metadata":{"timestamp":"2026-07-20T12:00:00.000Z","source":"cli"}}

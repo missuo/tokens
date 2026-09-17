@@ -13901,7 +13901,7 @@ mod tests {
                     .iter()
                     .map(|message| message.input)
                     .sum::<i64>(),
-                100,
+                95,
             );
             assert_eq!(
                 parsed
