@@ -25,7 +25,11 @@ const COST_ABSOLUTE_TOLERANCE = 0.1;
 const LEGACY_COST_FLOAT_EPSILON = 1e-6;
 const TOKEN_RELATIVE_TOLERANCE = 0.01;
 const TOKEN_ABSOLUTE_TOLERANCE = 100;
-const MAX_SUPPORTED_CODEX_PROVENANCE_SCHEMA_VERSION = 2;
+// Codex revision 3: the CLI stopped counting reasoning tokens twice (they are
+// already inside output_tokens). The higher revision lets that lower,
+// corrected total replace days stored at revision 2, which the same-revision
+// regression guard would otherwise keep.
+const MAX_SUPPORTED_CODEX_PROVENANCE_SCHEMA_VERSION = 3;
 const MAX_SUPPORTED_NON_CODEX_PROVENANCE_SCHEMA_VERSION = 1;
 
 const NonNegativeIntegerSchema = z.number().finite().int().min(0).max(Number.MAX_SAFE_INTEGER);
