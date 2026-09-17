@@ -1252,9 +1252,20 @@ struct TsTokenContributionData {
     client_manifest: Option<TsClientManifest>,
 }
 
+/// Per-client parser revision sent with every submission. The server keeps a
+/// day's stored value when a resubmit at the same revision reports fewer
+/// tokens, so a revision is bumped only when a parser fix deliberately lowers
+/// totals and the corrected figure should replace what is stored.
+///
+/// Codex 3: reasoning tokens are no longer counted on top of output tokens,
+/// which already include them. Codex rollouts are not cleaned up locally, so
+/// the recount covers the whole history. Claude's and Grok's smaller
+/// corrections are deliberately not bumped: both clients delete old session
+/// files, and a bump would let a total that shrank because history vanished
+/// overwrite the stored one.
 fn submit_parser_revision(client: &str) -> u32 {
     if client == "codex" {
-        2
+        3
     } else {
         1
     }
