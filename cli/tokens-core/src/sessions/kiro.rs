@@ -4,8 +4,8 @@
 //! 1. File-based (Kiro CLI): ~/.kiro/sessions/cli/*.json + *.jsonl
 //! 2. Kiro IDE globalStorage snapshots
 //! 3. SQLite-based: ~/Library/Application Support/kiro-cli/data.sqlite3
-//!    (conversations_v2 table with history[*].request_metadata)
-//! 4. File-based (Kiro IDE): ~/.kiro/sessions/<workspace>/sess_<uuid>/
+//!    (conversations_v2 table with `history[*].request_metadata`)
+//! 4. File-based (Kiro IDE): `~/.kiro/sessions/<workspace>/sess_<uuid>/`
 //!    session.json (metadata) + messages.jsonl (conversation). This is the
 //!    VS Code-based Kiro IDE layout, distinct from the CLI's cli/*.json layout.
 //!
@@ -13,16 +13,16 @@
 //! estimated from context_usage_percentage * context_window (input) and
 //! response_size / 4 (output).
 
-use super::utils::{back_anchor_timestamp, file_modified_timestamp_ms};
+use super::utils::{
+    back_anchor_timestamp, estimate_tokens, file_modified_timestamp_ms, for_each_json_line,
+    session_id_from_path, sqlite_for_each_row,
+};
 use super::{normalize_workspace_key, workspace_label_from_key, UnifiedMessage};
 use crate::TokenBreakdown;
-use rusqlite::Connection;
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use tracing::warn;
 
 const CLIENT_ID: &str = "kiro";
 const PROVIDER_ID: &str = "amazon-bedrock";
@@ -166,57 +166,45 @@ pub fn parse_kiro_file(path: &Path) -> Vec<UnifiedMessage> {
     };
     let mut content_by_message_id: HashMap<String, KiroMessageContent> = HashMap::new();
 
-    if let Ok(jsonl_file) = std::fs::File::open(&jsonl_path) {
-        let reader = BufReader::new(jsonl_file);
-        let mut pending_prompt: Option<(usize, Option<i64>)> = None;
+    let mut pending_prompt: Option<(usize, Option<i64>)> = None;
 
-        for line in reader.lines() {
-            let line = match line {
-                Ok(l) => l,
-                Err(_) => continue,
-            };
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                continue;
+    for_each_json_line(&jsonl_path, &mut |_index, trimmed| {
+        let mut bytes = trimmed.as_bytes().to_vec();
+        let entry = match simd_json::from_slice::<KiroJsonlEntry>(&mut bytes) {
+            Ok(entry) => entry,
+            Err(_) => return,
+        };
+
+        let Some(data) = entry.data else {
+            return;
+        };
+        let Some(message_id) = data.message_id else {
+            return;
+        };
+
+        let text_chars = text_char_count(data.content.as_deref());
+
+        match entry.kind.as_str() {
+            "Prompt" => {
+                let timestamp_ms = data
+                    .meta
+                    .and_then(|meta| meta.timestamp)
+                    .map(seconds_to_millis);
+                pending_prompt = Some((text_chars, timestamp_ms));
             }
-
-            let mut bytes = trimmed.as_bytes().to_vec();
-            let entry = match simd_json::from_slice::<KiroJsonlEntry>(&mut bytes) {
-                Ok(entry) => entry,
-                Err(_) => continue,
-            };
-
-            let Some(data) = entry.data else {
-                continue;
-            };
-            let Some(message_id) = data.message_id else {
-                continue;
-            };
-
-            let text_chars = text_char_count(data.content.as_deref());
-
-            match entry.kind.as_str() {
-                "Prompt" => {
-                    let timestamp_ms = data
-                        .meta
-                        .and_then(|meta| meta.timestamp)
-                        .map(seconds_to_millis);
-                    pending_prompt = Some((text_chars, timestamp_ms));
-                }
-                "AssistantMessage" => {
-                    let message = content_by_message_id.entry(message_id).or_default();
-                    if let Some((prompt_chars, prompt_ts)) = pending_prompt.take() {
-                        message.prompt_chars += prompt_chars;
-                        if message.prompt_timestamp_ms.is_none() {
-                            message.prompt_timestamp_ms = prompt_ts;
-                        }
+            "AssistantMessage" => {
+                let message = content_by_message_id.entry(message_id).or_default();
+                if let Some((prompt_chars, prompt_ts)) = pending_prompt.take() {
+                    message.prompt_chars += prompt_chars;
+                    if message.prompt_timestamp_ms.is_none() {
+                        message.prompt_timestamp_ms = prompt_ts;
                     }
-                    message.assistant_chars += text_chars;
                 }
-                _ => {}
+                message.assistant_chars += text_chars;
             }
+            _ => {}
         }
-    }
+    });
 
     turns
         .into_iter()
@@ -309,10 +297,6 @@ fn text_char_count(content: Option<&[KiroContentPart]>) -> usize {
         .sum()
 }
 
-fn estimate_tokens(chars: usize) -> i64 {
-    chars.div_ceil(4) as i64
-}
-
 fn seconds_to_millis(seconds: f64) -> i64 {
     // Scale fractional seconds to milliseconds (preserving sub-second
     // precision), then clamp into i64 range. The `f64 as i64` cast saturates
@@ -346,13 +330,6 @@ fn parse_timestamp_value(value: Option<&serde_json::Value>) -> Option<i64> {
             .or_else(|| timestamp.parse::<f64>().ok().map(seconds_to_millis)),
         _ => None,
     }
-}
-
-fn session_id_from_path(path: &Path) -> String {
-    path.file_stem()
-        .and_then(|name| name.to_str())
-        .unwrap_or("unknown")
-        .to_string()
 }
 
 fn is_kiro_global_storage_path(path: &Path) -> bool {
@@ -455,12 +432,6 @@ fn parse_kiro_ide_session_file(path: &Path) -> Vec<UnifiedMessage> {
         return Vec::new();
     }
 
-    let jsonl_file = match std::fs::File::open(&messages_path) {
-        Ok(f) => f,
-        Err(_) => return Vec::new(),
-    };
-    let reader = BufReader::new(jsonl_file);
-
     const DEFAULT_CONTEXT_WINDOW: i64 = 200_000;
 
     #[derive(Default)]
@@ -482,19 +453,10 @@ fn parse_kiro_ide_session_file(path: &Path) -> Vec<UnifiedMessage> {
     let mut flat_model_id: Option<String> = None;
     let mut flat_assistant_turns: i32 = 0;
 
-    for line in reader.lines() {
-        let line = match line {
-            Ok(l) => l,
-            Err(_) => continue,
-        };
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-
+    for_each_json_line(&messages_path, &mut |_index, trimmed| {
         let entry: Value = match serde_json::from_str(trimmed) {
             Ok(v) => v,
-            Err(_) => continue,
+            Err(_) => return,
         };
 
         // Structured format: each line has `payload.type`
@@ -575,7 +537,7 @@ fn parse_kiro_ide_session_file(path: &Path) -> Vec<UnifiedMessage> {
                     }
                     _ => {}
                 }
-                continue;
+                return;
             }
         }
 
@@ -588,7 +550,7 @@ fn parse_kiro_ide_session_file(path: &Path) -> Vec<UnifiedMessage> {
         if flat_counts.assistant_chars > assistant_before {
             flat_assistant_turns += 1;
         }
-    }
+    });
 
     // Flush any in-flight structured turn
     if let Some(turn) = current_turn.take() {
@@ -1269,59 +1231,16 @@ pub(crate) fn suppress_snapshots_covered_by_executions(
 }
 
 pub fn parse_kiro_sqlite(db_path: &Path) -> Vec<UnifiedMessage> {
-    let conn = match Connection::open_with_flags(
-        db_path,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    ) {
-        Ok(c) => c,
-        Err(err) => {
-            warn!(
-                db_path = %db_path.display(),
-                error = %err,
-                "Failed to open Kiro CLI database"
-            );
-            return Vec::new();
-        }
-    };
-
     let query = "SELECT key, conversation_id, value FROM conversations_v2";
-    let mut stmt = match conn.prepare(query) {
-        Ok(s) => s,
-        Err(err) => {
-            warn!(
-                db_path = %db_path.display(),
-                error = %err,
-                "Failed to prepare Kiro conversations query"
-            );
-            return Vec::new();
-        }
-    };
-
-    let rows = match stmt.query_map([], |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, String>(2)?,
-        ))
-    }) {
-        Ok(r) => r,
-        Err(err) => {
-            warn!(
-                db_path = %db_path.display(),
-                error = %err,
-                "Failed to execute Kiro conversations query"
-            );
-            return Vec::new();
-        }
-    };
-
     let mut messages = Vec::new();
 
-    for row in rows.flatten() {
-        let (cwd, conversation_id, json_str) = row;
+    sqlite_for_each_row(db_path, query, Some("Kiro conversation"), &mut |row| {
+        let cwd: String = row.get(0)?;
+        let conversation_id: String = row.get(1)?;
+        let json_str: String = row.get(2)?;
         let parsed = match serde_json::from_str::<KiroDbConversation>(&json_str) {
             Ok(p) => p,
-            Err(_) => continue,
+            Err(_) => return Ok(()),
         };
 
         let context_window = parsed
@@ -1395,7 +1314,8 @@ pub fn parse_kiro_sqlite(db_path: &Path) -> Vec<UnifiedMessage> {
             message.set_workspace(workspace_key.clone(), workspace_label.clone());
             messages.push(message);
         }
-    }
+        Ok(())
+    });
 
     messages
 }
@@ -1419,3 +1339,897 @@ struct KiroDbRequestMetadata {
     stream_end_timestamp_ms: Option<i64>,
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rusqlite::Connection;
+    use std::fs;
+    use std::io::Write;
+    use tempfile::TempDir;
+
+    #[test]
+    fn parse_kiro_sqlite_returns_empty_for_missing_database() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("missing.db");
+        assert!(parse_kiro_sqlite(&missing).is_empty());
+    }
+
+    fn create_session_files(
+        dir: &TempDir,
+        stem: &str,
+        json: &str,
+        jsonl: &str,
+    ) -> std::path::PathBuf {
+        let json_path = dir.path().join(format!("{}.json", stem));
+        let jsonl_path = dir.path().join(format!("{}.jsonl", stem));
+        let mut f = std::fs::File::create(&json_path).unwrap();
+        f.write_all(json.as_bytes()).unwrap();
+        let mut f = std::fs::File::create(&jsonl_path).unwrap();
+        f.write_all(jsonl.as_bytes()).unwrap();
+        json_path
+    }
+
+    #[test]
+    fn test_parse_kiro_estimates_tokens_from_jsonl_content() {
+        let dir = TempDir::new().unwrap();
+        let json = r#"{"session_id":"session-1","cwd":"/tmp/project","session_state":{"rts_model_state":{"model_info":{"model_id":"claude-sonnet-4-5"}},"conversation_metadata":{"user_turn_metadatas":[{"input_token_count":0,"output_token_count":0,"turn_duration":123,"end_timestamp":1770983427,"total_request_count":2,"message_ids":["prompt-1","assistant-1"]}]}}}"#;
+        let jsonl = r#"{"version":"v1","kind":"Prompt","data":{"message_id":"prompt-1","content":[{"kind":"text","data":"hello world"}],"meta":{"timestamp":1770983426.420942}}}
+{"version":"v1","kind":"AssistantMessage","data":{"message_id":"assistant-1","content":[{"kind":"text","data":"response text"}]}}"#;
+        let path = create_session_files(&dir, "session-1", json, jsonl);
+
+        let messages = parse_kiro_file(&path);
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].client, "kiro");
+        assert_eq!(messages[0].provider_id, "amazon-bedrock");
+        assert_eq!(messages[0].model_id, "claude-sonnet-4-5");
+        assert_eq!(messages[0].session_id, "session-1");
+        assert_eq!(messages[0].tokens.input, 3);
+        assert_eq!(messages[0].tokens.output, 4);
+        assert_eq!(messages[0].message_count, 2);
+        assert!(messages[0].is_turn_start);
+        assert_eq!(messages[0].timestamp, 1770983426420);
+        assert_eq!(messages[0].duration_ms, Some(580));
+        assert_eq!(messages[0].workspace_key, Some("/tmp/project".to_string()));
+        assert_eq!(messages[0].workspace_label, Some("project".to_string()));
+    }
+
+    #[test]
+    fn test_parse_kiro_skips_zero_content_turns() {
+        let dir = TempDir::new().unwrap();
+        let json = r#"{"session_id":"session-2","cwd":"/tmp","session_state":{"rts_model_state":{"model_info":{"model_id":"model"}},"conversation_metadata":{"user_turn_metadatas":[{"input_token_count":0,"output_token_count":0,"message_ids":["missing"]}]}}}"#;
+        let jsonl = "";
+        let path = create_session_files(&dir, "session-2", json, jsonl);
+
+        let messages = parse_kiro_file(&path);
+
+        assert!(messages.is_empty());
+    }
+
+    #[test]
+    fn test_parse_kiro_skips_malformed_jsonl_lines() {
+        let dir = TempDir::new().unwrap();
+        let json = r#"{"session_id":"session-3","cwd":"/tmp/project","session_state":{"rts_model_state":{"model_info":{"model_id":"claude-sonnet-4-5"}},"conversation_metadata":{"user_turn_metadatas":[{"input_token_count":0,"output_token_count":0,"turn_duration":100,"end_timestamp":1770983427,"total_request_count":2,"message_ids":["prompt-3","assistant-3"]}]}}}"#;
+        let jsonl = r#"{"version":"v1","kind":"Prompt","data":{"message_id":"prompt-3","content":[{"kind":"text","data":"hello world"}],"meta":{"timestamp":1770983426.420942}}}
+not valid json at all
+{"version":"v1","kind":"AssistantMessage","data":{"message_id":"assistant-3","content":[{"kind":"text","data":"response text"}]}}"#;
+        let path = create_session_files(&dir, "session-3", json, jsonl);
+
+        let messages = parse_kiro_file(&path);
+
+        assert_eq!(messages.len(), 1);
+        assert!(messages[0].tokens.input > 0 || messages[0].tokens.output > 0);
+    }
+
+    #[test]
+    fn test_parse_kiro_sqlite_sets_duration_from_request_metadata() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("data.sqlite3");
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute(
+            "CREATE TABLE conversations_v2 (key TEXT, conversation_id TEXT, value TEXT)",
+            [],
+        )
+        .unwrap();
+        let value = r#"{
+            "model_info": {
+                "model_id": "auto",
+                "context_window_tokens": 1000
+            },
+            "history": [{
+                "request_metadata": {
+                    "context_usage_percentage": 10,
+                    "response_size": 40,
+                    "request_start_timestamp_ms": 1770983426000,
+                    "stream_end_timestamp_ms": 1770983427500
+                }
+            }]
+        }"#;
+        conn.execute(
+            "INSERT INTO conversations_v2 (key, conversation_id, value) VALUES (?1, ?2, ?3)",
+            (&"/tmp/project", &"conv-1", &value),
+        )
+        .unwrap();
+        drop(conn);
+
+        let messages = parse_kiro_sqlite(&db_path);
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].model_id, "auto");
+        assert_eq!(messages[0].timestamp, 1770983426000);
+        assert_eq!(messages[0].duration_ms, Some(1500));
+        assert_eq!(messages[0].tokens.input, 100);
+        assert_eq!(messages[0].tokens.output, 10);
+    }
+
+    #[test]
+    fn test_parse_kiro_global_storage_chat_file() {
+        let dir = TempDir::new().unwrap();
+        let file_path = dir.path().join(
+            "Library/Application Support/Kiro/User/globalStorage/kiro.kiroagent/workspace-a/execution.chat",
+        );
+        fs::create_dir_all(file_path.parent().unwrap()).unwrap();
+        fs::write(
+            &file_path,
+            r#"{
+                "model": "auto",
+                "messages": [
+                    {"role": "user", "content": "hello world"},
+                    {"role": "assistant", "content": "response text"}
+                ]
+            }"#,
+        )
+        .unwrap();
+
+        let messages = parse_kiro_file(&file_path);
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].client, "kiro");
+        assert_eq!(messages[0].model_id, "auto");
+        assert!(messages[0].tokens.input > 0);
+        assert!(messages[0].tokens.output > 0);
+        // (4a) Workspace attribution: the `<workspace>` segment after
+        // `kiro.kiroagent/` flows through the same workspace helpers.
+        assert_eq!(messages[0].workspace_key, Some("workspace-a".to_string()));
+        assert_eq!(messages[0].workspace_label, Some("workspace-a".to_string()));
+        assert_eq!(
+            messages[0].dedup_key,
+            Some("workspace-a/execution:globalstorage".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_kiro_execution_file_attributes_workspace_model_and_duration() {
+        let dir = TempDir::new().unwrap();
+        let file_path = dir.path().join(
+            "Library/Application Support/Kiro/User/globalStorage/kiro.kiroagent/workspace-a/execution-123.json",
+        );
+        fs::create_dir_all(file_path.parent().unwrap()).unwrap();
+        fs::write(
+            &file_path,
+            r#"{
+                "executionId": "exec-123",
+                "chatSessionId": "chat-abc",
+                "status": "succeed",
+                "startTime": 1770983426000,
+                "endTime": 1770983427500,
+                "completionOptions": {"modelId": "claude-sonnet-4-5"},
+                "actions": [
+                    {"actionType": "say", "output": "the assistant replied with a full answer"},
+                    {"actionType": "reasoning", "output": {"message": "thinking it through"}}
+                ],
+                "context": {
+                    "messages": [
+                        {"entries": [{"type": "text", "text": "user asks a reasonably long question"}]}
+                    ]
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let messages = parse_kiro_file(&file_path);
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].session_id, "chat-abc");
+        assert_eq!(
+            messages[0].dedup_key,
+            Some("execution:exec-123".to_string())
+        );
+        assert!(messages[0].tokens.input > 0);
+        assert!(messages[0].tokens.output > 0);
+        // Model is extracted from completionOptions, not hardcoded to "auto".
+        assert_eq!(messages[0].model_id, "claude-sonnet-4-5");
+        // Workspace attribution matches the snapshot path.
+        assert_eq!(messages[0].workspace_key, Some("workspace-a".to_string()));
+        assert_eq!(messages[0].workspace_label, Some("workspace-a".to_string()));
+        // Duration is carried through (endTime - startTime = 1500ms).
+        assert_eq!(messages[0].duration_ms, Some(1500));
+    }
+
+    #[test]
+    fn test_parse_kiro_execution_file_parses_seconds_epoch_start_time() {
+        let dir = TempDir::new().unwrap();
+        let file_path = dir.path().join(
+            "Library/Application Support/Kiro/User/globalStorage/kiro.kiroagent/workspace-a/execution-secs.json",
+        );
+        fs::create_dir_all(file_path.parent().unwrap()).unwrap();
+        // startTime as an epoch-seconds integer must be scaled to ms, not read
+        // as a millisecond value (which would file it under 1970).
+        fs::write(
+            &file_path,
+            r#"{
+                "executionId": "exec-secs",
+                "status": "succeed",
+                "startTime": 1770983426,
+                "actions": [{"actionType": "say", "output": "answer text here"}],
+                "context": {
+                    "messages": [
+                        {"entries": [{"type": "text", "text": "a question from the user"}]}
+                    ]
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let messages = parse_kiro_file(&file_path);
+
+        assert_eq!(messages.len(), 1);
+        // 1770983426 seconds -> 1770983426000 ms -> 2026, not 1970.
+        assert_eq!(messages[0].timestamp, 1770983426000);
+        assert!(messages[0].date.starts_with("2026-"));
+    }
+
+    fn make_globalstorage_message(
+        session_id: &str,
+        dedup_key: &str,
+        workspace: Option<&str>,
+    ) -> UnifiedMessage {
+        let mut message = UnifiedMessage::new_with_dedup(
+            CLIENT_ID,
+            "auto".to_string(),
+            PROVIDER_ID,
+            session_id.to_string(),
+            1_770_983_426_000,
+            TokenBreakdown {
+                input: 100,
+                output: 10,
+                cache_read: 0,
+                cache_write: 0,
+                reasoning: 0,
+            },
+            0.0,
+            Some(dedup_key.to_string()),
+        );
+        message.set_workspace(workspace.map(str::to_string), workspace.map(str::to_string));
+        message
+    }
+
+    #[test]
+    fn suppress_snapshots_covered_by_executions_drops_only_exact_matches() {
+        let messages = vec![
+            // Snapshot for chat-abc in workspace-a: covered by the execution below.
+            make_globalstorage_message(
+                "workspace-a/chat-abc",
+                "workspace-a/chat-abc:globalstorage",
+                Some("workspace-a"),
+            ),
+            // Execution for the same chat session and workspace.
+            make_globalstorage_message("chat-abc", "execution:exec-1", Some("workspace-a")),
+            // Snapshot with a different stem: kept.
+            make_globalstorage_message(
+                "workspace-a/other-session",
+                "workspace-a/other-session:globalstorage",
+                Some("workspace-a"),
+            ),
+            // Same stem but different workspace: kept.
+            make_globalstorage_message(
+                "workspace-b/chat-abc",
+                "workspace-b/chat-abc:globalstorage",
+                Some("workspace-b"),
+            ),
+        ];
+
+        let kept = suppress_snapshots_covered_by_executions(messages);
+
+        let keys: Vec<&str> = kept
+            .iter()
+            .filter_map(|message| message.dedup_key.as_deref())
+            .collect();
+        assert_eq!(kept.len(), 3);
+        assert!(keys.contains(&"execution:exec-1"));
+        assert!(keys.contains(&"workspace-a/other-session:globalstorage"));
+        assert!(keys.contains(&"workspace-b/chat-abc:globalstorage"));
+        assert!(!keys.contains(&"workspace-a/chat-abc:globalstorage"));
+    }
+
+    #[test]
+    fn test_parse_kiro_workspace_session_promptlogs() {
+        let dir = TempDir::new().unwrap();
+        let file_path = dir.path().join(
+            "Library/Application Support/Kiro/User/globalStorage/kiro.kiroagent/workspace-sessions/d29ya3NwYWNl/sess-uuid-1.json",
+        );
+        fs::create_dir_all(file_path.parent().unwrap()).unwrap();
+        fs::write(
+            &file_path,
+            r#"{
+                "sessionId": "sess-uuid-1",
+                "selectedModel": "claude-sonnet-4",
+                "history": [
+                    {
+                        "message": {"role": "user", "content": "hello"},
+                        "promptLogs": [{"prompt": "0123456789012345", "completion": "hi"}]
+                    },
+                    {
+                        "message": {"role": "assistant", "content": "On it."},
+                        "promptLogs": [{"prompt": "01234567890123456789012345678901", "completion": "done"}]
+                    }
+                ]
+            }"#,
+        )
+        .unwrap();
+
+        let messages = parse_kiro_file(&file_path);
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].session_id, "sess-uuid-1");
+        assert_eq!(messages[0].model_id, "claude-sonnet-4");
+        // 16 + 32 prompt chars -> ceil(48 / 4) = 12 estimated input tokens.
+        assert_eq!(messages[0].tokens.input, 12);
+        // "On it." -> ceil(6 / 4) = 2 estimated output tokens.
+        assert_eq!(messages[0].tokens.output, 2);
+        assert_eq!(messages[0].message_count, 2);
+        assert_eq!(
+            messages[0].dedup_key,
+            Some("sess-uuid-1:workspace-session".to_string())
+        );
+    }
+
+    #[test]
+    fn suppress_drops_workspace_session_covered_by_execution() {
+        let messages = vec![
+            // Workspace-session promptLogs snapshot for sess-1: covered by the
+            // execution below even though the workspace keys differ (the two
+            // stores live under different kiro.kiroagent subdirectories).
+            make_globalstorage_message(
+                "sess-1",
+                "sess-1:workspace-session",
+                Some("workspace-sessions"),
+            ),
+            // Execution whose chatSessionId is the same session UUID.
+            make_globalstorage_message("sess-1", "execution:exec-9", Some("abc080c47e826767")),
+            // Workspace-session for a session with no counted execution: kept.
+            make_globalstorage_message(
+                "sess-2",
+                "sess-2:workspace-session",
+                Some("workspace-sessions"),
+            ),
+        ];
+
+        let kept = suppress_snapshots_covered_by_executions(messages);
+
+        let keys: Vec<&str> = kept
+            .iter()
+            .filter_map(|message| message.dedup_key.as_deref())
+            .collect();
+        assert_eq!(kept.len(), 2);
+        assert!(keys.contains(&"execution:exec-9"));
+        assert!(keys.contains(&"sess-2:workspace-session"));
+        assert!(!keys.contains(&"sess-1:workspace-session"));
+    }
+
+    #[test]
+    fn suppress_snapshots_is_noop_without_executions() {
+        let messages = vec![make_globalstorage_message(
+            "workspace-a/chat-abc",
+            "workspace-a/chat-abc:globalstorage",
+            Some("workspace-a"),
+        )];
+
+        let kept = suppress_snapshots_covered_by_executions(messages);
+        assert_eq!(kept.len(), 1);
+    }
+
+    #[test]
+    fn parse_kiro_chat_artifact_counts_human_and_bot_roles() {
+        // Real IDE-private .chat files use human/bot/tool roles; tool context
+        // is intentionally not counted.
+        let dir = TempDir::new().unwrap();
+        let file_path = dir.path().join(
+            "Kiro/User/globalStorage/kiro.kiroagent/workspace-a/0c433dc89e4c1803dd6fe838634ed7fc.chat",
+        );
+        fs::create_dir_all(file_path.parent().unwrap()).unwrap();
+        fs::write(
+            &file_path,
+            r#"{
+                "executionId": "5b40545a-2539-4334-9411-23df0bfea51b",
+                "actionId": "act",
+                "chat": [
+                    {"role": "human", "content": "please refactor the loader"},
+                    {"role": "tool", "content": "You are operating in a workspace"},
+                    {"role": "bot", "content": "Done, refactored."}
+                ],
+                "metadata": {}
+            }"#,
+        )
+        .unwrap();
+
+        let messages = parse_kiro_file(&file_path);
+
+        assert_eq!(messages.len(), 1);
+        // human: 26 chars -> ceil(26/4) = 7; bot: 17 chars -> ceil(17/4) = 5.
+        // The 32-char tool line is excluded from both.
+        assert_eq!(messages[0].tokens.input, 7);
+        assert_eq!(messages[0].tokens.output, 5);
+    }
+
+    #[test]
+    fn parse_kiro_chat_artifact_tags_dedup_key_with_execution_id() {
+        // Shape observed in real globalStorage trees: `<hash>.chat` carries a
+        // top-level executionId (and NO `actions`, so it must not be parsed as
+        // an execution record).
+        let dir = TempDir::new().unwrap();
+        let file_path = dir.path().join(
+            "Kiro/User/globalStorage/kiro.kiroagent/abc080c47e826767f65b27677d791c66/006924fffc3bc58648f10379cdfd77a6.chat",
+        );
+        fs::create_dir_all(file_path.parent().unwrap()).unwrap();
+        fs::write(
+            &file_path,
+            r#"{
+                "executionId": "3067e447-2cda-47c9-a476-536a72d92f31",
+                "actionId": "act",
+                "context": {},
+                "chat": [
+                    {"role": "user", "content": "please refactor the config loader"},
+                    {"role": "assistant", "content": "On it."}
+                ],
+                "metadata": {"workflowId": "3e445aa7-f59c-4bf4-a471-c655dad734f5"}
+            }"#,
+        )
+        .unwrap();
+
+        let messages = parse_kiro_file(&file_path);
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(
+            messages[0].dedup_key.as_deref(),
+            Some(
+                "abc080c47e826767f65b27677d791c66/006924fffc3bc58648f10379cdfd77a6:globalstorage:exec:3067e447-2cda-47c9-a476-536a72d92f31"
+            )
+        );
+    }
+
+    #[test]
+    fn suppress_snapshots_drops_chat_artifacts_matching_execution_id() {
+        // Real-world id shapes: `.chat` stems are opaque 32-hex hashes, while
+        // executionId/chatSessionId are dashed UUIDs — so only the executionId
+        // tag can link the two.
+        let ws = "abc080c47e826767f65b27677d791c66";
+        let messages = vec![
+            // Two .chat artifacts for the same execution: both covered.
+            make_globalstorage_message(
+                "abc080c47e826767f65b27677d791c66/006924fffc3bc58648f10379cdfd77a6",
+                "abc080c47e826767f65b27677d791c66/006924fffc3bc58648f10379cdfd77a6:globalstorage:exec:3067e447-2cda-47c9-a476-536a72d92f31",
+                Some(ws),
+            ),
+            make_globalstorage_message(
+                "abc080c47e826767f65b27677d791c66/01e341965ac1caf00a9ecb9cc1635d62",
+                "abc080c47e826767f65b27677d791c66/01e341965ac1caf00a9ecb9cc1635d62:globalstorage:exec:3067e447-2cda-47c9-a476-536a72d92f31",
+                Some(ws),
+            ),
+            // The execution record itself (session id = chatSessionId).
+            make_globalstorage_message(
+                "efddf80a-eab9-4f1c-8a13-877eaac72736",
+                "execution:3067e447-2cda-47c9-a476-536a72d92f31",
+                Some(ws),
+            ),
+            // .chat artifact for an execution that is NOT counted (e.g. failed):
+            // kept.
+            make_globalstorage_message(
+                "abc080c47e826767f65b27677d791c66/0681d950923f98601e198293ca2040fd",
+                "abc080c47e826767f65b27677d791c66/0681d950923f98601e198293ca2040fd:globalstorage:exec:5b40545a-2539-4334-9411-23df0bfea51b",
+                Some(ws),
+            ),
+            // Same execution id but a different workspace: kept.
+            make_globalstorage_message(
+                "other-ws/aaaa",
+                "other-ws/aaaa:globalstorage:exec:3067e447-2cda-47c9-a476-536a72d92f31",
+                Some("other-ws"),
+            ),
+        ];
+
+        let kept = suppress_snapshots_covered_by_executions(messages);
+
+        let keys: Vec<&str> = kept
+            .iter()
+            .filter_map(|message| message.dedup_key.as_deref())
+            .collect();
+        assert_eq!(kept.len(), 3);
+        assert!(keys.contains(&"execution:3067e447-2cda-47c9-a476-536a72d92f31"));
+        assert!(keys.iter().any(|key| key.contains("0681d950")));
+        assert!(keys.iter().any(|key| key.starts_with("other-ws/aaaa")));
+        assert!(!keys.iter().any(|key| key.contains("006924ff")));
+        assert!(!keys.iter().any(|key| key.contains("01e34196")));
+    }
+
+    #[test]
+    fn test_parse_kiro_global_storage_dedup_keys_differ_across_workspaces() {
+        let dir = TempDir::new().unwrap();
+        let payload = r#"{
+                "model": "auto",
+                "messages": [
+                    {"role": "user", "content": "hello world"},
+                    {"role": "assistant", "content": "response text"}
+                ]
+            }"#;
+
+        // Two `execution.chat` snapshots under DIFFERENT workspaces.
+        let path_a = dir.path().join(
+            "Library/Application Support/Kiro/User/globalStorage/kiro.kiroagent/workspace-a/execution.chat",
+        );
+        let path_b = dir.path().join(
+            "Library/Application Support/Kiro/User/globalStorage/kiro.kiroagent/workspace-b/execution.chat",
+        );
+        fs::create_dir_all(path_a.parent().unwrap()).unwrap();
+        fs::create_dir_all(path_b.parent().unwrap()).unwrap();
+        fs::write(&path_a, payload).unwrap();
+        fs::write(&path_b, payload).unwrap();
+
+        let messages_a = parse_kiro_file(&path_a);
+        let messages_b = parse_kiro_file(&path_b);
+
+        assert_eq!(messages_a.len(), 1);
+        assert_eq!(messages_b.len(), 1);
+        assert_ne!(messages_a[0].dedup_key, messages_b[0].dedup_key);
+        assert_eq!(
+            messages_a[0].dedup_key,
+            Some("workspace-a/execution:globalstorage".to_string())
+        );
+        assert_eq!(
+            messages_b[0].dedup_key,
+            Some("workspace-b/execution:globalstorage".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_kiro_global_storage_ignores_unknown_roles() {
+        let dir = TempDir::new().unwrap();
+        let file_path = dir.path().join(
+            "Library/Application Support/Kiro/User/globalStorage/kiro.kiroagent/workspace-a/execution.chat",
+        );
+        fs::create_dir_all(file_path.parent().unwrap()).unwrap();
+        fs::write(
+            &file_path,
+            r#"{
+                "model": "auto",
+                "messages": [
+                    {"role": "mystery", "content": "mystery text"},
+                    {"role": "assistant", "content": "response text"}
+                ]
+            }"#,
+        )
+        .unwrap();
+
+        let messages = parse_kiro_file(&file_path);
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].tokens.output, 4);
+    }
+
+    #[test]
+    fn test_collect_kiro_snapshot_text_does_not_double_count_aliased_keys() {
+        // (a) A single message object that stores the SAME assistant body under
+        // two aliased text keys (`content` and `text`). Before the fix, the
+        // traversal descended into every present alias and counted "response
+        // text" twice (8 assistant chars -> output 2). After the fix it descends
+        // into only the first present alias in the group, counting once.
+        let value: Value = serde_json::from_str(
+            r#"{
+                "messages": [
+                    {"role": "assistant", "content": "abcd", "text": "abcd"}
+                ]
+            }"#,
+        )
+        .unwrap();
+
+        let mut counts = KiroSnapshotTextCounts::default();
+        collect_kiro_snapshot_text(&value, &mut counts, None);
+
+        // "abcd" counted once = 4 chars, not 8.
+        assert_eq!(counts.assistant_chars, 4);
+        assert_eq!(counts.prompt_chars, 0);
+    }
+
+    #[test]
+    fn test_collect_kiro_snapshot_text_does_not_double_count_aliased_containers() {
+        // (a) An object that stores the SAME conversation list under two aliased
+        // container keys (`messages` and `entries`). Before the fix both were
+        // traversed and the text was counted twice.
+        let value: Value = serde_json::from_str(
+            r#"{
+                "messages": [{"role": "user", "content": "hello"}],
+                "entries": [{"role": "user", "content": "hello"}]
+            }"#,
+        )
+        .unwrap();
+
+        let mut counts = KiroSnapshotTextCounts::default();
+        collect_kiro_snapshot_text(&value, &mut counts, None);
+
+        // "hello" counted once = 5 chars, not 10.
+        assert_eq!(counts.prompt_chars, 5);
+        assert_eq!(counts.assistant_chars, 0);
+    }
+
+    #[test]
+    fn test_collect_kiro_snapshot_text_counts_distinct_alias_subtrees() {
+        // A single turn that stores DISTINCT payloads under two keys of the same
+        // alias group: `prompt` (user text) and `response` (assistant text).
+        // These are different subtrees, so both must be counted. A first-key-only
+        // traversal would drop the `response` body and undercount.
+        let value: Value = serde_json::from_str(
+            r#"{
+                "prompt": {"role": "user", "text": "hi there"},
+                "response": {"role": "assistant", "text": "hello back"}
+            }"#,
+        )
+        .unwrap();
+
+        let mut counts = KiroSnapshotTextCounts::default();
+        collect_kiro_snapshot_text(&value, &mut counts, None);
+
+        // "hi there" = 8 prompt chars, "hello back" = 10 assistant chars.
+        assert_eq!(counts.prompt_chars, 8);
+        assert_eq!(counts.assistant_chars, 10);
+    }
+
+    #[test]
+    fn test_collect_kiro_snapshot_text_counts_distinct_container_subtrees() {
+        // A chat object holding DISTINCT conversation lists under two container
+        // aliases (`messages` and `history`). Both must be counted; the
+        // value-based de-dup only skips structurally identical subtrees.
+        let value: Value = serde_json::from_str(
+            r#"{
+                "messages": [{"role": "user", "content": "alpha"}],
+                "history": [{"role": "user", "content": "bravo"}]
+            }"#,
+        )
+        .unwrap();
+
+        let mut counts = KiroSnapshotTextCounts::default();
+        collect_kiro_snapshot_text(&value, &mut counts, None);
+
+        // "alpha" (5) + "bravo" (5) = 10 prompt chars; nothing dropped.
+        assert_eq!(counts.prompt_chars, 10);
+        assert_eq!(counts.assistant_chars, 0);
+    }
+
+    #[test]
+    fn test_find_kiro_snapshot_model_id_descends_into_aliased_text_keys() {
+        // (b) Model id nested under `parts` / `prompt` — keys that
+        // `collect_kiro_snapshot_text` descends into but the model-id finder
+        // previously omitted, causing the model to fall back to `unknown`.
+        let parts_value: Value = serde_json::from_str(
+            r#"{
+                "messages": [
+                    {"parts": [{"model_id": "claude-sonnet-4-5"}]}
+                ]
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(
+            find_kiro_snapshot_model_id(&parts_value),
+            Some("claude-sonnet-4-5".to_string())
+        );
+
+        let prompt_value: Value =
+            serde_json::from_str(r#"{"prompt": {"model": "claude-sonnet-4"}}"#).unwrap();
+        assert_eq!(
+            find_kiro_snapshot_model_id(&prompt_value),
+            Some("claude-sonnet-4".to_string())
+        );
+    }
+
+    /// Build the Kiro IDE session layout on disk:
+    /// `<base>/.kiro/sessions/<workspace>/<sess_dir>/{session.json,messages.jsonl}`
+    /// and return the path to `session.json`.
+    fn create_ide_session_files(
+        dir: &TempDir,
+        workspace: &str,
+        sess_dir: &str,
+        session_json: &str,
+        messages_jsonl: &str,
+    ) -> std::path::PathBuf {
+        let sess_path = dir
+            .path()
+            .join(".kiro/sessions")
+            .join(workspace)
+            .join(sess_dir);
+        fs::create_dir_all(&sess_path).unwrap();
+        let session_path = sess_path.join("session.json");
+        fs::write(&session_path, session_json).unwrap();
+        fs::write(sess_path.join("messages.jsonl"), messages_jsonl).unwrap();
+        session_path
+    }
+
+    #[test]
+    fn test_parse_kiro_ide_session_estimates_tokens_from_messages_jsonl() {
+        // session.json is the schemaVersion 1.0.0 sample from issue #813.
+        let session_json = r#"{
+            "schemaVersion": "1.0.0",
+            "dataModelVersion": 1,
+            "id": "sess_02f1c107-37e8-4398-8b95-c3847bf59335",
+            "title": "Writing README docs for projects",
+            "agentMode": "vibe",
+            "createdAt": "2026-06-30T12:57:10.991Z",
+            "lastModifiedAt": "2026-06-30T12:57:12.991Z",
+            "status": "completed"
+        }"#;
+        let messages_jsonl = "{\"role\":\"user\",\"content\":\"hello world\"}\n{\"role\":\"assistant\",\"content\":\"response text\"}\n";
+
+        let dir = TempDir::new().unwrap();
+        let path = create_ide_session_files(
+            &dir,
+            "my-project",
+            "sess_02f1c107-37e8-4398-8b95-c3847bf59335",
+            session_json,
+            messages_jsonl,
+        );
+
+        let messages = parse_kiro_file(&path);
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].client, "kiro");
+        assert_eq!(messages[0].provider_id, "amazon-bedrock");
+        assert_eq!(
+            messages[0].session_id,
+            "sess_02f1c107-37e8-4398-8b95-c3847bf59335"
+        );
+        // "hello world" = 11 chars -> ceil(11/4) = 3; "response text" = 13 -> 4.
+        assert_eq!(messages[0].tokens.input, 3);
+        assert_eq!(messages[0].tokens.output, 4);
+        assert!(messages[0].is_turn_start);
+        // Workspace is the folder holding the sess_* dir.
+        assert_eq!(messages[0].workspace_key, Some("my-project".to_string()));
+        assert_eq!(messages[0].workspace_label, Some("my-project".to_string()));
+        // createdAt -> ms; duration = lastModifiedAt - createdAt = 2000ms.
+        assert_eq!(messages[0].timestamp, 1782824230991);
+        assert_eq!(messages[0].duration_ms, Some(2000));
+        assert!(messages[0].date.starts_with("2026-"));
+        // No model in session.json/messages.jsonl -> "auto" so pricing can resolve.
+        assert_eq!(messages[0].model_id, "auto");
+        // Dedup key is IDE-session-scoped and survives execution suppression.
+        assert_eq!(
+            messages[0].dedup_key,
+            Some("sess_02f1c107-37e8-4398-8b95-c3847bf59335:ide-session".to_string())
+        );
+        // One assistant response -> message_count 1.
+        assert_eq!(messages[0].message_count, 1);
+    }
+
+    #[test]
+    fn test_parse_kiro_ide_session_extracts_model_and_counts_turns() {
+        let session_json = r#"{
+            "schemaVersion": "1.0.0",
+            "id": "sess_abc",
+            "createdAt": "2026-06-30T12:57:10.000Z",
+            "lastModifiedAt": "2026-06-30T12:57:10.000Z"
+        }"#;
+        // Two assistant turns and a Kiro IDE model codename embedded in a line.
+        let messages_jsonl = concat!(
+            "{\"role\":\"user\",\"content\":\"first question here\"}\n",
+            "{\"role\":\"assistant\",\"model\":\"big-pickle\",\"content\":\"first answer\"}\n",
+            "{\"role\":\"user\",\"content\":\"second question\"}\n",
+            "{\"role\":\"assistant\",\"content\":\"second answer\"}\n"
+        );
+
+        let dir = TempDir::new().unwrap();
+        let path = create_ide_session_files(&dir, "ws", "sess_abc", session_json, messages_jsonl);
+
+        let messages = parse_kiro_file(&path);
+
+        assert_eq!(messages.len(), 1);
+        // Model codename is picked up from messages.jsonl (not a Kiro-internal id).
+        assert_eq!(messages[0].model_id, "big-pickle");
+        // Two assistant responses -> message_count 2.
+        assert_eq!(messages[0].message_count, 2);
+        assert!(messages[0].tokens.input > 0);
+        assert!(messages[0].tokens.output > 0);
+    }
+
+    #[test]
+    fn test_structured_turn_missing_prompt_timestamp_back_calculates_from_elapsed_time() {
+        // Second-round review fix: in the structured `messages.jsonl` layout,
+        // `usage_summary.elapsedTime` can supply `duration_ms` while the user
+        // prompt's own timestamp is absent (or unparseable). Previously the
+        // message timestamp fell back to the `turn_end` event's own
+        // timestamp, leaving the message end-anchored — sessionize()'s
+        // `[timestamp, timestamp + duration_ms]` span would then project
+        // forward past the turn's actual end into phantom idle time. The
+        // parser must back-calculate `turn_end - elapsedTime` as the anchor
+        // instead.
+        let session_json = r#"{
+            "schemaVersion": "1.0.0",
+            "id": "sess_structured"
+        }"#;
+        let messages_jsonl = concat!(
+            "{\"payload\":{\"type\":\"user\",\"content\":\"hello world\"}}\n",
+            "{\"payload\":{\"type\":\"assistant\",\"content\":\"response text\"}}\n",
+            "{\"payload\":{\"type\":\"usage_summary\",\"elapsedTime\":5000}}\n",
+            "{\"payload\":{\"type\":\"turn_end\"},\"timestamp\":\"2026-06-20T10:00:05Z\"}\n",
+        );
+
+        let dir = TempDir::new().unwrap();
+        let path =
+            create_ide_session_files(&dir, "ws", "sess_structured", session_json, messages_jsonl);
+
+        let messages = parse_kiro_file(&path);
+
+        assert_eq!(messages.len(), 1);
+        let expected_end = chrono::DateTime::parse_from_rfc3339("2026-06-20T10:00:05Z")
+            .unwrap()
+            .timestamp_millis();
+        assert_eq!(
+            messages[0].timestamp,
+            expected_end - 5000,
+            "timestamp must be back-calculated from turn_end - elapsedTime when the prompt timestamp is missing"
+        );
+        assert_eq!(messages[0].duration_ms, Some(5000));
+    }
+
+    #[test]
+    fn test_parse_kiro_ide_session_dropped_when_no_recognizable_content() {
+        let session_json = r#"{"schemaVersion":"1.0.0","id":"sess_empty"}"#;
+        // Only tool/system noise with no role-tagged conversation text.
+        let messages_jsonl = "{\"kind\":\"toolCall\",\"name\":\"read_file\"}\n";
+
+        let dir = TempDir::new().unwrap();
+        let path = create_ide_session_files(&dir, "ws", "sess_empty", session_json, messages_jsonl);
+
+        let messages = parse_kiro_file(&path);
+
+        // No estimable usage -> no fabricated message.
+        assert!(messages.is_empty());
+    }
+
+    #[test]
+    fn test_parse_kiro_ide_session_falls_back_to_dir_name_and_mtime() {
+        // session.json with no id and no timestamps: session id falls back to the
+        // sess_* directory name and timestamp to the file mtime.
+        let session_json = r#"{"schemaVersion":"1.0.0"}"#;
+        let messages_jsonl = "{\"role\":\"user\",\"content\":\"hello\"}\n";
+
+        let dir = TempDir::new().unwrap();
+        let path =
+            create_ide_session_files(&dir, "ws", "sess_no_meta", session_json, messages_jsonl);
+
+        let messages = parse_kiro_file(&path);
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].session_id, "sess_no_meta");
+        assert_eq!(
+            messages[0].dedup_key,
+            Some("sess_no_meta:ide-session".to_string())
+        );
+        assert!(messages[0].timestamp > 0);
+    }
+
+    #[test]
+    fn suppress_snapshots_leaves_ide_sessions_untouched() {
+        // An IDE-session message must never be dropped by execution suppression,
+        // even when a globalStorage execution is present in the same batch.
+        let messages = vec![
+            make_globalstorage_message("chat-abc", "execution:exec-1", Some("ws")),
+            make_globalstorage_message("sess_abc", "sess_abc:ide-session", Some("ws")),
+        ];
+
+        let kept = suppress_snapshots_covered_by_executions(messages);
+
+        let keys: Vec<&str> = kept
+            .iter()
+            .filter_map(|message| message.dedup_key.as_deref())
+            .collect();
+        assert_eq!(kept.len(), 2);
+        assert!(keys.contains(&"sess_abc:ide-session"));
+        assert!(keys.contains(&"execution:exec-1"));
+    }
+}

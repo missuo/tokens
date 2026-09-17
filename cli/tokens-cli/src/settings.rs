@@ -214,8 +214,15 @@ impl Default for Settings {
 /// invocation. Errors during load fall through to
 /// [`ScannerSettings::default`] — a missing or malformed settings.json
 /// should never break `tokens` runs.
+///
+/// The bucketing timezone is resolved here too, so every scan buckets usage
+/// days into the zone this device is pinned to (see [`crate::timezone`]).
 pub fn load_scanner_settings() -> ScannerSettings {
-    Settings::load().scanner
+    let settings = Settings::load();
+    let bucket_timezone = crate::timezone::effective_name(&settings);
+    let mut scanner = settings.scanner;
+    scanner.bucket_timezone = bucket_timezone;
+    scanner
 }
 
 /// Loads the user's configured model aliases, honoring a `--home` override the

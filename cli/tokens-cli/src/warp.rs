@@ -299,7 +299,7 @@ async fn sync_warp_cache() -> SyncWarpResult {
 }
 
 async fn fetch_warp_usage(credentials: &WarpCredentials) -> Result<WarpUsageCache> {
-    let client = reqwest::Client::builder()
+    let client = tokens_core::http::client_builder()
         .timeout(WARP_HTTP_TIMEOUT)
         .build()
         .context("Failed to build Warp HTTP client")?;
@@ -553,3 +553,77 @@ fn value_to_i64(value: &Value) -> Option<i64> {
         .or_else(|| value.as_str().and_then(|text| text.parse::<i64>().ok()))
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ensure_graphql_response_ok_rejects_semantic_errors() {
+        let response = serde_json::json!({
+            "data": {
+                "requestLimitInfo": null
+            },
+            "errors": [
+                { "message": "token expired" },
+                { "message": "workspace unavailable" }
+            ]
+        });
+
+        let err = ensure_graphql_response_ok(&response)
+            .unwrap_err()
+            .to_string();
+
+        assert!(err.contains("Warp GraphQL API returned errors"));
+        assert!(err.contains("token expired"));
+        assert!(err.contains("workspace unavailable"));
+    }
+
+    #[test]
+    fn normalize_graphql_usage_extracts_request_limit_and_workspace_overage() {
+        let responses = vec![
+            serde_json::json!({
+                "data": {
+                    "requestLimitInfo": {
+                        "requestLimit": 100,
+                        "requestsUsedSinceLastRefresh": 42,
+                        "nextRefreshTime": "2026-06-01T00:00:00Z",
+                        "bonusGrantsInfo": {
+                            "spendingInfo": {
+                                "currentMonthSpendCents": 1234,
+                                "currentMonthCreditsPurchased": 500
+                            }
+                        }
+                    }
+                }
+            }),
+            serde_json::json!({
+                "data": {
+                    "workspacesMetadataForUser": [
+                        {
+                            "id": "workspace-1",
+                            "name": "Personal",
+                            "aiOverages": {
+                                "currentMonthlyRequestCostCents": 345,
+                                "currentMonthlyRequestsUsed": 12
+                            }
+                        }
+                    ]
+                }
+            }),
+        ];
+
+        let cache = normalize_graphql_usage(&responses).unwrap();
+
+        assert_eq!(cache.usage.requests_used, Some(42));
+        assert_eq!(cache.usage.request_limit, Some(100));
+        assert_eq!(cache.usage.spend_cents, Some(1234));
+        assert_eq!(cache.usage.credits_purchased_cents, Some(500));
+        assert_eq!(
+            cache.usage.next_refresh_time.as_deref(),
+            Some("2026-06-01T00:00:00Z")
+        );
+        assert_eq!(cache.workspaces.len(), 1);
+        assert_eq!(cache.workspaces[0].requests_used, Some(12));
+        assert_eq!(cache.workspaces[0].spend_cents, Some(345));
+    }
+}

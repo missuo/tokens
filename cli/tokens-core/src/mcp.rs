@@ -3,8 +3,24 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+pub struct McpServerEntry {
+    pub name: String,
+    pub source: McpSource,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum McpSource {
+    ClaudeCode,
+    ClaudeDesktop,
+    Cursor,
+    Kiro,
+    OpenCodeSkill,
+}
+
 pub fn discover_mcp_server_names(home_dir: Option<&Path>) -> Vec<String> {
-    let home = match home_dir.map(PathBuf::from).or_else(dirs::home_dir) {
+    let home = match home_dir.map(PathBuf::from).or_else(crate::paths::home_dir) {
         Some(h) => h,
         None => return Vec::new(),
     };
@@ -142,3 +158,169 @@ fn extract_yaml_frontmatter(content: &str) -> Option<&str> {
     Some(&after_first[..end])
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_collect_mcp_server_keys() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("mcp.json");
+        fs::write(
+            &path,
+            r#"{"mcpServers":{"slack":{"command":"npx"},"github":{"command":"npx"}}}"#,
+        )
+        .unwrap();
+
+        let mut names = BTreeSet::new();
+        collect_mcp_server_keys(&path, &mut names);
+        assert_eq!(
+            names.into_iter().collect::<Vec<_>>(),
+            vec!["github", "slack"]
+        );
+    }
+
+    #[test]
+    fn test_collect_mcp_server_keys_missing_file() {
+        let mut names = BTreeSet::new();
+        collect_mcp_server_keys(Path::new("/nonexistent/mcp.json"), &mut names);
+        assert!(names.is_empty());
+    }
+
+    #[test]
+    fn test_extract_mcp_names_from_skill_md() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("test.md");
+        fs::write(
+            &path,
+            r#"---
+name: playwright
+description: "Browser automation"
+mcp:
+  playwright:
+    command: npx
+    args:
+      - "@playwright/mcp@latest"
+---
+
+# Content here
+"#,
+        )
+        .unwrap();
+
+        let mut names = BTreeSet::new();
+        extract_mcp_names_from_skill_md(&path, &mut names);
+        assert_eq!(names.into_iter().collect::<Vec<_>>(), vec!["playwright"]);
+    }
+
+    #[test]
+    fn test_extract_mcp_names_from_skill_md_multiple() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("multi.md");
+        fs::write(
+            &path,
+            r#"---
+mcp:
+  server-a:
+    command: npx
+    args: ["-y", "server-a"]
+  server-b:
+    command: bunx
+    args: ["server-b"]
+---
+"#,
+        )
+        .unwrap();
+
+        let mut names = BTreeSet::new();
+        extract_mcp_names_from_skill_md(&path, &mut names);
+        assert_eq!(
+            names.into_iter().collect::<Vec<_>>(),
+            vec!["server-a", "server-b"]
+        );
+    }
+
+    #[test]
+    fn test_skill_directory_layout() {
+        let tmp = TempDir::new().unwrap();
+        let skills_dir = tmp.path().join("skills");
+
+        // Subdirectory layout
+        let tmap_dir = skills_dir.join("tmap");
+        fs::create_dir_all(&tmap_dir).unwrap();
+        fs::write(
+            tmap_dir.join("SKILL.md"),
+            "---\ndescription: \"TMAP\"\n---\n# TMAP MCP\n",
+        )
+        .unwrap();
+
+        // Flat file with mcp section
+        fs::write(
+            skills_dir.join("playwright.md"),
+            "---\nmcp:\n  playwright:\n    command: npx\n---\n# PW\n",
+        )
+        .unwrap();
+
+        let mut names = BTreeSet::new();
+        collect_skill_mcp_names(&skills_dir, &mut names);
+        // tmap SKILL.md has no mcp: section, so only playwright is found
+        assert_eq!(names.into_iter().collect::<Vec<_>>(), vec!["playwright"]);
+    }
+
+    #[test]
+    fn test_discover_mcp_server_names_integration() {
+        let tmp = TempDir::new().unwrap();
+        let home = tmp.path();
+
+        // Create Claude .mcp.json
+        let claude_dir = home.join(".claude");
+        fs::create_dir_all(&claude_dir).unwrap();
+        fs::write(
+            claude_dir.join(".mcp.json"),
+            r#"{"mcpServers":{"slack":{},"tmap":{}}}"#,
+        )
+        .unwrap();
+
+        // Create Cursor mcp.json
+        let cursor_dir = home.join(".cursor");
+        fs::create_dir_all(&cursor_dir).unwrap();
+        fs::write(
+            cursor_dir.join("mcp.json"),
+            r#"{"mcpServers":{"github":{},"slack":{}}}"#,
+        )
+        .unwrap();
+
+        // Create Kiro mcp.json
+        let kiro_dir = home.join(".kiro").join("settings");
+        fs::create_dir_all(&kiro_dir).unwrap();
+        fs::write(kiro_dir.join("mcp.json"), r#"{"mcpServers":{"tmap":{}}}"#).unwrap();
+
+        // Create skill
+        let skills_dir = home.join(".opencode").join("skills");
+        fs::create_dir_all(&skills_dir).unwrap();
+        fs::write(
+            skills_dir.join("apple-mcp.md"),
+            "---\nmcp:\n  apple-mcp:\n    command: bunx\n---\n",
+        )
+        .unwrap();
+
+        let result = discover_mcp_server_names(Some(home));
+        // Deduplicated and sorted
+        assert_eq!(result, vec!["apple-mcp", "github", "slack", "tmap"]);
+    }
+
+    #[test]
+    fn test_extract_yaml_frontmatter() {
+        let content = "---\nname: test\nmcp:\n  foo:\n    cmd: x\n---\n# Body";
+        let fm = extract_yaml_frontmatter(content).unwrap();
+        assert!(fm.contains("mcp:"));
+        assert!(!fm.contains("# Body"));
+    }
+
+    #[test]
+    fn test_no_frontmatter() {
+        assert_eq!(extract_yaml_frontmatter("# Just a heading"), None);
+    }
+}

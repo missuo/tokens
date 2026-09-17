@@ -1,14 +1,21 @@
 //! Claude Code session parser
 //!
-//! Parses JSONL files from ~/.claude/projects/
+//! Parses JSONL files from `<claude_config_dir>/projects/`, where
+//! `claude_config_dir` defaults to `~/.claude` but honors `CLAUDE_CONFIG_DIR`
+//! (see `ClientId::Claude` in `clients.rs`).
 
 use super::utils::{
-    extract_i64, extract_string, file_modified_timestamp_ms, parse_timestamp_value,
-    read_file_or_none,
+    estimate_tokens, extract_i64, extract_string, file_modified_timestamp_ms,
+    parse_timestamp_value, read_file_or_none, AnthropicUsage,
 };
 use super::{
     normalize_agent_name, normalize_workspace_key, workspace_label_from_key, UnifiedMessage,
 };
+
+/// The Anthropic `usage` block, kept reachable under its historical name so
+/// `sessions::claudecode::ClaudeUsage` still resolves to the same four fields
+/// after the type moved into `sessions::utils`.
+pub use super::utils::AnthropicUsage as ClaudeUsage;
 use crate::{pricing, provider_identity, TokenBreakdown};
 use serde::Deserialize;
 use serde_json::Value;
@@ -65,20 +72,12 @@ impl CcMirrorVariantMetadata {
 #[derive(Debug, Deserialize)]
 pub struct ClaudeMessage {
     pub model: Option<String>,
-    pub usage: Option<ClaudeUsage>,
+    pub usage: Option<AnthropicUsage>,
     /// Message ID for deduplication (used with requestId)
     pub id: Option<String>,
     /// Optional billing or routing provider emitted by wrappers around Claude Code.
     #[serde(rename = "providerId", alias = "provider_id", alias = "provider")]
     pub provider_id: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ClaudeUsage {
-    pub input_tokens: Option<i64>,
-    pub output_tokens: Option<i64>,
-    pub cache_read_input_tokens: Option<i64>,
-    pub cache_creation_input_tokens: Option<i64>,
 }
 
 /// Resolve the subagent display name for a sidechain transcript file.
@@ -144,13 +143,6 @@ fn is_workflow_journal(path: &Path) -> bool {
     }
     path.ancestors()
         .any(|ancestor| ancestor.file_name().and_then(|n| n.to_str()) == Some("subagents"))
-}
-
-fn is_in_transcripts_dir(path: &Path) -> bool {
-    path.parent()
-        .and_then(|p| p.file_name())
-        .and_then(|n| n.to_str())
-        == Some("transcripts")
 }
 
 /// Locate the parent main-session JSONL for a sidechain transcript.
@@ -412,9 +404,22 @@ fn extract_agent_id_from_text(text: &str) -> Option<String> {
 }
 
 /// Parse a Claude Code JSONL file
+pub fn parse_claude_file(path: &Path) -> Vec<UnifiedMessage> {
+    let home_dir = crate::paths::home_dir();
+    parse_claude_file_with_home(path, home_dir.as_deref())
+}
+
 pub fn parse_claude_file_with_home(path: &Path, home_dir: Option<&Path>) -> Vec<UnifiedMessage> {
     let mut parent_cache = ParentSubagentTypeCache::new();
     parse_claude_file_with_cache_and_home(path, &mut parent_cache, home_dir)
+}
+
+pub fn parse_claude_file_with_cache(
+    path: &Path,
+    parent_cache: &mut ParentSubagentTypeCache,
+) -> Vec<UnifiedMessage> {
+    let home_dir = crate::paths::home_dir();
+    parse_claude_file_with_cache_and_home(path, parent_cache, home_dir.as_deref())
 }
 
 pub fn parse_claude_file_with_cache_and_home(
@@ -442,15 +447,15 @@ pub fn parse_claude_file_with_cache_and_home(
         .unwrap_or("unknown")
         .to_string();
 
-    // Bare transcripts (files under ~/.claude/transcripts/ with no workspace/project
-    // context) must not use char-based token estimation. These files may be written by
-    // third-party tools (e.g. OpenCode) that log tool outputs without Claude API usage
-    // metadata. Estimating tokens from their content would double-count usage already
-    // tracked by the originating client's own parser. Explicit tool-result token counts
-    // are still honored — only the char-based fallback estimate is suppressed.
-    let is_bare_transcript =
-        is_in_transcripts_dir(path) && cc_mirror_metadata.is_none() && workspace_key.is_none();
-
+    // Never char-estimate tool_result content for Claude Code transcripts.
+    //
+    // Project transcripts already carry API-reported `usage.input_tokens` on the
+    // next assistant turn, and that figure already includes prior tool_result
+    // text. Estimating `ceil(chars/4)` on the tool_result row therefore double-
+    // counts the same content (tokens#1011). Bare transcripts under
+    // `~/.claude/transcripts/` have the same hazard when a third-party client
+    // (e.g. OpenCode) also logs the turn. Explicit tool-result token metadata
+    // is still honored — only the char-based fallback is suppressed.
     let fallback_timestamp = file_modified_timestamp_ms(path);
 
     if path.extension().and_then(|s| s.to_str()) == Some("json") {
@@ -490,6 +495,11 @@ pub fn parse_claude_file_with_cache_and_home(
     let mut pending_request_start_timestamp_ms: Option<i64> = None;
     let mut last_model: Option<String> = None;
     let mut last_provider_hint: Option<String> = None;
+    // Claude Code writes local API-error and auth notices as assistant messages
+    // with `<synthetic>` rather than an API model. A following tool result has
+    // no model of its own, so it must not inherit that placeholder and turn a
+    // char estimate into unpriceable usage.
+    let mut suppress_unattributed_tool_results = false;
     // Sidechain detection state (resolved lazily on first parseable entry)
     let mut sidechain_agent: Option<String> = None;
     let mut sidechain_detected = false;
@@ -541,7 +551,8 @@ pub fn parse_claude_file_with_cache_and_home(
                         workspace_key: workspace_key.clone(),
                         workspace_label: workspace_label.clone(),
                         sidechain_agent: sidechain_agent.clone(),
-                        allow_char_estimate: !is_bare_transcript,
+                        suppress_unattributed: suppress_unattributed_tool_results,
+                        allow_char_estimate: false,
                     },
                 );
 
@@ -582,6 +593,14 @@ pub fn parse_claude_file_with_cache_and_home(
                 };
 
                 if let Some(model) = message.model.as_deref() {
+                    if is_claude_synthetic_placeholder_model(model) {
+                        last_model = None;
+                        last_provider_hint = None;
+                        pending_request_start_timestamp_ms = None;
+                        suppress_unattributed_tool_results = true;
+                        continue;
+                    }
+                    suppress_unattributed_tool_results = false;
                     last_model = Some(model.to_string());
                     last_provider_hint = message
                         .provider_id
@@ -866,7 +885,7 @@ fn duration_between_ms(start_ms: Option<i64>, end_ms: Option<i64>) -> Option<i64
 
 fn merge_claude_duplicate(
     existing: &mut UnifiedMessage,
-    usage: &ClaudeUsage,
+    usage: &AnthropicUsage,
     parsed_timestamp: Option<i64>,
 ) {
     // Per-field max merge: each token field is updated independently.
@@ -894,6 +913,54 @@ fn merge_claude_duplicate(
     }
 }
 
+/// Merge two cached/live copies of the same globally-stable Claude response.
+///
+/// A scan can observe one transcript mid-stream and later find the completed
+/// replay in a fork. The parser already applies per-field maxima to streaming
+/// duplicates inside one file; cross-file/cache dedup must preserve the same
+/// monotonic completeness contract instead of keeping whichever path sorted
+/// first.
+pub(crate) fn merge_message_completeness(
+    existing: &mut UnifiedMessage,
+    candidate: &UnifiedMessage,
+) {
+    existing.tokens.input = existing.tokens.input.max(candidate.tokens.input);
+    existing.tokens.output = existing.tokens.output.max(candidate.tokens.output);
+    existing.tokens.cache_read = existing.tokens.cache_read.max(candidate.tokens.cache_read);
+    existing.tokens.cache_write = existing
+        .tokens
+        .cache_write
+        .max(candidate.tokens.cache_write);
+    existing.tokens.reasoning = existing.tokens.reasoning.max(candidate.tokens.reasoning);
+    existing.duration_ms = match (existing.duration_ms, candidate.duration_ms) {
+        (Some(left), Some(right)) => Some(left.max(right)),
+        (None, right) => right,
+        (left, None) => left,
+    };
+    existing.message_count = existing.message_count.max(candidate.message_count);
+    existing.is_turn_start |= candidate.is_turn_start;
+    existing.model_attribution_conflicted |= candidate.model_attribution_conflicted;
+
+    if existing.workspace_key.is_none() {
+        existing.workspace_key.clone_from(&candidate.workspace_key);
+    }
+    if existing.workspace_label.is_none() {
+        existing
+            .workspace_label
+            .clone_from(&candidate.workspace_label);
+    }
+    if existing.session_title.is_none() {
+        existing.session_title.clone_from(&candidate.session_title);
+    }
+    if existing.agent.is_none() {
+        existing.agent.clone_from(&candidate.agent);
+    }
+    if candidate.has_authoritative_cost() && !existing.has_authoritative_cost() {
+        existing.cost = candidate.cost;
+        existing.mark_provider_reported_cost();
+    }
+}
+
 fn merge_claude_tool_result_duplicate(
     existing: &mut UnifiedMessage,
     input_tokens: i64,
@@ -910,6 +977,35 @@ struct ClaudeToolResultUsage {
     dedup_key: Option<String>,
 }
 
+/// The segment that marks a dedup key as scoped to one transcript file.
+/// `tool_result_dedup_key` puts the session id — which is the transcript's
+/// file stem — behind it.
+const PATH_SCOPED_KEY_MARKER: &str = ":tool_result:";
+
+/// Whether a dedup key this parser mints identifies its message by content
+/// wherever that message happens to be written.
+///
+/// Assistant keys are `messageId:requestId` (or `message:{id}` when the
+/// transcript recorded no request id). Both come straight out of the API
+/// response, so the same turn replayed into a forked transcript keys
+/// identically and the two copies collapse at the cross-file dedup.
+/// Tool-result keys do not: they embed the session id, so the same tool result
+/// under a new filename is a different key and both copies count.
+///
+/// Only globally stable keys may be carried across an in-place rewrite. A
+/// retained path-scoped copy could never collapse against a live replay of
+/// itself, so retaining one would double count its input tokens.
+pub(crate) fn dedup_key_is_globally_stable(key: &str) -> bool {
+    !key.contains(PATH_SCOPED_KEY_MARKER)
+}
+
+/// A tool_use id is only unique within the conversation that issued it, so the
+/// key is deliberately scoped to the session. See `dedup_key_is_globally_stable`
+/// for what that costs.
+fn tool_result_dedup_key(client_id: &str, session_id: &str, usage_key: &str) -> String {
+    format!("{client_id}{PATH_SCOPED_KEY_MARKER}{session_id}:{usage_key}")
+}
+
 struct ClaudeToolResultContext<'a> {
     entry: &'a ClaudeEntry,
     last_model: Option<&'a str>,
@@ -921,11 +1017,14 @@ struct ClaudeToolResultContext<'a> {
     workspace_key: Option<String>,
     workspace_label: Option<String>,
     sidechain_agent: Option<String>,
+    /// A preceding local Claude Code notice used `<synthetic>` instead of an API
+    /// model. A following tool result with no model cannot be attributed safely.
+    suppress_unattributed: bool,
     /// Whether char-based token estimation may be used as a fallback when no
-    /// explicit tool-result token count is present. Bare transcripts (see
-    /// `is_bare_transcript`) set this to `false` to avoid double-counting
-    /// usage already tracked by the originating client's own parser, while
-    /// still honoring any explicit tool-result token counts.
+    /// explicit tool-result token count is present. Claude Code always passes
+    /// `false`: API-reported assistant `input_tokens` already include prior
+    /// tool_result text, so the char fallback double-counts (tokens#1011).
+    /// Explicit tool-result token metadata is still honored.
     allow_char_estimate: bool,
 }
 
@@ -936,16 +1035,13 @@ fn extract_claude_tool_result_message(
     let value: Value = serde_json::from_str(line).ok()?;
     let usage = extract_claude_tool_result_usage(&value, context.allow_char_estimate)?;
 
-    let raw_model = extract_claude_model(&value)
-        .or_else(|| {
-            context
-                .entry
-                .message
-                .as_ref()
-                .and_then(|message| message.model.clone())
-        })
-        .or_else(|| context.last_model.map(str::to_string))
-        .unwrap_or_else(|| "unknown".to_string());
+    let explicit_model = extract_claude_model(&value).or_else(|| {
+        context
+            .entry
+            .message
+            .as_ref()
+            .and_then(|message| message.model.clone())
+    });
     let provider_hint = extract_claude_provider(&value)
         .or_else(|| {
             context
@@ -954,7 +1050,39 @@ fn extract_claude_tool_result_message(
                 .as_ref()
                 .and_then(|message| message.provider_id.clone())
         })
-        .or_else(|| context.entry.provider_id.clone())
+        .or_else(|| context.entry.provider_id.clone());
+    let raw_model = match explicit_model {
+        Some(model) if is_claude_synthetic_placeholder_model(&model) => return None,
+        Some(model) => model,
+        // A provider alone cannot identify a billable model. Suppress every
+        // model-less result after a local synthetic notice rather than emit
+        // another unpriceable `provider/unknown` estimate.
+        None if context.suppress_unattributed => return None,
+        // A tool result inherits the preceding assistant model. That carrier can
+        // still be Claude Code's local `<synthetic>` notice when the placeholder
+        // arrived in a different transcript (a subagent sidechain resets the
+        // per-file suppression flag), so re-check the inherited value instead of
+        // trusting `suppress_unattributed` alone.
+        //
+        // Without this the row is emitted as `unknown/<synthetic>`. Production
+        // passes `allow_char_estimate: false`, so it carries tokens only when
+        // the tool result declared them explicitly; a text-only result yields
+        // no usage and is dropped before reaching submission.
+        //
+        // What that costs depends on pricing coverage, and neither outcome is
+        // the "aborts the whole submission" this comment once claimed:
+        //   - dataset loaded but not covering the model — #1053 excludes the
+        //     row with a named warning and submits the priced remainder, if any
+        //   - no pricing dataset loaded at all — #1055 fails the submission
+        // The first is a warning in a long run rather than a hard stop, so a
+        // regression here is easy to miss. Keep the guard.
+        None => match context.last_model {
+            Some(model) if is_claude_synthetic_placeholder_model(model) => return None,
+            Some(model) => model.to_string(),
+            None => "unknown".to_string(),
+        },
+    };
+    let provider_hint = provider_hint
         .or_else(|| context.last_provider_hint.map(str::to_string))
         .or_else(|| context.default_provider_hint.map(str::to_string));
 
@@ -978,12 +1106,9 @@ fn extract_claude_tool_result_message(
             reasoning: 0,
         },
         0.0,
-        usage.dedup_key.map(|key| {
-            format!(
-                "{}:tool_result:{}:{key}",
-                context.client_id, context.session_id
-            )
-        }),
+        usage
+            .dedup_key
+            .map(|key| tool_result_dedup_key(context.client_id, context.session_id, &key)),
     );
     message.message_count = 0;
     message.agent = context.sidechain_agent;
@@ -1082,7 +1207,7 @@ fn extract_tool_result_input_tokens(tool_result: &Value, allow_char_estimate: bo
             return None;
         }
         let chars = tool_result_output_char_count(tool_result);
-        (chars > 0).then(|| estimate_tokens_from_chars(chars))
+        (chars > 0).then(|| estimate_tokens(chars))
     })
 }
 
@@ -1164,10 +1289,20 @@ fn tool_result_content_output_chars(content: &Value) -> usize {
         .unwrap_or(0)
 }
 
-fn estimate_tokens_from_chars(chars: usize) -> i64 {
-    // Claude Code tool outputs may not include token metadata. Match the
-    // existing Kiro fallback of one token per four characters, rounded up.
-    chars.div_ceil(4) as i64
+fn is_claude_synthetic_placeholder_model(model: &str) -> bool {
+    model.trim().eq_ignore_ascii_case("<synthetic>")
+}
+
+/// Remove Claude Code's local `<synthetic>` placeholder rows from a cached
+/// transcript. These notices are not API usage and old cache entries can
+/// contain a tool-result char estimate attributed to the placeholder.
+///
+/// This lives with the parser rather than the cache so the sentinel definition
+/// stays consistent between cold parsing and cache migration.
+pub(crate) fn remove_synthetic_placeholder_messages(messages: &mut Vec<UnifiedMessage>) -> bool {
+    let message_count = messages.len();
+    messages.retain(|message| !is_claude_synthetic_placeholder_model(&message.model_id));
+    messages.len() != message_count
 }
 
 fn canonicalize_claude_model(model: &str) -> String {
@@ -1185,6 +1320,10 @@ struct ClaudeHeadlessState {
     cache_read: i64,
     cache_write: i64,
     timestamp_ms: Option<i64>,
+    /// A local Claude Code notice uses `<synthetic>` as its model. Ignore all
+    /// stream deltas until its matching stop event so they cannot leak into the
+    /// next real response.
+    skipping_synthetic_stream: bool,
 }
 
 fn parse_claude_headless_json(
@@ -1238,6 +1377,11 @@ fn process_claude_headless_line(
 
     match event_type {
         "message_start" => {
+            if state.skipping_synthetic_stream {
+                // A new start without a stop means the synthetic stream was
+                // truncated. Its deltas must not survive into the new stream.
+                *state = ClaudeHeadlessState::default();
+            }
             completed_message = finalize_headless_state(
                 state,
                 session_id,
@@ -1246,7 +1390,16 @@ fn process_claude_headless_line(
                 default_provider_hint,
             );
 
-            state.model = extract_claude_model(&value);
+            let model = extract_claude_model(&value);
+            if model
+                .as_deref()
+                .is_some_and(is_claude_synthetic_placeholder_model)
+            {
+                *state = ClaudeHeadlessState::default();
+                state.skipping_synthetic_stream = true;
+                return completed_message;
+            }
+            state.model = model;
             state.provider_id = extract_claude_provider(&value);
             state.timestamp_ms = extract_claude_timestamp(&value).or(state.timestamp_ms);
             if let Some(usage) = value
@@ -1258,6 +1411,9 @@ fn process_claude_headless_line(
             }
         }
         "message_delta" => {
+            if state.skipping_synthetic_stream {
+                return None;
+            }
             if let Some(usage) = value
                 .get("usage")
                 .or_else(|| value.get("delta").and_then(|delta| delta.get("usage")))
@@ -1266,6 +1422,10 @@ fn process_claude_headless_line(
             }
         }
         "message_stop" => {
+            if state.skipping_synthetic_stream {
+                *state = ClaudeHeadlessState::default();
+                return None;
+            }
             completed_message = finalize_headless_state(
                 state,
                 session_id,
@@ -1301,6 +1461,9 @@ fn extract_claude_headless_message(
         .get("usage")
         .or_else(|| value.get("message").and_then(|msg| msg.get("usage")))?;
     let raw_model = extract_claude_model(value)?;
+    if is_claude_synthetic_placeholder_model(&raw_model) {
+        return None;
+    }
     let provider_hint = extract_claude_provider(value);
     let provider_id = claude_provider_id(
         &raw_model,
@@ -1526,6 +1689,10 @@ fn finalize_headless_state(
     default_provider_hint: Option<&str>,
 ) -> Option<UnifiedMessage> {
     let raw_model = state.model.clone()?;
+    if is_claude_synthetic_placeholder_model(&raw_model) {
+        *state = ClaudeHeadlessState::default();
+        return None;
+    }
     let provider_id = claude_provider_id(
         &raw_model,
         state.provider_id.as_deref().or(default_provider_hint),
@@ -1557,3 +1724,1750 @@ fn finalize_headless_state(
     Some(message)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::paths::json_path_literal;
+    use std::io::Write;
+    use tempfile::{NamedTempFile, TempDir};
+
+    #[test]
+    fn is_human_turn_counts_html_user_prompt() {
+        let line = r#"{"type":"user","message":{"content":"<div>hello</div>"}}"#;
+        assert!(is_human_turn(line));
+    }
+
+    #[test]
+    fn is_human_turn_skips_internal_tool_tags() {
+        for tag in CLAUDECODE_INTERNAL_USER_TAGS {
+            let line =
+                format!(r#"{{"type":"user","message":{{"content":"{tag}some output</...>"}}}}"#);
+            assert!(
+                !is_human_turn(&line),
+                "expected tag {tag} to be filtered as non-human"
+            );
+        }
+    }
+
+    #[test]
+    fn is_human_turn_skips_array_content() {
+        let line = r#"{"type":"user","message":{"content":[{"type":"tool_result"}]}}"#;
+        assert!(!is_human_turn(line));
+    }
+
+    #[test]
+    fn parent_probe_resolves_first_row_marker_under_tiny_budget() {
+        let session_id = "11111111-2222-3333-4444-555555555555";
+        let content =
+            format!("{{\"isSidechain\":true,\"sessionId\":\"{session_id}\",\"type\":\"user\"}}\n");
+        let (_dir, path) = create_project_file(&content, "proj", "agent-abc.jsonl");
+
+        // The current row is always parsed in full, so a first-row marker is
+        // found even with a probe budget smaller than the row itself.
+        let candidates = parent_session_paths_for_cache_bounded(&path, 8);
+        assert!(candidates.iter().any(|candidate| {
+            candidate.file_name().and_then(|name| name.to_str())
+                == Some("11111111-2222-3333-4444-555555555555.jsonl")
+        }));
+    }
+
+    #[test]
+    fn parent_probe_stops_at_byte_cap_for_late_marker() {
+        let session_id = "11111111-2222-3333-4444-555555555555";
+        let mut content = String::new();
+        while content.len() < 4096 {
+            content.push_str("{\"type\":\"summary\",\"isSidechain\":false}\n");
+        }
+        content.push_str(&format!(
+            "{{\"isSidechain\":true,\"sessionId\":\"{session_id}\",\"type\":\"user\"}}\n"
+        ));
+        let (_dir, path) = create_project_file(&content, "proj", "agent-late.jsonl");
+
+        // A budget smaller than the marker's offset gives up before reaching it.
+        assert!(parent_session_paths_for_cache_bounded(&path, 1024).is_empty());
+        // An ample budget still finds it — the cap only bounds marker-less scans.
+        assert!(!parent_session_paths_for_cache_bounded(&path, 1024 * 1024).is_empty());
+    }
+
+    fn create_test_file(content: &str) -> NamedTempFile {
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(content.as_bytes()).unwrap();
+        file.flush().unwrap();
+        file
+    }
+
+    fn create_project_file(
+        content: &str,
+        project: &str,
+        filename: &str,
+    ) -> (TempDir, std::path::PathBuf) {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir
+            .path()
+            .join(".claude")
+            .join("projects")
+            .join(project)
+            .join(filename);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, content).unwrap();
+        (temp_dir, path)
+    }
+
+    fn create_cc_mirror_project_file(
+        content: &str,
+        variant: &str,
+        provider: &str,
+        project: &str,
+        filename: &str,
+    ) -> (TempDir, std::path::PathBuf) {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let variant_dir = temp_dir.path().join(".cc-mirror").join(variant);
+        let config_dir = variant_dir.join("config");
+        let path = config_dir.join("projects").join(project).join(filename);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            variant_dir.join("variant.json"),
+            format!(
+                r#"{{"name":"{variant}","provider":"{provider}","configDir":{}}}"#,
+                json_path_literal(&config_dir)
+            ),
+        )
+        .unwrap();
+        std::fs::write(&path, content).unwrap();
+        (temp_dir, path)
+    }
+
+    fn create_transcript_file(content: &str, filename: &str) -> (TempDir, std::path::PathBuf) {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir
+            .path()
+            .join(".claude")
+            .join("transcripts")
+            .join(filename);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, content).unwrap();
+        (temp_dir, path)
+    }
+
+    #[test]
+    fn test_deduplication_skips_duplicate_entries() {
+        let content = r#"{"type":"assistant","timestamp":"2024-12-01T10:00:00.000Z","requestId":"req_001","message":{"id":"msg_001","model":"claude-3-5-sonnet","usage":{"input_tokens":100,"output_tokens":50}}}
+{"type":"assistant","timestamp":"2024-12-01T10:00:01.000Z","requestId":"req_001","message":{"id":"msg_001","model":"claude-3-5-sonnet","usage":{"input_tokens":100,"output_tokens":50}}}
+{"type":"assistant","timestamp":"2024-12-01T10:00:02.000Z","requestId":"req_002","message":{"id":"msg_002","model":"claude-3-5-sonnet","usage":{"input_tokens":200,"output_tokens":100}}}"#;
+
+        let file = create_test_file(content);
+        let messages = parse_claude_file(file.path());
+
+        assert_eq!(
+            messages.len(),
+            2,
+            "Should deduplicate to 2 messages (first duplicate skipped)"
+        );
+        assert_eq!(messages[0].tokens.input, 100);
+        assert_eq!(messages[1].tokens.input, 200);
+    }
+
+    #[test]
+    fn test_parse_cc_mirror_claude_variant_attributes_client_provider_and_workspace() {
+        let content = r#"{"type":"assistant","timestamp":"2024-12-01T10:00:00.000Z","requestId":"req_001","message":{"id":"msg_001","model":"claude-3-5-sonnet","usage":{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":10,"cache_creation_input_tokens":5}}}"#;
+
+        let (_temp_dir, path) = create_cc_mirror_project_file(
+            content,
+            "zai-worker",
+            "zai",
+            "-Users-example-work",
+            "session.jsonl",
+        );
+
+        let messages = parse_claude_file(&path);
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].client, "cc-mirror/zai-worker");
+        assert_eq!(messages[0].provider_id, "zai");
+        assert_eq!(messages[0].model_id, "claude-3-5-sonnet");
+        assert_eq!(messages[0].tokens.input, 100);
+        assert_eq!(messages[0].tokens.output, 50);
+        assert_eq!(messages[0].tokens.cache_read, 10);
+        assert_eq!(messages[0].tokens.cache_write, 5);
+        assert_eq!(
+            messages[0].workspace_key.as_deref(),
+            Some("-Users-example-work")
+        );
+        assert_eq!(
+            messages[0].workspace_label.as_deref(),
+            Some("-Users-example-work")
+        );
+    }
+
+    #[test]
+    fn test_cc_mirror_variant_client_segment_is_submit_safe() {
+        assert_eq!(sanitize_cc_mirror_segment(" zaicc "), "zaicc");
+        assert_eq!(sanitize_cc_mirror_segment("../Zai CC!"), "zai-cc");
+        assert_eq!(sanitize_cc_mirror_segment("..."), "variant");
+        assert_eq!(sanitize_cc_mirror_segment(&"a".repeat(120)).len(), 96);
+    }
+
+    #[test]
+    fn test_deduplication_keeps_max_output_for_streaming_duplicates() {
+        // CC streaming writes the same messageId:requestId multiple times.
+        // The first entry has a partial output_tokens count; the last has the
+        // final (largest) count. We must keep the entry with the highest
+        // output_tokens, not the first-seen entry.
+        let content = r#"{"type":"assistant","timestamp":"2024-12-01T10:00:00.000Z","requestId":"req_001","message":{"id":"msg_001","model":"claude-3-5-sonnet","usage":{"input_tokens":10,"output_tokens":31}}}
+{"type":"assistant","timestamp":"2024-12-01T10:00:00.100Z","requestId":"req_001","message":{"id":"msg_001","model":"claude-3-5-sonnet","usage":{"input_tokens":10,"output_tokens":31}}}
+{"type":"assistant","timestamp":"2024-12-01T10:00:00.200Z","requestId":"req_001","message":{"id":"msg_001","model":"claude-3-5-sonnet","usage":{"input_tokens":10,"output_tokens":300}}}"#;
+
+        let file = create_test_file(content);
+        let messages = parse_claude_file(file.path());
+
+        assert_eq!(
+            messages.len(),
+            1,
+            "Streaming duplicates should collapse to one entry"
+        );
+        assert_eq!(
+            messages[0].tokens.output, 300,
+            "Should keep the max output_tokens"
+        );
+        assert_eq!(messages[0].tokens.input, 10);
+    }
+
+    #[test]
+    fn test_deduplication_per_field_max_not_just_output() {
+        // Later entry has same output but higher input - should still update input
+        let content = r#"{"type":"assistant","timestamp":"2024-12-01T10:00:00.000Z","requestId":"req_001","message":{"id":"msg_001","model":"claude-3-5-sonnet","usage":{"input_tokens":10,"output_tokens":100,"cache_read_input_tokens":5}}}
+{"type":"assistant","timestamp":"2024-12-01T10:00:00.100Z","requestId":"req_001","message":{"id":"msg_001","model":"claude-3-5-sonnet","usage":{"input_tokens":50,"output_tokens":100,"cache_read_input_tokens":20}}}"#;
+
+        let file = create_test_file(content);
+        let messages = parse_claude_file(file.path());
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].tokens.output, 100);
+        assert_eq!(
+            messages[0].tokens.input, 50,
+            "Should keep max input even if output unchanged"
+        );
+        assert_eq!(
+            messages[0].tokens.cache_read, 20,
+            "Should keep max cache_read even if output unchanged"
+        );
+    }
+
+    #[test]
+    fn test_deduplication_higher_first_lower_later() {
+        // First entry has higher output than later - should keep first's higher values
+        let content = r#"{"type":"assistant","timestamp":"2024-12-01T10:00:00.000Z","requestId":"req_001","message":{"id":"msg_001","model":"claude-3-5-sonnet","usage":{"input_tokens":100,"output_tokens":500}}}
+{"type":"assistant","timestamp":"2024-12-01T10:00:00.100Z","requestId":"req_001","message":{"id":"msg_001","model":"claude-3-5-sonnet","usage":{"input_tokens":10,"output_tokens":100}}}"#;
+
+        let file = create_test_file(content);
+        let messages = parse_claude_file(file.path());
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(
+            messages[0].tokens.output, 500,
+            "Should keep max output (first entry)"
+        );
+        assert_eq!(
+            messages[0].tokens.input, 100,
+            "Should keep max input (first entry)"
+        );
+    }
+
+    #[test]
+    fn test_deduplication_promotes_provider_hint_from_later_duplicate() {
+        let content = r#"{"type":"assistant","timestamp":"2024-12-01T10:00:00.000Z","requestId":"req_001","message":{"id":"msg_001","model":"claude-3-5-sonnet","usage":{"input_tokens":100,"output_tokens":50}}}
+{"type":"assistant","timestamp":"2024-12-01T10:00:00.100Z","requestId":"req_001","message":{"id":"msg_001","provider":"openrouter/anthropic","model":"claude-3-5-sonnet","usage":{"input_tokens":120,"output_tokens":75}}}"#;
+
+        let file = create_test_file(content);
+        let messages = parse_claude_file(file.path());
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].provider_id, "openrouter");
+        assert_eq!(messages[0].tokens.input, 120);
+        assert_eq!(messages[0].tokens.output, 75);
+    }
+
+    #[test]
+    fn test_deduplication_promotes_provider_hint_without_later_model() {
+        let content = r#"{"type":"assistant","timestamp":"2024-12-01T10:00:00.000Z","requestId":"req_001","message":{"id":"msg_001","model":"claude-3-5-sonnet","usage":{"input_tokens":100,"output_tokens":50}}}
+{"type":"assistant","provider":"openrouter/anthropic","timestamp":"2024-12-01T10:00:00.100Z","requestId":"req_001","message":{"id":"msg_001","usage":{"input_tokens":120,"output_tokens":75}}}"#;
+
+        let file = create_test_file(content);
+        let messages = parse_claude_file(file.path());
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].provider_id, "openrouter");
+        assert_eq!(messages[0].tokens.input, 120);
+        assert_eq!(messages[0].tokens.output, 75);
+    }
+
+    #[test]
+    fn test_deduplication_preserves_explicit_provider_against_later_inference() {
+        let content = r#"{"type":"assistant","timestamp":"2024-12-01T10:00:00.000Z","requestId":"req_001","message":{"id":"msg_001","provider":"openrouter/anthropic","model":"claude-3-5-sonnet","usage":{"input_tokens":100,"output_tokens":50}}}
+{"type":"assistant","timestamp":"2024-12-01T10:00:00.100Z","requestId":"req_001","message":{"id":"msg_001","model":"claude-3-5-sonnet","usage":{"input_tokens":120,"output_tokens":75}}}"#;
+
+        let file = create_test_file(content);
+        let messages = parse_claude_file(file.path());
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].provider_id, "openrouter");
+        assert_eq!(messages[0].tokens.input, 120);
+        assert_eq!(messages[0].tokens.output, 75);
+    }
+
+    #[test]
+    fn test_deduplication_skips_model_none_without_stale_index() {
+        // First entry has id+requestId+usage but model=null → skipped, no push.
+        // Second entry is a valid duplicate. Must not panic on stale index.
+        let content = r#"{"type":"assistant","timestamp":"2024-12-01T10:00:00.000Z","requestId":"req_001","message":{"id":"msg_001","usage":{"input_tokens":10,"output_tokens":50}}}
+{"type":"assistant","timestamp":"2024-12-01T10:00:00.100Z","requestId":"req_001","message":{"id":"msg_001","model":"claude-3-5-sonnet","usage":{"input_tokens":10,"output_tokens":100}}}"#;
+
+        let file = create_test_file(content);
+        let messages = parse_claude_file(file.path());
+
+        assert_eq!(
+            messages.len(),
+            1,
+            "Only the entry with model should be kept"
+        );
+        assert_eq!(messages[0].tokens.output, 100);
+    }
+
+    #[test]
+    fn test_deduplication_allows_same_message_different_request() {
+        let content = r#"{"type":"assistant","timestamp":"2024-12-01T10:00:00.000Z","requestId":"req_001","message":{"id":"msg_001","model":"claude-3-5-sonnet","usage":{"input_tokens":100,"output_tokens":50}}}
+{"type":"assistant","timestamp":"2024-12-01T10:00:01.000Z","requestId":"req_002","message":{"id":"msg_001","model":"claude-3-5-sonnet","usage":{"input_tokens":150,"output_tokens":75}}}"#;
+
+        let file = create_test_file(content);
+        let messages = parse_claude_file(file.path());
+
+        assert_eq!(
+            messages.len(),
+            2,
+            "Different requestId should not be deduplicated"
+        );
+    }
+
+    #[test]
+    fn test_deduplication_uses_message_id_without_request_id_and_keeps_final_duration() {
+        let content = r#"{"type":"user","timestamp":"2024-12-01T10:00:00.000Z","message":{"content":"Hello"}}
+{"type":"assistant","timestamp":"2024-12-01T10:00:01.000Z","message":{"id":"msg_stream","model":"claude-3-5-sonnet","usage":{"input_tokens":10,"output_tokens":25}}}
+{"type":"assistant","timestamp":"2024-12-01T10:00:03.500Z","message":{"id":"msg_stream","model":"claude-3-5-sonnet","usage":{"input_tokens":10,"output_tokens":250}}}"#;
+
+        let file = create_test_file(content);
+        let messages = parse_claude_file(file.path());
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].tokens.output, 250);
+        assert_eq!(messages[0].timestamp, 1_733_047_200_000);
+        assert_eq!(messages[0].duration_ms, Some(3500));
+        assert_eq!(messages[0].dedup_key.as_deref(), Some("message:msg_stream"));
+    }
+
+    #[test]
+    fn test_dedup_merge_duration_is_monotonic_across_out_of_order_duplicates() {
+        // Regression: several streaming duplicates of one message can be
+        // processed out of order (e.g. a late-arriving chunk carrying an
+        // earlier completion timestamp than one already merged). The start
+        // anchor (existing.timestamp) must survive every merge, and
+        // duration_ms must never shrink below a value already established by
+        // an earlier-processed duplicate — it must track the latest
+        // (largest) end timestamp seen so far.
+        let content = r#"{"type":"user","timestamp":"2024-12-01T10:00:00.000Z","message":{"content":"Hello"}}
+{"type":"assistant","timestamp":"2024-12-01T10:00:01.000Z","requestId":"req_multi","message":{"id":"msg_multi","model":"claude-3-5-sonnet","usage":{"input_tokens":10,"output_tokens":30}}}
+{"type":"assistant","timestamp":"2024-12-01T10:00:05.000Z","requestId":"req_multi","message":{"id":"msg_multi","model":"claude-3-5-sonnet","usage":{"input_tokens":10,"output_tokens":100}}}
+{"type":"assistant","timestamp":"2024-12-01T10:00:02.000Z","requestId":"req_multi","message":{"id":"msg_multi","model":"claude-3-5-sonnet","usage":{"input_tokens":10,"output_tokens":50}}}
+{"type":"assistant","timestamp":"2024-12-01T10:00:07.000Z","requestId":"req_multi","message":{"id":"msg_multi","model":"claude-3-5-sonnet","usage":{"input_tokens":10,"output_tokens":200}}}"#;
+
+        let file = create_test_file(content);
+        let messages = parse_claude_file(file.path());
+
+        assert_eq!(
+            messages.len(),
+            1,
+            "all streaming duplicates should collapse to one message"
+        );
+        assert_eq!(
+            messages[0].timestamp, 1_733_047_200_000,
+            "the start anchor must survive every merge (the user entry's timestamp)"
+        );
+        assert_eq!(
+            messages[0].duration_ms,
+            Some(7_000),
+            "duration_ms must equal the latest end timestamp minus the start \
+             anchor (7s), not shrink when an out-of-order duplicate with an \
+             earlier timestamp is merged"
+        );
+        assert_eq!(
+            messages[0].tokens.output, 200,
+            "token fields keep the per-field max across all duplicates"
+        );
+    }
+
+    #[test]
+    fn test_pending_request_start_is_cleared_between_assistant_messages() {
+        // Regression: previously, the user-entry timestamp was set into
+        // `pending_request_start_timestamp_ms` and never cleared after the
+        // first assistant message consumed it. A subsequent assistant message
+        // with no intervening user entry would then reuse the stale start
+        // timestamp and report a wildly inflated duration.
+        let content = r#"{"type":"user","timestamp":"2024-12-01T10:00:00.000Z","message":{"content":"Hello"}}
+{"type":"assistant","timestamp":"2024-12-01T10:00:01.000Z","requestId":"req_001","message":{"id":"msg_001","model":"claude-3-5-sonnet","usage":{"input_tokens":100,"output_tokens":50}}}
+{"type":"assistant","timestamp":"2024-12-01T10:01:30.000Z","requestId":"req_002","message":{"id":"msg_002","model":"claude-3-5-sonnet","usage":{"input_tokens":200,"output_tokens":80}}}"#;
+
+        let file = create_test_file(content);
+        let messages = parse_claude_file(file.path());
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(
+            messages[0].duration_ms,
+            Some(1_000),
+            "first assistant should report duration vs the user entry (1s)"
+        );
+        assert_eq!(
+            messages[1].duration_ms, None,
+            "second assistant has no preceding user entry; duration must NOT \
+             reuse the stale pending_request_start_timestamp_ms"
+        );
+    }
+
+    #[test]
+    fn test_entries_without_dedup_fields_still_processed() {
+        let content = r#"{"type":"assistant","timestamp":"2024-12-01T10:00:00.000Z","message":{"model":"claude-3-5-sonnet","usage":{"input_tokens":100,"output_tokens":50}}}
+{"type":"assistant","timestamp":"2024-12-01T10:00:01.000Z","message":{"model":"claude-3-5-sonnet","usage":{"input_tokens":200,"output_tokens":100}}}"#;
+
+        let file = create_test_file(content);
+        let messages = parse_claude_file(file.path());
+
+        assert_eq!(
+            messages.len(),
+            2,
+            "Entries without messageId/requestId should still be processed"
+        );
+    }
+
+    #[test]
+    fn test_user_messages_ignored() {
+        let content = r#"{"type":"user","timestamp":"2024-12-01T10:00:00.000Z","message":{"content":"Hello"}}
+{"type":"assistant","timestamp":"2024-12-01T10:00:01.000Z","requestId":"req_001","message":{"id":"msg_001","model":"claude-3-5-sonnet","usage":{"input_tokens":100,"output_tokens":50}}}"#;
+
+        let file = create_test_file(content);
+        let messages = parse_claude_file(file.path());
+
+        assert_eq!(messages.len(), 1, "User messages should be ignored");
+        assert_eq!(messages[0].tokens.input, 100);
+    }
+
+    #[test]
+    fn test_turn_start_detection() {
+        // Simulate: user asks → assistant responds → tool_result (as user) → assistant responds
+        //         → real user asks again → assistant responds
+        // Expected: 2 turns (tool_result should NOT count as a turn)
+        let content = r#"{"type":"user","timestamp":"2024-12-01T10:00:00.000Z","message":{"content":"Hello"}}
+{"type":"assistant","timestamp":"2024-12-01T10:00:01.000Z","requestId":"req_001","message":{"id":"msg_001","model":"claude-3-5-sonnet","usage":{"input_tokens":100,"output_tokens":50}}}
+{"type":"user","timestamp":"2024-12-01T10:00:02.000Z","message":{"content":[{"type":"tool_result","tool_use_id":"tu_001","content":"file contents here"}]}}
+{"type":"assistant","timestamp":"2024-12-01T10:00:03.000Z","requestId":"req_002","message":{"id":"msg_002","model":"claude-3-5-sonnet","usage":{"input_tokens":200,"output_tokens":80}}}
+{"type":"user","timestamp":"2024-12-01T10:00:04.000Z","message":{"content":"Thanks, now do X"}}
+{"type":"assistant","timestamp":"2024-12-01T10:00:05.000Z","requestId":"req_003","message":{"id":"msg_003","model":"claude-3-5-sonnet","usage":{"input_tokens":300,"output_tokens":120}}}"#;
+
+        let file = create_test_file(content);
+        let messages = parse_claude_file(file.path());
+
+        assert_eq!(
+            messages.len(),
+            3,
+            "Should include 3 assistant messages; tool_result without explicit tokens is not counted"
+        );
+        let assistant_messages: Vec<_> = messages
+            .iter()
+            .filter(|message| message.tokens.output > 0)
+            .collect();
+        assert_eq!(
+            assistant_messages.len(),
+            3,
+            "Should have 3 assistant usage messages"
+        );
+
+        // First assistant after first human user → turn start
+        assert!(
+            assistant_messages[0].is_turn_start,
+            "First response should be turn start"
+        );
+        // Assistant after tool_result → NOT a new turn
+        assert!(
+            !assistant_messages[1].is_turn_start,
+            "Response after tool_result should NOT be turn start"
+        );
+        // First assistant after second human user → turn start
+        assert!(
+            assistant_messages[2].is_turn_start,
+            "Response after real user input should be turn start"
+        );
+
+        let turn_count: usize = messages.iter().filter(|m| m.is_turn_start).count();
+        assert_eq!(turn_count, 2, "Should detect 2 turns");
+    }
+
+    #[test]
+    fn test_turn_start_ignores_system_messages() {
+        // XML-tagged content like <local-command-stdout> should not count as turns
+        let content = r#"{"type":"user","timestamp":"2024-12-01T10:00:00.000Z","message":{"content":"Do something"}}
+{"type":"assistant","timestamp":"2024-12-01T10:00:01.000Z","requestId":"req_001","message":{"id":"msg_001","model":"claude-3-5-sonnet","usage":{"input_tokens":100,"output_tokens":50}}}
+{"type":"user","timestamp":"2024-12-01T10:00:02.000Z","message":{"content":"<local-command-stdout>ok</local-command-stdout>"}}
+{"type":"assistant","timestamp":"2024-12-01T10:00:03.000Z","requestId":"req_002","message":{"id":"msg_002","model":"claude-3-5-sonnet","usage":{"input_tokens":200,"output_tokens":80}}}"#;
+
+        let file = create_test_file(content);
+        let messages = parse_claude_file(file.path());
+
+        assert_eq!(messages.len(), 2);
+        assert!(
+            messages[0].is_turn_start,
+            "First response after human input is a turn"
+        );
+        assert!(
+            !messages[1].is_turn_start,
+            "Response after local-command should NOT be a turn"
+        );
+
+        let turn_count: usize = messages.iter().filter(|m| m.is_turn_start).count();
+        assert_eq!(turn_count, 1);
+    }
+
+    #[test]
+    fn test_turn_start_without_user_message() {
+        // No user message → no turn starts (e.g. headless or partial log)
+        let content = r#"{"type":"assistant","timestamp":"2024-12-01T10:00:00.000Z","message":{"model":"claude-3-5-sonnet","usage":{"input_tokens":100,"output_tokens":50}}}
+{"type":"assistant","timestamp":"2024-12-01T10:00:01.000Z","message":{"model":"claude-3-5-sonnet","usage":{"input_tokens":200,"output_tokens":100}}}"#;
+
+        let file = create_test_file(content);
+        let messages = parse_claude_file(file.path());
+
+        assert_eq!(messages.len(), 2);
+        assert!(!messages[0].is_turn_start);
+        assert!(!messages[1].is_turn_start);
+    }
+
+    #[test]
+    fn test_token_breakdown_parsing() {
+        let content = r#"{"type":"assistant","timestamp":"2024-12-01T10:00:00.000Z","requestId":"req_001","message":{"id":"msg_001","model":"claude-3-5-sonnet","usage":{"input_tokens":1000,"output_tokens":500,"cache_read_input_tokens":200,"cache_creation_input_tokens":100}}}"#;
+
+        let file = create_test_file(content);
+        let messages = parse_claude_file(file.path());
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].tokens.input, 1000);
+        assert_eq!(messages[0].tokens.output, 500);
+        assert_eq!(messages[0].tokens.cache_read, 200);
+        assert_eq!(messages[0].tokens.cache_write, 100);
+        assert_eq!(messages[0].tokens.reasoning, 0);
+    }
+
+    #[test]
+    fn test_opus_4_7_usage_is_parsed_when_usage_metadata_exists() {
+        let content = r#"{"type":"assistant","timestamp":"2026-04-16T10:00:00.000Z","requestId":"req_opus47","message":{"id":"msg_opus47","model":"claude-opus-4-7","usage":{"input_tokens":321,"output_tokens":654,"cache_read_input_tokens":987,"cache_creation_input_tokens":111}}}"#;
+
+        let file = create_test_file(content);
+        let messages = parse_claude_file(file.path());
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].model_id, "claude-opus-4-7");
+        assert_eq!(messages[0].provider_id, "anthropic");
+        assert_eq!(messages[0].tokens.input, 321);
+        assert_eq!(messages[0].tokens.output, 654);
+        assert_eq!(messages[0].tokens.cache_read, 987);
+        assert_eq!(messages[0].tokens.cache_write, 111);
+    }
+
+    #[test]
+    fn test_tool_result_without_explicit_tokens_is_not_char_estimated() {
+        // tokens#1011: Claude Code never writes token metadata on tool_result
+        // blocks. The next assistant turn's API usage already includes that
+        // content, so ceil(chars/4) would double-count.
+        let content = r#"{"type":"user","timestamp":"2026-05-27T10:00:00.000Z","message":{"model":"anthropic/claude-4-6-sonnet","content":[{"type":"tool_result","tool_use_id":"toolu_input","tool_output":{"output":"abcdefghijklmnop"}}]}}"#;
+
+        let file = create_test_file(content);
+        let messages = parse_claude_file(file.path());
+
+        assert!(
+            messages.is_empty(),
+            "tool_result rows without explicit token metadata must not be char-estimated"
+        );
+    }
+
+    /// History retention across an in-place transcript rewrite is only sound
+    /// for keys that identify a message by content across files. This pins
+    /// which of the parser's own key shapes qualify, so a future key change
+    /// trips here rather than silently making a retained copy double count.
+    #[test]
+    fn test_only_content_derived_dedup_keys_are_globally_stable() {
+        let tool_result =
+            tool_result_dedup_key("claude", "0f1e2d3c-session", "tool_result:toolu_1");
+        assert!(
+            !dedup_key_is_globally_stable(&tool_result),
+            "tool-result keys embed the transcript file stem: {tool_result}"
+        );
+
+        // The two shapes `parse_claude_file` mints for assistant turns.
+        assert!(dedup_key_is_globally_stable("msg_01ABC:req_01XYZ"));
+        assert!(dedup_key_is_globally_stable("message:msg_01ABC"));
+    }
+
+    #[test]
+    fn test_cc_mirror_tool_result_keeps_variant_client_and_provider() {
+        let content = r#"{"type":"user","timestamp":"2026-05-27T10:00:00.000Z","message":{"model":"sonnet","content":[{"type":"tool_result","tool_use_id":"toolu_cc_mirror","tool_output":{"input_tokens":7,"output":"tool output"}}]}}"#;
+
+        let (_temp_dir, path) = create_cc_mirror_project_file(
+            content,
+            "zai-worker",
+            "zai",
+            "project-one",
+            "session.jsonl",
+        );
+        let messages = parse_claude_file(&path);
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].client, "cc-mirror/zai-worker");
+        assert_eq!(messages[0].provider_id, "zai");
+        assert_eq!(messages[0].model_id, "sonnet");
+        assert_eq!(messages[0].tokens.input, 7);
+        assert_eq!(messages[0].message_count, 0);
+    }
+
+    #[test]
+    fn test_tool_result_duplicate_uses_max_input_tokens() {
+        let content = r#"{"type":"tool_result","timestamp":"2026-05-27T10:00:00.000Z","model":"anthropic/claude-4-6-sonnet","tool_result":{"tool_use_id":"toolu_stream","tool_output":{"output":"abcdefghijklmnop","input_tokens":4}}}
+{"type":"tool_result","timestamp":"2026-05-27T10:00:00.100Z","model":"anthropic/claude-4-6-sonnet","tool_result":{"tool_use_id":"toolu_stream","tool_output":{"output":"abcdefghijklmnopqrstuvwxyzabcd","input_tokens":8}}}"#;
+
+        let file = create_test_file(content);
+        let messages = parse_claude_file(file.path());
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].model_id, "claude-sonnet-4-6");
+        assert_eq!(messages[0].tokens.input, 8);
+        assert_eq!(messages[0].timestamp, 1_779_876_000_100);
+    }
+
+    #[test]
+    fn test_tool_result_repeated_in_same_record_is_not_counted_twice() {
+        let content = r#"{"type":"tool_result","timestamp":"2026-05-27T10:00:00.000Z","model":"anthropic/claude-4-6-sonnet","tool_result":{"tool_use_id":"toolu_same","tool_output":{"output":"abcdefghijklmnop","input_tokens":4}},"message":{"content":[{"type":"tool_result","tool_use_id":"toolu_same","tool_output":{"output":"abcdefghijklmnop","input_tokens":4}}]}}"#;
+
+        let file = create_test_file(content);
+        let messages = parse_claude_file(file.path());
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].tokens.input, 4);
+    }
+
+    #[test]
+    fn test_tool_result_prefers_input_token_metadata_over_char_estimate() {
+        let content = r#"{"type":"user","timestamp":"2026-05-27T10:00:00.000Z","message":{"model":"claude-sonnet-4-6","content":[{"type":"tool_result","tool_use_id":"toolu_metadata","tool_output":{"output":"abcdefghijklmnopqrstuvwxyzabcd","input_tokens":3}}]}}"#;
+
+        let file = create_test_file(content);
+        let messages = parse_claude_file(file.path());
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].tokens.input, 3);
+    }
+
+    #[test]
+    fn test_synthetic_notice_does_not_seed_an_unmodelled_tool_result() {
+        let content = r#"{"type":"user","timestamp":"2026-06-24T01:00:00.000Z","message":{"role":"user","content":[{"type":"text","text":"hi"}]}}
+{"type":"assistant","timestamp":"2026-06-24T01:00:01.000Z","isApiErrorMessage":true,"error":"unknown","message":{"id":"m1","role":"assistant","model":"<synthetic>","usage":{"input_tokens":0,"output_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0},"content":[{"type":"text","text":"API Error"}]}}
+{"type":"user","timestamp":"2026-06-24T01:00:02.000Z","message":{"role":"user","content":[{"tool_use_id":"toolu_1","type":"tool_result","content":"XXXXXXXXXXXXXXXX"}]}}"#;
+
+        let file = create_test_file(content);
+        let messages = parse_claude_file(file.path());
+
+        assert!(messages.is_empty());
+    }
+
+    #[test]
+    fn test_synthetic_notice_does_not_hide_an_explicitly_modelled_tool_result() {
+        let content = r#"{"type":"assistant","timestamp":"2026-06-24T01:00:01.000Z","message":{"model":"<synthetic>","usage":{"input_tokens":0,"output_tokens":0}}}
+{"type":"user","timestamp":"2026-06-24T01:00:02.000Z","message":{"model":"claude-sonnet-4-6","content":[{"tool_use_id":"toolu_1","type":"tool_result","tool_output":{"output":"XXXXXXXXXXXXXXXX","input_tokens":4}}]}}"#;
+
+        let file = create_test_file(content);
+        let messages = parse_claude_file(file.path());
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].model_id, "claude-sonnet-4-6");
+        // Explicit tool-result token metadata is honored even after a
+        // synthetic notice; the char fallback stays off for this client (#1011).
+        assert_eq!(messages[0].tokens.input, 4);
+    }
+
+    #[test]
+    fn test_inherited_synthetic_model_does_not_price_a_tool_result() {
+        // A `<synthetic>` notice that is not immediately followed by the tool
+        // result in the same transcript still leaves the placeholder as the
+        // inherited carrier model. The usage must be dropped rather than
+        // emitted as `unknown/<synthetic>`: submission cannot price that model,
+        // so it either excludes the row or fails outright depending on pricing
+        // coverage. See the guard in `extract_claude_tool_result_message`.
+        let context = ClaudeToolResultContext {
+            entry: &ClaudeEntry {
+                entry_type: "user".to_string(),
+                timestamp: Some("2026-05-30T01:00:00.000Z".to_string()),
+                message: None,
+                request_id: None,
+                is_sidechain: false,
+                agent_id: None,
+                session_id: None,
+                provider_id: None,
+            },
+            last_model: Some("<synthetic>"),
+            last_provider_hint: None,
+            client_id: "claude",
+            default_provider_hint: None,
+            session_id: "session",
+            fallback_timestamp: 1_782_259_200_000,
+            workspace_key: None,
+            workspace_label: None,
+            sidechain_agent: None,
+            suppress_unattributed: false,
+            allow_char_estimate: true,
+        };
+        let raw = r#"{"type":"user","timestamp":"2026-05-30T01:00:00.000Z","message":{"role":"user","content":[{"tool_use_id":"toolu_1","type":"tool_result","content":"XXXXXXXXXXXXXXXX"}]}}"#;
+
+        assert!(extract_claude_tool_result_message(raw, context).is_none());
+    }
+
+    #[test]
+    fn test_synthetic_notice_does_not_emit_a_provider_only_tool_result() {
+        let content = r#"{"type":"assistant","timestamp":"2026-06-24T01:00:01.000Z","message":{"model":"<synthetic>","usage":{"input_tokens":0,"output_tokens":0}}}
+{"type":"user","timestamp":"2026-06-24T01:00:02.000Z","provider":"openrouter","message":{"content":[{"tool_use_id":"toolu_1","type":"tool_result","content":"XXXXXXXXXXXXXXXX"}]}}"#;
+
+        let file = create_test_file(content);
+        let messages = parse_claude_file(file.path());
+
+        assert!(messages.is_empty());
+    }
+
+    #[test]
+    fn test_api_reported_input_not_inflated_by_tool_result_char_estimate() {
+        // Minimal repro from tokens#1011: assistant usage.input_tokens=7 plus a
+        // 21-char tool_result. Before the fix, reported input was 13
+        // (7 + ceil(21/4)=6). After, only the API figure remains.
+        let content = concat!(
+            r#"{"type":"assistant","timestamp":"2026-05-27T10:00:00.000Z","message":{"id":"msg_api","model":"claude-sonnet-4-6","content":[{"type":"tool_use","id":"toolu_1","name":"Read","input":{"path":"/tmp/x"}}],"usage":{"input_tokens":7,"output_tokens":1}}}"#,
+            "\n",
+            r#"{"type":"user","timestamp":"2026-05-27T10:00:01.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"123456789012345678901"}]}}"#,
+            "\n",
+        );
+        let file = create_test_file(content);
+        let messages = parse_claude_file(file.path());
+
+        let total_input: i64 = messages.iter().map(|m| m.tokens.input).sum();
+        assert_eq!(
+            total_input, 7,
+            "tool_result char estimate must not stack on API input_tokens; got {messages:#?}"
+        );
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].tokens.output, 1);
+    }
+
+    #[test]
+    fn test_assistant_usage_with_tool_use_is_not_estimated_from_prompt_text() {
+        let content = r#"{"type":"assistant","timestamp":"2026-05-27T10:00:00.000Z","message":{"id":"msg_tool_use","model":"claude-sonnet-4-6","content":[{"type":"tool_use","id":"toolu_1","name":"Read","input":{"file_path":"/tmp/large.txt"}}],"usage":{"input_tokens":100,"output_tokens":50}}}"#;
+
+        let file = create_test_file(content);
+        let messages = parse_claude_file(file.path());
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].tokens.input, 100);
+        assert_eq!(messages[0].tokens.output, 50);
+    }
+
+    #[test]
+    fn test_anthropic_prefixed_claude_model_is_canonicalized() {
+        let content = r#"{"type":"assistant","timestamp":"2026-05-27T10:00:00.000Z","message":{"model":"anthropic/claude-4-6-sonnet","usage":{"input_tokens":100,"output_tokens":50}}}"#;
+
+        let file = create_test_file(content);
+        let messages = parse_claude_file(file.path());
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].model_id, "claude-sonnet-4-6");
+        assert_eq!(messages[0].provider_id, "anthropic");
+    }
+
+    #[test]
+    fn test_multi_provider_models_infer_provider_from_model() {
+        let content = r#"{"type":"assistant","timestamp":"2026-02-18T10:00:00.000Z","message":{"model":"claude-opus-4-6","usage":{"input_tokens":100,"output_tokens":10}}}
+{"type":"assistant","timestamp":"2026-02-18T10:00:01.000Z","message":{"model":"gpt-5.3-codex","usage":{"input_tokens":200,"output_tokens":20}}}
+{"type":"assistant","timestamp":"2026-02-18T10:00:02.000Z","message":{"model":"gemini-3-flash-preview","usage":{"input_tokens":300,"output_tokens":30}}}
+{"type":"assistant","timestamp":"2026-02-18T10:00:03.000Z","message":{"model":"MiniMax-M2.1","usage":{"input_tokens":400,"output_tokens":40}}}
+{"type":"assistant","timestamp":"2026-02-18T10:00:04.000Z","message":{"model":"<synthetic>","usage":{"input_tokens":500,"output_tokens":50}}}"#;
+
+        let file = create_test_file(content);
+        let messages = parse_claude_file(file.path());
+
+        assert_eq!(messages.len(), 4);
+        assert_eq!(messages[0].provider_id, "anthropic");
+        assert_eq!(messages[1].provider_id, "openai");
+        assert_eq!(messages[2].provider_id, "google");
+        assert_eq!(messages[3].provider_id, "minimax");
+        assert!(!messages
+            .iter()
+            .any(|message| message.model_id == "<synthetic>"));
+    }
+
+    #[test]
+    fn test_multi_provider_models_prefer_specific_model_over_default_anthropic_hint() {
+        let content = r#"{"type":"assistant","provider":"anthropic","timestamp":"2026-02-18T10:00:00.000Z","message":{"model":"gpt-5.3-codex","usage":{"input_tokens":200,"output_tokens":20}}}"#;
+
+        let file = create_test_file(content);
+        let messages = parse_claude_file(file.path());
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].model_id, "gpt-5.3-codex");
+        assert_eq!(messages[0].provider_id, "openai");
+    }
+
+    #[test]
+    fn test_multi_provider_models_preserve_reseller_provider_hint() {
+        let content = r#"{"type":"assistant","timestamp":"2026-02-18T10:00:00.000Z","message":{"provider":"openrouter/anthropic","model":"claude-opus-4-6","usage":{"input_tokens":100,"output_tokens":10}}}"#;
+
+        let file = create_test_file(content);
+        let messages = parse_claude_file(file.path());
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].model_id, "claude-opus-4-6");
+        assert_eq!(messages[0].provider_id, "openrouter");
+    }
+
+    #[test]
+    fn test_headless_json_output() {
+        let content = r#"{"type":"message","message":{"model":"claude-3-5-sonnet","usage":{"input_tokens":120,"output_tokens":60,"cache_read_input_tokens":10}}}"#;
+        let file = tempfile::Builder::new().suffix(".json").tempfile().unwrap();
+        std::fs::write(file.path(), content).unwrap();
+
+        let messages = parse_claude_file(file.path());
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].model_id, "claude-3-5-sonnet");
+        assert_eq!(messages[0].tokens.input, 120);
+        assert_eq!(messages[0].tokens.output, 60);
+        assert_eq!(messages[0].tokens.cache_read, 10);
+    }
+
+    #[test]
+    fn test_headless_json_output_infers_subprovider() {
+        let content = r#"{"type":"message","message":{"model":"gpt-5.3-codex","usage":{"input_tokens":120,"output_tokens":60,"cache_read_input_tokens":10}}}"#;
+        let file = tempfile::Builder::new().suffix(".json").tempfile().unwrap();
+        std::fs::write(file.path(), content).unwrap();
+
+        let messages = parse_claude_file(file.path());
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].model_id, "gpt-5.3-codex");
+        assert_eq!(messages[0].provider_id, "openai");
+    }
+
+    #[test]
+    fn test_headless_json_output_keeps_workspace_metadata() {
+        let content = r#"{"type":"message","message":{"model":"claude-3-5-sonnet","usage":{"input_tokens":120,"output_tokens":60,"cache_read_input_tokens":10}}}"#;
+        let (_dir, path) = create_project_file(content, "myproject", "session.json");
+
+        let messages = parse_claude_file(&path);
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].workspace_key.as_deref(), Some("myproject"));
+        assert_eq!(messages[0].workspace_label.as_deref(), Some("myproject"));
+    }
+
+    #[test]
+    fn test_headless_stream_output() {
+        let content = r#"{"type":"message_start","timestamp":"2025-01-01T00:00:00Z","message":{"id":"msg_1","model":"claude-3-5-sonnet","usage":{"input_tokens":200,"cache_read_input_tokens":20,"cache_creation_input_tokens":5}}}
+{"type":"message_delta","usage":{"output_tokens":80}}
+{"type":"message_stop"}"#;
+        let file = create_test_file(content);
+        let messages = parse_claude_file(file.path());
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].model_id, "claude-3-5-sonnet");
+        assert_eq!(messages[0].tokens.input, 200);
+        assert_eq!(messages[0].tokens.output, 80);
+        assert_eq!(messages[0].tokens.cache_read, 20);
+        assert_eq!(messages[0].tokens.cache_write, 5);
+    }
+
+    #[test]
+    fn test_headless_stream_output_infers_subprovider() {
+        let content = r#"{"type":"message_start","timestamp":"2026-02-18T10:00:00Z","message":{"id":"msg_1","model":"gemini-3-pro-preview","usage":{"input_tokens":200,"cache_read_input_tokens":20}}}
+{"type":"message_delta","usage":{"output_tokens":80}}
+{"type":"message_stop"}"#;
+        let file = create_test_file(content);
+        let messages = parse_claude_file(file.path());
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].model_id, "gemini-3-pro-preview");
+        assert_eq!(messages[0].provider_id, "google");
+        assert_eq!(messages[0].tokens.input, 200);
+        assert_eq!(messages[0].tokens.output, 80);
+    }
+
+    #[test]
+    fn test_headless_synthetic_stream_deltas_do_not_leak_into_next_response() {
+        let content = r#"{"type":"message_start","timestamp":"2026-06-24T01:00:00Z","message":{"model":"<synthetic>","usage":{"input_tokens":0}}}
+{"type":"message_delta","usage":{"output_tokens":999,"cache_read_input_tokens":888}}
+{"type":"message_stop"}
+{"type":"message_start","timestamp":"2026-06-24T01:00:02Z","message":{"model":"claude-sonnet-4-6","usage":{"input_tokens":10,"cache_read_input_tokens":2}}}
+{"type":"message_delta","usage":{"output_tokens":3}}
+{"type":"message_stop"}"#;
+        let file = create_test_file(content);
+        let messages = parse_claude_file(file.path());
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].model_id, "claude-sonnet-4-6");
+        assert_eq!(messages[0].tokens.input, 10);
+        assert_eq!(messages[0].tokens.output, 3);
+        assert_eq!(messages[0].tokens.cache_read, 2);
+    }
+
+    #[test]
+    fn test_truncated_headless_synthetic_stream_does_not_leak_into_next_response() {
+        let content = r#"{"type":"message_start","timestamp":"2026-06-24T01:00:00Z","message":{"model":"<synthetic>","usage":{"input_tokens":0}}}
+{"type":"message_delta","usage":{"output_tokens":999,"cache_read_input_tokens":888}}
+{"type":"message_start","timestamp":"2026-06-24T01:00:02Z","message":{"model":"claude-sonnet-4-6","usage":{"input_tokens":10,"cache_read_input_tokens":2}}}
+{"type":"message_delta","usage":{"output_tokens":3}}
+{"type":"message_stop"}"#;
+        let file = create_test_file(content);
+        let messages = parse_claude_file(file.path());
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].model_id, "claude-sonnet-4-6");
+        assert_eq!(messages[0].tokens.input, 10);
+        assert_eq!(messages[0].tokens.output, 3);
+        assert_eq!(messages[0].tokens.cache_read, 2);
+    }
+
+    #[test]
+    fn test_workspace_metadata_from_claude_project_path() {
+        let content = r#"{"type":"assistant","timestamp":"2024-12-01T10:00:00.000Z","message":{"model":"claude-3-5-sonnet","usage":{"input_tokens":100,"output_tokens":50}}}"#;
+        let (_dir, path) = create_project_file(content, "myproject", "session.jsonl");
+
+        let messages = parse_claude_file(&path);
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].workspace_key, Some("myproject".to_string()));
+        assert_eq!(messages[0].workspace_label, Some("myproject".to_string()));
+    }
+
+    #[test]
+    fn test_wrapper_transcript_with_usage_is_parsed() {
+        let content = r#"{"type":"user","timestamp":"2026-04-01T10:00:00.000Z","message":{"content":"Wrapped prompt"}}
+{"type":"assistant","timestamp":"2026-04-01T10:00:01.000Z","requestId":"req_wrapper","message":{"id":"msg_wrapper","model":"claude-sonnet-4","usage":{"input_tokens":123,"output_tokens":45,"cache_read_input_tokens":67,"cache_creation_input_tokens":8}}}"#;
+        let (_dir, path) = create_transcript_file(content, "ses_123456789012345678901234567.jsonl");
+
+        let messages = parse_claude_file(&path);
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].session_id, "ses_123456789012345678901234567");
+        assert_eq!(messages[0].model_id, "claude-sonnet-4");
+        assert_eq!(messages[0].tokens.input, 123);
+        assert_eq!(messages[0].tokens.output, 45);
+        assert_eq!(messages[0].tokens.cache_read, 67);
+        assert_eq!(messages[0].tokens.cache_write, 8);
+        assert_eq!(messages[0].workspace_key, None);
+        assert_eq!(messages[0].workspace_label, None);
+    }
+
+    #[test]
+    fn test_wrapper_transcript_without_usage_is_skipped() {
+        let content = r#"{"type":"user","timestamp":"2026-04-01T10:00:00.000Z","message":{"content":"Wrapped prompt"}}
+{"type":"tool_use","timestamp":"2026-04-01T10:00:01.000Z","message":{"content":"Run tool"}}
+{"type":"tool_result","timestamp":"2026-04-01T10:00:02.000Z","message":{"content":"Tool result"}}"#;
+        let (_dir, path) = create_transcript_file(content, "ses_765432109876543210987654321.jsonl");
+
+        let messages = parse_claude_file(&path);
+
+        assert!(
+            messages.is_empty(),
+            "wrapper transcripts without usage metadata must not be estimated"
+        );
+    }
+
+    #[test]
+    fn test_bare_transcript_with_tool_outputs_is_not_estimated() {
+        let content = r#"{"type":"tool_use","timestamp":"2026-04-01T10:00:00.000Z","tool_name":"read","tool_input":{"filePath":"/src/main.rs"}}
+{"type":"tool_result","timestamp":"2026-04-01T10:00:01.000Z","tool_name":"read","tool_input":{"filePath":"/src/main.rs"},"tool_output":{"output":"fn main() {\n    println!(\"Hello, world!\");\n}\n"}}
+{"type":"tool_use","timestamp":"2026-04-01T10:00:02.000Z","tool_name":"bash","tool_input":{"command":"cargo build"}}
+{"type":"tool_result","timestamp":"2026-04-01T10:00:03.000Z","tool_name":"bash","tool_input":{"command":"cargo build"},"tool_output":{"output":"   Compiling myproject v0.1.0\n    Finished dev [unoptimized + debuginfo] target(s) in 2.34s\n"}}"#;
+        let (_dir, path) = create_transcript_file(content, "ses_aabbccdd11223344556677889.jsonl");
+
+        let messages = parse_claude_file(&path);
+
+        assert!(
+            messages.is_empty(),
+            "bare transcripts with only tool outputs must not produce estimated token messages"
+        );
+    }
+
+    #[test]
+    fn test_project_transcript_with_tool_outputs_is_not_char_estimated() {
+        // Same rule as bare transcripts (tokens#1011): project sessions'
+        // assistant usage already includes tool_result text.
+        let content = r#"{"type":"tool_result","timestamp":"2026-04-01T10:00:01.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_001","content":[{"type":"text","text":"fn main() { println!(\"hello\"); }"}]}]}}"#;
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir
+            .path()
+            .join(".claude")
+            .join("projects")
+            .join("myproject")
+            .join("ses_project123.jsonl");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, content).unwrap();
+
+        let messages = parse_claude_file(&path);
+
+        assert!(
+            messages.is_empty(),
+            "project transcripts must not char-estimate tool_result rows without explicit tokens"
+        );
+    }
+
+    #[test]
+    fn test_bare_transcript_with_explicit_tool_result_tokens_is_counted() {
+        // Bare transcripts must not char-estimate tokens, but explicit tool-result
+        // token counts (e.g. reported by the originating client) should still be honored.
+        let content = r#"{"type":"tool_result","timestamp":"2026-04-01T10:00:01.000Z","tool_name":"read","input_tokens":42,"tool_output":{"output":"fn main() {\n    println!(\"Hello, world!\");\n}\n"}}"#;
+        let (_dir, path) = create_transcript_file(content, "ses_explicit112233445566778899.jsonl");
+
+        let messages = parse_claude_file(&path);
+
+        assert_eq!(
+            messages.len(),
+            1,
+            "bare transcripts must still count explicit tool-result token usage"
+        );
+        assert_eq!(messages[0].tokens.input, 42);
+    }
+
+    #[test]
+    fn test_transcripts_dir_under_project_keeps_workspace_attribution() {
+        // A `transcripts/` directory nested under a resolvable `projects/<key>/`
+        // path must still resolve workspace attribution. Char estimation is off
+        // everywhere now (#1011), so pin the workspace via an assistant usage row.
+        let content = r#"{"type":"assistant","timestamp":"2026-04-01T10:00:01.000Z","message":{"model":"claude-sonnet-4-6","usage":{"input_tokens":10,"output_tokens":2}}}"#;
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir
+            .path()
+            .join("projects")
+            .join("myproject")
+            .join("transcripts")
+            .join("ses_scoped112233445566778899.jsonl");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, content).unwrap();
+
+        let messages = parse_claude_file(&path);
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].workspace_key, Some("myproject".to_string()));
+        assert_eq!(messages[0].tokens.input, 10);
+    }
+
+    // --- Sidechain / Agent tracking tests ---
+
+    /// Helper: create a sidechain JSONL file and optional meta sidecar in a nested layout.
+    fn create_sidechain_files(
+        project: &str,
+        parent_session: &str,
+        agent_file_stem: &str,
+        jsonl_content: &str,
+        meta_content: Option<&str>,
+    ) -> (TempDir, std::path::PathBuf) {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let subagents_dir = temp_dir
+            .path()
+            .join(".claude")
+            .join("projects")
+            .join(project)
+            .join(parent_session)
+            .join("subagents");
+        std::fs::create_dir_all(&subagents_dir).unwrap();
+
+        let jsonl_path = subagents_dir.join(format!("{}.jsonl", agent_file_stem));
+        std::fs::write(&jsonl_path, jsonl_content).unwrap();
+
+        if let Some(meta) = meta_content {
+            let meta_path = subagents_dir.join(format!("{}.meta.json", agent_file_stem));
+            std::fs::write(&meta_path, meta).unwrap();
+        }
+
+        (temp_dir, jsonl_path)
+    }
+
+    #[test]
+    fn test_sidechain_nested_with_meta_sidecar() {
+        let jsonl = r#"{"type":"user","isSidechain":true,"sessionId":"parent-uuid-001","agentId":"abc123","timestamp":"2024-12-01T10:00:00.000Z","message":{"content":"Find files"}}
+{"type":"assistant","isSidechain":true,"sessionId":"parent-uuid-001","agentId":"abc123","timestamp":"2024-12-01T10:00:01.000Z","requestId":"req_s01","message":{"id":"msg_s01","model":"claude-3-5-sonnet","usage":{"input_tokens":200,"output_tokens":80,"cache_read_input_tokens":50}}}"#;
+        let meta = r#"{"agentType":"explore","description":"Find session creation UI"}"#;
+
+        let (_dir, path) = create_sidechain_files(
+            "myproject",
+            "parent-uuid-001",
+            "agent-abc123",
+            jsonl,
+            Some(meta),
+        );
+        let messages = parse_claude_file(&path);
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(
+            messages[0].agent,
+            Some("Explore".to_string()),
+            "Should resolve agent name from meta sidecar and normalize"
+        );
+        assert_eq!(
+            messages[0].session_id, "parent-uuid-001",
+            "Should use parent session ID from transcript, not filename"
+        );
+        assert_eq!(messages[0].tokens.input, 200);
+        assert_eq!(messages[0].tokens.output, 80);
+        assert_eq!(messages[0].tokens.cache_read, 50);
+    }
+
+    #[test]
+    fn test_sidechain_nested_without_meta_falls_back() {
+        let jsonl = r#"{"type":"user","isSidechain":true,"sessionId":"parent-uuid-002","agentId":"def456","timestamp":"2024-12-01T10:00:00.000Z","message":{"content":"Do something"}}
+{"type":"assistant","isSidechain":true,"sessionId":"parent-uuid-002","agentId":"def456","timestamp":"2024-12-01T10:00:01.000Z","requestId":"req_s02","message":{"id":"msg_s02","model":"claude-3-5-sonnet","usage":{"input_tokens":100,"output_tokens":40}}}"#;
+
+        let (_dir, path) =
+            create_sidechain_files("myproject", "parent-uuid-002", "agent-def456", jsonl, None);
+        let messages = parse_claude_file(&path);
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(
+            messages[0].agent,
+            Some("Claude Code Subagent".to_string()),
+            "Without meta sidecar, should fall back to generic label"
+        );
+        assert_eq!(messages[0].session_id, "parent-uuid-002");
+    }
+
+    /// Helper: create a deep nested-layout workflow transcript
+    /// `.../projects/<project>/<parent_session>/subagents/workflows/<wf>/<agent_stem>.jsonl`.
+    fn create_workflow_files(
+        project: &str,
+        parent_session: &str,
+        workflow: &str,
+        file_stem: &str,
+        jsonl_content: &str,
+        meta_content: Option<&str>,
+    ) -> (TempDir, std::path::PathBuf) {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let workflow_dir = temp_dir
+            .path()
+            .join(".claude")
+            .join("projects")
+            .join(project)
+            .join(parent_session)
+            .join("subagents")
+            .join("workflows")
+            .join(workflow);
+        std::fs::create_dir_all(&workflow_dir).unwrap();
+
+        let jsonl_path = workflow_dir.join(format!("{}.jsonl", file_stem));
+        std::fs::write(&jsonl_path, jsonl_content).unwrap();
+
+        if let Some(meta) = meta_content {
+            let meta_path = workflow_dir.join(format!("{}.meta.json", file_stem));
+            std::fs::write(&meta_path, meta).unwrap();
+        }
+
+        (temp_dir, jsonl_path)
+    }
+
+    #[test]
+    fn test_workflow_agent_transcript_counts_tokens() {
+        // #815: agent-*.jsonl nested under subagents/workflows/<wf>/ is a real
+        // transcript and its usage must be counted, keyed to the parent session.
+        let jsonl = r#"{"type":"user","isSidechain":true,"sessionId":"wf-parent-001","agentId":"wfa1","timestamp":"2024-12-01T10:00:00.000Z","message":{"content":"do work"}}
+{"type":"assistant","isSidechain":true,"sessionId":"wf-parent-001","agentId":"wfa1","timestamp":"2024-12-01T10:00:01.000Z","requestId":"req_wf1","message":{"id":"msg_wf1","model":"claude-3-5-sonnet","usage":{"input_tokens":500,"output_tokens":200,"cache_read_input_tokens":100,"cache_creation_input_tokens":40}}}"#;
+        let meta = r#"{"agentType":"workflow-subagent","spawnDepth":1}"#;
+
+        let (_dir, path) = create_workflow_files(
+            "myproject",
+            "wf-parent-001",
+            "wf_de048031",
+            "agent-wfa1",
+            jsonl,
+            Some(meta),
+        );
+        let messages = parse_claude_file(&path);
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(
+            messages[0].session_id, "wf-parent-001",
+            "deep nested transcript must key to the parent session, not the file/workflow"
+        );
+        assert_eq!(messages[0].tokens.input, 500);
+        assert_eq!(messages[0].tokens.output, 200);
+        assert_eq!(messages[0].tokens.cache_read, 100);
+        assert_eq!(messages[0].tokens.cache_write, 40);
+        assert_eq!(
+            messages[0].agent,
+            Some("Workflow Subagent".to_string()),
+            "Tier 1 meta sidecar next to the deep nested transcript should resolve the name"
+        );
+    }
+
+    #[test]
+    fn test_workflow_journal_not_ingested() {
+        // #815 CRITICAL: journal.jsonl is workflow orchestration metadata, not a
+        // transcript. Even if it grows lines that superficially resemble usage, the
+        // parser must drop the whole file.
+        let journal = r#"{"type":"started","key":"v2:abc","agentId":"wfa1"}
+{"type":"result","key":"v2:abc","agentId":"wfa1","result":{"verdict":"needs_fixes","summary":"Input tokens are estimated"}}
+{"type":"assistant","isSidechain":true,"sessionId":"wf-parent-002","timestamp":"2024-12-01T10:00:01.000Z","requestId":"req_j","message":{"id":"msg_j","model":"claude-3-5-sonnet","usage":{"input_tokens":9999,"output_tokens":9999}}}"#;
+
+        let (_dir, path) = create_workflow_files(
+            "myproject",
+            "wf-parent-002",
+            "wf_journal",
+            "journal",
+            journal,
+            None,
+        );
+        assert_eq!(path.file_name().unwrap().to_str().unwrap(), "journal.jsonl");
+        let messages = parse_claude_file(&path);
+
+        assert!(
+            messages.is_empty(),
+            "journal.jsonl must never be ingested, even with usage-shaped lines; got {:?}",
+            messages
+        );
+    }
+
+    #[test]
+    fn test_tier2_deep_nested_workflow_recovers_agent() {
+        // Deep nested layout without a meta sidecar: agent name must be recovered
+        // from the parent session tool_use, proving find_parent_session_path walks
+        // up past the extra workflows/<wf>/ levels.
+        let temp_dir = tempfile::tempdir().unwrap();
+        let project_dir = temp_dir
+            .path()
+            .join(".claude")
+            .join("projects")
+            .join("myproject");
+        std::fs::create_dir_all(&project_dir).unwrap();
+
+        let parent_session_id = "deep-parent-uuid";
+        let parent_content = r#"{"type":"assistant","timestamp":"2024-12-01T10:00:00.000Z","message":{"id":"msg_dp","model":"claude-3-5-sonnet","role":"assistant","content":[{"type":"tool_use","id":"toolu_deep","name":"Agent","input":{"subagent_type":"code-reviewer","prompt":"review"}}],"usage":{"input_tokens":80,"output_tokens":40}}}
+{"type":"user","timestamp":"2024-12-01T10:00:01.000Z","message":{"role":"user","content":[{"tool_use_id":"toolu_deep","type":"tool_result","content":[{"type":"text","text":"agentId: deepagent1 (use SendMessage)"}]}]}}"#;
+        std::fs::write(
+            project_dir.join(format!("{}.jsonl", parent_session_id)),
+            parent_content,
+        )
+        .unwrap();
+
+        let workflow_dir = project_dir
+            .join(parent_session_id)
+            .join("subagents")
+            .join("workflows")
+            .join("wf_deep");
+        std::fs::create_dir_all(&workflow_dir).unwrap();
+        let sidechain_content = r#"{"type":"user","isSidechain":true,"sessionId":"deep-parent-uuid","agentId":"deepagent1","timestamp":"2024-12-01T10:00:00.500Z","message":{"content":"task"}}
+{"type":"assistant","isSidechain":true,"sessionId":"deep-parent-uuid","agentId":"deepagent1","timestamp":"2024-12-01T10:00:01.000Z","requestId":"req_deep","message":{"id":"msg_deep","model":"claude-3-5-sonnet","usage":{"input_tokens":300,"output_tokens":120}}}"#;
+        let sidechain_path = workflow_dir.join("agent-deepagent1.jsonl");
+        std::fs::write(&sidechain_path, sidechain_content).unwrap();
+
+        let messages = parse_claude_file(&sidechain_path);
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(
+            messages[0].agent,
+            Some("Code Reviewer".to_string()),
+            "Tier 2 must resolve the agent name across the deep workflows/<wf>/ nesting"
+        );
+        assert_eq!(messages[0].session_id, parent_session_id);
+        assert_eq!(messages[0].tokens.input, 300);
+    }
+
+    #[test]
+    fn test_sidechain_flat_legacy_layout() {
+        // Flat layout: agent file lives directly under the project dir, no meta sidecar
+        let jsonl = r#"{"type":"user","isSidechain":true,"sessionId":"legacy-session-001","agentId":"ac0c74c","timestamp":"2024-12-01T10:00:00.000Z","message":{"content":"Warmup"}}
+{"type":"assistant","isSidechain":true,"sessionId":"legacy-session-001","agentId":"ac0c74c","timestamp":"2024-12-01T10:00:01.000Z","requestId":"req_l01","message":{"id":"msg_l01","model":"claude-3-5-sonnet","usage":{"input_tokens":150,"output_tokens":60}}}"#;
+
+        let (_dir, path) = create_project_file(jsonl, "myproject", "agent-ac0c74c.jsonl");
+        let messages = parse_claude_file(&path);
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(
+            messages[0].agent,
+            Some("Claude Code Subagent".to_string()),
+            "Legacy flat layout has no meta → Tier 3 fallback"
+        );
+        assert_eq!(
+            messages[0].session_id, "legacy-session-001",
+            "Should use parent session ID from transcript body"
+        );
+    }
+
+    #[test]
+    fn test_sidechain_session_id_correction() {
+        // Multiple sidechain files from the same parent should share the parent's session_id
+        let make_jsonl = |agent_id: &str, req: &str, msg: &str| {
+            format!(
+                r#"{{"type":"user","isSidechain":true,"sessionId":"shared-parent-uuid","agentId":"{agent_id}","timestamp":"2024-12-01T10:00:00.000Z","message":{{"content":"task"}}}}
+{{"type":"assistant","isSidechain":true,"sessionId":"shared-parent-uuid","agentId":"{agent_id}","timestamp":"2024-12-01T10:00:01.000Z","requestId":"{req}","message":{{"id":"{msg}","model":"claude-3-5-sonnet","usage":{{"input_tokens":100,"output_tokens":50}}}}}}"#
+            )
+        };
+
+        let (_dir1, path1) = create_sidechain_files(
+            "myproject",
+            "shared-parent-uuid",
+            "agent-aaa",
+            &make_jsonl("aaa", "req_a", "msg_a"),
+            Some(r#"{"agentType":"explore"}"#),
+        );
+        let (_dir2, path2) = create_sidechain_files(
+            "myproject",
+            "shared-parent-uuid",
+            "agent-bbb",
+            &make_jsonl("bbb", "req_b", "msg_b"),
+            Some(r#"{"agentType":"executor"}"#),
+        );
+        let (_dir3, path3) = create_sidechain_files(
+            "myproject",
+            "shared-parent-uuid",
+            "agent-ccc",
+            &make_jsonl("ccc", "req_c", "msg_c"),
+            None,
+        );
+
+        let msgs1 = parse_claude_file(&path1);
+        let msgs2 = parse_claude_file(&path2);
+        let msgs3 = parse_claude_file(&path3);
+
+        // All three should share the parent session ID
+        assert_eq!(msgs1[0].session_id, "shared-parent-uuid");
+        assert_eq!(msgs2[0].session_id, "shared-parent-uuid");
+        assert_eq!(msgs3[0].session_id, "shared-parent-uuid");
+
+        // Agent names should differ
+        assert_eq!(msgs1[0].agent, Some("Explore".to_string()));
+        assert_eq!(msgs2[0].agent, Some("Executor".to_string()));
+        assert_eq!(msgs3[0].agent, Some("Claude Code Subagent".to_string()));
+    }
+
+    #[test]
+    fn test_sidechain_token_totals_preserved() {
+        // Verify that sidechain parsing doesn't change token accounting
+        let sidechain_jsonl = r#"{"type":"user","isSidechain":true,"sessionId":"parent-001","agentId":"xyz","timestamp":"2024-12-01T10:00:00.000Z","message":{"content":"task"}}
+{"type":"assistant","isSidechain":true,"sessionId":"parent-001","agentId":"xyz","timestamp":"2024-12-01T10:00:01.000Z","requestId":"req_t1","message":{"id":"msg_t1","model":"claude-3-5-sonnet","usage":{"input_tokens":1000,"output_tokens":500,"cache_read_input_tokens":200,"cache_creation_input_tokens":100}}}
+{"type":"assistant","isSidechain":true,"sessionId":"parent-001","agentId":"xyz","timestamp":"2024-12-01T10:00:02.000Z","requestId":"req_t2","message":{"id":"msg_t2","model":"claude-3-5-sonnet","usage":{"input_tokens":800,"output_tokens":300,"cache_read_input_tokens":150,"cache_creation_input_tokens":50}}}"#;
+
+        let (_dir, path) = create_sidechain_files(
+            "myproject",
+            "parent-001",
+            "agent-xyz",
+            sidechain_jsonl,
+            Some(r#"{"agentType":"code-reviewer"}"#),
+        );
+        let messages = parse_claude_file(&path);
+
+        assert_eq!(messages.len(), 2);
+
+        let total_input: i64 = messages.iter().map(|m| m.tokens.input).sum();
+        let total_output: i64 = messages.iter().map(|m| m.tokens.output).sum();
+        let total_cache_read: i64 = messages.iter().map(|m| m.tokens.cache_read).sum();
+        let total_cache_write: i64 = messages.iter().map(|m| m.tokens.cache_write).sum();
+
+        assert_eq!(total_input, 1800, "input: 1000 + 800");
+        assert_eq!(total_output, 800, "output: 500 + 300");
+        assert_eq!(total_cache_read, 350, "cache_read: 200 + 150");
+        assert_eq!(total_cache_write, 150, "cache_write: 100 + 50");
+
+        // Both messages should have the same agent
+        assert_eq!(messages[0].agent, Some("Code Reviewer".to_string()));
+        assert_eq!(messages[1].agent, Some("Code Reviewer".to_string()));
+    }
+
+    #[test]
+    fn test_main_session_no_agent_regression() {
+        // Non-sidechain (main session) files must produce agent: None
+        let content = r#"{"type":"user","timestamp":"2024-12-01T10:00:00.000Z","message":{"content":"Hello"}}
+{"type":"assistant","timestamp":"2024-12-01T10:00:01.000Z","requestId":"req_m01","message":{"id":"msg_m01","model":"claude-3-5-sonnet","usage":{"input_tokens":500,"output_tokens":200}}}
+{"type":"assistant","timestamp":"2024-12-01T10:00:02.000Z","requestId":"req_m02","message":{"id":"msg_m02","model":"claude-3-5-sonnet","usage":{"input_tokens":600,"output_tokens":250}}}"#;
+
+        let file = create_test_file(content);
+        let messages = parse_claude_file(file.path());
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(
+            messages[0].agent, None,
+            "Main session messages must not have an agent"
+        );
+        assert_eq!(messages[1].agent, None);
+    }
+
+    #[test]
+    fn test_main_session_with_is_sidechain_false() {
+        // Explicit isSidechain: false should be treated as main session
+        let content = r#"{"type":"assistant","isSidechain":false,"timestamp":"2024-12-01T10:00:00.000Z","requestId":"req_001","message":{"id":"msg_001","model":"claude-3-5-sonnet","usage":{"input_tokens":100,"output_tokens":50}}}"#;
+
+        let file = create_test_file(content);
+        let messages = parse_claude_file(file.path());
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(
+            messages[0].agent, None,
+            "isSidechain=false should not set agent"
+        );
+    }
+
+    #[test]
+    fn test_sidechain_dedup_preserves_agent() {
+        // Streaming duplicates within a sidechain file should still carry the agent
+        let jsonl = r#"{"type":"user","isSidechain":true,"sessionId":"parent-dedup","agentId":"dd1","timestamp":"2024-12-01T10:00:00.000Z","message":{"content":"task"}}
+{"type":"assistant","isSidechain":true,"sessionId":"parent-dedup","agentId":"dd1","timestamp":"2024-12-01T10:00:01.000Z","requestId":"req_d1","message":{"id":"msg_d1","model":"claude-3-5-sonnet","usage":{"input_tokens":10,"output_tokens":30}}}
+{"type":"assistant","isSidechain":true,"sessionId":"parent-dedup","agentId":"dd1","timestamp":"2024-12-01T10:00:01.100Z","requestId":"req_d1","message":{"id":"msg_d1","model":"claude-3-5-sonnet","usage":{"input_tokens":10,"output_tokens":300}}}"#;
+
+        let (_dir, path) = create_sidechain_files(
+            "myproject",
+            "parent-dedup",
+            "agent-dd1",
+            jsonl,
+            Some(r#"{"agentType":"architect"}"#),
+        );
+        let messages = parse_claude_file(&path);
+
+        assert_eq!(
+            messages.len(),
+            1,
+            "Streaming duplicates should collapse to one"
+        );
+        assert_eq!(
+            messages[0].tokens.output, 300,
+            "Should keep max output_tokens"
+        );
+        assert_eq!(
+            messages[0].agent,
+            Some("Architect".to_string()),
+            "Deduped message should retain agent"
+        );
+        assert_eq!(messages[0].session_id, "parent-dedup");
+    }
+
+    #[test]
+    fn test_sidechain_meta_with_omc_prefix_agent() {
+        // Meta file might contain oh-my-claudecode: prefixed agent types
+        let jsonl = r#"{"type":"user","isSidechain":true,"sessionId":"parent-omc","agentId":"omc1","timestamp":"2024-12-01T10:00:00.000Z","message":{"content":"task"}}
+{"type":"assistant","isSidechain":true,"sessionId":"parent-omc","agentId":"omc1","timestamp":"2024-12-01T10:00:01.000Z","requestId":"req_omc","message":{"id":"msg_omc","model":"claude-3-5-sonnet","usage":{"input_tokens":100,"output_tokens":50}}}"#;
+
+        let (_dir, path) = create_sidechain_files(
+            "myproject",
+            "parent-omc",
+            "agent-omc1",
+            jsonl,
+            Some(r#"{"agentType":"oh-my-claudecode:code-reviewer"}"#),
+        );
+        let messages = parse_claude_file(&path);
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(
+            messages[0].agent,
+            Some("Code Reviewer".to_string()),
+            "Should strip oh-my-claudecode: prefix and normalize"
+        );
+    }
+
+    #[test]
+    fn test_sidechain_without_session_id_uses_filename() {
+        // Edge case: sidechain entry without sessionId should fall back to filename stem
+        let jsonl = r#"{"type":"user","isSidechain":true,"agentId":"noid","timestamp":"2024-12-01T10:00:00.000Z","message":{"content":"task"}}
+{"type":"assistant","isSidechain":true,"agentId":"noid","timestamp":"2024-12-01T10:00:01.000Z","requestId":"req_no","message":{"id":"msg_no","model":"claude-3-5-sonnet","usage":{"input_tokens":100,"output_tokens":50}}}"#;
+
+        let file = create_test_file(jsonl);
+        let messages = parse_claude_file(file.path());
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(
+            messages[0].agent,
+            Some("Claude Code Subagent".to_string()),
+            "Still detected as sidechain"
+        );
+        // session_id should be the file stem (fallback)
+        let expected_stem = file
+            .path()
+            .file_stem()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        assert_eq!(messages[0].session_id, expected_stem);
+    }
+
+    // --- Tier 2: parent session tool_use inference tests ---
+
+    #[test]
+    fn test_tier2_recovers_agent_from_parent_tool_use() {
+        // Nested layout: sidechain without meta, but parent session has matching tool_use
+        let temp_dir = tempfile::tempdir().unwrap();
+        let project_dir = temp_dir
+            .path()
+            .join(".claude")
+            .join("projects")
+            .join("myproject");
+        std::fs::create_dir_all(&project_dir).unwrap();
+
+        // Create parent session file with tool_use (Agent) and tool_result (agentId)
+        let parent_session_id = "parent-tier2-uuid";
+        let parent_content = r#"{"type":"assistant","timestamp":"2024-12-01T10:00:00.000Z","message":{"id":"msg_p1","model":"claude-3-5-sonnet","role":"assistant","content":[{"type":"tool_use","id":"toolu_abc","name":"Agent","input":{"subagent_type":"document-specialist","prompt":"Research something"}}],"usage":{"input_tokens":100,"output_tokens":50}}}
+{"type":"user","timestamp":"2024-12-01T10:00:01.000Z","message":{"role":"user","content":[{"tool_use_id":"toolu_abc","type":"tool_result","content":[{"type":"text","text":"Found the docs"},{"type":"text","text":"agentId: t2agent1 (use SendMessage with to: 't2agent1' to continue this agent)\n<usage>total_tokens: 5000</usage>"}]}]}}"#;
+        let parent_path = project_dir.join(format!("{}.jsonl", parent_session_id));
+        std::fs::write(&parent_path, parent_content).unwrap();
+
+        // Create sidechain file (nested layout, no meta sidecar)
+        let subagents_dir = project_dir.join(parent_session_id).join("subagents");
+        std::fs::create_dir_all(&subagents_dir).unwrap();
+        let sidechain_content = r#"{"type":"user","isSidechain":true,"sessionId":"parent-tier2-uuid","agentId":"t2agent1","timestamp":"2024-12-01T10:00:00.500Z","message":{"content":"Research something"}}
+{"type":"assistant","isSidechain":true,"sessionId":"parent-tier2-uuid","agentId":"t2agent1","timestamp":"2024-12-01T10:00:01.000Z","requestId":"req_t2","message":{"id":"msg_t2","model":"claude-3-5-sonnet","usage":{"input_tokens":300,"output_tokens":120}}}"#;
+        let sidechain_path = subagents_dir.join("agent-t2agent1.jsonl");
+        std::fs::write(&sidechain_path, sidechain_content).unwrap();
+
+        let messages = parse_claude_file(&sidechain_path);
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(
+            messages[0].agent,
+            Some("Document Specialist".to_string()),
+            "Tier 2 should recover agent name from parent tool_use"
+        );
+        assert_eq!(messages[0].session_id, parent_session_id);
+    }
+
+    #[test]
+    fn test_tier2_flat_layout_recovers_agent() {
+        // Flat layout: sidechain file in same dir as parent, no meta sidecar
+        let temp_dir = tempfile::tempdir().unwrap();
+        let project_dir = temp_dir
+            .path()
+            .join(".claude")
+            .join("projects")
+            .join("myproject");
+        std::fs::create_dir_all(&project_dir).unwrap();
+
+        let parent_session_id = "flat-parent-uuid";
+        let parent_content = r#"{"type":"assistant","timestamp":"2024-12-01T10:00:00.000Z","message":{"id":"msg_fp","model":"claude-3-5-sonnet","role":"assistant","content":[{"type":"tool_use","id":"toolu_flat","name":"Agent","input":{"subagent_type":"explore","prompt":"Find files"}}],"usage":{"input_tokens":50,"output_tokens":30}}}
+{"type":"user","timestamp":"2024-12-01T10:00:01.000Z","message":{"role":"user","content":[{"tool_use_id":"toolu_flat","type":"tool_result","content":[{"type":"text","text":"agentId: flatagent1 (use SendMessage)"}]}]}}"#;
+        std::fs::write(
+            project_dir.join(format!("{}.jsonl", parent_session_id)),
+            parent_content,
+        )
+        .unwrap();
+
+        let sidechain_content = r#"{"type":"user","isSidechain":true,"sessionId":"flat-parent-uuid","agentId":"flatagent1","timestamp":"2024-12-01T10:00:00.500Z","message":{"content":"task"}}
+{"type":"assistant","isSidechain":true,"sessionId":"flat-parent-uuid","agentId":"flatagent1","timestamp":"2024-12-01T10:00:01.000Z","requestId":"req_flat","message":{"id":"msg_flat","model":"claude-3-5-sonnet","usage":{"input_tokens":100,"output_tokens":50}}}"#;
+        std::fs::write(
+            project_dir.join("agent-flatagent1.jsonl"),
+            sidechain_content,
+        )
+        .unwrap();
+
+        let messages = parse_claude_file(&project_dir.join("agent-flatagent1.jsonl"));
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(
+            messages[0].agent,
+            Some("Explore".to_string()),
+            "Tier 2 should work for flat layout too"
+        );
+    }
+
+    #[test]
+    fn test_tier1_takes_precedence_over_tier2() {
+        // When meta sidecar exists, Tier 1 wins even if parent has a different subagent_type
+        let temp_dir = tempfile::tempdir().unwrap();
+        let project_dir = temp_dir
+            .path()
+            .join(".claude")
+            .join("projects")
+            .join("myproject");
+        std::fs::create_dir_all(&project_dir).unwrap();
+
+        let parent_session_id = "precedence-parent";
+        let parent_content = r#"{"type":"assistant","timestamp":"2024-12-01T10:00:00.000Z","message":{"id":"msg_prec","model":"claude-3-5-sonnet","role":"assistant","content":[{"type":"tool_use","id":"toolu_prec","name":"Agent","input":{"subagent_type":"wrong-type","prompt":"task"}}],"usage":{"input_tokens":50,"output_tokens":30}}}
+{"type":"user","timestamp":"2024-12-01T10:00:01.000Z","message":{"role":"user","content":[{"tool_use_id":"toolu_prec","type":"tool_result","content":[{"type":"text","text":"agentId: precagent1 done"}]}]}}"#;
+        std::fs::write(
+            project_dir.join(format!("{}.jsonl", parent_session_id)),
+            parent_content,
+        )
+        .unwrap();
+
+        let subagents_dir = project_dir.join(parent_session_id).join("subagents");
+        std::fs::create_dir_all(&subagents_dir).unwrap();
+
+        let sidechain_content = r#"{"type":"user","isSidechain":true,"sessionId":"precedence-parent","agentId":"precagent1","timestamp":"2024-12-01T10:00:00.500Z","message":{"content":"task"}}
+{"type":"assistant","isSidechain":true,"sessionId":"precedence-parent","agentId":"precagent1","timestamp":"2024-12-01T10:00:01.000Z","requestId":"req_prec","message":{"id":"msg_prec2","model":"claude-3-5-sonnet","usage":{"input_tokens":100,"output_tokens":50}}}"#;
+        std::fs::write(
+            subagents_dir.join("agent-precagent1.jsonl"),
+            sidechain_content,
+        )
+        .unwrap();
+        std::fs::write(
+            subagents_dir.join("agent-precagent1.meta.json"),
+            r#"{"agentType":"code-reviewer"}"#,
+        )
+        .unwrap();
+
+        let messages = parse_claude_file(&subagents_dir.join("agent-precagent1.jsonl"));
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(
+            messages[0].agent,
+            Some("Code Reviewer".to_string()),
+            "Tier 1 (meta sidecar) should take precedence over Tier 2 (parent lookup)"
+        );
+    }
+
+    #[test]
+    fn test_extract_agent_id_from_text() {
+        assert_eq!(
+            extract_agent_id_from_text(
+                "agentId: a8f80f8f33163def2 (use SendMessage with to: 'a8f80f8f33163def2')"
+            ),
+            Some("a8f80f8f33163def2".to_string())
+        );
+        assert_eq!(
+            extract_agent_id_from_text("agentId: abc123\n<usage>total_tokens: 5000</usage>"),
+            Some("abc123".to_string())
+        );
+        assert_eq!(extract_agent_id_from_text("no agent id here"), None);
+        assert_eq!(
+            extract_agent_id_from_text("agentId: "),
+            None,
+            "Empty agent id should return None"
+        );
+    }
+
+    #[test]
+    fn test_sidechain_agent_id_from_stem_extracts_aside_question_suffix() {
+        assert_eq!(
+            sidechain_agent_id_from_stem("agent-aside_question-0320a3d71bc1d01e"),
+            Some("0320a3d71bc1d01e".to_string())
+        );
+        assert_eq!(
+            sidechain_agent_id_from_stem("agent-flatagent1"),
+            Some("flatagent1".to_string())
+        );
+    }
+
+    #[test]
+    fn test_tier2_uses_entry_agent_id_when_filename_prefix_differs() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let project_dir = temp_dir
+            .path()
+            .join(".claude")
+            .join("projects")
+            .join("myproject");
+        std::fs::create_dir_all(&project_dir).unwrap();
+
+        let parent_session_id = "aside-parent-uuid";
+        let parent_content = r#"{"type":"assistant","timestamp":"2024-12-01T10:00:00.000Z","message":{"id":"msg_aside_parent","model":"claude-3-5-sonnet","role":"assistant","content":[{"type":"tool_use","id":"toolu_aside","name":"Agent","input":{"subagent_type":"writer","prompt":"Summarize findings"}}],"usage":{"input_tokens":50,"output_tokens":30}}}
+{"type":"user","timestamp":"2024-12-01T10:00:01.000Z","message":{"role":"user","content":[{"tool_use_id":"toolu_aside","type":"tool_result","content":[{"type":"text","text":"agentId: 0320a3d71bc1d01e (use SendMessage)"}]}]}}"#;
+        std::fs::write(
+            project_dir.join(format!("{}.jsonl", parent_session_id)),
+            parent_content,
+        )
+        .unwrap();
+
+        let subagents_dir = project_dir.join(parent_session_id).join("subagents");
+        std::fs::create_dir_all(&subagents_dir).unwrap();
+        let sidechain_content = r#"{"type":"user","isSidechain":true,"sessionId":"aside-parent-uuid","agentId":"0320a3d71bc1d01e","timestamp":"2024-12-01T10:00:00.500Z","message":{"content":"task"}}
+{"type":"assistant","isSidechain":true,"sessionId":"aside-parent-uuid","agentId":"0320a3d71bc1d01e","timestamp":"2024-12-01T10:00:01.000Z","requestId":"req_aside","message":{"id":"msg_aside","model":"claude-3-5-sonnet","usage":{"input_tokens":100,"output_tokens":50}}}"#;
+        let sidechain_path = subagents_dir.join("agent-aside_question-0320a3d71bc1d01e.jsonl");
+        std::fs::write(&sidechain_path, sidechain_content).unwrap();
+
+        let messages = parse_claude_file(&sidechain_path);
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].agent, Some("Writer".to_string()));
+    }
+
+    #[test]
+    fn test_parent_subagent_lookup_cache_reuses_parsed_parent_results() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let parent_path = temp_dir.path().join("parent.jsonl");
+        let initial_parent = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_a","name":"Agent","input":{"subagent_type":"explore"}},{"type":"tool_use","id":"toolu_b","name":"Agent","input":{"subagent_type":"executor"}}]}}
+{"type":"user","message":{"content":[{"tool_use_id":"toolu_a","type":"tool_result","content":[{"type":"text","text":"agentId: cacheA"}]},{"tool_use_id":"toolu_b","type":"tool_result","content":[{"type":"text","text":"agentId: cacheB"}]}]}}"#;
+        std::fs::write(&parent_path, initial_parent).unwrap();
+
+        let mut parent_cache = ParentSubagentTypeCache::new();
+        assert_eq!(
+            lookup_subagent_type_in_parent(&parent_path, "cacheA", &mut parent_cache),
+            Some("explore".to_string())
+        );
+
+        std::fs::write(
+            &parent_path,
+            r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_b","name":"Agent","input":{"subagent_type":"writer"}}]}}"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            lookup_subagent_type_in_parent(&parent_path, "cacheB", &mut parent_cache),
+            Some("executor".to_string())
+        );
+    }
+
+    #[test]
+    fn test_tier2_multiple_agents_in_same_parent() {
+        // Parent spawns multiple agents; each sidechain should get the correct type
+        let temp_dir = tempfile::tempdir().unwrap();
+        let project_dir = temp_dir
+            .path()
+            .join(".claude")
+            .join("projects")
+            .join("myproject");
+        std::fs::create_dir_all(&project_dir).unwrap();
+
+        let parent_session_id = "multi-agent-parent";
+        let parent_content = r#"{"type":"assistant","timestamp":"2024-12-01T10:00:00.000Z","message":{"id":"msg_ma1","model":"claude-3-5-sonnet","role":"assistant","content":[{"type":"tool_use","id":"toolu_m1","name":"Agent","input":{"subagent_type":"explore","prompt":"find files"}}],"usage":{"input_tokens":50,"output_tokens":30}}}
+{"type":"user","timestamp":"2024-12-01T10:00:01.000Z","message":{"role":"user","content":[{"tool_use_id":"toolu_m1","type":"tool_result","content":[{"type":"text","text":"agentId: multiA1 done"}]}]}}
+{"type":"assistant","timestamp":"2024-12-01T10:00:02.000Z","message":{"id":"msg_ma2","model":"claude-3-5-sonnet","role":"assistant","content":[{"type":"tool_use","id":"toolu_m2","name":"Agent","input":{"subagent_type":"executor","prompt":"implement feature"}}],"usage":{"input_tokens":60,"output_tokens":40}}}
+{"type":"user","timestamp":"2024-12-01T10:00:03.000Z","message":{"role":"user","content":[{"tool_use_id":"toolu_m2","type":"tool_result","content":[{"type":"text","text":"agentId: multiB2 done"}]}]}}"#;
+        std::fs::write(
+            project_dir.join(format!("{}.jsonl", parent_session_id)),
+            parent_content,
+        )
+        .unwrap();
+
+        let subagents_dir = project_dir.join(parent_session_id).join("subagents");
+        std::fs::create_dir_all(&subagents_dir).unwrap();
+
+        let make_sidechain = |agent_id: &str| {
+            format!(
+                r#"{{"type":"user","isSidechain":true,"sessionId":"{parent_session_id}","agentId":"{agent_id}","timestamp":"2024-12-01T10:00:00.500Z","message":{{"content":"task"}}}}
+{{"type":"assistant","isSidechain":true,"sessionId":"{parent_session_id}","agentId":"{agent_id}","timestamp":"2024-12-01T10:00:01.000Z","requestId":"req_{agent_id}","message":{{"id":"msg_{agent_id}","model":"claude-3-5-sonnet","usage":{{"input_tokens":100,"output_tokens":50}}}}}}"#
+            )
+        };
+
+        std::fs::write(
+            subagents_dir.join("agent-multiA1.jsonl"),
+            make_sidechain("multiA1"),
+        )
+        .unwrap();
+        std::fs::write(
+            subagents_dir.join("agent-multiB2.jsonl"),
+            make_sidechain("multiB2"),
+        )
+        .unwrap();
+
+        let msgs_a = parse_claude_file(&subagents_dir.join("agent-multiA1.jsonl"));
+        let msgs_b = parse_claude_file(&subagents_dir.join("agent-multiB2.jsonl"));
+
+        assert_eq!(
+            msgs_a[0].agent,
+            Some("Explore".to_string()),
+            "First agent should be explore"
+        );
+        assert_eq!(
+            msgs_b[0].agent,
+            Some("Executor".to_string()),
+            "Second agent should be executor"
+        );
+    }
+}

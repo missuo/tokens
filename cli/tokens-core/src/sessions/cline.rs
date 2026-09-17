@@ -1,15 +1,8 @@
 //! Cline task parser
 //!
-//! Cline ships in two flavours that persist sessions in unrelated layouts, so
-//! `parse_cline_file` inspects the path and dispatches to the right handler:
-//!
-//! - **VS Code extension** (`saoudrizwan.claude-dev`): one
-//!   `ui_messages.json` per task under VS Code globalStorage. Cline is the
-//!   upstream Roo Code / Kilo forked from, so this layout is shared and
-//!   handled by [`roocode::parse_roo_kilo_file`].
-//! - **Cline CLI / desktop** (`~/.cline/data/sessions/<id>/`): a
-//!   `<id>.messages.json` transcript plus a sibling `<id>.json` manifest. This
-//!   is the newer standalone runtime and is handled locally below.
+//! Cline is the upstream project that Roo Code and Kilo forked from, so it
+//! shares the same VS Code globalStorage task-log format and reuses the same
+//! parser helper.
 
 use super::roocode::parse_roo_kilo_file;
 use super::utils::{extract_i64, file_modified_timestamp_ms, parse_timestamp_value};
@@ -19,20 +12,14 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
-/// Entry point shared by the aggregator. Routes VS Code task logs to the
-/// shared Roo/Kilo parser and the CLI transcript format to the local handler.
 pub fn parse_cline_file(path: &Path) -> Vec<UnifiedMessage> {
     if is_cline_cli_messages_path(path) {
         return parse_cline_cli_file(path);
     }
+
     parse_roo_kilo_file(path, "cline")
 }
 
-// ---------------------------------------------------------------------------
-// Cline CLI / desktop transcript format
-// ---------------------------------------------------------------------------
-
-/// Top-level shape of `<id>.messages.json`.
 #[derive(Debug, Deserialize)]
 struct ClineCliMessagesFile {
     #[serde(rename = "sessionId")]
@@ -41,8 +28,6 @@ struct ClineCliMessagesFile {
     messages: Option<Vec<ClineCliMessage>>,
 }
 
-/// A single message in the transcript. Only `assistant` entries carry metrics;
-/// `user` entries are inspected solely to detect human-vs-tool-result turns.
 #[derive(Debug, Deserialize)]
 struct ClineCliMessage {
     id: Option<String>,
@@ -54,20 +39,28 @@ struct ClineCliMessage {
     metrics: Option<ClineCliMetrics>,
 }
 
+fn is_human_user_prompt(content: Option<&[Value]>) -> bool {
+    let Some(content) = content else {
+        return false;
+    };
+
+    let mut has_text_block = false;
+    for block in content {
+        match block.get("type").and_then(Value::as_str) {
+            Some("tool_result") => return false,
+            Some("text") => has_text_block = true,
+            _ => {}
+        }
+    }
+    has_text_block
+}
+
 #[derive(Debug, Deserialize)]
 struct ClineCliModelInfo {
     id: Option<String>,
     provider: Option<String>,
 }
 
-/// Token + cost metrics attached to assistant messages. Cline records
-/// `inputTokens` as the **total** prompt size for the call (cache hits
-/// included), so the parser must subtract `cacheReadTokens`/`cacheWriteTokens`
-/// before storing the net input — otherwise `TokenBreakdown::total()` would
-/// double-count the cached portion.
-///
-/// All fields arrive as JSON values rather than typed numbers because some
-/// providers emit them as strings.
 #[derive(Debug, Deserialize)]
 struct ClineCliMetrics {
     #[serde(rename = "inputTokens")]
@@ -81,31 +74,22 @@ struct ClineCliMetrics {
     cost: Option<Value>,
 }
 
-/// Sibling `<id>.json` manifest. Carries provider/model/workspace/title when
-/// the transcript itself omits `modelInfo` (e.g. a resumed session whose first
-/// calls predate that field).
 #[derive(Debug, Default, Deserialize)]
 struct ClineCliManifest {
     session_id: Option<String>,
     provider: Option<String>,
     model: Option<String>,
     cwd: Option<String>,
-    #[serde(rename = "workspace_root")]
     workspace_root: Option<String>,
     metadata: Option<Value>,
 }
 
-/// Filename sentinel identifying the CLI transcript layout: VS Code task logs
-/// are named `ui_messages.json` (exact), CLI transcripts are `<id>.messages.json`,
-/// so a suffix check cannot collide with the older format.
 pub(crate) fn is_cline_cli_messages_path(path: &Path) -> bool {
     path.file_name()
         .and_then(|name| name.to_str())
         .is_some_and(|name| name.ends_with(".messages.json"))
 }
 
-/// Path of the sibling manifest for a CLI transcript: drop the `.messages`
-/// infix from `<id>.messages.json` to get `<id>.json`.
 pub(crate) fn cline_cli_manifest_path(path: &Path) -> PathBuf {
     let stem = path
         .file_stem()
@@ -117,9 +101,39 @@ pub(crate) fn cline_cli_manifest_path(path: &Path) -> PathBuf {
         .join(format!("{session_stem}.json"))
 }
 
+fn read_cline_cli_manifest(path: &Path) -> ClineCliManifest {
+    let manifest_path = cline_cli_manifest_path(path);
+    let Ok(mut bytes) = std::fs::read(manifest_path) else {
+        return ClineCliManifest::default();
+    };
+
+    simd_json::from_slice(&mut bytes).unwrap_or_default()
+}
+
+fn non_empty_string(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn extract_f64(value: Option<&Value>) -> Option<f64> {
+    value.and_then(|value| {
+        value
+            .as_f64()
+            .or_else(|| value.as_i64().map(|value| value as f64))
+            .or_else(|| value.as_u64().map(|value| value as f64))
+            .or_else(|| value.as_str().and_then(|value| value.parse::<f64>().ok()))
+    })
+}
+
+fn extract_non_negative_finite_f64(value: Option<&Value>) -> Option<f64> {
+    extract_f64(value).filter(|value| value.is_finite() && *value >= 0.0)
+}
+
 /// Parse Cline CLI's persisted assistant messages from
 /// `~/.cline/data/sessions/<session>/<session>.messages.json`.
-fn parse_cline_cli_file(path: &Path) -> Vec<UnifiedMessage> {
+pub fn parse_cline_cli_file(path: &Path) -> Vec<UnifiedMessage> {
     let Some(data) = super::utils::read_file_or_none(path) else {
         return Vec::new();
     };
@@ -162,8 +176,6 @@ fn parse_cline_cli_file(path: &Path) -> Vec<UnifiedMessage> {
     let mut messages = Vec::new();
 
     for entry in file.messages.unwrap_or_default() {
-        // User entries never carry tokens but flag whether the *next* assistant
-        // reply opens a fresh human turn (vs. continuing after a tool_result).
         if entry.role.as_deref() == Some("user") {
             if is_human_user_prompt(entry.content.as_deref()) {
                 pending_turn_start = true;
@@ -174,8 +186,6 @@ fn parse_cline_cli_file(path: &Path) -> Vec<UnifiedMessage> {
             continue;
         }
 
-        // modelInfo may evolve mid-session (e.g. a `/model` switch); remember
-        // the latest sighting so later messages without one still resolve.
         if let Some(model_info) = entry.model_info.as_ref() {
             if let Some(model) = non_empty_string(model_info.id.as_deref()) {
                 current_model = model;
@@ -188,32 +198,29 @@ fn parse_cline_cli_file(path: &Path) -> Vec<UnifiedMessage> {
         let Some(metrics) = entry.metrics else {
             continue;
         };
+        let input_tokens = extract_i64(metrics.input_tokens.as_ref())
+            .unwrap_or(0)
+            .max(0);
+        let output = extract_i64(metrics.output_tokens.as_ref())
+            .unwrap_or(0)
+            .max(0);
         let cache_read = extract_i64(metrics.cache_read_tokens.as_ref())
             .unwrap_or(0)
             .max(0);
         let cache_write = extract_i64(metrics.cache_write_tokens.as_ref())
             .unwrap_or(0)
             .max(0);
-        // `inputTokens` is inclusive of cached tokens (see ClineCliMetrics); pull
-        // them back out so the breakdown sums without double counting.
-        let input = extract_i64(metrics.input_tokens.as_ref())
-            .unwrap_or(0)
-            .max(0)
+        let input = input_tokens
             .saturating_sub(cache_read)
             .saturating_sub(cache_write);
-        let output = extract_i64(metrics.output_tokens.as_ref())
-            .unwrap_or(0)
-            .max(0);
         let reported_cost = extract_non_negative_finite_f64(metrics.cost.as_ref());
+        let cost = reported_cost.unwrap_or(0.0);
 
-        // Skip vacuous entries: no tokens and no provider-reported cost means
-        // this assistant message produced nothing billable.
-        if input == 0
-            && output == 0
-            && cache_read == 0
-            && cache_write == 0
-            && reported_cost.is_none()
-        {
+        let total_tokens = input
+            .saturating_add(output)
+            .saturating_add(cache_read)
+            .saturating_add(cache_write);
+        if total_tokens == 0 && reported_cost.is_none() {
             continue;
         }
 
@@ -224,12 +231,9 @@ fn parse_cline_cli_file(path: &Path) -> Vec<UnifiedMessage> {
             .unwrap_or(fallback_timestamp);
         let dedup_key = entry
             .id
-            .as_deref()
             .filter(|id| !id.trim().is_empty())
             .map(|id| format!("cline-cli:{session_id}:{id}"))
             .unwrap_or_else(|| format!("cline-cli:{session_id}:{assistant_index}"));
-        let cost = reported_cost.unwrap_or(0.0);
-
         let mut message = UnifiedMessage::new_with_agent(
             "cline",
             current_model.clone(),
@@ -254,7 +258,6 @@ fn parse_cline_cli_file(path: &Path) -> Vec<UnifiedMessage> {
             message.mark_provider_reported_cost();
         }
         messages.push(message);
-
         assistant_index += 1;
         pending_turn_start = false;
     }
@@ -262,57 +265,9 @@ fn parse_cline_cli_file(path: &Path) -> Vec<UnifiedMessage> {
     messages
 }
 
-/// Detect a genuine human prompt: content has at least one `text` block and no
-/// `tool_result` block. Tool-result echoes are role `"user"` but must not start
-/// a new turn.
-fn is_human_user_prompt(content: Option<&[Value]>) -> bool {
-    let Some(content) = content else {
-        return false;
-    };
-    let mut has_text = false;
-    for block in content {
-        match block.get("type").and_then(Value::as_str) {
-            Some("tool_result") => return false,
-            Some("text") => has_text = true,
-            _ => {}
-        }
-    }
-    has_text
-}
-
-fn read_cline_cli_manifest(path: &Path) -> ClineCliManifest {
-    let manifest_path = cline_cli_manifest_path(path);
-    let Ok(mut bytes) = std::fs::read(manifest_path) else {
-        return ClineCliManifest::default();
-    };
-    simd_json::from_slice(&mut bytes).unwrap_or_default()
-}
-
-fn non_empty_string(value: Option<&str>) -> Option<String> {
-    value
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-}
-
-fn extract_f64(value: Option<&Value>) -> Option<f64> {
-    value.and_then(|value| {
-        value
-            .as_f64()
-            .or_else(|| value.as_i64().map(|value| value as f64))
-            .or_else(|| value.as_u64().map(|value| value as f64))
-            .or_else(|| value.as_str().and_then(|value| value.parse::<f64>().ok()))
-    })
-}
-
-fn extract_non_negative_finite_f64(value: Option<&Value>) -> Option<f64> {
-    extract_f64(value).filter(|value| value.is_finite() && *value >= 0.0)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sessions::CostSource;
     use std::fs;
     use tempfile::TempDir;
 
@@ -433,13 +388,15 @@ mod tests {
         assert_eq!(messages[0].model_id, "cline-free/glm-5.2");
         assert_eq!(messages[0].session_id, "cline-cli-session");
         assert_eq!(messages[0].agent.as_deref(), Some("lead"));
-        // 7507 total input minus 50 cache read = 7457 net input.
         assert_eq!(messages[0].tokens.input, 7457);
         assert_eq!(messages[0].tokens.output, 131);
         assert_eq!(messages[0].tokens.cache_read, 50);
         assert_eq!(messages[0].tokens.cache_write, 0);
         assert_eq!(messages[0].cost, 0.0110232);
-        assert_eq!(messages[0].cost_source, CostSource::ProviderReported);
+        assert_eq!(
+            messages[0].cost_source,
+            crate::sessions::CostSource::ProviderReported
+        );
         assert_eq!(messages[0].workspace_label.as_deref(), Some("project"));
         assert_eq!(messages[0].session_title.as_deref(), Some("CLI task"));
         assert!(messages[0].is_turn_start);
@@ -579,8 +536,14 @@ mod tests {
         assert_eq!(messages[0].tokens.cache_read, 5);
         assert_eq!(messages[0].tokens.cache_write, 2);
         assert_eq!(messages[0].cost, 0.0);
-        assert_eq!(messages[0].cost_source, CostSource::ProviderReported);
+        assert_eq!(
+            messages[0].cost_source,
+            crate::sessions::CostSource::ProviderReported
+        );
         assert_eq!(messages[1].cost, 0.0);
-        assert_eq!(messages[1].cost_source, CostSource::Unknown);
+        assert_eq!(
+            messages[1].cost_source,
+            crate::sessions::CostSource::Unknown
+        );
     }
 }

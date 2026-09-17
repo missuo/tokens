@@ -3,7 +3,9 @@ mod auth;
 mod commands;
 mod cursor;
 mod device;
+mod hindsight;
 mod paths;
+mod process_liveness;
 mod settings;
 mod timezone;
 mod trae;
@@ -97,7 +99,7 @@ enum Commands {
     },
     #[command(about = "Capture subprocess output for token usage tracking")]
     Headless {
-        #[arg(help = "Source CLI (currently only 'codex' supported)")]
+        #[arg(help = "Source CLI ('codex' or 'mcode')")]
         source: String,
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
@@ -132,6 +134,11 @@ enum Commands {
     Warp {
         #[command(subcommand)]
         subcommand: WarpSubcommand,
+    },
+    #[command(about = "Hindsight memory backend integration commands")]
+    Hindsight {
+        #[command(subcommand)]
+        subcommand: HindsightSubcommand,
     },
     #[command(about = "Delete all submitted usage data from the server")]
     DeleteSubmittedData,
@@ -253,6 +260,28 @@ enum TraeSubcommand {
 }
 
 #[derive(Subcommand)]
+enum HindsightSubcommand {
+    #[command(about = "Sync Hindsight LLM request logs into the local ledger cache")]
+    Sync {
+        #[arg(
+            long,
+            default_value = "http://127.0.0.1:8888",
+            help = "Hindsight API base URL"
+        )]
+        api: String,
+        #[arg(long, default_value = "default", help = "Tenant identifier")]
+        tenant: String,
+        #[arg(
+            long,
+            help = "Bearer authentication token (or set HINDSIGHT_API_API_TOKEN)"
+        )]
+        token: Option<String>,
+        #[arg(long, help = "Output as JSON")]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
 enum WarpSubcommand {
     #[command(about = "Save Warp GraphQL authentication for aggregate usage sync")]
     Login {
@@ -321,10 +350,6 @@ fn main() -> Result<()> {
     tokens_core::opencode_model_name::set_global(
         tokens_core::opencode_model_name::load_for_home(None),
     );
-
-    // Pin the date-bucketing timezone before any scanning so usage is
-    // attributed to stable calendar dates regardless of where `submit` runs.
-    timezone::install();
 
     match cli.command {
         Some(Commands::Login { token }) => {
@@ -403,6 +428,9 @@ fn main() -> Result<()> {
         Some(Commands::Warp { subcommand }) => {
             run_warp_command(subcommand)
         }
+        Some(Commands::Hindsight { subcommand }) => {
+            run_hindsight_command(subcommand)
+        }
         Some(Commands::DeleteSubmittedData) => {
             run_delete_data_command()
         }
@@ -480,6 +508,23 @@ pub enum ClientFilter {
     Reasonix,
     Freebuff,
     Fx,
+    Senpi,
+    #[value(alias = "auggie")]
+    Augment,
+    Kimchi,
+    #[value(name = "prime-agent")]
+    PrimeAgent,
+    #[value(name = "cherrystudio")]
+    CherryStudio,
+    Dsh,
+    Mcode,
+    Omp,
+    #[value(name = "lmstudio")]
+    LmStudio,
+    Unsloth,
+    Hindsight,
+    #[value(name = "craft-agent")]
+    CraftAgent,
     Synthetic,
 }
 
@@ -532,6 +577,18 @@ impl ClientFilter {
             Self::Reasonix => "reasonix",
             Self::Freebuff => "freebuff",
             Self::Fx => "fx",
+            Self::Senpi => "senpi",
+            Self::Augment => "augment",
+            Self::Kimchi => "kimchi",
+            Self::PrimeAgent => "prime-agent",
+            Self::CherryStudio => "cherrystudio",
+            Self::Dsh => "dsh",
+            Self::Mcode => "mcode",
+            Self::Omp => "omp",
+            Self::LmStudio => "lmstudio",
+            Self::Unsloth => "unsloth",
+            Self::Hindsight => "hindsight",
+            Self::CraftAgent => "craft-agent",
             Self::Synthetic => "synthetic",
         }
     }
@@ -587,6 +644,18 @@ impl ClientFilter {
             Self::Reasonix => Some(ClientId::Reasonix),
             Self::Freebuff => Some(ClientId::Freebuff),
             Self::Fx => Some(ClientId::Fx),
+            Self::Senpi => Some(ClientId::Senpi),
+            Self::Augment => Some(ClientId::Augment),
+            Self::Kimchi => Some(ClientId::Kimchi),
+            Self::PrimeAgent => Some(ClientId::PrimeAgent),
+            Self::CherryStudio => Some(ClientId::CherryStudio),
+            Self::Dsh => Some(ClientId::Dsh),
+            Self::Mcode => Some(ClientId::Mcode),
+            Self::Omp => Some(ClientId::Omp),
+            Self::LmStudio => Some(ClientId::LmStudio),
+            Self::Unsloth => Some(ClientId::Unsloth),
+            Self::Hindsight => Some(ClientId::Hindsight),
+            Self::CraftAgent => Some(ClientId::CraftAgent),
             Self::Synthetic => None,
         }
     }
@@ -638,6 +707,18 @@ impl ClientFilter {
             ClientId::Reasonix => Self::Reasonix,
             ClientId::Freebuff => Self::Freebuff,
             ClientId::Fx => Self::Fx,
+            ClientId::Senpi => Self::Senpi,
+            ClientId::Augment => Self::Augment,
+            ClientId::Kimchi => Self::Kimchi,
+            ClientId::PrimeAgent => Self::PrimeAgent,
+            ClientId::CherryStudio => Self::CherryStudio,
+            ClientId::Dsh => Self::Dsh,
+            ClientId::Mcode => Self::Mcode,
+            ClientId::Omp => Self::Omp,
+            ClientId::LmStudio => Self::LmStudio,
+            ClientId::Unsloth => Self::Unsloth,
+            ClientId::Hindsight => Self::Hindsight,
+            ClientId::CraftAgent => Self::CraftAgent,
         }
     }
 
@@ -646,6 +727,11 @@ impl ClientFilter {
     /// any unknown id so callers can drop unrecognized settings entries
     /// without erroring.
     pub fn from_filter_str(s: &str) -> Option<Self> {
+        // Canonical ids match as_filter_str. A few product aliases map onto
+        // the same ClientFilter (e.g. "auggie" -> Augment).
+        if s == "auggie" {
+            return Some(Self::Augment);
+        }
         Self::value_variants()
             .iter()
             .copied()
@@ -750,6 +836,12 @@ fn client_filter_explicitly_requests_cursor(clients: &Option<Vec<String>>) -> bo
         .is_some_and(|sources| sources.iter().any(|source| source == "cursor"))
 }
 
+fn client_filter_explicitly_requests_hindsight(clients: &Option<Vec<String>>) -> bool {
+    clients
+        .as_ref()
+        .is_some_and(|sources| sources.iter().any(|source| source == "hindsight"))
+}
+
 fn client_filter_explicitly_requests_warp(clients: &Option<Vec<String>>) -> bool {
     clients
         .as_ref()
@@ -839,9 +931,28 @@ fn warp_setup_warnings(clients: &Option<Vec<String>>) -> Vec<String> {
     )]
 }
 
+fn hindsight_setup_warnings(clients: &Option<Vec<String>>) -> Vec<String> {
+    if !client_filter_explicitly_requests_hindsight(clients)
+        || hindsight::has_hindsight_usage_cache_in_home(None)
+    {
+        return Vec::new();
+    }
+
+    let cache_glob = match std::env::var("HINDSIGHT_HOME") {
+        Ok(val) if !val.trim().is_empty() => format!("{}/usage/*.jsonl", val.trim()),
+        _ => "~/.hindsight/usage/*.jsonl".to_string(),
+    };
+
+    vec![format!(
+        "Hindsight usage requires the Tokens Hindsight ledger cache at `{}`; run `tokens hindsight sync`. Tokens does not parse the local Hindsight database.",
+        cache_glob
+    )]
+}
+
 fn setup_warnings(clients: &Option<Vec<String>>) -> Vec<String> {
     let mut warnings = cursor_setup_warnings(clients);
     warnings.extend(warp_setup_warnings(clients));
+    warnings.extend(hindsight_setup_warnings(clients));
     warnings
 }
 
@@ -856,7 +967,7 @@ fn default_submit_clients() -> Vec<String> {
 
 
 fn build_date_filter(date: &DateRangeFlags) -> (Option<String>, Option<String>) {
-    build_date_filter_for_date(date, tokens_core::bucket_timezone().today())
+    build_date_filter_for_date(date, timezone::current().today())
 }
 
 fn build_date_filter_for_date(
@@ -1710,6 +1821,18 @@ fn run_import_command(
         format!("    Models: {}", graph.summary.models.len()).bright_black()
     );
 
+    if outcome.agent_attributed_rows > 0 {
+        eprintln!(
+            "{}",
+            format!(
+                "    Client attribution: exact, from the export's per-agent breakdowns \
+                 ({} row(s))",
+                outcome.agent_attributed_rows
+            )
+            .bright_black()
+        );
+    }
+
     if !outcome.unknown_clients.is_empty() {
         eprintln!(
             "\n  {}",
@@ -2265,6 +2388,7 @@ fn run_submit_command(
 
     let explicit_cursor_filter = client_filter_explicitly_requests_cursor(&clients);
     let explicit_warp_filter = client_filter_explicitly_requests_warp(&clients);
+    let explicit_hindsight_filter = client_filter_explicitly_requests_hindsight(&clients);
     let clients = clients.or_else(|| Some(default_submit_clients()));
 
     let include_cursor = clients
@@ -2274,7 +2398,7 @@ fn run_submit_command(
     if include_cursor && cursor::is_cursor_logged_in() {
         println!("{}", "  Syncing Cursor usage data...".bright_black());
         let rt_sync = Runtime::new()?;
-        let sync_result = rt_sync.block_on(async { cursor::sync_cursor_cache().await });
+        let sync_result = rt_sync.block_on(async { cursor::sync_cursor_cache(false).await });
         if sync_result.synced {
             println!(
                 "{}",
@@ -2289,7 +2413,7 @@ fn run_submit_command(
             }
         }
     }
-    if explicit_cursor_filter || explicit_warp_filter {
+    if explicit_cursor_filter || explicit_warp_filter || explicit_hindsight_filter {
         let cursor_setup_warnings = setup_warnings(&clients);
         emit_cursor_setup_warnings(&cursor_setup_warnings);
     }
@@ -2307,10 +2431,8 @@ fn run_submit_command(
                 until,
                 year,
                 group_by: GroupBy::default(),
+                worktree_rollup: tokens_core::WorktreeRollup::default(),
                 scanner_settings: settings::load_scanner_settings(),
-                // Submit path: never compute subagents — the submit payload must
-                // be identical with or without this feature.
-                today_only: false,
             })
             .await
         })
@@ -2324,6 +2446,7 @@ fn run_submit_command(
     // left out, so a single legacy charge can't block the whole submission.
     let excluded_rows = exclude_tokenless_cost_contributions(&mut graph_result);
     report_excluded_tokenless_rows(&excluded_rows);
+    report_unpriced_submission_usage(&graph_result.unpriced_submission_usage);
 
     if let Some(replacement) = replacement.as_ref() {
         for client in &replacement.clients {
@@ -2716,6 +2839,23 @@ fn run_trae_command(subcommand: TraeSubcommand) -> Result<()> {
     }
 }
 
+fn run_hindsight_command(subcommand: HindsightSubcommand) -> Result<()> {
+    match subcommand {
+        HindsightSubcommand::Sync {
+            api,
+            tenant,
+            token,
+            json,
+        } => hindsight::run_hindsight_sync(hindsight::SyncHindsightOptions {
+            api,
+            tenant,
+            token,
+            json,
+            home: None,
+        }),
+    }
+}
+
 fn run_warp_command(subcommand: WarpSubcommand) -> Result<()> {
     match subcommand {
         WarpSubcommand::Login { token, cookie } => warp::run_warp_login(token, cookie),
@@ -2723,6 +2863,88 @@ fn run_warp_command(subcommand: WarpSubcommand) -> Result<()> {
         WarpSubcommand::Status { json } => warp::run_warp_status(json),
         WarpSubcommand::Sync { json } => warp::run_warp_sync(json),
     }
+}
+
+fn report_unpriced_submission_usage(unpriced: &[tokens_core::UnpricedSubmissionUsage]) {
+    use colored::Colorize;
+
+    if unpriced.is_empty() {
+        return;
+    }
+
+    // One row per provider/model pair can run to dozens on a long proxy-model
+    // history, so cap the detail and report the aggregate. Rank by tokens --
+    // every row is $0.00, so tokens are what pricing a model would recover --
+    // and still name the capped ids, because the hint below asks the user to
+    // add pricing keyed by exactly these ids.
+    const MAX_DETAIL_ROWS: usize = 20;
+    const TAIL_IDS_PER_LINE: usize = 4;
+
+    let mut ranked: Vec<&tokens_core::UnpricedSubmissionUsage> = unpriced.iter().collect();
+    ranked.sort_by(|a, b| {
+        b.total_tokens
+            .cmp(&a.total_tokens)
+            .then_with(|| b.message_count.cmp(&a.message_count))
+            .then_with(|| (&a.provider_id, &a.model_id).cmp(&(&b.provider_id, &b.model_id)))
+    });
+
+    for row in ranked.iter().take(MAX_DETAIL_ROWS) {
+        println!(
+            "{}",
+            format!(
+                "  Warning: submitting {} unpriced {}/{} message(s) ({} tokens) at $0.00: {}.",
+                row.message_count,
+                row.provider_id,
+                row.model_id,
+                format_tokens_with_commas(row.total_tokens),
+                row.reason,
+            )
+            .yellow()
+        );
+    }
+
+    if ranked.len() > MAX_DETAIL_ROWS {
+        let capped = &ranked[MAX_DETAIL_ROWS..];
+        println!(
+            "{}",
+            format!("    ... and {} more at $0.00:", capped.len()).bright_black()
+        );
+        for chunk in capped.chunks(TAIL_IDS_PER_LINE) {
+            let ids = chunk
+                .iter()
+                .map(|row| format!("{}/{}", row.provider_id, row.model_id))
+                .collect::<Vec<_>>()
+                .join(", ");
+            println!("{}", format!("      {}", ids).bright_black());
+        }
+    }
+
+    let total_messages: usize = unpriced
+        .iter()
+        .fold(0usize, |acc, row| acc.saturating_add(row.message_count));
+    let total_tokens: i64 = unpriced
+        .iter()
+        .fold(0i64, |acc, row| acc.saturating_add(row.total_tokens));
+    println!(
+        "{}",
+        format!(
+            "  Unpriced total: {} message(s) ({} tokens) at $0.00 across {} provider/model(s).",
+            total_messages,
+            format_tokens_with_commas(total_tokens),
+            unpriced.len(),
+        )
+        .bright_black()
+    );
+
+    let pricing_path = crate::paths::get_config_dir().join("custom-pricing.json");
+    println!(
+        "{}",
+        format!(
+            "  Hint: unpriced usage counts toward tokens with zero cost. Add exact-match entries to\n          {}\n          keyed by the model id (the `model` half of `provider/model` above); an explicit 0\n          declares a free model. Re-check with `tokens submit --dry-run`, then resubmit.",
+            pricing_path.display(),
+        )
+        .bright_black()
+    );
 }
 
 fn format_tokens_with_commas(n: i64) -> String {
@@ -2743,6 +2965,15 @@ struct CaptureCommandOutcome {
     exit_code: i32,
     timed_out: bool,
 }
+
+/// How long the stdout pump gets to finish draining a killed child's pipe.
+///
+/// Bounded because a *descendant* of the child may still hold the write end, in
+/// which case the pump never reaches EOF and an unbounded wait hangs the whole
+/// timeout (#1049). Two seconds because the ordinary case -- the pipe closing
+/// with the child -- only has to move at most one pipe buffer, so anything past
+/// a few milliseconds already means a descendant is holding it open.
+const STDOUT_DRAIN_GRACE: Duration = Duration::from_secs(2);
 
 fn run_capture_command(
     command: &str,
@@ -2776,23 +3007,30 @@ fn run_capture_command(
         )
     })?;
 
-    let output_handle = thread::spawn(move || -> Result<()> {
-        let mut reader = std::io::BufReader::new(stdout);
-        let mut buffer = [0; 8192];
-        loop {
-            match reader.read(&mut buffer) {
-                Ok(0) => return Ok(()),
-                Ok(n) => output_file
-                    .write_all(&buffer[..n])
-                    .map_err(|e| anyhow::anyhow!("Failed to write to output file: {}", e))?,
-                Err(e) => {
-                    return Err(anyhow::anyhow!(
-                        "Failed to read from subprocess stdout: {}",
-                        e
-                    ));
+    // The pump reports completion over a channel rather than only through its
+    // JoinHandle, so the timeout path below can wait for it with a bound.
+    let (pump_done_tx, pump_done_rx) = std::sync::mpsc::channel::<Result<()>>();
+    thread::spawn(move || {
+        let result = (|| -> Result<()> {
+            let mut reader = std::io::BufReader::new(stdout);
+            let mut buffer = [0; 8192];
+            loop {
+                match reader.read(&mut buffer) {
+                    Ok(0) => return Ok(()),
+                    Ok(n) => output_file
+                        .write_all(&buffer[..n])
+                        .map_err(|e| anyhow::anyhow!("Failed to write to output file: {}", e))?,
+                    Err(e) => {
+                        return Err(anyhow::anyhow!(
+                            "Failed to read from subprocess stdout: {}",
+                            e
+                        ));
+                    }
                 }
             }
-        }
+        })();
+        // A panic drops the sender instead, surfacing as RecvError below.
+        let _ = pump_done_tx.send(result);
     });
 
     let deadline = Instant::now() + timeout;
@@ -2816,11 +3054,46 @@ fn run_capture_command(
         thread::sleep(Duration::from_millis(25));
     };
 
-    let output_result = output_handle
-        .join()
-        .map_err(|_| anyhow::anyhow!("Subprocess stdout reader thread panicked"))?;
-    if !timed_out {
-        output_result?;
+    if timed_out {
+        // Wait, but with a bound. An unbounded wait hangs whenever a descendant
+        // holds the pipe open (#1049); no wait at all loses output, because the
+        // caller prints "Partial output saved" and then calls process::exit,
+        // which does not wait for threads -- so anything the child had already
+        // written but the pump had not yet copied would be dropped.
+        //
+        // A drain error is deliberately ignored: the run already failed on the
+        // timeout, and the partial file is best-effort by definition.
+        let _ = pump_done_rx.recv_timeout(STDOUT_DRAIN_GRACE);
+    } else {
+        // The child exited on its own, but that does NOT mean the pipe is closed:
+        // a descendant it spawned can still hold the write end, and then the pump
+        // never reaches EOF. This branch has no deadline behind it -- `timed_out`
+        // is false precisely because the deadline was never reached -- so an
+        // unbounded wait here hangs forever with nothing to rescue it. That was
+        // true of the original unconditional join too, and #1166 only bounded the
+        // timeout branch, so it survived both.
+        //
+        // Bound it by whatever is left of the caller's own deadline, plus the same
+        // drain grace. Total wall time therefore stays within the configured
+        // timeout plus the grace, whichever path is taken.
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        match pump_done_rx.recv_timeout(remaining + STDOUT_DRAIN_GRACE) {
+            Ok(pump_result) => pump_result?,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                // Report rather than silently truncate: the child succeeded, so
+                // returning Ok here would present a capture file we cannot show
+                // is complete.
+                return Err(anyhow::anyhow!(
+                    "Subprocess '{}' exited but its stdout stayed open past the capture deadline, \
+                     which happens when it leaves a background process holding the pipe. \
+                     The output file may be incomplete.",
+                    command
+                ));
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                return Err(anyhow::anyhow!("Subprocess stdout reader thread panicked"));
+            }
+        }
     }
 
     Ok(CaptureCommandOutcome {
@@ -2840,9 +3113,9 @@ fn run_headless_command(
     use uuid::Uuid;
 
     let source_lower = source.to_lowercase();
-    if source_lower != "codex" {
+    if source_lower != "codex" && source_lower != "mcode" {
         eprintln!("\n  Error: Unknown headless source '{}'.", source);
-        eprintln!("  Currently only 'codex' is supported.\n");
+        eprintln!("  Supported sources are 'codex' and 'mcode'.\n");
         std::process::exit(1);
     }
 
@@ -2855,10 +3128,12 @@ fn run_headless_command(
         None => "jsonl".to_string(),
     };
 
-    let mut final_args = args.clone();
-    if !no_auto_flags && source_lower == "codex" && !final_args.contains(&"--json".to_string()) {
-        final_args.push("--json".to_string());
+    if source_lower == "mcode" && resolved_format != "jsonl" {
+        eprintln!("\n  Error: MiniMax Code headless capture requires jsonl output.\n");
+        std::process::exit(1);
     }
+
+    let final_args = prepare_headless_args(&source_lower, args, no_auto_flags)?;
 
     let home_dir =
         dirs::home_dir().ok_or_else(|| anyhow::anyhow!("Could not determine home directory"))?;
@@ -2931,5 +3206,39 @@ fn run_headless_command(
     }
 
     Ok(())
+}
+
+fn prepare_headless_args(
+    source: &str,
+    mut args: Vec<String>,
+    no_auto_flags: bool,
+) -> Result<Vec<String>> {
+    if no_auto_flags {
+        return Ok(args);
+    }
+
+    if source == "codex" {
+        if !args.iter().any(|arg| arg == "--json") {
+            args.push("--json".to_string());
+        }
+        return Ok(args);
+    }
+
+    let exec_index = args.iter().position(|arg| arg == "exec").ok_or_else(|| {
+        anyhow::anyhow!("MiniMax Code headless capture requires the `exec` subcommand")
+    })?;
+    let has_output_format = args.iter().any(|arg| {
+        arg == "--output-format"
+            || arg.starts_with("--output-format=")
+            || arg == "--format"
+            || arg.starts_with("--format=")
+    });
+    if !has_output_format {
+        args.splice(
+            exec_index + 1..exec_index + 1,
+            ["--output-format".to_string(), "stream-json".to_string()],
+        );
+    }
+    Ok(args)
 }
 

@@ -2,13 +2,12 @@
 //!
 //! Junie stores local sessions under `~/.junie/sessions/<session-id>/events.jsonl`.
 
-use super::utils::{back_anchor_timestamp, file_modified_timestamp_ms};
+use super::utils::{back_anchor_timestamp, file_modified_timestamp_ms, for_each_json_line};
 use super::UnifiedMessage;
 use crate::{pricing, provider_identity, TokenBreakdown};
 use chrono::{Local, LocalResult, NaiveDateTime, TimeZone};
 use serde_json::Value;
 use std::collections::HashSet;
-use std::io::{BufRead, BufReader};
 use std::path::Path;
 
 const USAGE_EVENT_KIND: &str = "LlmResponseMetadataEvent";
@@ -20,11 +19,6 @@ const SKIP_EVENT_KINDS: &[&str] = &[
 ];
 
 pub fn parse_junie_file(path: &Path) -> Vec<UnifiedMessage> {
-    let file = match std::fs::File::open(path) {
-        Ok(file) => file,
-        Err(_) => return Vec::new(),
-    };
-
     let session_id = session_id_from_path(path);
     let default_timestamp =
         session_timestamp_from_id(&session_id).unwrap_or_else(|| file_modified_timestamp_ms(path));
@@ -32,39 +26,36 @@ pub fn parse_junie_file(path: &Path) -> Vec<UnifiedMessage> {
     let mut messages = Vec::new();
     let mut seen = HashSet::new();
 
-    for line in BufReader::new(file).lines() {
-        let Ok(line) = line else {
-            continue;
-        };
+    for_each_json_line(path, &mut |_index, line| {
         // Cheap pre-filter only: Junie state snapshots can be very large and do
         // not carry the usage rows Tokens needs, so skip lines that mention
         // neither relevant kind before paying for JSON parsing. The authoritative
         // skip decision is made on the parsed event kind below.
         if !line.contains(USAGE_EVENT_KIND) && !line.contains(USER_PROMPT_KIND) {
-            continue;
+            return;
         }
 
-        let Ok(value) = serde_json::from_str::<Value>(&line) else {
-            continue;
+        let Ok(value) = serde_json::from_str::<Value>(line) else {
+            return;
         };
         // Skip noise events by matching the parsed event kind, not a raw substring
         // search: a legitimate usage/prompt line may merely *mention* a skipped
         // kind in its text and must not be dropped.
         if let Some(kind) = parsed_event_kind(&value) {
             if SKIP_EVENT_KINDS.contains(&kind) {
-                continue;
+                return;
             }
         }
         if event_kind(&value) == Some(USER_PROMPT_KIND) {
             pending_turn_start = true;
-            continue;
+            return;
         }
 
         let Some(agent_event) = value
             .pointer("/event/agentEvent")
             .filter(|event| string_field(event, "kind") == Some(USAGE_EVENT_KIND))
         else {
-            continue;
+            return;
         };
 
         // `explicit_timestamp` is the recorded `timestampMs` for this event, as
@@ -78,7 +69,7 @@ pub fn parse_junie_file(path: &Path) -> Vec<UnifiedMessage> {
         let timestamp = explicit_timestamp.unwrap_or(default_timestamp);
         let agent = agent_name(agent_event);
         let Some(usages) = agent_event.get("modelUsage").and_then(Value::as_array) else {
-            continue;
+            return;
         };
 
         let mut turn_start_assigned = false;
@@ -99,9 +90,9 @@ pub fn parse_junie_file(path: &Path) -> Vec<UnifiedMessage> {
                 .to_string();
             let provider_id = provider_from_usage(usage, &model_id);
             let tokens = tokens_from_usage(usage);
-            let cost = float_field(usage, "cost")
-                .filter(|cost| cost.is_finite() && *cost >= 0.0)
-                .unwrap_or(0.0);
+            let reported_cost =
+                float_field(usage, "cost").filter(|cost| cost.is_finite() && *cost >= 0.0);
+            let cost = reported_cost.unwrap_or(0.0);
             if tokens.total() == 0 && cost == 0.0 {
                 continue;
             }
@@ -150,6 +141,9 @@ pub fn parse_junie_file(path: &Path) -> Vec<UnifiedMessage> {
             );
             message.dedup_key = Some(dedup_key);
             message.duration_ms = duration_ms;
+            if reported_cost.is_some() {
+                message.mark_provider_reported_cost();
+            }
             if pending_turn_start && !turn_start_assigned {
                 message.is_turn_start = true;
                 turn_start_assigned = true;
@@ -161,7 +155,7 @@ pub fn parse_junie_file(path: &Path) -> Vec<UnifiedMessage> {
         // produced no counted usage does not leak `is_turn_start` onto a later,
         // unrelated turn's usage event.
         pending_turn_start = false;
-    }
+    });
 
     messages
 }
@@ -293,3 +287,222 @@ fn float_field(value: &Value, field: &str) -> Option<f64> {
     value.as_str()?.trim().parse().ok()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::TempDir;
+
+    /// Write the given JSONL `content` to `events.jsonl` inside a session
+    /// directory whose name drives `session_id_from_path`, then parse it.
+    fn parse_events(content: &str) -> Vec<UnifiedMessage> {
+        let dir = TempDir::new().unwrap();
+        let session_dir = dir.path().join("session-250622-101010");
+        std::fs::create_dir_all(&session_dir).unwrap();
+        let path = session_dir.join("events.jsonl");
+        let mut file = std::fs::File::create(&path).unwrap();
+        file.write_all(content.as_bytes()).unwrap();
+        file.flush().unwrap();
+        parse_junie_file(&path)
+    }
+
+    fn usage_event(timestamp_ms: i64, model: &str, input: i64, output: i64) -> String {
+        format!(
+            r#"{{"timestampMs":{timestamp_ms},"event":{{"agentEvent":{{"kind":"LlmResponseMetadataEvent","modelUsage":[{{"model":"{model}","inputTokens":{input},"outputTokens":{output}}}]}}}}}}"#
+        )
+    }
+
+    #[test]
+    fn distinct_usage_rows_with_identical_tokens_are_both_counted() {
+        // Two separate LLM response events with identical token counts but
+        // distinct `timestampMs` (the realistic shape of #727: back-to-back
+        // calls returning the same usage). Both must be counted. The original
+        // #727 bug dropped the second because the per-`modelUsage` index reset
+        // to 0; here the differing timestamp keeps the keys distinct.
+        let content = format!(
+            "{}\n{}\n",
+            usage_event(1_750_000_000_000, "gpt-5", 100, 50),
+            usage_event(1_750_000_001_000, "gpt-5", 100, 50),
+        );
+        let messages = parse_events(&content);
+
+        assert_eq!(
+            messages.len(),
+            2,
+            "both distinct calls with identical token counts must be counted"
+        );
+        for message in &messages {
+            assert_eq!(message.tokens.input, 100);
+            assert_eq!(message.tokens.output, 50);
+        }
+        assert_ne!(
+            messages[0].dedup_key, messages[1].dedup_key,
+            "distinct usage rows must receive distinct dedup keys"
+        );
+    }
+
+    #[test]
+    fn field_present_cost_is_provider_reported_even_when_zero() {
+        let content = r#"{"timestampMs":1750000000000,"event":{"agentEvent":{"kind":"LlmResponseMetadataEvent","modelUsage":[{"model":"unknown-model","inputTokens":1,"outputTokens":0,"cost":0}]}}}"#;
+        let messages = parse_events(content);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].cost, 0.0);
+        assert_eq!(
+            messages[0].cost_source,
+            super::super::CostSource::ProviderReported
+        );
+    }
+
+    #[test]
+    fn replayed_identical_event_is_deduplicated_to_one() {
+        // Junie can append/replay the exact same `LlmResponseMetadataEvent`.
+        // A byte-for-byte replayed event (same timestamp, model, and tokens)
+        // must collapse to a single counted row — otherwise the same tokens
+        // and cost are double-counted. The dedup suffix is derived from the
+        // event's own within-array index, so the replay reproduces the same
+        // dedup key and is dropped by the `seen` set.
+        let content = format!(
+            "{}\n{}\n",
+            usage_event(1_750_000_000_000, "gpt-5", 100, 50),
+            usage_event(1_750_000_000_000, "gpt-5", 100, 50),
+        );
+        let messages = parse_events(&content);
+
+        assert_eq!(
+            messages.len(),
+            1,
+            "a replayed identical usage event must collapse to a single row"
+        );
+        assert_eq!(messages[0].tokens.input, 100);
+        assert_eq!(messages[0].tokens.output, 50);
+    }
+
+    #[test]
+    fn identical_rows_within_one_event_are_both_counted() {
+        // Multiple identical rows inside a single `modelUsage` array must also
+        // each survive: they get distinct within-event indices (0 and 1).
+        let content = "{\"timestampMs\":1750000000000,\"event\":{\"agentEvent\":{\"kind\":\"LlmResponseMetadataEvent\",\"modelUsage\":[{\"model\":\"gpt-5\",\"inputTokens\":100,\"outputTokens\":50},{\"model\":\"gpt-5\",\"inputTokens\":100,\"outputTokens\":50}]}}}\n";
+        let messages = parse_events(content);
+        assert_eq!(messages.len(), 2);
+        assert_ne!(messages[0].dedup_key, messages[1].dedup_key);
+    }
+
+    #[test]
+    fn pending_turn_start_does_not_leak_when_prompt_yields_no_usage() {
+        // Prompt A opens a turn but its response event carries no counted usage
+        // (zero tokens). Prompt B then opens its own turn with real usage. The
+        // turn-start must attach to B's usage, and the empty A response must not
+        // leak the flag onto an unrelated later usage event.
+        let empty_usage = r#"{"timestampMs":1750000000000,"event":{"agentEvent":{"kind":"LlmResponseMetadataEvent","modelUsage":[{"model":"gpt-5","inputTokens":0,"outputTokens":0}]}}}"#;
+        let content = format!(
+            "{}\n{}\n{}\n{}\n",
+            r#"{"kind":"UserPromptEvent"}"#,
+            empty_usage,
+            r#"{"kind":"UserPromptEvent"}"#,
+            usage_event(1_750_000_100_000, "gpt-5", 100, 50),
+        );
+        let messages = parse_events(&content);
+
+        assert_eq!(messages.len(), 1);
+        assert!(
+            messages[0].is_turn_start,
+            "turn-start should attach to prompt B's real usage"
+        );
+    }
+
+    #[test]
+    fn turn_start_marks_only_the_first_usage_after_a_prompt() {
+        let content = format!(
+            "{}\n{}\n{}\n",
+            r#"{"kind":"UserPromptEvent"}"#,
+            usage_event(1_750_000_000_000, "gpt-5", 100, 50),
+            usage_event(1_750_000_100_000, "gpt-5", 200, 60),
+        );
+        let messages = parse_events(&content);
+
+        assert_eq!(messages.len(), 2);
+        assert!(messages[0].is_turn_start);
+        assert!(
+            !messages[1].is_turn_start,
+            "only the first usage event after a prompt is a turn-start"
+        );
+    }
+
+    #[test]
+    fn usage_line_mentioning_skipped_kind_is_not_dropped() {
+        // The user prompt text legitimately mentions a skipped kind name; the
+        // following usage event must still be counted because the skip decision
+        // is made on the parsed event kind, not a raw substring match.
+        let content = format!(
+            "{}\n{}\n",
+            r#"{"kind":"UserPromptEvent","prompt":"please review the AgentStateUpdatedEvent handling"}"#,
+            usage_event(1_750_000_000_000, "gpt-5", 100, 50),
+        );
+        let messages = parse_events(&content);
+
+        assert_eq!(
+            messages.len(),
+            1,
+            "a usage event must not be dropped just because a prior line mentioned a skipped kind"
+        );
+        assert!(messages[0].is_turn_start);
+    }
+
+    #[test]
+    fn skipped_event_kind_is_ignored() {
+        let content = format!(
+            "{}\n{}\n",
+            r#"{"kind":"AgentStateUpdatedEvent","event":{"agentEvent":{"kind":"LlmResponseMetadataEvent","modelUsage":[{"model":"gpt-5","inputTokens":100,"outputTokens":50}]}}}"#,
+            usage_event(1_750_000_000_000, "gpt-5", 100, 50),
+        );
+        let messages = parse_events(&content);
+        // Only the genuine usage event counts; the snapshot tagged with a
+        // skipped top-level kind is ignored even though it embeds a usage shape.
+        assert_eq!(messages.len(), 1);
+    }
+
+    #[test]
+    fn test_usage_timestamp_is_start_anchored() {
+        // Regression (follow-up to #890): `timestampMs` on a
+        // LlmResponseMetadataEvent is recorded when the response is logged
+        // (the call's *end*), and `usage.time` is that call's latency. If the
+        // message's timestamp were left at `timestampMs`, sessionize()'s
+        // `[timestamp, timestamp + duration_ms]` span would project forward
+        // past the actual completion into phantom idle time. The parser must
+        // back-calculate the start anchor instead.
+        let content = r#"{"timestampMs":1750000005000,"event":{"agentEvent":{"kind":"LlmResponseMetadataEvent","modelUsage":[{"model":"gpt-5","inputTokens":100,"outputTokens":50,"time":2000}]}}}"#;
+        let messages = parse_events(content);
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(
+            messages[0].timestamp, 1_750_000_003_000,
+            "timestamp must be back-calculated to the call start (end - duration)"
+        );
+        assert_eq!(
+            messages[0].duration_ms,
+            Some(2000),
+            "duration_ms must still span from start to the logged end timestamp"
+        );
+    }
+
+    #[test]
+    fn missing_timestamp_ms_does_not_subtract_from_session_fallback() {
+        // Second-round review fix: when `timestampMs` is absent (only
+        // `usage.time` latency is recorded), `timestamp` falls back to
+        // `default_timestamp` (session-ID-derived, or file mtime) — not a
+        // per-event recorded end time. Back-calculating
+        // `default_timestamp - usage.time` in that case would shift the
+        // message into the wrong day rather than anchor it correctly, since
+        // the fallback was never the call's actual completion time.
+        let content = r#"{"event":{"agentEvent":{"kind":"LlmResponseMetadataEvent","modelUsage":[{"model":"gpt-5","inputTokens":100,"outputTokens":50,"time":2000}]}}}"#;
+        let messages = parse_events(content);
+
+        assert_eq!(messages.len(), 1);
+        let expected_fallback = session_timestamp_from_id("session-250622-101010").unwrap();
+        assert_eq!(
+            messages[0].timestamp, expected_fallback,
+            "timestamp must stay at the session-derived fallback, not be back-calculated from it"
+        );
+        assert_eq!(messages[0].duration_ms, Some(2000));
+    }
+}
