@@ -319,6 +319,52 @@ pub(crate) struct CodexParseState {
     /// re-parses, since a mirror row for an earlier turn still has to yield.
     #[serde(default)]
     pub turn_coverage: CodexTurnCoverage,
+    /// Thread id announced by a `codex exec --json` capture's `thread.started`
+    /// line. Headless usage lines carry no session identity or timestamp of
+    /// their own, so this is what ties them to the thread (and to its
+    /// rollout, which records the same turns). Fork (missuo/tokens).
+    #[serde(default)]
+    pub headless_thread_id: Option<String>,
+    /// Usage lines seen so far under `headless_thread_id`; the ordinal that
+    /// makes each one's dedup key unique within the thread.
+    #[serde(default)]
+    pub headless_turn_ordinal: u32,
+}
+
+/// Dedup-key prefix of usage read from a `codex exec --json` capture.
+pub(crate) const CODEX_HEADLESS_CAPTURE_KEY_PREFIX: &str = "codex:headless-capture:";
+
+/// The creation time a UUIDv7 thread id encodes, in Unix milliseconds.
+///
+/// Codex thread ids are UUIDv7, whose first 48 bits are the creation time.
+/// That is a stable date for usage that records no timestamp, unlike the
+/// capture file's mtime, which moves every time the file is copied, synced or
+/// touched and so re-dated the same usage onto a new day each time.
+pub(crate) fn uuid_v7_timestamp_ms(id: &str) -> Option<i64> {
+    let bytes = id.as_bytes();
+    let is_uuid = bytes.len() == 36
+        && bytes.iter().enumerate().all(|(index, byte)| match index {
+            8 | 13 | 18 | 23 => *byte == b'-',
+            _ => byte.is_ascii_hexdigit(),
+        });
+    if !is_uuid || bytes[14] != b'7' {
+        return None;
+    }
+    let hex: String = id.chars().filter(|c| *c != '-').take(12).collect();
+    i64::from_str_radix(&hex, 16).ok()
+}
+
+/// The thread id a `codex exec --json` `thread.started` line announces.
+fn headless_thread_started_id(line: &str) -> Option<String> {
+    if !line.contains("thread.started") {
+        return None;
+    }
+    let mut bytes = line.as_bytes().to_vec();
+    let value: Value = simd_json::from_slice(&mut bytes).ok()?;
+    if value.get("type").and_then(Value::as_str) != Some("thread.started") {
+        return None;
+    }
+    extract_string(value.get("thread_id")).filter(|id| !id.trim().is_empty())
 }
 
 /// Which of a thread's turns a rollout recorded usage for.
@@ -902,6 +948,14 @@ fn parse_codex_reader<R: BufRead>(
             }
         }
 
+        if let Some(thread_id) = headless_thread_started_id(trimmed) {
+            if state.headless_thread_id.as_deref() != Some(thread_id.as_str()) {
+                state.headless_thread_id = Some(thread_id);
+                state.headless_turn_ordinal = 0;
+            }
+            continue;
+        }
+
         let headless_message = parse_codex_headless_line(
             trimmed,
             session_id,
@@ -929,11 +983,30 @@ fn parse_codex_reader<R: BufRead>(
             }
         }
 
-        if let Some((mut msg, used_fallback_timestamp)) = headless_message {
+        if let Some((mut msg, mut used_fallback_timestamp)) = headless_message {
             msg.set_workspace(
                 state.session_workspace_key.clone(),
                 state.session_workspace_label.clone(),
             );
+            // A capture names its thread up front. Key its usage by thread and
+            // ordinal so copies of the same capture collapse, and so the codex
+            // lane can defer to the thread's rollout, which records the same
+            // turns with real timestamps. Without a thread id the line keeps
+            // the old file-scoped identity.
+            if let Some(thread_id) = state.headless_thread_id.clone() {
+                state.headless_turn_ordinal = state.headless_turn_ordinal.saturating_add(1);
+                msg.session_id = thread_id.clone();
+                msg.dedup_key = Some(format!(
+                    "{CODEX_HEADLESS_CAPTURE_KEY_PREFIX}{thread_id}:{}",
+                    state.headless_turn_ordinal
+                ));
+                if used_fallback_timestamp {
+                    if let Some(created_ms) = uuid_v7_timestamp_ms(&thread_id) {
+                        msg.set_timestamp(created_ms);
+                        used_fallback_timestamp = false;
+                    }
+                }
+            }
             messages.push(msg);
             if used_fallback_timestamp {
                 fallback_timestamp_indices.push(messages.len() - 1);
@@ -3272,6 +3345,81 @@ mod tests {
         assert_eq!(messages[1].tokens.output, 8);
         assert_eq!(messages[1].tokens.cache_read, 5);
         assert_eq!(messages[1].tokens.reasoning, 2);
+    }
+
+    // What `codex exec --json` really prints (codex-cli 0.154.0): no
+    // timestamps anywhere, and the thread id on its own first line.
+    const EXEC_CAPTURE: &str = concat!(
+        r#"{"type":"thread.started","thread_id":"01a0b007-2e53-70a0-8b1f-04212dd8dd11"}"#, "\n",
+        r#"{"type":"turn.started"}"#, "\n",
+        r#"{"type":"turn.completed","usage":{"input_tokens":20826,"cached_input_tokens":12928,"cache_write_input_tokens":0,"output_tokens":5,"reasoning_output_tokens":0}}"#, "\n",
+    );
+
+    #[test]
+    fn test_exec_capture_is_keyed_and_dated_by_its_thread() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("codex-a.jsonl");
+        std::fs::write(&path, EXEC_CAPTURE).unwrap();
+
+        let parsed = parse_codex_file_incremental(&path, 0, CodexParseState::default());
+        assert_eq!(parsed.messages.len(), 1);
+        let message = &parsed.messages[0];
+        assert_eq!(message.session_id, "01a0b007-2e53-70a0-8b1f-04212dd8dd11");
+        assert_eq!(
+            message.dedup_key.as_deref(),
+            Some("codex:headless-capture:01a0b007-2e53-70a0-8b1f-04212dd8dd11:1")
+        );
+        // 2026-09-17T15:40:55.763Z, the thread's UUIDv7 creation time --
+        // not the capture file's mtime, and not re-stamped later.
+        assert_eq!(message.timestamp, 1_789_659_655_763);
+        assert!(parsed.fallback_timestamp_indices.is_empty());
+        assert_eq!(message.tokens.total(), 20_831);
+    }
+
+    #[test]
+    fn test_exec_capture_copies_share_identity_whatever_their_mtime() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let first = dir.path().join("codex-a.jsonl");
+        let copy = dir.path().join("codex-b.jsonl");
+        std::fs::write(&first, EXEC_CAPTURE).unwrap();
+        std::fs::write(&copy, EXEC_CAPTURE).unwrap();
+        let old = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+        std::fs::File::options()
+            .write(true)
+            .open(&copy)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+
+        let a = parse_codex_file(&first);
+        let b = parse_codex_file(&copy);
+        assert_eq!(a[0].dedup_key, b[0].dedup_key);
+        assert_eq!(a[0].timestamp, b[0].timestamp);
+        assert_eq!(a[0].date, b[0].date);
+    }
+
+    #[test]
+    fn test_uuid_v7_timestamp_only_reads_v7_ids() {
+        assert_eq!(
+            uuid_v7_timestamp_ms("01a0b007-2e53-70a0-8b1f-04212dd8dd11"),
+            Some(1_789_659_655_763)
+        );
+        assert_eq!(uuid_v7_timestamp_ms("01a0b007-2e53-40a0-8b1f-04212dd8dd11"), None);
+        assert_eq!(uuid_v7_timestamp_ms("not-a-uuid"), None);
+    }
+
+    #[test]
+    fn test_capture_without_thread_keeps_file_scoped_identity() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("legacy.jsonl");
+        std::fs::write(
+            &path,
+            r#"{"type":"turn.completed","model":"gpt-4o-mini","usage":{"input_tokens":120,"cached_input_tokens":20,"output_tokens":30}}"#,
+        )
+        .unwrap();
+        let parsed = parse_codex_file_incremental(&path, 0, CodexParseState::default());
+        assert_eq!(parsed.messages[0].session_id, "legacy");
+        assert_eq!(parsed.fallback_timestamp_indices, vec![0]);
     }
 
     #[test]

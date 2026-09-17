@@ -1258,14 +1258,15 @@ struct TsTokenContributionData {
 /// totals and the corrected figure should replace what is stored.
 ///
 /// Codex 3: reasoning tokens are no longer counted on top of output tokens,
-/// which already include them. Codex rollouts are not cleaned up locally, so
+/// which already include them. Codex 4: a `codex exec --json` capture no
+/// longer counts beside the run's rollout or once per copy. Codex rollouts are not cleaned up locally, so
 /// the recount covers the whole history. Claude's and Grok's smaller
 /// corrections are deliberately not bumped: both clients delete old session
 /// files, and a bump would let a total that shrank because history vanished
 /// overwrite the stored one.
 fn submit_parser_revision(client: &str) -> u32 {
     if client == "codex" {
-        3
+        4
     } else {
         1
     }

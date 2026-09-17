@@ -2189,10 +2189,14 @@ fn parse_all_messages_streaming<S: MessageSink>(
         })
         .collect();
     let mut codex_seen: HashSet<String> = HashSet::new();
+    let rollout_threads = codex_rollout_threads(codex_outcomes.iter().map(|(path, _)| path));
     for (path, (outcome, turn_coverage)) in codex_outcomes {
         let mut owned_thread: Option<String> = None;
         let mut counted_under_codex = false;
         for message in outcome.messages {
+            if headless_capture_superseded(&message, &rollout_threads) {
+                continue;
+            }
             if message.client == sessions::codex::OPENCLAW_CLIENT_ID {
                 if owned_thread.is_none() {
                     owned_thread = Some(message.session_id.clone());
@@ -5348,10 +5352,14 @@ pub fn parse_local_clients(options: LocalParseOptions) -> Result<ParsedMessages,
     let mut recorded_codex_turns = RecordedCodexTurns::default();
     let mut codex_seen: HashSet<String> = HashSet::new();
     let mut codex_msgs: Vec<ParsedMessage> = Vec::new();
+    let rollout_threads = codex_rollout_threads(codex_files.iter().map(|(path, _, _)| path));
     for (path, file_messages, turn_coverage) in codex_files {
         let mut owned_thread: Option<String> = None;
         let mut counted_under_codex = false;
         for message in file_messages {
+            if headless_capture_superseded(&message, &rollout_threads) {
+                continue;
+            }
             if message.client == sessions::codex::OPENCLAW_CLIENT_ID {
                 if owned_thread.is_none() {
                     owned_thread = Some(message.session_id.clone());
@@ -6472,6 +6480,30 @@ fn unified_to_parsed(msg: &UnifiedMessage) -> ParsedMessage {
         cost: msg.cost,
         cost_source: msg.cost_source,
     }
+}
+
+/// Thread ids of the Codex rollouts in this scan.
+fn codex_rollout_threads<'a>(paths: impl Iterator<Item = &'a PathBuf>) -> HashSet<String> {
+    paths
+        .filter_map(|path| sessions::codex::thread_id_from_rollout_path(path))
+        .collect()
+}
+
+/// Whether a `codex exec --json` capture row is already covered by its
+/// thread's rollout.
+///
+/// `codex exec` writes a rollout of every run under the Codex home, with a
+/// timestamp and per-call usage for each turn; a `tokens headless codex`
+/// capture of the same run reports those turns again, as per-turn totals.
+/// Counting both doubled every captured run (and every copy of a capture
+/// added another). The rollout is the better record, so a capture row only
+/// counts when its thread has no rollout in the scan. Fork (missuo/tokens).
+fn headless_capture_superseded(message: &UnifiedMessage, rollout_threads: &HashSet<String>) -> bool {
+    message
+        .dedup_key
+        .as_deref()
+        .is_some_and(|key| key.starts_with(sessions::codex::CODEX_HEADLESS_CAPTURE_KEY_PREFIX))
+        && rollout_threads.contains(&message.session_id)
 }
 
 fn should_keep_deduped_message(seen_keys: &mut HashSet<String>, message: &UnifiedMessage) -> bool {
@@ -12592,6 +12624,99 @@ mod tests {
         );
         assert_eq!(codex_only.len(), 2);
         assert!(codex_only.iter().all(|message| message.client == "codex"));
+    }
+
+    const EXEC_THREAD: &str = "01a0b007-2e53-70a0-8b1f-04212dd8dd11";
+
+    fn write_exec_capture(dir: &std::path::Path, name: &str) {
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(
+            dir.join(name),
+            format!(
+                "{}\n{}\n{}\n",
+                format_args!(r#"{{"type":"thread.started","thread_id":"{EXEC_THREAD}"}}"#),
+                r#"{"type":"turn.started"}"#,
+                r#"{"type":"turn.completed","usage":{"input_tokens":20826,"cached_input_tokens":12928,"cache_write_input_tokens":0,"output_tokens":5,"reasoning_output_tokens":0}}"#,
+            ),
+        )
+        .unwrap();
+    }
+
+    fn write_exec_rollout(codex_home: &std::path::Path) {
+        let dir = codex_home.join("sessions/2026/09/17");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join(format!("rollout-2026-09-17T08-40-55-{EXEC_THREAD}.jsonl")),
+            format!(
+                "{}\n{}\n{}\n",
+                format_args!(r#"{{"timestamp":"2026-09-17T15:40:55.800Z","type":"session_meta","payload":{{"id":"{EXEC_THREAD}","source":"exec","originator":"codex_exec","cwd":"/tmp/exec"}}}}"#),
+                r#"{"timestamp":"2026-09-17T15:40:56.000Z","type":"turn_context","payload":{"model":"gpt-6-astra","cwd":"/tmp/exec"}}"#,
+                r#"{"timestamp":"2026-09-17T15:41:02.807Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":20826,"cached_input_tokens":12928,"output_tokens":5,"reasoning_output_tokens":0},"last_token_usage":{"input_tokens":20826,"cached_input_tokens":12928,"output_tokens":5,"reasoning_output_tokens":0}}}}"#,
+            ),
+        )
+        .unwrap();
+    }
+
+    fn codex_totals_both_lanes(home: &std::path::Path) -> (i64, i64) {
+        let submitted: i64 = parse_all_messages_with_pricing_with_cache_policy(
+            home.to_str().unwrap(),
+            &["codex".to_string()],
+            None,
+            true,
+            &scanner::ScannerSettings::default(),
+            SourceCachePolicy::Persistent,
+        )
+        .iter()
+        .map(|message| message.tokens.total())
+        .sum();
+        let local: i64 = parse_local_clients(LocalParseOptions {
+            home_dir: Some(home.to_str().unwrap().to_string()),
+            use_env_roots: true,
+            clients: Some(vec!["codex".to_string()]),
+            since: None,
+            until: None,
+            year: None,
+            scanner_settings: scanner::ScannerSettings::default(),
+        })
+        .unwrap()
+        .messages
+        .iter()
+        .map(|message| message.input + message.output + message.cache_read + message.cache_write)
+        .sum();
+        (submitted, local)
+    }
+
+    /// `codex exec` writes a rollout of every run; a `tokens headless codex`
+    /// capture of the same run, and every copy of that capture, must not be
+    /// counted on top of it. Without the rollout, the capture counts once.
+    #[test]
+    #[serial_test::serial]
+    fn test_exec_captures_count_once_beside_their_rollout() {
+        let cache_home = tempfile::TempDir::new().unwrap();
+        let source_home = tempfile::TempDir::new().unwrap();
+        let _cache_env = redirect_cache_home(cache_home.path());
+        let home = source_home.path();
+        let codex_home = home.join("codex-home");
+        let headless = home.join("headless");
+        write_exec_capture(&headless.join("codex"), "codex-a.jsonl");
+        write_exec_capture(&headless.join("codex"), "codex-b.jsonl");
+
+        let mut env = crate::paths::test_env::EnvGuard::capture(&[
+            "CODEX_HOME",
+            "TOKENS_EXTRA_DIRS",
+            "TOKENS_HEADLESS_DIR",
+        ]);
+        env.set("CODEX_HOME", &codex_home);
+        env.set("TOKENS_HEADLESS_DIR", &headless);
+        env.remove("TOKENS_EXTRA_DIRS");
+
+        // Captures only: the two copies are one run.
+        std::fs::create_dir_all(&codex_home).unwrap();
+        assert_eq!(codex_totals_both_lanes(home), (20_831, 20_831));
+
+        // With the rollout, the rollout is the record and the captures yield.
+        write_exec_rollout(&codex_home);
+        assert_eq!(codex_totals_both_lanes(home), (20_831, 20_831));
     }
 
     #[test]

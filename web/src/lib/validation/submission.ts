@@ -29,7 +29,9 @@ const TOKEN_ABSOLUTE_TOLERANCE = 100;
 // already inside output_tokens). The higher revision lets that lower,
 // corrected total replace days stored at revision 2, which the same-revision
 // regression guard would otherwise keep.
-const MAX_SUPPORTED_CODEX_PROVENANCE_SCHEMA_VERSION = 3;
+// Codex revision 4: a `codex exec --json` capture no longer counts on top of
+// the run's own rollout, nor once per copy of the capture.
+const MAX_SUPPORTED_CODEX_PROVENANCE_SCHEMA_VERSION = 4;
 const MAX_SUPPORTED_NON_CODEX_PROVENANCE_SCHEMA_VERSION = 1;
 
 const NonNegativeIntegerSchema = z.number().finite().int().min(0).max(Number.MAX_SAFE_INTEGER);
