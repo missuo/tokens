@@ -262,6 +262,18 @@ pub fn submit_filters(
     (clients, since, until, year)
 }
 
+/// `ERROR_LOCK_VIOLATION`: what `LockFileEx` reports on Windows when another
+/// handle already holds the range. No Unix `flock` failure uses errno 33, so
+/// matching it everywhere cannot disguise a genuine error as contention.
+const WINDOWS_ERROR_LOCK_VIOLATION: i32 = 33;
+
+/// Whether `err` means "another process already holds this lock" rather than a
+/// real I/O failure. Only `WouldBlock` used to count, so on Windows a second
+/// run hit the error arm instead of stepping aside.
+pub(crate) fn is_lock_contention(err: &std::io::Error) -> bool {
+    err.kind() == ErrorKind::WouldBlock || err.raw_os_error() == Some(WINDOWS_ERROR_LOCK_VIOLATION)
+}
+
 pub fn try_acquire_run_lock() -> Result<Option<AutosubmitRunLock>> {
     let path = autosubmit_lock_path()?;
     let file = OpenOptions::new()
@@ -273,7 +285,7 @@ pub fn try_acquire_run_lock() -> Result<Option<AutosubmitRunLock>> {
         .with_context(|| format!("Could not open autosubmit lock at {}", path.display()))?;
     match file.try_lock_exclusive() {
         Ok(()) => Ok(Some(AutosubmitRunLock { _file: file })),
-        Err(err) if err.kind() == ErrorKind::WouldBlock => Ok(None),
+        Err(err) if is_lock_contention(&err) => Ok(None),
         Err(err) => Err(err)
             .with_context(|| format!("Could not lock autosubmit state at {}", path.display())),
     }

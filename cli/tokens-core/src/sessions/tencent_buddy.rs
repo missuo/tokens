@@ -1,14 +1,25 @@
 //! Shared parsers for Tencent CodeBuddy / WorkBuddy session formats.
 
+use super::utils::for_each_json_line;
 use super::{normalize_workspace_key, workspace_label_from_key, UnifiedMessage};
 use crate::{provider_identity, TokenBreakdown};
 use chrono::TimeZone;
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader};
 use std::path::Path;
 
 const DEFAULT_PROVIDER: &str = "tencent";
+
+/// Shared base parser version for the Tencent buddy transcript format.
+///
+/// CodeBuddy and WorkBuddy both parse their detailed JSONL transcripts and
+/// IDE extension logs through this module ([`parse_jsonl_file`] /
+/// [`parse_extension_log_file`]), so a change here alters what byte-identical
+/// sources parse to for both clients at once. Bump this base when that
+/// happens; `message_cache::parser_version()` derives each member's version
+/// from it (base plus a per-client offset that preserves independent history)
+/// so no member can be left serving stale cache entries.
+pub(crate) const TENCENT_BUDDY_PARSER_BASE_VERSION: u32 = 1;
 
 #[derive(Debug, Deserialize)]
 struct BuddyLine {
@@ -57,6 +68,9 @@ struct BuddyUsage {
     #[serde(rename = "inputTokens")]
     input_tokens_camel: Option<i64>,
     prompt_tokens: Option<i64>,
+    total_tokens: Option<i64>,
+    #[serde(rename = "totalTokens")]
+    total_tokens_camel: Option<i64>,
     #[serde(rename = "output_tokens")]
     output_tokens: Option<i64>,
     #[serde(rename = "outputTokens")]
@@ -87,41 +101,81 @@ struct BuddyUsage {
 
 impl BuddyUsage {
     fn to_breakdown(&self) -> Option<TokenBreakdown> {
+        let cache_read = first_positive(&[
+            self.cache_read_input_tokens,
+            self.cache_read_input_tokens_camel,
+            self.cache_tokens,
+            self.prompt_cache_hit_tokens,
+            self.cached_tokens,
+        ]);
+        let output = first_present(&[
+            self.output_tokens,
+            self.output_tokens_camel,
+            self.completion_tokens,
+        ]);
+        let cache_write = first_positive(&[
+            self.cache_creation_input_tokens,
+            self.cache_creation_input_tokens_camel,
+            self.cached_write_tokens,
+            self.prompt_cache_write_tokens,
+        ]);
+        let reasoning = first_present(&[
+            self.completion_thinking_tokens,
+            self.completion_thinking_tokens_camel,
+            self.reasoning_tokens,
+        ]);
         let tokens = TokenBreakdown {
-            input: first_present(&[
-                self.cached_miss_tokens,
-                self.cache_miss_tokens,
-                self.input_tokens,
-                self.input_tokens_camel,
-                self.prompt_tokens,
-            ]),
-            output: first_present(&[
-                self.output_tokens,
-                self.output_tokens_camel,
-                self.completion_tokens,
-            ]),
-            cache_read: first_positive(&[
-                self.cache_read_input_tokens,
-                self.cache_read_input_tokens_camel,
-                self.cache_tokens,
-                self.prompt_cache_hit_tokens,
-                self.cached_tokens,
-            ]),
-            cache_write: first_positive(&[
-                self.cache_creation_input_tokens,
-                self.cache_creation_input_tokens_camel,
-                self.cached_write_tokens,
-                self.prompt_cache_write_tokens,
-            ]),
-            reasoning: first_present(&[
-                self.completion_thinking_tokens,
-                self.completion_thinking_tokens_camel,
-                self.reasoning_tokens,
-            ]),
+            input: self.input_exclusive(cache_read, cache_write, reasoning, output),
+            output,
+            cache_read,
+            cache_write,
+            reasoning,
         };
 
         (tokens.total() > 0).then_some(tokens)
     }
+
+    /// `cachedMissTokens` / `cacheMissTokens` (extension-log style) already
+    /// exclude cached input. Other input fields are ambiguous unless a
+    /// reported total proves they include the cache buckets.
+    fn input_exclusive(
+        &self,
+        cache_read: i64,
+        cache_write: i64,
+        reasoning: i64,
+        output: i64,
+    ) -> i64 {
+        if let Some(miss_input) = self
+            .cached_miss_tokens
+            .or(self.cache_miss_tokens)
+            .map(|tokens| tokens.max(0))
+        {
+            return miss_input;
+        }
+        let input = first_present(&[
+            self.input_tokens,
+            self.input_tokens_camel,
+            self.prompt_tokens,
+        ]);
+        let Some(total) = first_option(&[self.total_tokens, self.total_tokens_camel]) else {
+            return input;
+        };
+
+        let inclusive_total = input.saturating_add(output);
+        let exclusive_total = inclusive_total
+            .saturating_add(cache_read)
+            .saturating_add(cache_write)
+            .saturating_add(reasoning);
+        if cache_read > 0 && total.max(0) == inclusive_total && inclusive_total != exclusive_total {
+            input.saturating_sub(cache_read)
+        } else {
+            input
+        }
+    }
+}
+
+fn first_option(values: &[Option<i64>]) -> Option<i64> {
+    values.iter().copied().flatten().next()
 }
 
 fn first_present(values: &[Option<i64>]) -> i64 {
@@ -144,11 +198,6 @@ pub(crate) fn parse_jsonl_file(
     default_model: &'static str,
     path: &Path,
 ) -> Vec<UnifiedMessage> {
-    let file = match std::fs::File::open(path) {
-        Ok(file) => file,
-        Err(_) => return Vec::new(),
-    };
-
     let fallback_session_id = path
         .file_stem()
         .and_then(|name| name.to_str())
@@ -158,26 +207,18 @@ pub(crate) fn parse_jsonl_file(
     let mut keyed_indices: HashMap<String, usize> = HashMap::new();
     let mut messages: Vec<UnifiedMessage> = Vec::new();
 
-    for line in BufReader::new(file).lines() {
-        let Ok(line) = line else {
-            continue;
-        };
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-
+    for_each_json_line(path, &mut |_index, trimmed| {
         let mut bytes = trimmed.as_bytes().to_vec();
         let item = match simd_json::from_slice::<BuddyLine>(&mut bytes) {
             Ok(item) => item,
-            Err(_) => continue,
+            Err(_) => return,
         };
 
         let is_assistant_message = item.line_type.as_deref() == Some("message")
             && item.role.as_deref() == Some("assistant");
         let is_function_call = item.line_type.as_deref() == Some("function_call");
         if !is_assistant_message && !is_function_call {
-            continue;
+            return;
         }
 
         if item
@@ -185,7 +226,7 @@ pub(crate) fn parse_jsonl_file(
             .as_deref()
             .is_some_and(|status| status != "completed")
         {
-            continue;
+            return;
         }
 
         let usage = item
@@ -203,7 +244,7 @@ pub(crate) fn parse_jsonl_file(
                     .and_then(|provider| provider.raw_usage.as_ref())
             });
         let Some(tokens) = usage.and_then(BuddyUsage::to_breakdown) else {
-            continue;
+            return;
         };
 
         let provider_data = item.provider_data.as_ref();
@@ -253,13 +294,13 @@ pub(crate) fn parse_jsonl_file(
                 if message.tokens.total() >= messages[existing_index].tokens.total() {
                     messages[existing_index] = message;
                 }
-                continue;
+                return;
             }
             keyed_indices.insert(key, messages.len());
         }
 
         messages.push(message);
-    }
+    });
 
     messages
 }
@@ -269,11 +310,6 @@ pub(crate) fn parse_extension_log_file(
     default_model: &'static str,
     path: &Path,
 ) -> Vec<UnifiedMessage> {
-    let file = match std::fs::File::open(path) {
-        Ok(file) => file,
-        Err(_) => return Vec::new(),
-    };
-
     let fallback_timestamp = super::utils::file_modified_timestamp_ms(path);
     let fallback_session_id = path
         .file_stem()
@@ -283,44 +319,40 @@ pub(crate) fn parse_extension_log_file(
     let mut models_by_agent: HashMap<String, String> = HashMap::new();
     let mut messages = Vec::new();
 
-    for line in BufReader::new(file).lines() {
-        let Ok(line) = line else {
-            continue;
-        };
-
+    for_each_json_line(path, &mut |_index, line| {
         if line.contains("[CraftInvokableAgent]") && line.contains("Model prepared:") {
-            if let Some((agent_id, model_id)) = parse_model_prepared_line(&line) {
+            if let Some((agent_id, model_id)) = parse_model_prepared_line(line) {
                 models_by_agent.insert(agent_id, model_id);
             }
-            continue;
+            return;
         }
 
         if !line.contains("[AgentReporter]")
             || !line.contains("Agent execution successful with usage:")
         {
-            continue;
+            return;
         }
 
-        let Some(agent_id) = bracket_value_after(&line, "[AgentReporter]") else {
-            continue;
+        let Some(agent_id) = bracket_value_after(line, "[AgentReporter]") else {
+            return;
         };
         let Some(usage_json) = line.split("Agent execution successful with usage:").nth(1) else {
-            continue;
+            return;
         };
         let usage_json = usage_json.trim();
         let Some(json_end) = usage_json.rfind('}') else {
-            continue;
+            return;
         };
         let mut bytes = usage_json.as_bytes()[..=json_end].to_vec();
         let usage = match simd_json::from_slice::<BuddyUsage>(&mut bytes) {
             Ok(usage) => usage,
-            Err(_) => continue,
+            Err(_) => return,
         };
         let Some(tokens) = usage.to_breakdown() else {
-            continue;
+            return;
         };
 
-        let timestamp = parse_log_timestamp_ms(&line).unwrap_or(fallback_timestamp);
+        let timestamp = parse_log_timestamp_ms(line).unwrap_or(fallback_timestamp);
         let model_id = models_by_agent
             .get(&agent_id)
             .cloned()
@@ -363,7 +395,7 @@ pub(crate) fn parse_extension_log_file(
         }
 
         messages.push(message);
-    }
+    });
 
     messages
 }
@@ -446,3 +478,202 @@ fn workspace_from_log_path(path: &Path) -> Option<String> {
     normalize_workspace_key(workspace)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_jsonl_file_reads_assistant_usage() {
+        let dir = tempfile::tempdir().unwrap();
+        let project_dir = dir.path().join("projects").join("c-Users-alice-repo");
+        std::fs::create_dir_all(&project_dir).unwrap();
+        let path = project_dir.join("session-1.jsonl");
+        std::fs::write(
+            &path,
+            r#"{"id":"user-1","timestamp":1780000000000,"type":"message","role":"user","sessionId":"session-1","cwd":"/Users/alice/repo"}
+{"id":"assistant-1","timestamp":1780000000100,"type":"message","role":"assistant","status":"completed","sessionId":"session-1","cwd":"/Users/alice/repo","providerData":{"model":"glm-5.2","messageId":"msg-1"},"message":{"usage":{"input_tokens":24486,"output_tokens":3,"total_tokens":24489,"cache_read_input_tokens":14720}}}"#,
+        )
+        .unwrap();
+
+        let messages = parse_jsonl_file("codebuddy", "codebuddy", &path);
+
+        assert_eq!(messages.len(), 1);
+        let message = &messages[0];
+        assert_eq!(message.client, "codebuddy");
+        assert_eq!(message.model_id, "glm-5.2");
+        // `inferred_provider_from_model` recognizes "glm" and infers "zai"
+        // (Zhipu AI), taking precedence over the DEFAULT_PROVIDER ("tencent")
+        // fallback — consistent with how every other model family (claude,
+        // gpt, etc.) is attributed to its real provider rather than the
+        // client name. DEFAULT_PROVIDER only applies when inference can't
+        // identify the model at all.
+        assert_eq!(message.provider_id, "zai");
+        assert_eq!(message.session_id, "session-1");
+        assert_eq!(message.tokens.input, 9766);
+        assert_eq!(message.tokens.output, 3);
+        assert_eq!(message.tokens.cache_read, 14720);
+        assert_eq!(message.tokens.total(), 24489);
+        assert_eq!(message.workspace_label.as_deref(), Some("repo"));
+        assert_eq!(
+            message.dedup_key.as_deref(),
+            Some("codebuddy:session-1:msg-1")
+        );
+    }
+
+    #[test]
+    fn parse_jsonl_file_keeps_ambiguous_raw_usage_input_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session-2.jsonl");
+        std::fs::write(
+            &path,
+            r#"{"id":"call-1","timestamp":1780000000100,"type":"function_call","sessionId":"session-2","providerData":{"requestModelId":"glm-5.2","messageId":"msg-2","rawUsage":{"prompt_tokens":3,"completion_tokens":2,"prompt_cache_hit_tokens":4,"prompt_cache_write_tokens":4,"completion_thinking_tokens":5}}}"#,
+        )
+        .unwrap();
+
+        let messages = parse_jsonl_file("workbuddy", "workbuddy", &path);
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].client, "workbuddy");
+        assert_eq!(messages[0].tokens.input, 3);
+        assert_eq!(messages[0].tokens.output, 2);
+        assert_eq!(messages[0].tokens.cache_read, 4);
+        assert_eq!(messages[0].tokens.cache_write, 4);
+        assert_eq!(messages[0].tokens.reasoning, 5);
+        assert_eq!(messages[0].tokens.total(), 18);
+    }
+
+    #[test]
+    fn parse_jsonl_file_does_not_double_count_inclusive_cache_input() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session-cache.jsonl");
+        std::fs::write(
+            &path,
+            r#"{"id":"assistant-1","timestamp":1780000000100,"type":"message","role":"assistant","status":"completed","sessionId":"session-cache","cwd":"/Users/alice/repo","providerData":{"model":"glm-5.2","messageId":"msg-1"},"message":{"usage":{"input_tokens":113415,"output_tokens":990,"total_tokens":114405,"cache_read_input_tokens":112224}}}"#,
+        )
+        .unwrap();
+
+        let messages = parse_jsonl_file("workbuddy", "workbuddy", &path);
+
+        assert_eq!(messages.len(), 1);
+        let message = &messages[0];
+        assert_eq!(message.tokens.input, 1191);
+        assert_eq!(message.tokens.output, 990);
+        assert_eq!(message.tokens.cache_read, 112224);
+        // Provider-billed total (114405), not input + cache_read + output (226629).
+        assert_eq!(message.tokens.total(), 114405);
+    }
+
+    #[test]
+    fn parse_jsonl_file_keeps_ambiguous_codebuddy_input_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session-ambiguous.jsonl");
+        std::fs::write(
+            &path,
+            r#"{"id":"assistant-1","timestamp":1780000000100,"type":"message","role":"assistant","status":"completed","sessionId":"session-ambiguous","cwd":"/Users/alice/repo","providerData":{"model":"glm-5.2","messageId":"msg-1"},"message":{"usage":{"inputTokens":7,"outputTokens":2,"cacheTokens":10}}}"#,
+        )
+        .unwrap();
+
+        let messages = parse_jsonl_file("codebuddy", "codebuddy", &path);
+
+        assert_eq!(messages.len(), 1);
+        let message = &messages[0];
+        assert_eq!(message.tokens.input, 7);
+        assert_eq!(message.tokens.output, 2);
+        assert_eq!(message.tokens.cache_read, 10);
+        assert_eq!(message.tokens.total(), 19);
+    }
+
+    #[test]
+    fn parse_jsonl_file_keeps_zero_cached_miss_tokens_exclusive() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session-zero-cache-miss.jsonl");
+        std::fs::write(
+            &path,
+            r#"{"id":"assistant-1","timestamp":1780000000100,"type":"message","role":"assistant","status":"completed","sessionId":"session-zero-cache-miss","cwd":"/Users/alice/repo","providerData":{"model":"glm-5.2","messageId":"msg-1"},"message":{"usage":{"inputTokens":100,"outputTokens":5,"cacheTokens":100,"cachedMissTokens":0}}}"#,
+        )
+        .unwrap();
+
+        let messages = parse_jsonl_file("workbuddy", "workbuddy", &path);
+
+        assert_eq!(messages.len(), 1);
+        let message = &messages[0];
+        assert_eq!(message.tokens.input, 0);
+        assert_eq!(message.tokens.output, 5);
+        assert_eq!(message.tokens.cache_read, 100);
+        assert_eq!(message.tokens.total(), 105);
+    }
+
+    #[test]
+    fn parse_extension_log_file_splits_cached_miss_and_cache_tokens() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("moza-configurator__session.log");
+        std::fs::write(
+            &path,
+            r#"[2026/7/1 16:56:01.100] [info] [CraftInvokableAgent] [agent-1] Model prepared: Kimi-K2.7-Code (kimi-k2.7)
+[2026/7/1 16:56:02.200] [info] [AgentReporter] [agent-1] Agent execution successful with usage: {"inputTokens":140732,"outputTokens":635,"totalTokens":141367,"cacheTokens":76032,"cachedWriteTokens":0,"cachedMissTokens":64700}"#,
+        )
+        .unwrap();
+
+        let messages = parse_extension_log_file("codebuddy", "codebuddy", &path);
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].model_id, "kimi-k2.7");
+        assert_eq!(messages[0].tokens.input, 64700);
+        assert_eq!(messages[0].tokens.output, 635);
+        assert_eq!(messages[0].tokens.cache_read, 76032);
+        assert_eq!(messages[0].tokens.total(), 141367);
+        assert_eq!(
+            messages[0].workspace_label.as_deref(),
+            Some("moza-configurator")
+        );
+    }
+
+    #[test]
+    fn parse_extension_log_file_keeps_repeated_agent_usage_at_different_times() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session.log");
+        std::fs::write(
+            &path,
+            r#"[2026/7/1 16:56:01.100] [info] [CraftInvokableAgent] [agent-1] Model prepared: GLM-5.2 (glm-5.2)
+[2026/7/1 16:56:02.200] [info] [AgentReporter] [agent-1] Agent execution successful with usage: {"inputTokens":10,"outputTokens":2,"totalTokens":12}
+[2026/7/1 16:57:02.200] [info] [AgentReporter] [agent-1] Agent execution successful with usage: {"inputTokens":10,"outputTokens":2,"totalTokens":12}"#,
+        )
+        .unwrap();
+
+        let messages = parse_extension_log_file("codebuddy", "codebuddy", &path);
+
+        assert_eq!(messages.len(), 2);
+        assert_ne!(messages[0].dedup_key, messages[1].dedup_key);
+    }
+
+    #[test]
+    fn parse_extension_log_file_mirrored_sinks_share_dedup_key_despite_ms_skew() {
+        // The same agent execution is logged to the extension's own sink and to
+        // the host's output-channel sink; each writer stamps its own prefix a few
+        // ms apart (and in a different format). Both copies must produce the same
+        // dedup key so cross-file dedup collapses them.
+        let dir = tempfile::tempdir().unwrap();
+
+        let extension_sink = dir.path().join("proj__session.log");
+        std::fs::write(
+            &extension_sink,
+            r#"[2026/7/1 16:56:02.200] [info] [AgentReporter] [agent-1] Agent execution successful with usage: {"inputTokens":140732,"outputTokens":635,"totalTokens":141367}"#,
+        )
+        .unwrap();
+
+        let host_sink = dir.path().join("proj__host.log");
+        std::fs::write(
+            &host_sink,
+            r#"2026-07-01 16:56:02.201 [info] [AgentReporter] [agent-1] Agent execution successful with usage: {"inputTokens":140732,"outputTokens":635,"totalTokens":141367}"#,
+        )
+        .unwrap();
+
+        let from_extension = parse_extension_log_file("codebuddy", "codebuddy", &extension_sink);
+        let from_host = parse_extension_log_file("codebuddy", "codebuddy", &host_sink);
+
+        assert_eq!(from_extension.len(), 1);
+        assert_eq!(from_host.len(), 1);
+        assert!(from_extension[0].dedup_key.is_some());
+        assert_eq!(from_extension[0].dedup_key, from_host[0].dedup_key);
+    }
+}

@@ -3,7 +3,7 @@
 //! Detects synthetic.new API usage across existing agent sessions by model/provider patterns,
 //! and parses Octofriend's SQLite database when token data is available.
 
-use super::utils::open_readonly_sqlite;
+use super::utils::{open_readonly_sqlite_opt, sqlite_for_each_row_on};
 use super::UnifiedMessage;
 use crate::TokenBreakdown;
 use std::path::Path;
@@ -110,7 +110,7 @@ pub fn matches_synthetic_filter(client: &str, model_id: &str, provider_id: &str)
 /// This function checks for token-related tables and parses them when available,
 /// making it future-proof for when Octofriend adds token persistence.
 pub fn parse_octofriend_sqlite(db_path: &Path) -> Vec<UnifiedMessage> {
-    let Some(conn) = open_readonly_sqlite(db_path) else {
+    let Some(conn) = open_readonly_sqlite_opt(db_path) else {
         return Vec::new();
     };
 
@@ -134,11 +134,16 @@ pub fn parse_octofriend_sqlite(db_path: &Path) -> Vec<UnifiedMessage> {
     // SELECT id, session_id, data FROM messages WHERE role = 'assistant' AND tokens IS NOT NULL
     let mut messages = Vec::new();
 
+    // Quiet scans: Octofriend may have any one of these tables, so a missing
+    // one is the expected case rather than a fault worth logging.
+
     // Try 'messages' table first (most likely schema)
-    if let Ok(mut stmt) = conn.prepare(
+    sqlite_for_each_row_on(
+        &conn,
+        db_path,
         "SELECT id, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens, cost, timestamp, session_id, provider FROM messages WHERE input_tokens IS NOT NULL OR output_tokens IS NOT NULL",
-    ) {
-        if let Ok(rows) = stmt.query_map([], |row| {
+        None,
+        &mut |row| {
             let id: String = row.get(0)?;
             let model_id: String = row.get::<_, String>(1).unwrap_or_default();
             let input: i64 = row.get::<_, i64>(2).unwrap_or(0);
@@ -151,15 +156,52 @@ pub fn parse_octofriend_sqlite(db_path: &Path) -> Vec<UnifiedMessage> {
             let session_id: String = row.get::<_, String>(9).unwrap_or_else(|_| "unknown".to_string());
             let provider: String = row.get::<_, String>(10).unwrap_or_else(|_| "synthetic".to_string());
 
-            Ok((id, model_id, input, output, cache_read, cache_write, reasoning, cost, timestamp, session_id, provider))
-        }) {
-            for row_result in rows.flatten() {
-                let (id, model_id, input, output, cache_read, cache_write, reasoning, cost, timestamp, session_id, provider) = row_result;
+            let total = input + output + cache_read + cache_write + reasoning;
+            if total == 0 {
+                return Ok(());
+            }
 
-                let total = input + output + cache_read + cache_write + reasoning;
-                if total == 0 {
-                    continue;
-                }
+            let ts_ms = if timestamp > 1e12 {
+                timestamp as i64
+            } else {
+                (timestamp * 1000.0) as i64
+            };
+
+            let mut msg = UnifiedMessage::new(
+                "synthetic",
+                normalize_synthetic_model(&model_id),
+                provider,
+                session_id,
+                ts_ms,
+                TokenBreakdown {
+                    input: input.max(0),
+                    output: output.max(0),
+                    cache_read: cache_read.max(0),
+                    cache_write: cache_write.max(0),
+                    reasoning: reasoning.max(0),
+                },
+                cost.max(0.0),
+            );
+            msg.dedup_key = Some(id);
+            messages.push(msg);
+            Ok(())
+        },
+    );
+
+    // Try 'token_usage' table as alternative schema
+    if messages.is_empty() {
+        sqlite_for_each_row_on(
+            &conn,
+            db_path,
+            "SELECT id, model, input_tokens, output_tokens, timestamp, session_id FROM token_usage WHERE input_tokens > 0 OR output_tokens > 0",
+            None,
+            &mut |row| {
+                let id: String = row.get(0)?;
+                let model_id: String = row.get::<_, String>(1).unwrap_or_default();
+                let input: i64 = row.get::<_, i64>(2).unwrap_or(0);
+                let output: i64 = row.get::<_, i64>(3).unwrap_or(0);
+                let timestamp: f64 = row.get::<_, f64>(4).unwrap_or(0.0);
+                let session_id: String = row.get::<_, String>(5).unwrap_or_else(|_| "unknown".to_string());
 
                 let ts_ms = if timestamp > 1e12 {
                     timestamp as i64
@@ -170,70 +212,151 @@ pub fn parse_octofriend_sqlite(db_path: &Path) -> Vec<UnifiedMessage> {
                 let mut msg = UnifiedMessage::new(
                     "synthetic",
                     normalize_synthetic_model(&model_id),
-                    provider,
+                    "synthetic",
                     session_id,
                     ts_ms,
                     TokenBreakdown {
                         input: input.max(0),
                         output: output.max(0),
-                        cache_read: cache_read.max(0),
-                        cache_write: cache_write.max(0),
-                        reasoning: reasoning.max(0),
+                        cache_read: 0,
+                        cache_write: 0,
+                        reasoning: 0,
                     },
-                    cost.max(0.0),
+                    0.0,
                 );
                 msg.dedup_key = Some(id);
                 messages.push(msg);
-            }
-        }
-    }
-
-    // Try 'token_usage' table as alternative schema
-    if messages.is_empty() {
-        if let Ok(mut stmt) = conn.prepare(
-            "SELECT id, model, input_tokens, output_tokens, timestamp, session_id FROM token_usage WHERE input_tokens > 0 OR output_tokens > 0",
-        ) {
-            if let Ok(rows) = stmt.query_map([], |row| {
-                let id: String = row.get(0)?;
-                let model_id: String = row.get::<_, String>(1).unwrap_or_default();
-                let input: i64 = row.get::<_, i64>(2).unwrap_or(0);
-                let output: i64 = row.get::<_, i64>(3).unwrap_or(0);
-                let timestamp: f64 = row.get::<_, f64>(4).unwrap_or(0.0);
-                let session_id: String = row.get::<_, String>(5).unwrap_or_else(|_| "unknown".to_string());
-
-                Ok((id, model_id, input, output, timestamp, session_id))
-            }) {
-                for row_result in rows.flatten() {
-                    let (id, model_id, input, output, timestamp, session_id) = row_result;
-
-                    let ts_ms = if timestamp > 1e12 {
-                        timestamp as i64
-                    } else {
-                        (timestamp * 1000.0) as i64
-                    };
-
-                    let mut msg = UnifiedMessage::new(
-                        "synthetic",
-                        normalize_synthetic_model(&model_id),
-                        "synthetic",
-                        session_id,
-                        ts_ms,
-                        TokenBreakdown {
-                            input: input.max(0),
-                            output: output.max(0),
-                            cache_read: 0,
-                            cache_write: 0,
-                            reasoning: 0,
-                        },
-                        0.0,
-                    );
-                    msg.dedup_key = Some(id);
-                    messages.push(msg);
-                }
-            }
-        }
+                Ok(())
+            },
+        );
     }
 
     messages
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_synthetic_model_hf_prefix() {
+        assert!(is_synthetic_model("hf:deepseek-ai/DeepSeek-V3-0324"));
+        assert!(is_synthetic_model("hf:zai-org/GLM-4.7"));
+        assert!(is_synthetic_model("hf:moonshotai/Kimi-K2.5"));
+        assert!(is_synthetic_model("hf:MiniMaxAI/MiniMax-M2.1"));
+    }
+
+    #[test]
+    fn test_is_synthetic_model_fireworks_prefix() {
+        assert!(is_synthetic_model(
+            "accounts/fireworks/models/deepseek-v3-0324"
+        ));
+        assert!(is_synthetic_model("accounts/fireworks/models/glm-4.7"));
+    }
+
+    #[test]
+    fn test_is_synthetic_model_together_prefix() {
+        assert!(is_synthetic_model("accounts/together/models/qwen3-235b"));
+    }
+
+    #[test]
+    fn test_is_synthetic_model_negative() {
+        assert!(!is_synthetic_model("claude-sonnet-4-5"));
+        assert!(!is_synthetic_model("gpt-5.2-codex"));
+        assert!(!is_synthetic_model("deepseek-v3"));
+        assert!(!is_synthetic_model("gemini-2.5-pro"));
+    }
+
+    #[test]
+    fn test_is_synthetic_provider() {
+        assert!(is_synthetic_provider("synthetic"));
+        assert!(is_synthetic_provider("glhf"));
+        assert!(is_synthetic_provider("Synthetic"));
+        assert!(is_synthetic_provider("GLHF"));
+        assert!(is_synthetic_provider("synthetic.new"));
+        assert!(is_synthetic_provider("octofriend"));
+    }
+
+    #[test]
+    fn test_is_synthetic_provider_negative() {
+        assert!(!is_synthetic_provider("anthropic"));
+        assert!(!is_synthetic_provider("openai"));
+        assert!(!is_synthetic_provider("moonshot"));
+        assert!(!is_synthetic_provider("fireworks"));
+    }
+
+    #[test]
+    fn test_normalize_synthetic_model_hf() {
+        assert_eq!(
+            normalize_synthetic_model("hf:deepseek-ai/DeepSeek-V3-0324"),
+            "deepseek-v3-0324"
+        );
+        assert_eq!(normalize_synthetic_model("hf:zai-org/GLM-4.7"), "glm-4.7");
+        assert_eq!(
+            normalize_synthetic_model("hf:moonshotai/Kimi-K2.5"),
+            "kimi-k2.5"
+        );
+    }
+
+    #[test]
+    fn test_normalize_synthetic_model_fireworks() {
+        assert_eq!(
+            normalize_synthetic_model("accounts/fireworks/models/deepseek-v3-0324"),
+            "deepseek-v3-0324"
+        );
+    }
+
+    #[test]
+    fn test_normalize_synthetic_model_passthrough() {
+        assert_eq!(
+            normalize_synthetic_model("claude-sonnet-4-5"),
+            "claude-sonnet-4-5"
+        );
+        assert_eq!(normalize_synthetic_model("gpt-4o"), "gpt-4o");
+    }
+
+    #[test]
+    fn test_normalize_synthetic_gateway_fields_sets_provider_when_unknown() {
+        let mut model_id = "hf:deepseek-ai/DeepSeek-V3-0324".to_string();
+        let mut provider_id = "unknown".to_string();
+
+        let matched = normalize_synthetic_gateway_fields(&mut model_id, &mut provider_id);
+
+        assert!(matched);
+        assert_eq!(model_id, "deepseek-v3-0324");
+        assert_eq!(provider_id, "synthetic");
+    }
+
+    #[test]
+    fn test_normalize_synthetic_gateway_fields_preserves_existing_provider() {
+        let mut model_id = "accounts/fireworks/models/deepseek-v3-0324".to_string();
+        let mut provider_id = "fireworks".to_string();
+
+        let matched = normalize_synthetic_gateway_fields(&mut model_id, &mut provider_id);
+
+        assert!(matched);
+        assert_eq!(model_id, "deepseek-v3-0324");
+        assert_eq!(provider_id, "fireworks");
+    }
+
+    #[test]
+    fn test_matches_synthetic_filter_accepts_gateway_traffic_without_rewriting_client() {
+        assert!(matches_synthetic_filter(
+            "opencode",
+            "hf:deepseek-ai/DeepSeek-V3-0324",
+            "unknown"
+        ));
+        assert!(matches_synthetic_filter(
+            "claude",
+            "claude-sonnet-4-5",
+            "glhf"
+        ));
+        assert!(!matches_synthetic_filter("opencode", "gpt-4o", "anthropic"));
+    }
+
+    #[test]
+    fn test_parse_octofriend_sqlite_nonexistent() {
+        let result = parse_octofriend_sqlite(Path::new("/nonexistent/path/sqlite.db"));
+        assert!(result.is_empty());
+    }
+}

@@ -46,7 +46,7 @@ pub mod auth {
     //! Cache filenames: `credentials-solo.json` (Solo) and `credentials-ide.json` (Ide).
     //! These are fixed names, not derived from the report client id (`client_str()`).
     //! Cache directory: `<tokens config dir>/trae-cache/`, where the
-    //! config dir is resolved by [`paths::get_config_dir`] and honors
+    //! config dir is resolved by `paths::get_config_dir` and honors
     //! `TOKENS_CONFIG_DIR` plus XDG defaults (typically
     //! `~/.config/tokens` on Linux/macOS).
 
@@ -331,7 +331,7 @@ pub mod auth {
     // ── storage.json decryption ────────────────────────────────────────────
 
     fn decrypt_from_storage(variant: TraeVariant) -> Result<CachedCredentials> {
-        let home = dirs::home_dir().context("could not determine home directory")?;
+        let home = crate::paths::home_dir().context("could not determine home directory")?;
         let app_dir = home
             .join("Library/Application Support")
             .join(variant.app_dir_name());
@@ -452,7 +452,7 @@ pub mod auth {
         refresh_token: &str,
         current_token: &str,
     ) -> Result<TokenPair> {
-        let client = reqwest::Client::new();
+        let client = tokens_core::http::client();
         let url = format!("{}{}", host, EXCHANGE_TOKEN_PATH);
         let resp = client
             .post(&url)
@@ -595,6 +595,84 @@ pub mod auth {
         [TraeVariant::Solo, TraeVariant::Ide]
     }
 
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn test_variant_client_str() {
+            assert_eq!(TraeVariant::Solo.client_str(), "trae-solo");
+            assert_eq!(TraeVariant::Ide.client_str(), "trae");
+        }
+
+        #[test]
+        fn test_variant_default_host() {
+            assert_eq!(TraeVariant::Solo.default_host(), INTL_HOST);
+            assert_eq!(TraeVariant::Ide.default_host(), INTL_HOST);
+        }
+
+        #[test]
+        fn test_variant_serialize() {
+            let solo = serde_json::to_string(&TraeVariant::Solo).unwrap();
+            assert_eq!(solo, r#""Solo""#);
+            let ide = serde_json::to_string(&TraeVariant::Ide).unwrap();
+            assert_eq!(ide, r#""Ide""#);
+        }
+
+        #[test]
+        fn test_epoch_ms_to_iso() {
+            let dt = chrono::DateTime::parse_from_rfc3339("2026-05-21T11:29:04.295Z").unwrap();
+            let ms = dt.timestamp_millis();
+            let iso = epoch_ms_to_iso(ms);
+            assert!(iso.contains("2026-05-21"));
+        }
+
+        #[test]
+        fn test_all_variants_count() {
+            assert_eq!(all_variants().len(), 2);
+        }
+
+        fn encode_jwt_payload(payload: &serde_json::Value) -> String {
+            let header = base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .encode(b"{\"alg\":\"HS256\",\"typ\":\"JWT\"}");
+            let body = base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .encode(serde_json::to_vec(payload).unwrap());
+            let sig = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b"sig");
+            format!("{header}.{body}.{sig}")
+        }
+
+        #[test]
+        fn test_decode_jwt_payload_extracts_exp_and_iat() {
+            // Payload length 27 → not a multiple of 4. The previous
+            // implementation stripped padding and choked on this.
+            let payload = serde_json::json!({ "exp": 1900000000_i64, "iat": 1780000000_i64 });
+            let token = encode_jwt_payload(&payload);
+            let decoded = decode_jwt_payload(&token).expect("decode succeeds");
+            assert_eq!(decoded["exp"].as_i64(), Some(1900000000));
+            assert_eq!(decoded["iat"].as_i64(), Some(1780000000));
+        }
+
+        #[test]
+        fn test_decode_jwt_payload_handles_url_safe_chars() {
+            // Force a payload that exercises base64url `-` / `_` substitution.
+            // `>` and `?` map to `+` / `/` in standard base64; in URL-safe
+            // they map to `-` / `_`. Using a string with a known byte that
+            // produces `_` in the encoding ensures we don't regress to
+            // STANDARD-only decoding.
+            let payload = serde_json::json!({ "data": "??>>??" });
+            let token = encode_jwt_payload(&payload);
+            assert!(token.contains('_') || token.contains('-'));
+            let decoded = decode_jwt_payload(&token).expect("decode succeeds");
+            assert_eq!(decoded["data"].as_str(), Some("??>>??"));
+        }
+
+        #[test]
+        fn test_decode_jwt_payload_rejects_malformed_token() {
+            assert!(decode_jwt_payload("not-a-jwt").is_none());
+            assert!(decode_jwt_payload("").is_none());
+            assert!(decode_jwt_payload("badbase64!@#.badbase64!@#").is_none());
+        }
+    }
 }
 
 pub mod safestorage {
@@ -748,6 +826,115 @@ pub mod safestorage {
         Ok(data.to_vec())
     }
 
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use aes::Aes128;
+        use cbc::cipher::{block_padding::Pkcs7, BlockEncryptMut, KeyIvInit};
+
+        type Aes128CbcEnc = cbc::Encryptor<Aes128>;
+
+        /// Encrypt with the same algorithm — used only by tests. Production
+        /// blobs are encrypted by the Trae client itself.
+        fn encrypt_for_test(plain_text: &[u8]) -> Vec<u8> {
+            // Fixed salt so the test is deterministic.
+            let salt = [0xAAu8; SALT_LEN];
+            let (key, iv) = derive_key_iv(&salt).unwrap();
+            // hash || data
+            let hash = Sha512::digest(plain_text);
+            let mut buf = Vec::with_capacity(HASH_LEN + plain_text.len() + 16);
+            buf.extend_from_slice(&hash);
+            buf.extend_from_slice(plain_text);
+            // PKCS7 padding happens inside `encrypt_padded_mut`; reserve space.
+            let unpadded_len = buf.len();
+            buf.resize(unpadded_len + 16, 0);
+            let ct_len = Aes128CbcEnc::new(&key.into(), &iv.into())
+                .encrypt_padded_mut::<Pkcs7>(&mut buf, unpadded_len)
+                .unwrap()
+                .len();
+            buf.truncate(ct_len);
+            let mut blob = Vec::with_capacity(MAGIC.len() + SALT_LEN + ct_len);
+            blob.extend_from_slice(&MAGIC);
+            blob.extend_from_slice(&salt);
+            blob.extend_from_slice(&buf);
+            blob
+        }
+
+        #[test]
+        fn test_hardcoded_password_constant() {
+            // This value must not change — changing it breaks decryption of
+            // every existing Trae client blob.
+            let pw = hardcoded_password();
+            assert_eq!(pw.len(), 64);
+            // First byte = JG[0] ^ KG[0] = 82 ^ 31 = 77 = 0x4d
+            assert_eq!(pw[0], 0x4d);
+            // Last byte = 37 ^ 125 = 88 = 0x58
+            assert_eq!(pw[63], 0x58);
+        }
+
+        #[test]
+        fn test_round_trip_simple_json() {
+            let plain = br#"{"token":"abc","refreshToken":"xyz"}"#;
+            let blob = encrypt_for_test(plain);
+            let decrypted = decrypt_blob(&blob).expect("decrypt succeeds");
+            assert_eq!(&decrypted, plain);
+        }
+
+        #[test]
+        fn test_round_trip_unicode() {
+            let plain = "Hello, world 🌍 — Unicode test".as_bytes();
+            let blob = encrypt_for_test(plain);
+            let decrypted = decrypt_blob(&blob).expect("decrypt succeeds");
+            assert_eq!(&decrypted, plain);
+        }
+
+        #[test]
+        fn test_decrypt_base64_blob_round_trip() {
+            let plain = br#"{"hello":"world"}"#;
+            let blob = encrypt_for_test(plain);
+            let b64 = B64.encode(&blob);
+            let s = decrypt_base64_blob(&b64).expect("decrypt + utf8 ok");
+            assert_eq!(s, r#"{"hello":"world"}"#);
+        }
+
+        #[test]
+        fn test_wrong_magic_rejected() {
+            let mut blob = encrypt_for_test(b"test");
+            blob[0] = b'x';
+            let err = decrypt_blob(&blob).unwrap_err();
+            assert!(err.to_string().contains("magic"));
+        }
+
+        #[test]
+        fn test_too_short_rejected() {
+            let blob = vec![0u8; 16];
+            let err = decrypt_blob(&blob).unwrap_err();
+            assert!(err.to_string().contains("blob too short"));
+        }
+
+        #[test]
+        fn test_tampered_ciphertext_caught_by_hash_check() {
+            let plain = br#"{"token":"abc"}"#;
+            let mut blob = encrypt_for_test(plain);
+            // Flip a byte in the ciphertext — PKCS7 unpadding may still
+            // succeed (depending on the block), but SHA-512 will fail.
+            let last = blob.len() - 1;
+            blob[last - 16] ^= 0x01;
+            let err = decrypt_blob(&blob);
+            assert!(err.is_err(), "expected decrypt to fail on tampered blob");
+        }
+
+        #[test]
+        fn test_ciphertext_not_block_aligned_rejected() {
+            // Deliberately construct a blob whose ciphertext is misaligned.
+            let mut blob = Vec::new();
+            blob.extend_from_slice(&MAGIC);
+            blob.extend_from_slice(&[0u8; SALT_LEN]);
+            blob.extend_from_slice(&[0u8; 17]); // 17 bytes — not a multiple of 16
+            let err = decrypt_blob(&blob).unwrap_err();
+            assert!(err.to_string().contains("AES block size"));
+        }
+    }
 }
 
 pub mod sync {
@@ -761,10 +948,12 @@ pub mod sync {
     //! under the single `trae` client cache.
 
     use super::auth::{self, get_trae_cache_dir, TraeVariant};
+    use crate::process_liveness::pid_is_alive;
     use anyhow::{Context, Result};
     use chrono::Utc;
     use serde::{Deserialize, Serialize};
     use std::collections::HashMap;
+    use std::io::Write;
     use std::path::PathBuf;
     use std::time::Duration;
 
@@ -895,7 +1084,7 @@ pub mod sync {
         end_time: i64,
         usage_types: &[i32],
     ) -> Result<Vec<serde_json::Value>> {
-        let client = reqwest::Client::new();
+        let client = tokens_core::http::client();
         let url = format!("{}/trae/api/v1/pay/query_user_usage_group_by_session", host);
         let mut all = Vec::new();
         let mut page = 1;
@@ -949,64 +1138,84 @@ pub mod sync {
 
     // ── Sync lock ──────────────────────────────────────────────────────────
 
-    const SYNC_LOCK_ACQUIRE_ATTEMPTS: usize = 3;
-
     #[derive(Debug)]
     struct SyncLockGuard {
-        path: PathBuf,
+        _os_file: std::fs::File,
+        path: std::path::PathBuf,
+        record: String,
     }
 
     impl SyncLockGuard {
+        /// Take exclusive ownership of the Trae sync for as long as the
+        /// returned guard lives.
+        ///
+        /// Ownership is the kernel's exclusive lock on the file, not the
+        /// bytes inside it. The previous protocol created the lock file, then
+        /// wrote its pid, then probed that pid's liveness to decide whether to
+        /// unlink and retry — a read-decide-unlink sequence that is not
+        /// atomic, so two contenders could find the same dead owner and both
+        /// proceed, and a contender arriving before the pid was written read
+        /// an empty file and evicted a live owner. The companion OS lock prevents
+        /// those races between new binaries, while the visible PID record remains
+        /// readable by older binaries during a rolling upgrade.
+        ///
+        /// On normal release the guard removes only its own visible record while
+        /// holding the companion lock. After a crash, a surviving visible record
+        /// fails closed and requires the documented user-mediated recovery.
         fn acquire(cache_dir: &std::path::Path) -> Result<Self> {
-            let lock_path = cache_dir.join("sync.lock");
             if !cache_dir.exists() {
                 std::fs::create_dir_all(cache_dir)?;
             }
-            let mut stale_recoveries = 0usize;
-            loop {
-                match std::fs::OpenOptions::new()
-                    .create_new(true)
-                    .write(true)
-                    .open(&lock_path)
-                {
-                    Ok(mut file) => {
-                        use std::io::Write;
-                        let _ = writeln!(file, "{} {}", std::process::id(), Utc::now().timestamp());
-                        return Ok(Self { path: lock_path });
-                    }
-                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                        // Only evict the lock when its owner is provably
-                        // dead. Live syncs MUST keep exclusive access for as
-                        // long as they hold the PID — otherwise two
-                        // processes overlap on the manifest and delete each
-                        // other's session artifacts.
-                        if let Some((existing_pid, _)) = read_sync_lock(&lock_path) {
-                            if pid_is_alive(existing_pid) {
-                                return Err(anyhow::anyhow!(
-                                    "another trae sync is in progress (pid {existing_pid}); aborting"
-                                ));
-                            }
-                        }
-                        if stale_recoveries >= SYNC_LOCK_ACQUIRE_ATTEMPTS {
-                            return Err(anyhow::anyhow!(
-                                "could not acquire trae sync lock after {SYNC_LOCK_ACQUIRE_ATTEMPTS} stale-lock recoveries; another process keeps recreating the lock file"
-                            ));
-                        }
-                        stale_recoveries += 1;
-                        let _ = std::fs::remove_file(&lock_path);
-                        continue;
-                    }
-                    Err(e) => {
-                        return Err(anyhow::Error::new(e).context("failed to acquire sync lock"));
-                    }
+
+            // Do not range-lock the legacy PID file: on Windows that can
+            // make an old reader fail and then unlink the live record.
+            let os_path = cache_dir.join("sync.os.lock");
+            let lock_path = cache_dir.join("sync.lock");
+            let os_file = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .open(&os_path)
+                .with_context(|| format!("failed to open OS sync lock at {}", os_path.display()))?;
+
+            match fs2::FileExt::try_lock_exclusive(&os_file) {
+                Ok(()) => {}
+                Err(e) if crate::commands::autosubmit::is_lock_contention(&e) => {
+                    // Best effort: name the owner when its pid is recorded and
+                    // still alive. Windows refuses reads of a range another
+                    // handle has locked, so the pid is often unavailable there.
+                    let owner = read_sync_lock(&lock_path)
+                        .filter(|(pid, _)| pid_is_alive(*pid))
+                        .map(|(pid, _)| format!(" (pid {pid})"))
+                        .unwrap_or_default();
+                    return Err(anyhow::anyhow!(
+                        "another trae sync is in progress{owner}; aborting"
+                    ));
+                }
+                Err(e) => {
+                    return Err(anyhow::Error::new(e).context("failed to acquire sync lock"));
                 }
             }
+
+            // New-format contenders acquire this companion lock before
+            // publishing the legacy PID record, so a losing contender never
+            // strands a visible lock.
+            let record = publish_legacy_readable_lock(&lock_path)?;
+
+            Ok(Self {
+                _os_file: os_file,
+                path: lock_path,
+                record,
+            })
         }
     }
 
     impl Drop for SyncLockGuard {
         fn drop(&mut self) {
-            let _ = std::fs::remove_file(&self.path);
+            if std::fs::read_to_string(&self.path).ok().as_deref() == Some(&self.record) {
+                let _ = std::fs::remove_file(&self.path);
+            }
         }
     }
 
@@ -1018,35 +1227,56 @@ pub mod sync {
         Some((pid, timestamp))
     }
 
-    fn pid_is_alive(pid: u32) -> bool {
-        if pid == 0 {
-            return false;
+    fn publish_legacy_readable_lock(lock_path: &std::path::Path) -> Result<String> {
+        if lock_path.exists() {
+            return Err(existing_sync_lock_error(lock_path));
         }
-        #[cfg(unix)]
-        {
-            // `kill(pid, 0)` is a signal-free liveness probe. EPERM (errno
-            // 1) still means the process exists, just that we lack
-            // permission to signal it.
-            let result = unsafe { libc_kill(pid as i32, 0) };
-            result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(1)
-        }
-        #[cfg(not(unix))]
-        {
-            let _ = pid;
-            // No portable PID probe available. Treat the lock as stale so a
-            // crashed previous run doesn't permanently block subsequent
-            // syncs. This matches the policy used by Antigravity sync and
-            // accepts a small concurrent-corruption risk on Windows; that
-            // risk is acceptable because tokens is a single-user CLI and
-            // overlapping syncs are rare in practice.
-            false
+
+        let temp_path = lock_path.with_extension(format!(
+            "lock.{}.{}",
+            std::process::id(),
+            Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        let mut temp = std::fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&temp_path)
+            .with_context(|| format!("failed to prepare sync lock at {}", temp_path.display()))?;
+        writeln!(temp, "{} {}", std::process::id(), Utc::now().timestamp())?;
+        drop(temp);
+        let record = std::fs::read_to_string(&temp_path)?;
+
+        let published = std::fs::hard_link(&temp_path, lock_path);
+        let _ = std::fs::remove_file(&temp_path);
+        match published {
+            Ok(()) => Ok(record),
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+                let owner = read_sync_lock(lock_path)
+                    .filter(|(pid, _)| pid_is_alive(*pid))
+                    .map(|(pid, _)| format!(" (pid {pid})"))
+                    .unwrap_or_default();
+                anyhow::bail!("another trae sync is in progress{owner}; aborting")
+            }
+            Err(err) => {
+                Err(anyhow::Error::new(err).context("failed to publish sync lock atomically"))
+            }
         }
     }
 
-    #[cfg(unix)]
-    extern "C" {
-        #[link_name = "kill"]
-        fn libc_kill(pid: i32, sig: i32) -> i32;
+    fn existing_sync_lock_error(lock_path: &std::path::Path) -> anyhow::Error {
+        if let Some((pid, _)) = read_sync_lock(lock_path).filter(|(pid, _)| pid_is_alive(*pid)) {
+            anyhow::anyhow!(
+                "Another tokens Trae sync may be in progress (pid {pid}); do not remove '{}' until that process has stopped. If it has stopped, remove '{}' and retry.",
+                lock_path.display(),
+                lock_path.display()
+            )
+        } else {
+            anyhow::anyhow!(
+                "Trae sync lock at '{}' already exists. To avoid overlapping a possible active sync during a rolling upgrade, tokens will not replace it automatically. Confirm no tokens Trae sync is running, then remove '{}' and retry.",
+                lock_path.display(),
+                lock_path.display()
+            )
+        }
     }
 
     // ── Main sync logic ────────────────────────────────────────────────────
@@ -1232,4 +1462,317 @@ pub mod sync {
         }
     }
 
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn test_read_sync_lock_parses_pid_and_timestamp() {
+            let tmp = tempfile::tempdir().unwrap();
+            let path = tmp.path().join("sync.lock");
+            std::fs::write(&path, "12345 1776000000\n").unwrap();
+            let (pid, ts) = read_sync_lock(&path).expect("readable");
+            assert_eq!(pid, 12345);
+            assert_eq!(ts, 1776000000);
+        }
+
+        #[test]
+        fn test_read_sync_lock_returns_none_on_malformed() {
+            let tmp = tempfile::tempdir().unwrap();
+            let path = tmp.path().join("sync.lock");
+            std::fs::write(&path, "not a pid\n").unwrap();
+            assert!(read_sync_lock(&path).is_none());
+        }
+
+        // Liveness probe coverage moved to `crate::process_liveness`, which
+        // now owns the single implementation both sync locks share.
+
+        /// A visible lock record left behind by a crashed run fails closed.
+        /// The next sync preserves it until the user confirms no sync is
+        /// active and removes the exact reported path.
+        #[test]
+        fn test_acquire_refuses_a_lock_file_left_by_a_crashed_run() {
+            let tmp = tempfile::tempdir().unwrap();
+            let cache_dir = tmp.path();
+            std::fs::write(cache_dir.join("sync.lock"), "0 1\n").unwrap();
+
+            let err = SyncLockGuard::acquire(cache_dir).unwrap_err();
+            assert!(err.to_string().contains("already exists"));
+            assert!(cache_dir.join("sync.lock").exists());
+        }
+
+        #[test]
+        fn test_existing_sync_lock_error_names_the_exact_stale_lock_path() {
+            let tmp = tempfile::tempdir().unwrap();
+            let lock_path = tmp.path().join("sync.lock");
+            std::fs::write(&lock_path, "999999 1\n").unwrap();
+
+            let err = existing_sync_lock_error(&lock_path).to_string();
+            let quoted_path = format!("'{}'", lock_path.display());
+            assert!(err.contains(&quoted_path));
+            assert!(err.contains("Confirm no tokens Trae sync is running"));
+            assert!(err.contains("remove"));
+        }
+
+        /// A live PID-only lock belongs to a pre-OS-lock binary. A new
+        /// version must not overwrite it while a rolling upgrade is in
+        /// progress.
+        #[test]
+        fn test_acquire_preserves_a_live_legacy_pid_lock() {
+            let tmp = tempfile::tempdir().unwrap();
+            let cache_dir = tmp.path();
+            let lock_path = cache_dir.join("sync.lock");
+            std::fs::write(&lock_path, format!("{} 1\n", std::process::id())).unwrap();
+
+            let err = SyncLockGuard::acquire(cache_dir).unwrap_err();
+            assert!(
+                err.to_string()
+                    .contains("Another tokens Trae sync may be in progress"),
+                "a live legacy owner must be preserved, got: {err:#}"
+            );
+            assert_eq!(
+                read_sync_lock(&lock_path).map(|(pid, _)| pid),
+                Some(std::process::id()),
+                "the new binary must not overwrite the legacy owner's record"
+            );
+        }
+
+        #[test]
+        fn test_acquire_remains_readable_to_the_legacy_protocol() {
+            let tmp = tempfile::tempdir().unwrap();
+            let cache_dir = tmp.path();
+            let lock_path = cache_dir.join("sync.lock");
+            let guard = SyncLockGuard::acquire(cache_dir).unwrap();
+
+            let legacy_open = std::fs::OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .open(&lock_path)
+                .unwrap_err();
+            assert_eq!(legacy_open.kind(), std::io::ErrorKind::AlreadyExists);
+            let (pid, _) = read_sync_lock(&lock_path).expect("legacy PID record");
+            assert_eq!(pid, std::process::id());
+            assert!(pid_is_alive(pid), "legacy sync would preserve a live owner");
+            assert!(
+                lock_path.exists(),
+                "legacy sync must not unlink the live inode"
+            );
+            drop(guard);
+        }
+
+        #[test]
+        fn test_publish_lock_never_exposes_an_empty_inode_to_legacy_acquire() {
+            let tmp = tempfile::tempdir().unwrap();
+            let lock_path = tmp.path().join("sync.lock");
+
+            publish_legacy_readable_lock(&lock_path).unwrap();
+            let legacy_open = std::fs::OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .open(&lock_path)
+                .unwrap_err();
+            assert_eq!(legacy_open.kind(), std::io::ErrorKind::AlreadyExists);
+            let (pid, timestamp) = read_sync_lock(&lock_path).expect("complete legacy record");
+            assert_eq!(pid, std::process::id());
+            assert!(timestamp > 0);
+        }
+
+        #[test]
+        fn test_acquire_refuses_an_empty_legacy_inode_without_an_os_lock() {
+            let tmp = tempfile::tempdir().unwrap();
+            let cache_dir = tmp.path();
+            let lock_path = cache_dir.join("sync.lock");
+            std::fs::OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .open(&lock_path)
+                .unwrap();
+
+            let err = SyncLockGuard::acquire(cache_dir).unwrap_err();
+            assert!(err.to_string().contains("already exists"));
+            assert!(lock_path.exists(), "the pending legacy inode must survive");
+        }
+
+        /// Regression (#1010): the old protocol decided ownership from the
+        /// bytes in the lock file, so a lock held by a live process that had
+        /// not yet written its pid looked unowned and was evicted.
+        #[test]
+        fn test_acquire_refuses_a_held_lock_that_has_no_pid_written_yet() {
+            let tmp = tempfile::tempdir().unwrap();
+            let cache_dir = tmp.path();
+            let lock_path = cache_dir.join("sync.lock");
+
+            let holder = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .open(&lock_path)
+                .unwrap();
+            fs2::FileExt::try_lock_exclusive(&holder).unwrap();
+
+            let err = SyncLockGuard::acquire(cache_dir).unwrap_err();
+            assert!(
+                err.to_string().contains("already exists"),
+                "a held lock must never be evicted, got: {err:#}"
+            );
+
+            fs2::FileExt::unlock(&holder).unwrap();
+        }
+
+        /// A second sync is refused for as long as the first guard lives, and
+        /// succeeds once it is dropped.
+        #[test]
+        fn test_acquire_excludes_a_second_sync_until_the_first_is_dropped() {
+            let tmp = tempfile::tempdir().unwrap();
+            let cache_dir = tmp.path();
+
+            let guard = SyncLockGuard::acquire(cache_dir).expect("first acquire");
+            let err = SyncLockGuard::acquire(cache_dir).unwrap_err();
+            assert!(err.to_string().contains("in progress"));
+
+            drop(guard);
+            SyncLockGuard::acquire(cache_dir).expect("the lock is free once the guard is dropped");
+        }
+
+        #[test]
+        fn test_losing_contender_leaves_no_orphan_after_release() {
+            let tmp = tempfile::tempdir().unwrap();
+            let cache_dir = tmp.path();
+            let lock_path = cache_dir.join("sync.lock");
+
+            let owner = SyncLockGuard::acquire(cache_dir).unwrap();
+            let err = SyncLockGuard::acquire(cache_dir).unwrap_err();
+            assert!(err.to_string().contains("in progress"));
+            assert!(lock_path.exists(), "only the owner's record is visible");
+
+            drop(owner);
+            assert!(!lock_path.exists(), "owner release removes its record");
+            let successor = SyncLockGuard::acquire(cache_dir).unwrap();
+            drop(successor);
+            assert!(!lock_path.exists(), "no contender record is stranded");
+        }
+
+        #[test]
+        fn test_acquire_removes_its_lock_after_drop() {
+            let tmp = tempfile::tempdir().unwrap();
+            let cache_dir = tmp.path();
+            drop(SyncLockGuard::acquire(cache_dir).expect("first acquire"));
+            assert!(!cache_dir.join("sync.lock").exists());
+        }
+
+        #[test]
+        fn test_merge_manifest_upsert_prefers_newer_usage_time() {
+            let existing = vec![
+                TraeSessionEntry {
+                    session_id: "session-stable".to_string(),
+                    usage_time: 1_700_000_000,
+                    artifact_path: "sessions/old.json".to_string(),
+                },
+                TraeSessionEntry {
+                    session_id: "session-older".to_string(),
+                    usage_time: 1_600_000_000,
+                    artifact_path: "sessions/older.json".to_string(),
+                },
+            ];
+
+            let incoming = vec![
+                TraeSessionEntry {
+                    session_id: "session-stable".to_string(),
+                    usage_time: 1_700_000_001,
+                    artifact_path: "sessions/newer.json".to_string(),
+                },
+                TraeSessionEntry {
+                    session_id: "session-older".to_string(),
+                    usage_time: 1_500_000_000,
+                    artifact_path: "sessions/should-not-win.json".to_string(),
+                },
+                TraeSessionEntry {
+                    session_id: "session-new".to_string(),
+                    usage_time: 1_800_000_000,
+                    artifact_path: "sessions/new.json".to_string(),
+                },
+            ];
+
+            let merged = merge_manifest_sessions(existing, incoming);
+            merged.iter().for_each(|entry| {
+                if entry.session_id == "session-stable" {
+                    assert_eq!(entry.usage_time, 1_700_000_001);
+                    assert_eq!(entry.artifact_path, "sessions/newer.json");
+                }
+                if entry.session_id == "session-older" {
+                    assert_eq!(entry.usage_time, 1_600_000_000);
+                    assert_eq!(entry.artifact_path, "sessions/older.json");
+                }
+            });
+            assert_eq!(merged.len(), 3);
+        }
+
+        #[test]
+        fn test_merge_manifest_session_batch_dedups_same_session() {
+            let existing = vec![];
+            let incoming = vec![
+                TraeSessionEntry {
+                    session_id: "session-dupe".to_string(),
+                    usage_time: 1_000,
+                    artifact_path: "sessions/first.json".to_string(),
+                },
+                TraeSessionEntry {
+                    session_id: "session-dupe".to_string(),
+                    usage_time: 1_200,
+                    artifact_path: "sessions/second.json".to_string(),
+                },
+                TraeSessionEntry {
+                    session_id: "session-dupe".to_string(),
+                    usage_time: 1_200,
+                    artifact_path: "sessions/zzz.json".to_string(),
+                },
+            ];
+            let merged = merge_manifest_sessions(existing, incoming);
+            assert_eq!(merged.len(), 1);
+            assert_eq!(merged[0].session_id, "session-dupe");
+            assert_eq!(merged[0].usage_time, 1_200);
+            assert_eq!(merged[0].artifact_path, "sessions/zzz.json");
+        }
+
+        #[test]
+        fn test_manifest_reference_is_absent_when_batch_loses_merge() {
+            let current_batch = "sessions/current.json";
+            let merged = merge_manifest_sessions(
+                vec![TraeSessionEntry {
+                    session_id: "session-stable".to_string(),
+                    usage_time: 2_000,
+                    artifact_path: "sessions/previous.json".to_string(),
+                }],
+                vec![TraeSessionEntry {
+                    session_id: "session-stable".to_string(),
+                    usage_time: 1_000,
+                    artifact_path: current_batch.to_string(),
+                }],
+            );
+
+            assert!(!manifest_references_artifact(&merged, current_batch));
+            assert_eq!(merged[0].artifact_path, "sessions/previous.json");
+        }
+
+        #[test]
+        fn test_manifest_reference_is_present_when_batch_wins_merge() {
+            let current_batch = "sessions/current.json";
+            let merged = merge_manifest_sessions(
+                vec![TraeSessionEntry {
+                    session_id: "session-stable".to_string(),
+                    usage_time: 1_000,
+                    artifact_path: "sessions/previous.json".to_string(),
+                }],
+                vec![TraeSessionEntry {
+                    session_id: "session-stable".to_string(),
+                    usage_time: 2_000,
+                    artifact_path: current_batch.to_string(),
+                }],
+            );
+
+            assert!(manifest_references_artifact(&merged, current_batch));
+            assert_eq!(merged[0].artifact_path, current_batch);
+        }
+    }
 }

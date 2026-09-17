@@ -1,33 +1,49 @@
-//! Pins the process-wide date-bucketing timezone (see
+//! The date-bucketing timezone this device submits in (see
 //! `tokens_core::bucket_tz`).
 //!
 //! Usage events only carry UTC timestamps, so the calendar date a row belongs to
 //! is reconstructed at scan time. Doing that with the machine's *current*
 //! timezone makes dates drift when the user travels, which the server's per-day
 //! "keep the max" merge then double-counts. To keep bucketing stable we detect
-//! the system IANA timezone once, persist it in settings.json, and install it
-//! here before any scanning. See https://github.com/missuo/tokens/issues/15.
-
+//! the system IANA timezone once, persist it in settings.json, and hand it to
+//! every scan through `ScannerSettings::bucket_timezone`. See
+//! https://github.com/missuo/tokens/issues/15.
+//!
+//! The pin lives in the top-level `timezone` key, which every release of this
+//! fork has written. Upstream keeps its pin in `scanner.bucketTimezone`; that
+//! key is honoured as a fallback, but the top-level key wins so no existing
+//! device changes the zone it buckets into on upgrade.
 
 use crate::settings::Settings;
+use tokens_core::BucketTimezone;
 
-/// Resolve the configured (or detected) timezone and install it as the
-/// process-wide bucketing timezone. Pure in-memory: never writes settings.
-/// Honors a `--home` override so sandboxed/explicit-home runs stay hermetic.
-pub fn install() {
-    let settings = Settings::load();
-    let name = settings.timezone.or_else(detect_system_timezone);
-    if let Some(name) = name {
-        if let Some(tz) = tokens_core::parse_bucket_timezone(&name) {
-            tokens_core::set_bucket_timezone(tz);
-        }
-    }
+/// The zone name scans on this device bucket into: the pinned `timezone`,
+/// else `scanner.bucketTimezone`, else the machine's current zone. Never
+/// writes settings.
+pub fn effective_name(settings: &Settings) -> Option<String> {
+    settings
+        .timezone
+        .clone()
+        .filter(|name| !name.trim().is_empty())
+        .or_else(|| {
+            settings
+                .scanner
+                .bucket_timezone
+                .clone()
+                .filter(|name| !name.trim().is_empty())
+        })
+        .or_else(detect_system_timezone)
+}
+
+/// The resolved bucketing zone for this device.
+pub fn current() -> BucketTimezone {
+    BucketTimezone::from_pinned_name(effective_name(&Settings::load()).as_deref())
 }
 
 /// Persist the detected system timezone into settings.json when none is pinned
 /// yet, so future submissions — including ones made while traveling — keep
 /// bucketing in the same reference frame. Best-effort: a write failure leaves
-/// the in-memory default (machine-local) in place. Call from the submit path.
+/// the machine-local zone in place for this run. Call from the submit path.
 pub fn ensure_pinned() {
     let mut settings = Settings::load();
     if settings.timezone.is_some() {
@@ -40,7 +56,5 @@ pub fn ensure_pinned() {
 }
 
 fn detect_system_timezone() -> Option<String> {
-    iana_time_zone::get_timezone()
-        .ok()
-        .filter(|name| !name.is_empty())
+    tokens_core::bucket_tz::detect_local_iana_name()
 }

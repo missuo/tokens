@@ -1,14 +1,25 @@
-use super::cache;
 use super::litellm::ModelPricing;
+use super::{cache, describe_error, fetch};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 
 const CACHE_FILENAME: &str = "pricing-openrouter.json";
-const MODELS_URL: &str = "https://openrouter.ai/api/v1/models";
-const MAX_RETRIES: u32 = 3;
-const INITIAL_BACKOFF_MS: u64 = 200;
+/// Root of the OpenRouter REST API. Both requests this module makes — the
+/// model list and the per-model endpoint lookup — are built from this one
+/// value so a test can point the whole fetch at a local fixture server. The
+/// per-model URL used to be hardcoded, which left the author-pricing leg
+/// unreachable offline: any test that got far enough to exercise it made a
+/// real request to openrouter.ai.
+///
+/// Do not reintroduce a literal URL for either request.
+/// `a_fetch_with_caching_disabled_writes_no_cache_file` reaches the
+/// author-pricing leg on purpose — that is the only path that populates
+/// `result`, and therefore the only one that can reach the cache write the
+/// test guards. Hardcoding that URL again would not fail the test; it would
+/// make `cargo test` call openrouter.ai for real on every run.
+const API_BASE: &str = "https://openrouter.ai/api/v1";
 const MAX_CONCURRENT_REQUESTS: usize = 10;
 
 /// Structs for `/api/v1/models` endpoint (list all models).
@@ -45,8 +56,6 @@ struct EndpointPricing {
 #[derive(Deserialize)]
 struct Endpoint {
     provider_name: String,
-    #[serde(default)]
-    tag: String,
     pricing: EndpointPricing,
 }
 
@@ -103,6 +112,7 @@ fn parse_price(s: &str) -> Option<f64> {
 
 async fn fetch_author_pricing(
     client: Arc<reqwest::Client>,
+    api_base: Arc<String>,
     model_id: String,
     semaphore: Arc<Semaphore>,
     fallback_pricing: Option<ModelPricing>,
@@ -114,7 +124,7 @@ async fn fetch_author_pricing(
         None => return fallback_pricing.map(|p| (model_id, p)),
     };
 
-    let url = format!("https://openrouter.ai/api/v1/models/{}/endpoints", model_id);
+    let url = format!("{}/models/{}/endpoints", api_base, model_id);
 
     let response = match client
         .get(&url)
@@ -139,140 +149,182 @@ async fn fetch_author_pricing(
         }
     };
 
-    // Author providers (especially OpenAI) expose several service-tier
-    // endpoints under the same provider_name: Standard (`openai`), Flex
-    // (`openai/flex`, 50%), Fast (`openai/fast`, 2x). `.find()` would take
-    // whichever OpenRouter lists first — currently Flex — and silently
-    // half-price every Standard lookup. Prefer the Standard tag, or the
-    // tag that matches an explicit `:batch`/`:flex`/`:fast` model suffix.
-    let author_endpoint = match select_author_endpoint(&data.data.endpoints, author_name, &model_id)
-    {
-        Some(ep) => ep,
-        None => {
-            return fallback_pricing.map(|p| (model_id, p));
-        }
-    };
-
-    let input_cost = parse_price(&author_endpoint.pricing.prompt);
-    let output_cost = parse_price(&author_endpoint.pricing.completion);
-
-    if input_cost.is_none() || output_cost.is_none() {
-        return fallback_pricing.map(|p| (model_id, p));
+    match select_endpoint_pricing(&data.data.endpoints, author_name, fallback_pricing.as_ref()) {
+        Some(pricing) => Some((model_id, pricing)),
+        None => fallback_pricing.map(|p| (model_id, p)),
     }
+}
 
-    let pricing = ModelPricing {
-        input_cost_per_token: input_cost,
-        output_cost_per_token: output_cost,
-        cache_read_input_token_cost: author_endpoint
+fn endpoint_pricing(endpoint: &Endpoint) -> Option<ModelPricing> {
+    Some(ModelPricing {
+        input_cost_per_token: Some(parse_price(&endpoint.pricing.prompt)?),
+        output_cost_per_token: Some(parse_price(&endpoint.pricing.completion)?),
+        cache_read_input_token_cost: endpoint
             .pricing
             .input_cache_read
-            .as_ref()
-            .and_then(|s| parse_price(s)),
-        cache_creation_input_token_cost: author_endpoint
+            .as_deref()
+            .and_then(parse_price),
+        cache_creation_input_token_cost: endpoint
             .pricing
             .input_cache_write
-            .as_ref()
-            .and_then(|s| parse_price(s)),
+            .as_deref()
+            .and_then(parse_price),
         ..Default::default()
+    })
+}
+
+fn quotes_same_base_price(candidate: &ModelPricing, listed: &ModelPricing) -> bool {
+    let same = |candidate: Option<f64>, listed: Option<f64>| match (candidate, listed) {
+        (Some(candidate), Some(listed)) => (candidate - listed).abs() <= listed.abs() * 1e-9,
+        _ => false,
     };
 
-    Some((model_id, pricing))
+    same(candidate.input_cost_per_token, listed.input_cost_per_token)
+        && same(
+            candidate.output_cost_per_token,
+            listed.output_cost_per_token,
+        )
+}
+
+/// Pick the pricing row for a model from its OpenRouter endpoints.
+///
+/// The model author's own endpoint still wins, so `glm-4.7` keeps Z.AI's
+/// price rather than a reseller's markup. When the model has no endpoint from
+/// its author, the listed price is used exactly as before — but it is taken
+/// from an endpoint that quotes that same base price, so the cache rates
+/// OpenRouter publishes alongside it survive.
+///
+/// Discarding them is what broke `tokens submit`: OpenRouter serves
+/// `openai/gpt-5.2-codex` only from an `Azure` endpoint, so the author lookup
+/// missed and the row lost the `input_cache_read` price it publishes.
+/// Submission validation treats a populated bucket with no rate as
+/// unpriceable, so every Codex session — which always carries cached tokens —
+/// aborted the whole submission (#1013).
+///
+/// One author can serve the same model from several endpoints that differ only
+/// by service tier — `openai` against `openai/flex` and `openai/fast`,
+/// `google-vertex/global` against `.../flex` and `.../priority` — and all of
+/// them report the same `provider_name`. Taking the first match therefore made
+/// the stored price depend on OpenRouter's response ordering, which currently
+/// returns the discounted Flex tier first and so halved every rate for 26
+/// models. Flex is a real price but not the one that ran: it has to be opted
+/// into per request, and Codex records `"service_tier":"priority"` or
+/// `"default"`, never `flex`. The listed price on `/models` is the standard
+/// tier, so it breaks the tie between endpoints of one author. `tag` is
+/// deliberately not used here: tier naming is not uniform across authors, so
+/// it would need per-author rules where the listed price needs none.
+fn select_endpoint_pricing(
+    endpoints: &[Endpoint],
+    author_name: &str,
+    listed: Option<&ModelPricing>,
+) -> Option<ModelPricing> {
+    let author_endpoints: Vec<&Endpoint> = endpoints
+        .iter()
+        .filter(|e| e.provider_name == author_name)
+        .collect();
+
+    if let Some(first) = author_endpoints.first() {
+        if let Some(listed) = listed {
+            let standard_tier = fewest_unpriceable_buckets(
+                author_endpoints
+                    .iter()
+                    .copied()
+                    .filter_map(endpoint_pricing)
+                    .filter(|pricing| quotes_same_base_price(pricing, listed)),
+            );
+            // The first match stands only when no author endpoint quotes the
+            // listed price, so a model whose author price legitimately differs
+            // from the listed one is left exactly as it was.
+            if standard_tier.is_some() {
+                return standard_tier;
+            }
+        }
+        return endpoint_pricing(first);
+    }
+
+    let listed = listed?;
+    fewest_unpriceable_buckets(
+        endpoints
+            .iter()
+            .filter_map(endpoint_pricing)
+            .filter(|pricing| quotes_same_base_price(pricing, listed)),
+    )
+}
+
+/// Reduce equally-priced candidates to the one that leaves the fewest token
+/// buckets unpriceable.
+///
+/// Cache read and cache write are independent fields, so the endpoint
+/// publishing the most of them wins. On an equal count, retain cache-read
+/// pricing: it is the bucket required by Codex usage and must not be lost to
+/// an earlier write-only endpoint.
+fn fewest_unpriceable_buckets(
+    candidates: impl Iterator<Item = ModelPricing>,
+) -> Option<ModelPricing> {
+    candidates.reduce(|best, candidate| {
+        if published_cache_rates(&candidate) > published_cache_rates(&best)
+            || (published_cache_rates(&candidate) == published_cache_rates(&best)
+                && candidate.cache_read_input_token_cost.is_some()
+                && best.cache_read_input_token_cost.is_none())
+        {
+            candidate
+        } else {
+            best
+        }
+    })
+}
+
+fn published_cache_rates(pricing: &ModelPricing) -> usize {
+    usize::from(pricing.cache_read_input_token_cost.is_some())
+        + usize::from(pricing.cache_creation_input_token_cost.is_some())
 }
 
 /// Fetch all models and get author pricing for each
-pub async fn fetch_all_models() -> HashMap<String, ModelPricing> {
-    if let Some(cached) = load_cached() {
-        return cached;
+pub async fn fetch_all_models() -> Result<HashMap<String, ModelPricing>, String> {
+    fetch_all_models_from_api_base(API_BASE, true).await
+}
+
+async fn fetch_all_models_from_api_base(
+    api_base: &str,
+    use_disk_cache: bool,
+) -> Result<HashMap<String, ModelPricing>, String> {
+    if use_disk_cache {
+        if let Some(cached) = load_cached() {
+            return Ok(cached);
+        }
     }
 
-    let client = Arc::new(
-        reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
-            .connect_timeout(std::time::Duration::from_secs(10))
-            .build()
-            .unwrap_or_default(),
-    );
-
-    let mut last_error: Option<String> = None;
-
-    let models_with_fallback: Vec<(String, Option<ModelPricing>)> = 'retry: {
-        for attempt in 0..MAX_RETRIES {
-            let response = match client
-                .get(MODELS_URL)
-                .header("Content-Type", "application/json")
-                .send()
-                .await
-            {
-                Ok(r) => r,
-                Err(e) => {
-                    last_error = Some(format!("network error: {}", e));
-                    if attempt < MAX_RETRIES - 1 {
-                        tokio::time::sleep(std::time::Duration::from_millis(
-                            INITIAL_BACKOFF_MS * (1 << attempt),
-                        ))
-                        .await;
-                    }
-                    continue;
-                }
-            };
-
-            let status = response.status();
-            if status.is_server_error() || status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-                last_error = Some(format!("HTTP {}", status));
-                let _ = response.bytes().await;
-                if attempt < MAX_RETRIES - 1 {
-                    tokio::time::sleep(std::time::Duration::from_millis(
-                        INITIAL_BACKOFF_MS * (1 << attempt),
-                    ))
-                    .await;
-                }
-                continue;
-            }
-
-            if !status.is_success() {
-                eprintln!("[tokens] OpenRouter models API returned {}", status);
-                break 'retry Vec::new();
-            }
-
-            let data: ModelsListResponse = match response.json().await {
-                Ok(d) => d,
-                Err(e) => {
-                    eprintln!("[tokens] OpenRouter models JSON parse failed: {}", e);
-                    break 'retry Vec::new();
-                }
-            };
-
-            break 'retry data
-                .data
-                .into_iter()
-                .map(|m| {
-                    let fallback = m.pricing.and_then(|p| {
-                        let input = parse_price(&p.prompt)?;
-                        let output = parse_price(&p.completion)?;
-                        Some(ModelPricing {
-                            input_cost_per_token: Some(input),
-                            output_cost_per_token: Some(output),
-                            cache_read_input_token_cost: None,
-                            cache_creation_input_token_cost: None,
-                            ..Default::default()
-                        })
-                    });
-                    (m.id, fallback)
+    let api_base = Arc::new(api_base.to_string());
+    let models_url = format!("{api_base}/models");
+    let client = Arc::new(fetch::pricing_client()?);
+    let response = fetch::get_with_retry(&client, &models_url, "OpenRouter").await?;
+    let data: ModelsListResponse = response.json().await.map_err(|error| {
+        format!(
+            "OpenRouter models JSON parse failed: {}",
+            describe_error(&error)
+        )
+    })?;
+    let models_with_fallback: Vec<(String, Option<ModelPricing>)> = data
+        .data
+        .into_iter()
+        .map(|m| {
+            let fallback = m.pricing.and_then(|p| {
+                let input = parse_price(&p.prompt)?;
+                let output = parse_price(&p.completion)?;
+                Some(ModelPricing {
+                    input_cost_per_token: Some(input),
+                    output_cost_per_token: Some(output),
+                    cache_read_input_token_cost: None,
+                    cache_creation_input_token_cost: None,
+                    ..Default::default()
                 })
-                .collect();
-        }
-
-        if let Some(err) = &last_error {
-            eprintln!(
-                "[tokens] OpenRouter fetch failed after {} retries: {}",
-                MAX_RETRIES, err
-            );
-        }
-        Vec::new()
-    };
+            });
+            (m.id, fallback)
+        })
+        .collect();
 
     if models_with_fallback.is_empty() {
-        return HashMap::new();
+        return Err("OpenRouter returned no models".to_string());
     }
 
     let models_with_authors: Vec<(String, Option<ModelPricing>)> = models_with_fallback
@@ -286,12 +338,12 @@ pub async fn fetch_all_models() -> HashMap<String, ModelPricing> {
 
     for (model_id, fallback) in models_with_authors {
         let client = Arc::clone(&client);
+        let api_base = Arc::clone(&api_base);
         let sem = Arc::clone(&semaphore);
 
-        let handle =
-            tokio::spawn(
-                async move { fetch_author_pricing(client, model_id, sem, fallback).await },
-            );
+        let handle = tokio::spawn(async move {
+            fetch_author_pricing(client, api_base, model_id, sem, fallback).await
+        });
 
         handles.push(handle);
     }
@@ -305,7 +357,11 @@ pub async fn fetch_all_models() -> HashMap<String, ModelPricing> {
         }
     }
 
-    if !result.is_empty() {
+    // `use_disk_cache` gates the write as well as the read above. See
+    // `litellm::fetch_inner` for why the caller's opt-out, not a
+    // `TOKENS_CONFIG_DIR` redirect in each test, is what keeps a fixture
+    // fetch out of the user's real cache.
+    if use_disk_cache && !result.is_empty() {
         if let Err(e) = cache::save_cache(CACHE_FILENAME, &result) {
             eprintln!(
                 "[tokens] Warning: Failed to cache OpenRouter pricing at {}: {}",
@@ -315,127 +371,360 @@ pub async fn fetch_all_models() -> HashMap<String, ModelPricing> {
         }
     }
 
-    result
+    if result.is_empty() {
+        return Err("OpenRouter returned no usable pricing rows".to_string());
+    }
+
+    Ok(result)
 }
 
-pub async fn fetch_all_mapped() -> HashMap<String, ModelPricing> {
+pub async fn fetch_all_mapped() -> Result<HashMap<String, ModelPricing>, String> {
     fetch_all_models().await
-}
-
-fn select_author_endpoint<'a>(
-    endpoints: &'a [Endpoint],
-    author_name: &str,
-    model_id: &str,
-) -> Option<&'a Endpoint> {
-    let author_eps: Vec<&'a Endpoint> = endpoints
-        .iter()
-        .filter(|endpoint| endpoint.provider_name == author_name)
-        .collect();
-    if author_eps.is_empty() {
-        return None;
-    }
-
-    if let Some(tier) = model_service_tier(model_id) {
-        let suffix = format!("/{tier}");
-        if let Some(endpoint) = author_eps.iter().copied().find(|endpoint| {
-            let tag = endpoint.tag.to_ascii_lowercase();
-            tag == tier || tag.ends_with(&suffix)
-        }) {
-            return Some(endpoint);
-        }
-        return Some(author_eps[0]);
-    }
-
-    let standard_tag = model_id
-        .split('/')
-        .next()
-        .unwrap_or(model_id)
-        .to_ascii_lowercase();
-    if let Some(endpoint) = author_eps
-        .iter()
-        .copied()
-        .find(|endpoint| endpoint.tag.eq_ignore_ascii_case(&standard_tag))
-    {
-        return Some(endpoint);
-    }
-
-    if let Some(endpoint) = author_eps
-        .iter()
-        .copied()
-        .find(|endpoint| !is_service_tier_tag(&endpoint.tag))
-    {
-        return Some(endpoint);
-    }
-
-    Some(author_eps[0])
-}
-
-fn model_service_tier(model_id: &str) -> Option<String> {
-    let tier = model_id.rsplit_once(':')?.1.to_ascii_lowercase();
-    matches!(tier.as_str(), "flex" | "fast" | "batch" | "priority").then_some(tier)
-}
-
-fn is_service_tier_tag(tag: &str) -> bool {
-    tag.to_ascii_lowercase()
-        .rsplit_once('/')
-        .is_some_and(|(_, suffix)| matches!(suffix, "flex" | "fast" | "batch" | "priority"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::paths::test_env::EnvGuard;
+    use serial_test::serial;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::thread;
+    use tempfile::TempDir;
 
-    fn endpoint(provider_name: &str, tag: &str, prompt: &str, completion: &str) -> Endpoint {
+    fn response_server(status: &'static str, body: &'static str, requests: usize) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        thread::spawn(move || {
+            for _ in 0..requests {
+                let Ok((mut stream, _)) = listener.accept() else {
+                    return;
+                };
+                let mut buffer = [0; 1024];
+                let _ = stream.read(&mut buffer);
+                let response = format!(
+                    "{status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(response.as_bytes());
+            }
+        });
+        url
+    }
+
+    fn endpoint(
+        provider_name: &str,
+        prompt: &str,
+        completion: &str,
+        input_cache_read: Option<&str>,
+    ) -> Endpoint {
+        endpoint_with_cache(provider_name, prompt, completion, input_cache_read, None)
+    }
+
+    fn endpoint_with_cache(
+        provider_name: &str,
+        prompt: &str,
+        completion: &str,
+        input_cache_read: Option<&str>,
+        input_cache_write: Option<&str>,
+    ) -> Endpoint {
         Endpoint {
             provider_name: provider_name.to_string(),
-            tag: tag.to_string(),
             pricing: EndpointPricing {
                 prompt: prompt.to_string(),
                 completion: completion.to_string(),
-                input_cache_read: None,
-                input_cache_write: None,
+                input_cache_read: input_cache_read.map(str::to_string),
+                input_cache_write: input_cache_write.map(str::to_string),
             },
         }
     }
 
+    fn listed(input: f64, output: f64) -> ModelPricing {
+        ModelPricing {
+            input_cost_per_token: Some(input),
+            output_cost_per_token: Some(output),
+            ..Default::default()
+        }
+    }
+
+    // Regression: #1013. OpenRouter serves `openai/gpt-5.2-codex` only from an
+    // `Azure` endpoint, so the `OpenAI` author lookup missed and the row fell
+    // back to the listed price with its cache rates dropped. Submission
+    // validation then rejected every Codex session as unpriced.
     #[test]
-    fn select_author_endpoint_prefers_openai_standard_over_flex() {
-        let endpoints = [
-            endpoint("OpenAI", "openai/flex", "0.000005", "0.000025"),
-            endpoint("Azure", "azure", "0.00001", "0.00005"),
-            endpoint("OpenAI", "openai", "0.00001", "0.00005"),
-            endpoint("OpenAI", "openai/fast", "0.00002", "0.0001"),
+    fn cache_rates_survive_when_the_model_has_no_author_endpoint() {
+        let endpoints = vec![endpoint(
+            "Azure",
+            "0.00000175",
+            "0.000014",
+            Some("0.000000175"),
+        )];
+
+        let pricing =
+            select_endpoint_pricing(&endpoints, "OpenAI", Some(&listed(1.75e-6, 1.4e-5))).unwrap();
+
+        assert_eq!(pricing.input_cost_per_token, Some(1.75e-6));
+        assert_eq!(pricing.output_cost_per_token, Some(1.4e-5));
+        assert_eq!(pricing.cache_read_input_token_cost, Some(1.75e-7));
+    }
+
+    // The author's own price stays authoritative, so a reseller endpoint can
+    // never override it just because it publishes extra cache rates.
+    #[test]
+    fn author_endpoint_still_wins_over_other_providers() {
+        let endpoints = vec![
+            endpoint("Azure", "0.0000035", "0.0000175", Some("0.00000035")),
+            endpoint("OpenAI", "0.0000002", "0.0000015", None),
         ];
 
-        let selected = select_author_endpoint(&endpoints, "OpenAI", "openai/gpt-6-astra").unwrap();
-        assert_eq!(selected.tag, "openai");
-        assert_eq!(selected.pricing.prompt, "0.00001");
-        assert_eq!(selected.pricing.completion, "0.00005");
+        let pricing =
+            select_endpoint_pricing(&endpoints, "OpenAI", Some(&listed(3.5e-6, 1.75e-5))).unwrap();
+
+        assert_eq!(pricing.input_cost_per_token, Some(2e-7));
+        assert_eq!(pricing.output_cost_per_token, Some(1.5e-6));
+        assert_eq!(pricing.cache_read_input_token_cost, None);
+    }
+
+    // An endpoint quoting a different base price is a different deal, so its
+    // cache rate must not be grafted onto the listed price.
+    #[test]
+    fn endpoints_quoting_another_base_price_are_not_adopted() {
+        let endpoints = vec![endpoint(
+            "Azure",
+            "0.0000035",
+            "0.0000175",
+            Some("0.00000035"),
+        )];
+
+        assert!(
+            select_endpoint_pricing(&endpoints, "OpenAI", Some(&listed(1.75e-6, 1.4e-5))).is_none()
+        );
+    }
+
+    // Cache read and cache write are independent fields, so preferring the
+    // first endpoint that publishes a read rate can hide another endpoint
+    // that publishes both. Usage with cache-write tokens would then stay
+    // unpriceable for no reason.
+    #[test]
+    fn the_endpoint_publishing_the_most_cache_rates_wins() {
+        let endpoints = vec![
+            endpoint_with_cache("Azure", "0.00000175", "0.000014", Some("0.000000175"), None),
+            endpoint_with_cache(
+                "Foundry",
+                "0.00000175",
+                "0.000014",
+                Some("0.000000175"),
+                Some("0.0000022"),
+            ),
+        ];
+
+        let pricing =
+            select_endpoint_pricing(&endpoints, "OpenAI", Some(&listed(1.75e-6, 1.4e-5))).unwrap();
+
+        assert_eq!(pricing.cache_read_input_token_cost, Some(1.75e-7));
+        assert_eq!(pricing.cache_creation_input_token_cost, Some(2.2e-6));
     }
 
     #[test]
-    fn select_author_endpoint_keeps_batch_tier_for_batch_model_ids() {
-        let endpoints = [
-            endpoint("OpenAI", "openai/flex", "0.000005", "0.000025"),
-            endpoint("OpenAI", "openai", "0.00001", "0.00005"),
-            endpoint("OpenAI", "openai/batch", "0.000005", "0.000025"),
+    fn cache_read_wins_a_cache_rate_count_tie() {
+        let endpoints = vec![
+            endpoint_with_cache("Azure", "0.00000175", "0.000014", None, Some("0.0000022")),
+            endpoint_with_cache(
+                "Foundry",
+                "0.00000175",
+                "0.000014",
+                Some("0.000000175"),
+                None,
+            ),
         ];
 
-        let selected =
-            select_author_endpoint(&endpoints, "OpenAI", "openai/gpt-6-astra:batch").unwrap();
-        assert_eq!(selected.tag, "openai/batch");
-        assert_eq!(selected.pricing.prompt, "0.000005");
+        let pricing =
+            select_endpoint_pricing(&endpoints, "OpenAI", Some(&listed(1.75e-6, 1.4e-5))).unwrap();
+
+        assert_eq!(pricing.cache_read_input_token_cost, Some(1.75e-7));
+        assert_eq!(pricing.cache_creation_input_token_cost, None);
     }
 
+    // OpenRouter serves `openai/gpt-6-astra` from three `OpenAI` endpoints that
+    // differ only by service tier, and returns the discounted `openai/flex` one
+    // first. Selecting by `provider_name` alone therefore stored $5/$25 for a
+    // model whose standard rate — and whose `/models` listed price — is
+    // $10/$50, halving every reported cost for it.
     #[test]
-    fn select_author_endpoint_skips_service_tiers_when_standard_tag_missing() {
-        let endpoints = [
-            endpoint("OpenAI", "openai/flex", "0.000005", "0.000025"),
-            endpoint("OpenAI", "", "0.00001", "0.00005"),
+    fn a_discounted_tier_does_not_outrank_the_standard_author_endpoint() {
+        let endpoints = vec![
+            endpoint("OpenAI", "0.000005", "0.000025", Some("0.0000005")),
+            endpoint("Azure", "0.00001", "0.00005", Some("0.000001")),
+            endpoint("OpenAI", "0.00001", "0.00005", Some("0.000001")),
         ];
 
-        let selected = select_author_endpoint(&endpoints, "OpenAI", "openai/gpt-6-astra").unwrap();
-        assert_eq!(selected.tag, "");
-        assert_eq!(selected.pricing.prompt, "0.00001");
+        let pricing =
+            select_endpoint_pricing(&endpoints, "OpenAI", Some(&listed(1e-5, 5e-5))).unwrap();
+
+        assert_eq!(pricing.input_cost_per_token, Some(1e-5));
+        assert_eq!(pricing.output_cost_per_token, Some(5e-5));
+        assert_eq!(pricing.cache_read_input_token_cost, Some(1e-6));
+    }
+
+    // The error is not one-directional: `openai/fast` is 2x the standard rate,
+    // so the same ordering dependency overcharges if OpenRouter ever returns
+    // that tier first.
+    #[test]
+    fn a_premium_tier_does_not_outrank_the_standard_author_endpoint() {
+        let endpoints = vec![
+            endpoint("OpenAI", "0.00002", "0.0001", Some("0.000002")),
+            endpoint("OpenAI", "0.00001", "0.00005", Some("0.000001")),
+        ];
+
+        let pricing =
+            select_endpoint_pricing(&endpoints, "OpenAI", Some(&listed(1e-5, 5e-5))).unwrap();
+
+        assert_eq!(pricing.input_cost_per_token, Some(1e-5));
+        assert_eq!(pricing.output_cost_per_token, Some(5e-5));
+    }
+
+    // Tiering is not an OpenAI shape. Google serves `gemini-3.6-flash` from
+    // `google-vertex/global/flex` before `google-vertex/global`, both as
+    // `Google`, and no 272k LiteLLM preference shields Gemini the way it
+    // currently shields some OpenAI models.
+    #[test]
+    fn the_tier_rule_is_not_specific_to_one_author() {
+        let endpoints = vec![
+            endpoint("Google", "0.000000375", "0.000001875", Some("0.0000000375")),
+            endpoint("Google AI Studio", "0.00000075", "0.00000375", None),
+            endpoint("Google", "0.00000075", "0.00000375", Some("0.000000075")),
+        ];
+
+        let pricing =
+            select_endpoint_pricing(&endpoints, "Google", Some(&listed(7.5e-7, 3.75e-6))).unwrap();
+
+        assert_eq!(pricing.input_cost_per_token, Some(7.5e-7));
+        assert_eq!(pricing.output_cost_per_token, Some(3.75e-6));
+        assert_eq!(pricing.cache_read_input_token_cost, Some(7.5e-8));
+    }
+
+    // Z.AI quantization tiers (`z-ai/fp4`, `z-ai/fp8`) quote prices that match
+    // no listed price, and the listed price there is a reseller's. Those models
+    // must keep resolving exactly as before, so the tier rule stays additive.
+    #[test]
+    fn author_endpoint_still_wins_when_none_quotes_the_listed_price() {
+        let endpoints = vec![
+            endpoint("Z.AI", "0.0000006", "0.0000022", None),
+            endpoint("Z.AI", "0.0000008", "0.0000029", None),
+        ];
+
+        let pricing =
+            select_endpoint_pricing(&endpoints, "Z.AI", Some(&listed(4e-7, 2e-6))).unwrap();
+
+        assert_eq!(pricing.input_cost_per_token, Some(6e-7));
+        assert_eq!(pricing.output_cost_per_token, Some(2.2e-6));
+    }
+
+    #[tokio::test]
+    async fn list_status_and_decode_failures_remain_explicit() {
+        let status = response_server("HTTP/1.1 503 Service Unavailable", "", 3);
+        assert!(fetch_all_models_from_api_base(&status, false)
+            .await
+            .unwrap_err()
+            .contains("HTTP 503"));
+
+        let malformed = response_server("HTTP/1.1 200 OK", "not json", 1);
+        assert!(fetch_all_models_from_api_base(&malformed, false)
+            .await
+            .unwrap_err()
+            .contains("JSON parse failed"));
+    }
+
+    /// Serve the two request shapes a full OpenRouter fetch makes, dispatching
+    /// on the path so the author-pricing leg is answered locally instead of
+    /// reaching openrouter.ai. `response_server` above cannot do this: it
+    /// replays one fixed body for every connection.
+    ///
+    /// Bounded to the two requests a single fetch makes so the thread and its
+    /// listening socket are released when the test ends, rather than parking
+    /// on `accept` for the life of the test process.
+    fn openrouter_api_server(models_body: &'static str, endpoints_body: &'static str) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        thread::spawn(move || {
+            for _ in 0..2 {
+                let Ok((mut stream, _)) = listener.accept() else {
+                    return;
+                };
+                let mut buffer = [0; 1024];
+                let read = stream.read(&mut buffer).unwrap_or(0);
+                let request = String::from_utf8_lossy(&buffer[..read]).to_string();
+                let body = if request.contains("/endpoints") {
+                    endpoints_body
+                } else {
+                    models_body
+                };
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(response.as_bytes());
+            }
+        });
+        url
+    }
+
+    /// OpenRouter carried the same defect as LiteLLM and models.dev: the write
+    /// was gated only on `!result.is_empty()`, never on the caller's opt-out,
+    /// so a successful fixture fetch overwrote the developer's real
+    /// `pricing-openrouter.json`. No existing test reached the write — the two
+    /// cases above both fail before it — which is precisely why the module
+    /// needs its own proof rather than inheriting confidence from its siblings.
+    ///
+    /// See the sibling test in `litellm.rs` for why the assertion redirects
+    /// `TOKENS_CONFIG_DIR` rather than probing the developer's home.
+    #[tokio::test]
+    #[serial]
+    async fn a_fetch_with_caching_disabled_writes_no_cache_file() {
+        let temp_config = TempDir::new().unwrap();
+        let mut env = EnvGuard::capture(&["TOKENS_CONFIG_DIR"]);
+        env.set("TOKENS_CONFIG_DIR", temp_config.path());
+
+        let cache_path = cache::get_cache_path(CACHE_FILENAME);
+        assert!(
+            cache_path.starts_with(temp_config.path()),
+            "the config-dir redirect must be in effect or this test proves nothing: {}",
+            cache_path.display()
+        );
+
+        // `anthropic/` maps to a known author, so this model survives the
+        // author filter and drives the endpoints request the fixture answers.
+        //
+        // The endpoint quotes a different prompt price than the model list on
+        // purpose. `fetch_author_pricing` falls back to the listed price on any
+        // endpoints failure, so a fixture that quoted the same number on both
+        // legs would pass even if the endpoints request had gone to
+        // openrouter.ai and failed — which is precisely the regression
+        // `API_BASE` exists to prevent. Asserting the endpoint's distinct rate
+        // won makes that leg observable.
+        let url = openrouter_api_server(
+            r#"{"data":[{"id":"anthropic/claude","pricing":{"prompt":"0.000003","completion":"0.000015"}}]}"#,
+            r#"{"data":{"id":"anthropic/claude","endpoints":[{"provider_name":"Anthropic","pricing":{"prompt":"0.000009","completion":"0.000015"}}]}}"#,
+        );
+        let data = fetch_all_models_from_api_base(&url, false)
+            .await
+            .expect("the fixture serves one priced model");
+        assert_eq!(
+            data.get("anthropic/claude")
+                .and_then(|pricing| pricing.input_cost_per_token),
+            Some(9e-6),
+            "the local endpoints fixture must have served the author-pricing leg; the listed 3e-6 means it fell back, so this test would no longer catch a hardcoded URL"
+        );
+        assert_eq!(
+            cache::get_cache_path(CACHE_FILENAME),
+            cache_path,
+            "the redirect moved while the fetch ran, so the assertion below would check a path the fetch never targeted"
+        );
+
+        assert!(
+            !cache_path.exists(),
+            "a fetch that opted out of the cache must not write it, but {} was created",
+            cache_path.display()
+        );
     }
 }

@@ -184,3 +184,95 @@ fn write_stored_device(path: &Path, device: &StoredDevice) -> Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serial_test::serial;
+    use std::env;
+
+    fn save_env() -> (
+        Option<std::ffi::OsString>,
+        Option<std::ffi::OsString>,
+        Option<std::ffi::OsString>,
+    ) {
+        (
+            env::var_os("TOKENS_CONFIG_DIR"),
+            env::var_os("TOKENS_DEVICE_ID"),
+            env::var_os("TOKENS_DEVICE_NAME"),
+        )
+    }
+
+    struct EnvRestore(
+        Option<std::ffi::OsString>,
+        Option<std::ffi::OsString>,
+        Option<std::ffi::OsString>,
+    );
+
+    impl Drop for EnvRestore {
+        fn drop(&mut self) {
+            restore_env((self.0.clone(), self.1.clone(), self.2.clone()));
+        }
+    }
+
+    fn restore_env(
+        prev: (
+            Option<std::ffi::OsString>,
+            Option<std::ffi::OsString>,
+            Option<std::ffi::OsString>,
+        ),
+    ) {
+        unsafe {
+            match prev.0 {
+                Some(v) => env::set_var("TOKENS_CONFIG_DIR", v),
+                None => env::remove_var("TOKENS_CONFIG_DIR"),
+            }
+            match prev.1 {
+                Some(v) => env::set_var("TOKENS_DEVICE_ID", v),
+                None => env::remove_var("TOKENS_DEVICE_ID"),
+            }
+            match prev.2 {
+                Some(v) => env::set_var("TOKENS_DEVICE_NAME", v),
+                None => env::remove_var("TOKENS_DEVICE_NAME"),
+            }
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn env_device_id_is_used_without_touching_config_file() {
+        let prev = save_env();
+        let _restore = EnvRestore(prev.0, prev.1, prev.2);
+        let dir = tempfile::tempdir().unwrap();
+        unsafe {
+            env::set_var("TOKENS_CONFIG_DIR", dir.path());
+            env::set_var("TOKENS_DEVICE_ID", "dev_ci");
+            env::set_var("TOKENS_DEVICE_NAME", "CI runner");
+        }
+
+        let device = resolve_submit_device().unwrap();
+
+        assert_eq!(device.id, "dev_ci");
+        assert_eq!(device.name.as_deref(), Some("CI runner"));
+        assert!(!dir.path().join("device.json").exists());
+    }
+
+    #[test]
+    #[serial]
+    fn generated_device_id_is_stable_in_config_dir() {
+        let prev = save_env();
+        let _restore = EnvRestore(prev.0, prev.1, prev.2);
+        let dir = tempfile::tempdir().unwrap();
+        unsafe {
+            env::set_var("TOKENS_CONFIG_DIR", dir.path());
+            env::remove_var("TOKENS_DEVICE_ID");
+            env::remove_var("TOKENS_DEVICE_NAME");
+        }
+
+        let first = resolve_submit_device().unwrap();
+        let second = resolve_submit_device().unwrap();
+
+        assert!(first.id.starts_with("dev_"));
+        assert_eq!(first, second);
+        assert!(dir.path().join("device.json").exists());
+    }
+}

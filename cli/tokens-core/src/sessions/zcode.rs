@@ -13,12 +13,15 @@
 //! counts are used. When absent, tokens are estimated at ~4 chars/token,
 //! consistent with tokens's other estimated sources (see CommandCode, Kiro).
 
-use super::utils::{back_anchor_timestamp, file_modified_timestamp_ms, open_readonly_sqlite};
+use super::utils::{
+    back_anchor_timestamp, estimate_tokens, file_modified_timestamp_ms, for_each_json_line,
+    open_readonly_sqlite_opt, session_id_from_path, sqlite_for_each_row_on,
+    workspace_key_from_path,
+};
 use super::{normalize_workspace_key, workspace_label_from_key, UnifiedMessage};
 use crate::TokenBreakdown;
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader};
 use std::path::Path;
 
 const CLIENT_ID: &str = "zcode";
@@ -101,11 +104,6 @@ impl ZcodeUsage {
 }
 
 pub fn parse_zcode_file(path: &Path) -> Vec<UnifiedMessage> {
-    let file = match std::fs::File::open(path) {
-        Ok(file) => file,
-        Err(_) => return Vec::new(),
-    };
-
     let fallback_timestamp = file_modified_timestamp_ms(path);
     let session_id_from_path = session_id_from_path(path);
     let workspace_key = workspace_key_from_path(path);
@@ -119,20 +117,10 @@ pub fn parse_zcode_file(path: &Path) -> Vec<UnifiedMessage> {
     let mut pending_turn_start = false;
     let mut assistant_index = 0usize;
 
-    let reader = BufReader::new(file);
-    for line in reader.lines() {
-        let line = match line {
-            Ok(line) => line,
-            Err(_) => continue,
-        };
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-
+    for_each_json_line(path, &mut |_index, trimmed| {
         let entry = match serde_json::from_str::<ZcodeEntry>(trimmed) {
             Ok(entry) => entry,
-            Err(_) => continue,
+            Err(_) => return,
         };
 
         if session_id.is_none() {
@@ -174,7 +162,7 @@ pub fn parse_zcode_file(path: &Path) -> Vec<UnifiedMessage> {
                         // emitted, so the next real assistant message in this
                         // turn must keep its is_turn_start marker.
                         context_chars += chars;
-                        continue;
+                        return;
                     }
                     TokenBreakdown {
                         input,
@@ -221,7 +209,7 @@ pub fn parse_zcode_file(path: &Path) -> Vec<UnifiedMessage> {
                 context_chars += chars;
             }
         }
-    }
+    });
 
     messages
 }
@@ -239,7 +227,7 @@ fn subtract_overlap(value: i64, overlap: i64) -> i64 {
 /// ZCode's `model_usage` rows report `input_tokens` and `output_tokens` as
 /// cache/reasoning-inclusive: `input_tokens` already contains
 /// `cache_read_input_tokens` + `cache_creation_input_tokens`, and
-/// `output_tokens` already contains `reasoning_tokens`. The Tokens
+/// `output_tokens` already contains `reasoning_tokens`. Tokens's
 /// `TokenBreakdown` instead expects five non-overlapping buckets, so passing
 /// the raw columns straight through double-counts cache and reasoning in
 /// `TokenBreakdown::total()`.
@@ -289,7 +277,7 @@ fn normalize_zcode_input_and_output(
 }
 
 pub fn parse_zcode_sqlite(db_path: &Path) -> Vec<UnifiedMessage> {
-    let Some(conn) = open_readonly_sqlite(db_path) else {
+    let Some(conn) = open_readonly_sqlite_opt(db_path) else {
         return Vec::new();
     };
 
@@ -361,38 +349,38 @@ pub fn parse_zcode_sqlite(db_path: &Path) -> Vec<UnifiedMessage> {
         .prepare("SELECT computed_total_tokens FROM model_usage LIMIT 1")
         .is_err();
 
-    let mut stmt = match conn.prepare(modern_query) {
-        Ok(stmt) => stmt,
-        Err(_) => match conn.prepare(legacy_query) {
-            Ok(stmt) => stmt,
-            Err(_) => return Vec::new(),
-        },
-    };
-
-    let rows = match stmt.query_map([], |row| {
-        Ok(ZcodeUsageRow {
-            id: row.get(0)?,
-            session_id: row.get(1)?,
-            turn_id: row.get(2)?,
-            model_id: row.get(3)?,
-            started_at: row.get(4)?,
-            completed_at: row.get(5)?,
-            duration_ms: row.get(6)?,
-            input_tokens: row.get(7)?,
-            output_tokens: row.get(8)?,
-            reasoning_tokens: row.get(9)?,
-            cache_read_input_tokens: row.get(10)?,
-            cache_creation_input_tokens: row.get(11)?,
-            computed_total_tokens: row.get(12)?,
-            agent: row.get(13)?,
-            mode: row.get(14)?,
-            session_directory: row.get(15)?,
-            session_path: row.get(16)?,
-        })
-    }) {
-        Ok(rows) => rows,
-        Err(_) => return Vec::new(),
-    };
+    // Quiet: a database that understands neither query is not a ZCode usage
+    // store, which is an expected outcome of probing candidate paths.
+    let mut rows: Vec<ZcodeUsageRow> = Vec::new();
+    for query in [modern_query, legacy_query] {
+        let scan = sqlite_for_each_row_on(&conn, db_path, query, None, &mut |row| {
+            rows.push(ZcodeUsageRow {
+                id: row.get(0)?,
+                session_id: row.get(1)?,
+                turn_id: row.get(2)?,
+                model_id: row.get(3)?,
+                started_at: row.get(4)?,
+                completed_at: row.get(5)?,
+                duration_ms: row.get(6)?,
+                input_tokens: row.get(7)?,
+                output_tokens: row.get(8)?,
+                reasoning_tokens: row.get(9)?,
+                cache_read_input_tokens: row.get(10)?,
+                cache_creation_input_tokens: row.get(11)?,
+                computed_total_tokens: row.get(12)?,
+                agent: row.get(13)?,
+                mode: row.get(14)?,
+                session_directory: row.get(15)?,
+                session_path: row.get(16)?,
+            });
+            Ok(())
+        });
+        // A query that prepared is the one this schema supports; only a
+        // prepare failure means "try the older spelling".
+        if scan.prepared() {
+            break;
+        }
+    }
 
     let mut messages = Vec::new();
     // Parallel to `messages`: each row's turn_id (if any), so is_turn_start
@@ -400,12 +388,7 @@ pub fn parse_zcode_sqlite(db_path: &Path) -> Vec<UnifiedMessage> {
     // timestamp is known (see below).
     let mut turn_ids: Vec<Option<String>> = Vec::new();
 
-    for row_result in rows {
-        let row = match row_result {
-            Ok(row) => row,
-            Err(_) => continue,
-        };
-
+    for row in rows {
         let session_id = row.session_id.unwrap_or_else(|| "unknown".to_string());
         let model_id = row
             .model_id
@@ -600,27 +583,633 @@ fn content_chars(content: &serde_json::Value) -> usize {
     }
 }
 
-fn estimate_tokens(chars: usize) -> i64 {
-    chars.div_ceil(4) as i64
-}
-
 fn parse_rfc3339_ms(timestamp: &str) -> Option<i64> {
     chrono::DateTime::parse_from_rfc3339(timestamp)
         .ok()
         .map(|dt| dt.timestamp_millis())
 }
 
-fn session_id_from_path(path: &Path) -> String {
-    path.file_stem()
-        .and_then(|stem| stem.to_str())
-        .unwrap_or("unknown")
-        .to_string()
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rusqlite::{params, Connection};
+    use serde_json::json;
+    use std::io::Write;
+    use tempfile::TempDir;
 
-fn workspace_key_from_path(path: &Path) -> Option<String> {
-    path.parent()
-        .and_then(|dir| dir.file_name())
-        .and_then(|name| name.to_str())
-        .and_then(normalize_workspace_key)
-}
+    fn write_session(dir: &TempDir, slug: &str, session: &str, jsonl: &str) -> std::path::PathBuf {
+        let project_dir = dir.path().join("projects").join(slug);
+        std::fs::create_dir_all(&project_dir).unwrap();
+        let path = project_dir.join(format!("{session}.jsonl"));
+        let mut file = std::fs::File::create(&path).unwrap();
+        file.write_all(jsonl.as_bytes()).unwrap();
+        path
+    }
 
+    fn create_zcode_sqlite_db(dir: &TempDir) -> std::path::PathBuf {
+        let db_path = dir.path().join("db.sqlite");
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute_batch(
+            r#"
+            CREATE TABLE model_usage (
+                id TEXT PRIMARY KEY,
+                session_id TEXT,
+                turn_id TEXT,
+                model_id TEXT,
+                started_at INTEGER,
+                completed_at INTEGER,
+                duration_ms INTEGER,
+                input_tokens INTEGER,
+                output_tokens INTEGER,
+                reasoning_tokens INTEGER,
+                cache_read_input_tokens INTEGER,
+                cache_creation_input_tokens INTEGER,
+                computed_total_tokens INTEGER,
+                agent TEXT,
+                mode TEXT
+            );
+            CREATE TABLE session (
+                id TEXT PRIMARY KEY,
+                directory TEXT,
+                path TEXT
+            );
+            "#,
+        )
+        .unwrap();
+        db_path
+    }
+
+    #[test]
+    fn test_parse_with_authoritative_usage() {
+        let dir = TempDir::new().unwrap();
+        let jsonl = format!(
+            "{}\n{}",
+            json!({
+                "role": "user",
+                "sessionId": "s1",
+                "timestamp": "2026-06-20T10:00:00Z",
+                "content": "hello"
+            }),
+            json!({
+                "role": "assistant",
+                "sessionId": "s1",
+                "timestamp": "2026-06-20T10:00:05Z",
+                "model": "glm-5.2",
+                "content": "Hi there!",
+                "usage": {
+                    "input_tokens": 100,
+                    "output_tokens": 50,
+                    "input_cache_read": 20
+                }
+            }),
+        );
+        let path = write_session(&dir, "proj", "s1", &jsonl);
+        let messages = parse_zcode_file(&path);
+
+        assert_eq!(messages.len(), 1);
+        let msg = &messages[0];
+        assert_eq!(msg.client, "zcode");
+        assert_eq!(msg.provider_id, "zhipu");
+        assert_eq!(msg.model_id, "glm-5.2");
+        assert_eq!(msg.session_id, "s1");
+        assert_eq!(msg.tokens.input, 100);
+        assert_eq!(msg.tokens.output, 50);
+        assert_eq!(msg.tokens.cache_read, 20);
+        assert!(msg.is_turn_start);
+    }
+
+    #[test]
+    fn test_parse_with_estimated_tokens() {
+        let dir = TempDir::new().unwrap();
+        let user_content = json!([{"type": "text", "text": "12345678"}]);
+        let asst_content = json!([{"type": "text", "text": "abcd"}]);
+        let jsonl = format!(
+            "{}\n{}",
+            json!({"role": "user", "sessionId": "s2", "content": user_content}),
+            json!({"role": "assistant", "sessionId": "s2", "content": asst_content}),
+        );
+        let path = write_session(&dir, "repo", "s2", &jsonl);
+        let messages = parse_zcode_file(&path);
+
+        assert_eq!(messages.len(), 1);
+        let msg = &messages[0];
+        assert_eq!(msg.model_id, "glm-5.2"); // default
+        assert!(msg.tokens.input > 0);
+        assert!(msg.tokens.output > 0);
+        assert_eq!(msg.tokens.cache_read, 0);
+    }
+
+    #[test]
+    fn test_canonicalize_model() {
+        assert_eq!(canonicalize_model("GLM-5.2"), "glm-5.2");
+        assert_eq!(canonicalize_model("GLM-5-Turbo"), "glm-5-turbo");
+        assert_eq!(canonicalize_model("glm-5.2"), "glm-5.2");
+    }
+
+    #[test]
+    fn test_content_chars_treats_empty_string_as_empty() {
+        // Empty string content must count as 0 chars, consistent with null,
+        // empty array, and empty object — otherwise serializing `""` yields 2
+        // chars and produces a spurious estimated token.
+        assert_eq!(content_chars(&json!("")), 0);
+        assert_eq!(content_chars(&serde_json::Value::Null), 0);
+        assert_eq!(content_chars(&json!([])), 0);
+        assert_eq!(content_chars(&json!({})), 0);
+        assert!(content_chars(&json!("abcd")) > 0);
+    }
+
+    #[test]
+    fn test_empty_string_assistant_content_emits_no_message() {
+        // An assistant entry with empty-string content and no token usage has
+        // nothing to estimate, so it must take the zero-token continue path
+        // instead of emitting a fake 1-token message.
+        let dir = TempDir::new().unwrap();
+        let jsonl = format!(
+            "{}\n{}",
+            json!({"role": "user", "sessionId": "s", "content": ""}),
+            json!({"role": "assistant", "sessionId": "s", "content": ""}),
+        );
+        let path = write_session(&dir, "proj", "s", &jsonl);
+        let messages = parse_zcode_file(&path);
+
+        assert!(messages.is_empty());
+    }
+
+    #[test]
+    fn test_usage_with_alternative_field_names() {
+        let dir = TempDir::new().unwrap();
+        let jsonl = format!(
+            "{}\n{}",
+            json!({"role": "user", "sessionId": "s3", "content": "hi"}),
+            json!({
+                "role": "assistant",
+                "sessionId": "s3",
+                "content": "bye",
+                "token_usage": {
+                    "prompt_tokens": 200,
+                    "completion_tokens": 100
+                }
+            }),
+        );
+        let path = write_session(&dir, "p", "s3", &jsonl);
+        let messages = parse_zcode_file(&path);
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].tokens.input, 200);
+        assert_eq!(messages[0].tokens.output, 100);
+    }
+
+    #[test]
+    fn test_cumulative_context_estimation() {
+        let dir = TempDir::new().unwrap();
+        let jsonl = concat!(
+            r#"{"role":"user","sessionId":"s","content":[{"type":"text","text":"aaaa"}]}"#,
+            "\n",
+            r#"{"role":"assistant","sessionId":"s","content":[{"type":"text","text":"bbbb"}]}"#,
+            "\n",
+            r#"{"role":"user","sessionId":"s","content":[{"type":"text","text":"cccc"}]}"#,
+            "\n",
+            r#"{"role":"assistant","sessionId":"s","content":[{"type":"text","text":"dddd"}]}"#,
+        );
+        let path = write_session(&dir, "proj", "s", jsonl);
+        let messages = parse_zcode_file(&path);
+
+        assert_eq!(messages.len(), 2);
+        assert!(messages[1].tokens.input > messages[0].tokens.input);
+    }
+
+    #[test]
+    fn test_model_switch_mid_session() {
+        let dir = TempDir::new().unwrap();
+        let jsonl = format!(
+            "{}\n{}\n{}\n{}\n{}\n{}",
+            json!({"role": "user", "sessionId": "s", "content": "hi"}),
+            json!({
+                "role": "assistant",
+                "sessionId": "s",
+                "model": "GLM-5.2",
+                "content": "first",
+                "usage": {"input_tokens": 10, "output_tokens": 5}
+            }),
+            json!({"role": "user", "sessionId": "s", "content": "switch"}),
+            json!({
+                "role": "assistant",
+                "sessionId": "s",
+                "model": "glm-5-turbo",
+                "content": "second",
+                "usage": {"input_tokens": 10, "output_tokens": 5}
+            }),
+            json!({"role": "user", "sessionId": "s", "content": "again"}),
+            json!({
+                "role": "assistant",
+                "sessionId": "s",
+                "content": "third",
+                "usage": {"input_tokens": 10, "output_tokens": 5}
+            }),
+        );
+        let path = write_session(&dir, "proj", "s", &jsonl);
+        let messages = parse_zcode_file(&path);
+
+        assert_eq!(messages.len(), 3);
+        // Each assistant message reflects the model in effect at that point.
+        assert_eq!(messages[0].model_id, "glm-5.2");
+        assert_eq!(messages[1].model_id, "glm-5-turbo");
+        assert_ne!(messages[0].model_id, messages[1].model_id);
+        // An entry with no `model` field inherits the most-recently-seen model.
+        assert_eq!(messages[2].model_id, "glm-5-turbo");
+    }
+
+    #[test]
+    fn test_empty_usage_falls_back_to_token_usage() {
+        let dir = TempDir::new().unwrap();
+        let jsonl = format!(
+            "{}\n{}",
+            json!({"role": "user", "sessionId": "s", "content": "hi"}),
+            json!({
+                "role": "assistant",
+                "sessionId": "s",
+                "content": "bye",
+                "usage": {},
+                "token_usage": {
+                    "input_tokens": 321,
+                    "output_tokens": 123,
+                    "input_cache_read": 7
+                }
+            }),
+        );
+        let path = write_session(&dir, "p", "s", &jsonl);
+        let messages = parse_zcode_file(&path);
+
+        assert_eq!(messages.len(), 1);
+        // Authoritative token_usage counts are used, NOT estimated.
+        assert_eq!(messages[0].tokens.input, 321);
+        assert_eq!(messages[0].tokens.output, 123);
+        assert_eq!(messages[0].tokens.cache_read, 7);
+    }
+
+    #[test]
+    fn test_parse_zcode_sqlite_model_usage() {
+        let dir = TempDir::new().unwrap();
+        let db_path = create_zcode_sqlite_db(&dir);
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute(
+            "INSERT INTO session (id, directory, path) VALUES (?1, ?2, ?3)",
+            params!["sess_1", "/Users/alice/work/demo", "/Users/alice/work/demo"],
+        )
+        .unwrap();
+        conn.execute(
+            r#"
+            INSERT INTO model_usage (
+                id, session_id, turn_id, model_id, started_at, completed_at,
+                duration_ms, input_tokens, output_tokens, reasoning_tokens,
+                cache_read_input_tokens, cache_creation_input_tokens, computed_total_tokens, agent, mode
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+            "#,
+            params![
+                "usage_1",
+                "sess_1",
+                "turn_1",
+                "GLM-5.2",
+                1_782_718_000_000_i64,
+                1_782_718_001_000_i64,
+                1000_i64,
+                100_i64,
+                20_i64,
+                5_i64,
+                7_i64,
+                3_i64,
+                120_i64,
+                "zcode-agent",
+                "yolo",
+            ],
+        )
+        .unwrap();
+
+        let messages = parse_zcode_sqlite(&db_path);
+
+        assert_eq!(messages.len(), 1);
+        let msg = &messages[0];
+        assert_eq!(msg.client, "zcode");
+        assert_eq!(msg.provider_id, "zhipu");
+        assert_eq!(msg.model_id, "glm-5.2");
+        assert_eq!(msg.session_id, "sess_1");
+        // Timestamp anchors to `started_at` (the call's start), not
+        // `completed_at` (the call's end). See #890 (follow-up).
+        assert_eq!(msg.timestamp, 1_782_718_000_000_i64);
+        assert_eq!(msg.duration_ms, Some(1000));
+        assert_eq!(msg.tokens.input, 90);
+        assert_eq!(msg.tokens.output, 15);
+        assert_eq!(msg.tokens.reasoning, 5);
+        assert_eq!(msg.tokens.cache_read, 7);
+        assert_eq!(msg.tokens.cache_write, 3);
+        assert_eq!(msg.agent.as_deref(), Some("zcode-agent"));
+        assert_eq!(msg.workspace_key.as_deref(), Some("/Users/alice/work/demo"));
+        assert_eq!(msg.workspace_label.as_deref(), Some("demo"));
+        assert!(msg.is_turn_start);
+        assert_eq!(msg.dedup_key.as_deref(), Some("zcode-sqlite:usage_1"));
+    }
+
+    #[test]
+    fn test_parse_zcode_sqlite_marks_only_first_request_per_turn() {
+        let dir = TempDir::new().unwrap();
+        let db_path = create_zcode_sqlite_db(&dir);
+        let conn = Connection::open(&db_path).unwrap();
+        for (id, completed_at) in [("usage_1", 1_000_i64), ("usage_2", 2_000_i64)] {
+            conn.execute(
+                r#"
+                INSERT INTO model_usage (
+                    id, session_id, turn_id, model_id, completed_at,
+                    input_tokens, output_tokens
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                "#,
+                params![
+                    id,
+                    "sess_1",
+                    "turn_1",
+                    "glm-5.2",
+                    completed_at,
+                    10_i64,
+                    1_i64
+                ],
+            )
+            .unwrap();
+        }
+
+        let messages = parse_zcode_sqlite(&db_path);
+
+        assert_eq!(messages.len(), 2);
+        assert!(messages[0].is_turn_start);
+        assert!(!messages[1].is_turn_start);
+    }
+
+    #[test]
+    fn test_model_usage_timestamp_is_start_anchored() {
+        // Regression (follow-up to #890): `model_usage` records both
+        // `started_at` and `completed_at` for a call, plus an explicit
+        // `duration_ms`. Anchoring the message timestamp at `completed_at`
+        // would make sessionize()'s `[timestamp, timestamp + duration_ms]`
+        // span project forward past the actual completion into phantom idle
+        // time. The parser must prefer `started_at`.
+        let dir = TempDir::new().unwrap();
+        let db_path = create_zcode_sqlite_db(&dir);
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute(
+            r#"
+            INSERT INTO model_usage (
+                id, session_id, turn_id, model_id, started_at, completed_at,
+                duration_ms, input_tokens, output_tokens
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+            "#,
+            params![
+                "usage_1",
+                "sess_1",
+                "turn_1",
+                "glm-5.2",
+                1_782_718_000_000_i64,
+                1_782_718_005_000_i64,
+                5000_i64,
+                10_i64,
+                1_i64,
+            ],
+        )
+        .unwrap();
+
+        let messages = parse_zcode_sqlite(&db_path);
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(
+            messages[0].timestamp, 1_782_718_000_000_i64,
+            "timestamp must anchor at started_at, not completed_at"
+        );
+        assert_eq!(
+            messages[0].duration_ms,
+            Some(5000),
+            "duration_ms must still span from start to completion"
+        );
+    }
+
+    #[test]
+    fn test_model_usage_missing_started_at_back_calculates_from_completed_at() {
+        // Second-round review fix: when `started_at` is NULL but
+        // `completed_at` and a positive `duration_ms` are present, the row
+        // must not stay end-anchored at `completed_at` (a phantom forward
+        // projection past the call's actual completion). Back-calculate the
+        // start anchor from `completed_at - duration_ms` instead.
+        let dir = TempDir::new().unwrap();
+        let db_path = create_zcode_sqlite_db(&dir);
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute(
+            r#"
+            INSERT INTO model_usage (
+                id, session_id, turn_id, model_id, completed_at,
+                duration_ms, input_tokens, output_tokens
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            "#,
+            params![
+                "usage_1",
+                "sess_1",
+                "turn_1",
+                "glm-5.2",
+                1_782_718_005_000_i64,
+                5000_i64,
+                10_i64,
+                1_i64,
+            ],
+        )
+        .unwrap();
+
+        let messages = parse_zcode_sqlite(&db_path);
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(
+            messages[0].timestamp, 1_782_718_000_000_i64,
+            "timestamp must be back-calculated from completed_at - duration_ms when started_at is missing"
+        );
+        assert_eq!(messages[0].duration_ms, Some(5000));
+    }
+
+    #[test]
+    fn test_parse_zcode_sqlite_cache_inclusive_normalization() {
+        let dir = TempDir::new().unwrap();
+        let db_path = create_zcode_sqlite_db(&dir);
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute(
+            r#"
+            INSERT INTO model_usage (
+                id, session_id, model_id, completed_at,
+                input_tokens, output_tokens, reasoning_tokens,
+                cache_read_input_tokens, cache_creation_input_tokens, computed_total_tokens
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+            "#,
+            params![
+                "usage_cache_incl",
+                "sess_cache",
+                "glm-5.2",
+                1_000_i64,
+                100_i64,
+                50_i64,
+                10_i64,
+                80_i64,
+                5_i64,
+                150_i64,
+            ],
+        )
+        .unwrap();
+
+        let messages = parse_zcode_sqlite(&db_path);
+
+        assert_eq!(messages.len(), 1);
+        let msg = &messages[0];
+        assert_eq!(msg.tokens.input, 15);
+        assert_eq!(msg.tokens.output, 40);
+        assert_eq!(msg.tokens.cache_read, 80);
+        assert_eq!(msg.tokens.cache_write, 5);
+        assert_eq!(msg.tokens.reasoning, 10);
+        assert_eq!(msg.tokens.total(), 150);
+    }
+
+    #[test]
+    fn test_parse_zcode_sqlite_legacy_schema_subtracts_unconditionally() {
+        // True legacy schema: no `computed_total_tokens` column (and no
+        // `session` table), so the column probe and the modern query both
+        // fail and the legacy fallback runs with is_legacy_schema=true.
+        // Every row must then take the unconditional-subtraction branch.
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("db.sqlite");
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute_batch(
+            r#"
+            CREATE TABLE model_usage (
+                id TEXT PRIMARY KEY,
+                session_id TEXT,
+                turn_id TEXT,
+                model_id TEXT,
+                started_at INTEGER,
+                completed_at INTEGER,
+                duration_ms INTEGER,
+                input_tokens INTEGER,
+                output_tokens INTEGER,
+                reasoning_tokens INTEGER,
+                cache_read_input_tokens INTEGER,
+                cache_creation_input_tokens INTEGER,
+                agent TEXT,
+                mode TEXT
+            );
+            "#,
+        )
+        .unwrap();
+        conn.execute(
+            r#"
+            INSERT INTO model_usage (
+                id, session_id, model_id, completed_at,
+                input_tokens, output_tokens, reasoning_tokens,
+                cache_read_input_tokens, cache_creation_input_tokens
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+            "#,
+            params![
+                "usage_legacy",
+                "sess_legacy",
+                "glm-5.2",
+                1_000_i64,
+                100_i64,
+                50_i64,
+                10_i64,
+                80_i64,
+                5_i64,
+            ],
+        )
+        .unwrap();
+
+        let messages = parse_zcode_sqlite(&db_path);
+
+        assert_eq!(messages.len(), 1);
+        let msg = &messages[0];
+        assert_eq!(msg.tokens.input, 15);
+        assert_eq!(msg.tokens.output, 40);
+        assert_eq!(msg.tokens.cache_read, 80);
+        assert_eq!(msg.tokens.cache_write, 5);
+        assert_eq!(msg.tokens.reasoning, 10);
+        assert_eq!(msg.tokens.total(), 150);
+    }
+
+    #[test]
+    fn test_parse_zcode_sqlite_modern_schema_null_total_passes_through() {
+        // Modern schema (computed_total_tokens column exists) but this row's
+        // value is NULL: the shape can't be detected, so input/output must
+        // pass through unchanged rather than being unconditionally subtracted.
+        let dir = TempDir::new().unwrap();
+        let db_path = create_zcode_sqlite_db(&dir);
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute(
+            r#"
+            INSERT INTO model_usage (
+                id, session_id, model_id, completed_at,
+                input_tokens, output_tokens, reasoning_tokens,
+                cache_read_input_tokens, cache_creation_input_tokens, computed_total_tokens
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL)
+            "#,
+            params![
+                "usage_null_total",
+                "sess_null",
+                "glm-5.2",
+                1_000_i64,
+                100_i64,
+                50_i64,
+                10_i64,
+                80_i64,
+                5_i64,
+            ],
+        )
+        .unwrap();
+
+        let messages = parse_zcode_sqlite(&db_path);
+
+        assert_eq!(messages.len(), 1);
+        let msg = &messages[0];
+        assert_eq!(msg.tokens.input, 100);
+        assert_eq!(msg.tokens.output, 50);
+        assert_eq!(msg.tokens.cache_read, 80);
+        assert_eq!(msg.tokens.cache_write, 5);
+        assert_eq!(msg.tokens.reasoning, 10);
+    }
+
+    #[test]
+    fn test_parse_zcode_sqlite_cache_exclusive_preserved() {
+        let dir = TempDir::new().unwrap();
+        let db_path = create_zcode_sqlite_db(&dir);
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute(
+            r#"
+            INSERT INTO model_usage (
+                id, session_id, model_id, completed_at,
+                input_tokens, output_tokens, reasoning_tokens,
+                cache_read_input_tokens, cache_creation_input_tokens, computed_total_tokens
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+            "#,
+            params![
+                "usage_cache_excl",
+                "sess_excl",
+                "claude-sonnet-5",
+                1_000_i64,
+                20_i64,
+                30_i64,
+                5_i64,
+                80_i64,
+                10_i64,
+                145_i64,
+            ],
+        )
+        .unwrap();
+
+        let messages = parse_zcode_sqlite(&db_path);
+
+        assert_eq!(messages.len(), 1);
+        let msg = &messages[0];
+        assert_eq!(msg.tokens.input, 20);
+        assert_eq!(msg.tokens.output, 30);
+        assert_eq!(msg.tokens.cache_read, 80);
+        assert_eq!(msg.tokens.cache_write, 10);
+        assert_eq!(msg.tokens.reasoning, 5);
+        assert_eq!(msg.tokens.total(), 145);
+    }
+}
