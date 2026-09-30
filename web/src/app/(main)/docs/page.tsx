@@ -297,6 +297,51 @@ export default function DocsPage() {
           </Card>
         </Section>
 
+        {/* Third-party, and labelled as such. Nowdex reads the public
+            profile API the same way any visitor can, so it needs nothing from
+            this project and this project promises nothing about it. */}
+        <Section
+          id="elsewhere"
+          title="Elsewhere"
+          description="Apps other people built that can show your Tokens usage."
+        >
+          <Card>
+            <CardHeader className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <CardTitle className="text-base">Nowdex</CardTitle>
+                <Badge variant="secondary">Third party</Badge>
+              </div>
+              <Button
+                variant="outline"
+                className="w-full shrink-0 sm:w-auto"
+                render={
+                  <a
+                    href="https://nowdex.app"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  />
+                }
+              >
+                nowdex.app
+              </Button>
+            </CardHeader>
+            <CardContent className="text-sm leading-relaxed text-muted-foreground">
+              Nowdex tracks how much of your Codex, Claude, Cursor and other
+              plan quotas is left, on Mac, iPhone and iPad, with Home Screen
+              widgets and a menu bar item. It now shows Tokens usage too —
+              tokens, cost and messages — alongside those quotas. Built by{" "}
+              <a
+                href="https://x.com/randyloop"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline underline-offset-4"
+              >
+                Randy Lu
+              </a>, and not affiliated with this project.
+            </CardContent>
+          </Card>
+        </Section>
+
         <Section
           id="usage"
           title="Everyday use"
