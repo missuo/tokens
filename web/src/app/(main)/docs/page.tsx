@@ -297,19 +297,19 @@ export default function DocsPage() {
           </Card>
         </Section>
 
-        {/* Third-party, and labelled as such. Nowdex reads the public
-            profile API the same way any visitor can, so it needs nothing from
-            this project and this project promises nothing about it. */}
+        {/* Endorsed rather than merely tolerated: someone else builds and
+            runs these, on the public profile API, and this project vouches
+            for them as a good way to read your usage. */}
         <Section
           id="elsewhere"
-          title="Elsewhere"
-          description="Apps other people built that can show your Tokens usage."
+          title="Recognized clients"
+          description="Apps built by other people that Tokens endorses for viewing your usage."
         >
           <Card>
             <CardHeader className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
               <div className="flex flex-wrap items-center gap-2">
                 <CardTitle className="text-base">Nowdex</CardTitle>
-                <Badge variant="secondary">Third party</Badge>
+                <Badge variant="secondary">Recognized client</Badge>
               </div>
               <Button
                 variant="outline"
@@ -328,8 +328,9 @@ export default function DocsPage() {
             <CardContent className="text-sm leading-relaxed text-muted-foreground">
               Nowdex tracks how much of your Codex, Claude, Cursor and other
               plan quotas is left, on Mac, iPhone and iPad, with Home Screen
-              widgets and a menu bar item. It now shows Tokens usage too —
-              tokens, cost and messages — alongside those quotas. Built by{" "}
+              widgets and a menu bar item. It shows Tokens usage too — tokens,
+              cost and messages — alongside those quotas, and Tokens recognizes
+              it as a client for viewing that usage. Thanks to{" "}
               <a
                 href="https://x.com/randyloop"
                 target="_blank"
@@ -337,7 +338,10 @@ export default function DocsPage() {
                 className="underline underline-offset-4"
               >
                 Randy Lu
-              </a>, and not affiliated with this project.
+              </a>{" "}
+              for building it. Nowdex is his app, with its own support and
+              privacy policy; it reads the public profile API and never needs
+              your Tokens login.
             </CardContent>
           </Card>
         </Section>
