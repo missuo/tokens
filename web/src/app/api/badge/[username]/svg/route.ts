@@ -7,6 +7,7 @@ import {
   type BadgeStyle,
 } from "@/lib/embed/renderProfileBadgeSvg";
 import { isValidGitHubUsername } from "@/lib/validation/username";
+import { PRIVATE_CACHE_CONTROL, getViewerAccess } from "@/lib/privacy";
 
 export const revalidate = 60;
 
@@ -66,7 +67,13 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   try {
     const data = await getUserEmbedStats(username, sortBy);
 
-    if (!data) {
+    // A private account renders exactly like a missing one unless the request
+    // carries one of its read tokens (`?token=tkr_…` for an <img>).
+    const allowed =
+      data != null &&
+      (!data.user.isPrivate || (await getViewerAccess(request, data.user)).allowed);
+
+    if (!data || !allowed) {
       const svg = renderBadgeErrorSvg("not found", { style, label });
       return createSvgResponse(svg, { status: 200 });
     }
@@ -81,7 +88,10 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       sortBy,
     });
 
-    return createSvgResponse(svg);
+    return createSvgResponse(
+      svg,
+      data.user.isPrivate ? { cacheControl: PRIVATE_CACHE_CONTROL } : undefined,
+    );
   } catch (error) {
     console.error("[badge-svg] failed", {
       username,

@@ -363,6 +363,67 @@ export default function DocsPage() {
         </Section>
 
         <Section
+          id="private"
+          title="Private mode"
+          description="Track your usage without publishing it. A private account is left off the leaderboard, and its profile, devices, badges and embeds answer as if it did not exist."
+        >
+          <div className="flex flex-col gap-4">
+            <CommandBlock
+              commands={[
+                {
+                  command: "tokens login --private",
+                  note: "go private and print a read token",
+                },
+              ]}
+            />
+
+            <Card size="sm">
+              <CardHeader>
+                <CardTitle className="text-sm">Turning it on and off</CardTitle>
+              </CardHeader>
+              <CardContent className="text-sm leading-relaxed text-muted-foreground">
+                Log in with <code>--private</code>, or run it again on a machine
+                that is already logged in, to switch the account to private. The
+                Private mode switch in{" "}
+                <a href="/settings" className="underline underline-offset-4 hover:text-foreground">
+                  Settings
+                </a>{" "}
+                does the same and is the only way back to public: a submit token
+                in CI can hide your profile but never expose it. You still see
+                your own profile while signed in.
+              </CardContent>
+            </Card>
+
+            <Card size="sm">
+              <CardHeader>
+                <CardTitle className="text-sm">Read tokens</CardTitle>
+              </CardHeader>
+              <CardContent className="text-sm leading-relaxed text-muted-foreground">
+                A read token (<code>tkr_…</code>) unlocks a private profile for
+                whoever holds it — the iOS app, a script, a badge you still want
+                to show. Send it as <code>Authorization: Bearer tkr_…</code>, or
+                append <code>?token=tkr_…</code> to a badge or embed URL.{" "}
+                <code>tokens login --private</code> prints the first one; create
+                and revoke more in Settings. They can only read — never submit or
+                change anything — and are shown once, then stored only as a hash.
+              </CardContent>
+            </Card>
+
+            <Card size="sm">
+              <CardHeader>
+                <CardTitle className="text-sm">Device names</CardTitle>
+              </CardHeader>
+              <CardContent className="text-sm leading-relaxed text-muted-foreground">
+                Public or private, other people only ever see your device names
+                masked — the first and last two characters, like{" "}
+                <code>jo****ro</code> — since a device name is often a hostname.
+                You see them in full on your own profile and in Settings.
+              </CardContent>
+            </Card>
+          </div>
+        </Section>
+
+        <Section
           id="verified"
           title="The verified badge"
           description="A small check next to a name on the leaderboard. It says the account is a real, findable person — nothing more."

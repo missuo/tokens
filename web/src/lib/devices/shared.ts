@@ -26,3 +26,29 @@ export function toIsoString(value: Date | string | null | undefined): string | n
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
+
+/**
+ * A device name as the public profile shows it. Device names are frequently a
+ * hostname — `johns-macbook-pro`, `acme-build-07` — which carries a real name
+ * or an employer, so only the first and last two characters survive. The
+ * middle is a fixed run of asterisks rather than one per character, so the
+ * mask does not give away the length either.
+ *
+ * The fallback labels ("Unnamed device", "Legacy submissions") are ours, not
+ * the user's, and are passed through untouched.
+ */
+export function maskDeviceName(name: string): string {
+  const chars = Array.from(name.trim());
+  if (chars.length === 0) return "";
+  if (chars.length <= 4) return `${chars[0]}***`;
+  return `${chars.slice(0, 2).join("")}****${chars.slice(-2).join("")}`;
+}
+
+export function publicDeviceDisplayLabel(
+  deviceKey: string,
+  displayName: string | null | undefined
+): string {
+  return displayName?.trim()
+    ? maskDeviceName(displayName)
+    : deviceDisplayLabel(deviceKey, displayName);
+}

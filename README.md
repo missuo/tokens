@@ -186,6 +186,21 @@ bunx tokens-cli@latest login      # or: npx tokens-cli@latest login
 bunx tokens-cli@latest submit
 ```
 
+### Private mode
+
+```sh
+tokens login --private
+```
+
+Keeps your usage off the leaderboard and makes your profile, devices, badges
+and embeds answer as if the account did not exist. The command prints a read
+token (`tkr_…`) once; send it as `Authorization: Bearer tkr_…` or append
+`?token=tkr_…` to a badge or embed URL to read your own data. Running it on a
+machine that is already logged in switches that account. Turn private mode off,
+and create or revoke read tokens, in [Settings](https://tokens.ci/settings).
+
+On every public profile, device names are shown masked (`jo****ro`).
+
 ## Who pays for this
 
 <div align="center">

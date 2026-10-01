@@ -34,7 +34,13 @@ use std::path::Path;
 /// `message_cache::parser_version()`, while allowing each client to keep its
 /// own client-specific version offset for independent historical invalidations
 /// (e.g. dedup key changes, session metadata).
-pub const PI_FORMAT_PARSER_BASE_VERSION: u32 = 1;
+///
+/// v1 -> v2: assistant records now attribute to `message.responseModel` (the
+/// model that served the request) instead of `message.model` (the alias the
+/// client asked for), so proxied usage stops caching under the proxy's
+/// routing alias. Source files are byte-identical before and after, so only
+/// the parser version retires those cached alias attributions.
+pub const PI_FORMAT_PARSER_BASE_VERSION: u32 = 2;
 
 /// Pi session header (first line of JSONL)
 #[derive(Debug, Deserialize)]
@@ -240,6 +246,15 @@ pub struct PiMessage {
     pub usage: Option<PiUsage>,
     pub model: Option<String>,
     pub provider: Option<String>,
+    /// The model that actually served the request.
+    ///
+    /// A reverse proxy between the client and the provider resolves its own
+    /// routing alias per request, so `model` names the alias the client asked
+    /// for while this names what ran. Only this one is a name any pricing
+    /// table can know: the alias is a routing entry that may resolve to a
+    /// different model on every request.
+    #[serde(rename = "responseModel")]
+    pub response_model: Option<String>,
     #[serde(rename = "responseId")]
     pub response_id: Option<String>,
 }
@@ -546,7 +561,17 @@ fn pi_emitted_record<'a>(
         return None;
     }
 
-    let recorded_model = message.model.as_deref()?;
+    // `responseModel` is what served the request; `model` is what the client
+    // asked for. When a reverse proxy sits in front, the latter is the proxy's
+    // own routing alias — not a model name, and not a name any pricing table
+    // can resolve. Prefer the served model, and fall back to the requested one
+    // when it is absent, blank, or replacement-damaged, so an unusable
+    // `responseModel` never costs the record its `model` as well.
+    let recorded_model = message
+        .response_model
+        .as_deref()
+        .filter(|served| !served.trim().is_empty() && !has_replacement_character(served))
+        .or(message.model.as_deref())?;
     Some(PiEmittedRecord {
         message,
         usage,
@@ -1001,6 +1026,73 @@ mod tests {
         assert_eq!(messages[0].tokens.cache_write, 5);
         assert_eq!(messages[0].workspace_key, Some("/tmp".to_string()));
         assert_eq!(messages[0].workspace_label, Some("tmp".to_string()));
+    }
+
+    #[test]
+    fn proxied_response_model_names_the_served_model_not_the_alias() {
+        // given: a reverse proxy in front of the provider. "forge" is the
+        // proxy's routing alias, "glm-5.3" is what served the request. Only
+        // the latter is a name the pricing tables can resolve.
+        let content = r#"{"type":"session","id":"pi_proxy_001","timestamp":"2026-01-01T00:00:00.000Z","cwd":"/tmp"}
+{"type":"message","id":"msg_001","parentId":null,"timestamp":"2026-01-01T00:00:01.000Z","message":{"role":"assistant","provider":"9router","model":"forge","responseId":"resp_001","responseModel":"glm-5.3","usage":{"input":100,"output":50,"cacheRead":10,"cacheWrite":5,"totalTokens":165}}}"#;
+        let file = create_test_file(content);
+
+        // when
+        let messages = parse_pi_file(file.path());
+
+        // then
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].model_id, "glm-5.3");
+        // An unrecognized proxy id is preserved verbatim rather than inferred
+        // from the served model.
+        assert_eq!(messages[0].provider_id, "9router");
+    }
+
+    #[test]
+    fn absent_response_model_falls_back_to_the_requested_model() {
+        // given: a direct provider, which records no responseModel
+        let content = r#"{"type":"session","id":"pi_direct_001","timestamp":"2026-01-01T00:00:00.000Z","cwd":"/tmp"}
+{"type":"message","id":"msg_001","parentId":null,"timestamp":"2026-01-01T00:00:01.000Z","message":{"role":"assistant","model":"claude-3-5-sonnet","provider":"anthropic","usage":{"input":100,"output":50,"cacheRead":0,"cacheWrite":0,"totalTokens":150}}}"#;
+        let file = create_test_file(content);
+
+        // when
+        let messages = parse_pi_file(file.path());
+
+        // then
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].model_id, "claude-3-5-sonnet");
+    }
+
+    #[test]
+    fn blank_response_model_falls_back_to_the_requested_model() {
+        // given: "responseModel" present but blank — same path as absent.
+        let content = r#"{"type":"session","id":"pi_blank_001","timestamp":"2026-01-01T00:00:00.000Z","cwd":"/tmp"}
+{"type":"message","id":"msg_001","parentId":null,"timestamp":"2026-01-01T00:00:01.000Z","message":{"role":"assistant","provider":"9router","model":"zzz","responseModel":"  ","usage":{"input":100,"output":50,"cacheRead":0,"cacheWrite":0,"totalTokens":150}}}"#;
+        let file = create_test_file(content);
+
+        // when
+        let messages = parse_pi_file(file.path());
+
+        // then
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].model_id, "zzz");
+    }
+
+    #[test]
+    fn replacement_damaged_response_model_falls_back_to_the_requested_model() {
+        // given: a damaged "responseModel" must not cost the record its
+        // "model" as well — falling back to the requested name beats
+        // emitting a mangled one, which is also why the damage check here
+        // is unconditional rather than gated on the lossy reader.
+        let content = "{\"type\":\"session\",\"id\":\"pi_damaged_001\",\"timestamp\":\"2026-01-01T00:00:00.000Z\",\"cwd\":\"/tmp\"}\n{\"type\":\"message\",\"id\":\"msg_001\",\"parentId\":null,\"timestamp\":\"2026-01-01T00:00:01.000Z\",\"message\":{\"role\":\"assistant\",\"provider\":\"9router\",\"model\":\"zzz\",\"responseModel\":\"glm-5.\u{fffd}\",\"usage\":{\"input\":100,\"output\":50,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":150}}}";
+        let file = create_test_file(content);
+
+        // when
+        let messages = parse_pi_file(file.path());
+
+        // then
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].model_id, "zzz");
     }
 
     #[test]

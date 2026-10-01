@@ -11,6 +11,7 @@ import {
 } from "@/lib/db/usernameLookup";
 import { buildSubmissionFreshness } from "@/lib/submissionFreshness";
 import { SOCIAL_VERIFIED_THRESHOLD } from "@/lib/socialVerification";
+import { PRIVATE_CACHE_CONTROL, getViewerAccess } from "@/lib/privacy";
 
 const LEGACY_CLIENT_ALIASES: Record<string, string> = { kilocode: "kilo" };
 function normalizeClientId(id: string): string {
@@ -116,6 +117,7 @@ export async function getPublicProfileResponse(
         socialLinks: users.socialLinks,
         bannedAt: users.bannedAt,
         banReason: users.banReason,
+        isPrivate: users.isPrivate,
       })
       .from(users)
       .where(usernameEqualsIgnoreCase(username))
@@ -123,6 +125,17 @@ export async function getPublicProfileResponse(
     const user = getSingleUsernameMatch(matchingUsers, username);
 
     if (!user) {
+      return NextResponse.json({ error: "User not found" }, { status: 404 });
+    }
+
+    // A private account without the owner's session or a read token answers
+    // exactly like no account — checked before the case redirect, which would
+    // otherwise confirm the username exists. Banned accounts skip this: the
+    // ban notice is public on purpose, private or not.
+    const access = user.bannedAt
+      ? { allowed: true, isOwner: false }
+      : await getViewerAccess(request, user);
+    if (!access.allowed) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
 
@@ -203,7 +216,9 @@ export async function getPublicProfileResponse(
             s.user_id,
             SUM(s.total_tokens) as total_tokens
           FROM submissions s
-          JOIN users u ON u.id = s.user_id AND u.banned_at IS NULL
+          JOIN users u ON u.id = s.user_id
+            AND u.banned_at IS NULL
+            AND NOT u.is_private
           GROUP BY s.user_id
         ),
         ranked AS (
@@ -614,6 +629,9 @@ export async function getPublicProfileResponse(
         displayName: user.displayName,
         avatarUrl: user.avatarUrl,
         createdAt: user.createdAt,
+        // Private accounts are not ranked: the ranking above leaves them out,
+        // so their own row is never found and this stays null.
+        isPrivate: user.isPrivate,
         rank: isPeriodFiltered ? null : rank ? Number(rank) : null,
         // Same rule as the leaderboard's verifiedExpr(): two or more social
         // links marks a profile verified. Exposed here so clients that only
@@ -675,7 +693,9 @@ export async function getPublicProfileResponse(
       hasBackfill: archivedDayCount > 0,
       modelUsage,
       contributions: graphContributions,
-    });
+    }, user.isPrivate
+      ? { headers: { "Cache-Control": PRIVATE_CACHE_CONTROL } }
+      : undefined);
   } catch (error) {
     if (error instanceof AmbiguousUsernameError) {
       return NextResponse.json(

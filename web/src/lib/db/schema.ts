@@ -9,6 +9,7 @@ import {
   date,
   jsonb,
   integer,
+  boolean,
   index,
   unique,
   uniqueIndex,
@@ -47,6 +48,13 @@ export const users = pgTable(
      */
     bannedAt: timestamp("banned_at", { withTimezone: true }),
     banReason: text("ban_reason"),
+    /**
+     * Private accounts expose nothing publicly: they are left out of every
+     * leaderboard and ranking, and their profile, device and embed reads
+     * answer as if the user did not exist unless the request carries the
+     * owner's session or one of their read tokens (see read_tokens).
+     */
+    isPrivate: boolean("is_private").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -116,6 +124,36 @@ export const apiTokens = pgTable(
     index("idx_api_tokens_token").on(table.token),
     index("idx_api_tokens_user_id").on(table.userId),
     unique("api_tokens_user_name_unique").on(table.userId, table.name),
+  ]
+);
+
+// ============================================================================
+// READ TOKENS
+// ============================================================================
+/**
+ * Read-only credentials for a private account's data. Kept apart from
+ * api_tokens on purpose: those submit usage, these can only read it, and a
+ * separate table (and `tkr_` prefix) means neither can ever be accepted where
+ * the other is expected.
+ */
+export const readTokens = pgTable(
+  "read_tokens",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** SHA-256 of the token; the plaintext is shown once and never stored. */
+    tokenHash: varchar("token_hash", { length: 64 }).notNull().unique(),
+    name: varchar("name", { length: 100 }).notNull(),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("idx_read_tokens_user_id").on(table.userId),
+    unique("read_tokens_user_name_unique").on(table.userId, table.name),
   ]
 );
 
@@ -451,6 +489,8 @@ export type Session = typeof sessions.$inferSelect;
 export type NewSession = typeof sessions.$inferInsert;
 export type ApiToken = typeof apiTokens.$inferSelect;
 export type NewApiToken = typeof apiTokens.$inferInsert;
+export type ReadToken = typeof readTokens.$inferSelect;
+export type NewReadToken = typeof readTokens.$inferInsert;
 export type DeviceCode = typeof deviceCodes.$inferSelect;
 export type NewDeviceCode = typeof deviceCodes.$inferInsert;
 export type Submission = typeof submissions.$inferSelect;

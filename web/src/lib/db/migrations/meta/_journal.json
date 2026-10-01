@@ -169,6 +169,13 @@
       "when": 1784918833532,
       "tag": "0023_archived_window_totals",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1784918833533,
+      "tag": "0024_private_mode",
+      "breakpoints": true
     }
   ]
 }

@@ -1,6 +1,8 @@
+import { Suspense } from "react";
 import Link from "next/link";
+import PrivateProfileOwnerView from "./PrivateProfileOwnerView";
 
-export default function ProfileNotFound() {
+function NotFoundContent() {
   return (
     <div className="flex min-h-screen flex-col bg-background pt-16">
       <main className="mx-auto w-full max-w-[800px] flex-1 px-6 py-10">
@@ -13,5 +15,16 @@ export default function ProfileNotFound() {
         </div>
       </main>
     </div>
+  );
+}
+
+// A private profile lands here for every reader, so the cached page cannot
+// tell it apart from a missing one. The owner view upgrades it in the browser
+// when the signed-in user is the one in the URL.
+export default function ProfileNotFound() {
+  return (
+    <Suspense fallback={<NotFoundContent />}>
+      <PrivateProfileOwnerView fallback={<NotFoundContent />} />
+    </Suspense>
   );
 }

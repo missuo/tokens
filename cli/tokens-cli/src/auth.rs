@@ -82,6 +82,19 @@ struct TokenValidationResponse {
     user: UserInfo,
 }
 
+#[derive(Debug, Deserialize)]
+struct EnablePrivateResponse {
+    #[serde(rename = "readToken")]
+    read_token: Option<ReadTokenInfo>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ReadTokenInfo {
+    token: String,
+}
+
+const READ_TOKEN_PREFIX: &str = "tkr_";
+
 fn get_credentials_path() -> Result<PathBuf> {
     Ok(crate::paths::get_config_dir().join("credentials.json"))
 }
@@ -224,6 +237,89 @@ fn get_device_name() -> String {
     format!("CLI on {}", hostname)
 }
 
+/// A read token is about to be printed verbatim, so anything that is not the
+/// shape the server issues (`tkr_` + hex) is refused rather than echoed — the
+/// same reason `sanitize_server_text` exists for error strings.
+fn is_valid_read_token(token: &str) -> bool {
+    token
+        .strip_prefix(READ_TOKEN_PREFIX)
+        .is_some_and(|rest| !rest.is_empty() && rest.chars().all(|c| c.is_ascii_hexdigit()))
+}
+
+/// Switch the account behind `api_token` to private mode and print the read
+/// token the server issues for it. The plaintext token is shown here once and
+/// never stored: the server keeps only its hash, and the CLI has no use for it.
+async fn enable_private_mode(
+    client: &reqwest::Client,
+    base_url: &str,
+    api_token: &str,
+) -> Result<()> {
+    use colored::Colorize;
+
+    let response = client
+        .post(format!("{}/api/me/private", base_url))
+        .header("Authorization", format!("Bearer {}", api_token))
+        .json(&serde_json::json!({ "tokenName": get_device_name() }))
+        .send()
+        .await?;
+
+    let status = response.status();
+    if status == reqwest::StatusCode::NOT_FOUND {
+        anyhow::bail!("This Tokens server does not support private mode yet.");
+    }
+    if !status.is_success() {
+        let body: serde_json::Value = response.json().await.unwrap_or_default();
+        let error = body
+            .get("error")
+            .and_then(|value| value.as_str())
+            .map(sanitize_server_text)
+            .unwrap_or_else(|| "Failed to enable private mode".to_string());
+        anyhow::bail!("{} ({})", error, status);
+    }
+
+    let data: EnablePrivateResponse = response.json().await?;
+    let read_token = data
+        .read_token
+        .map(|info| info.token)
+        .filter(|token| is_valid_read_token(token))
+        .ok_or_else(|| anyhow::anyhow!("Server did not return a valid read token."))?;
+
+    println!(
+        "  {}",
+        "Private mode is on. Your profile, devices, badges and embeds are hidden,".green()
+    );
+    println!("{}", "  and you are no longer on the leaderboard.".green());
+    println!();
+    println!(
+        "{}",
+        "  Your read token (shown only once — copy it now):".white()
+    );
+    println!(
+        "{}
+",
+        format!("  {}", read_token).green().bold()
+    );
+    println!(
+        "{}",
+        "  Use it to read your private data, e.g. in the iOS app, as".bright_black()
+    );
+    println!(
+        "{}",
+        "  `Authorization: Bearer <token>`, or by appending `?token=<token>` to a".bright_black()
+    );
+    println!("{}", "  badge or embed URL.".bright_black());
+    println!(
+        "{}",
+        format!(
+            "  Manage read tokens and privacy at {}/settings\n",
+            base_url
+        )
+        .bright_black()
+    );
+
+    Ok(())
+}
+
 #[cfg(target_os = "linux")]
 fn has_non_empty_env_var(name: &str) -> bool {
     std::env::var_os(name).is_some_and(|value| !value.is_empty())
@@ -335,14 +431,25 @@ fn open_browser(url: &str) -> bool {
     false
 }
 
-pub async fn login() -> Result<()> {
+pub async fn login(private: bool) -> Result<()> {
     use colored::Colorize;
+
+    let base_url = get_api_base_url();
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()?;
 
     if let Some(creds) = load_credentials() {
         println!(
             "\n  {}",
             format!("Already logged in as {}", creds.username.bold()).yellow()
         );
+        // `--private` on an existing login switches that account rather than
+        // asking the user to sign out and through the browser again.
+        if private {
+            println!();
+            return enable_private_mode(&client, &base_url, &creds.token).await;
+        }
         println!(
             "{}",
             "  Run 'tokens logout' to sign out first.\n".bright_black()
@@ -350,14 +457,8 @@ pub async fn login() -> Result<()> {
         return Ok(());
     }
 
-    let base_url = get_api_base_url();
-
     println!("\n  {}\n", "Tokens - Login".cyan());
     println!("{}", "  Requesting authorization code...".bright_black());
-
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()?;
 
     let device_code_response = client
         .post(format!("{}/api/auth/device", base_url))
@@ -443,6 +544,20 @@ pub async fn login() -> Result<()> {
                                 "\n  {}",
                                 format!("Success! Logged in as {}", user.username.bold()).green()
                             );
+                            if private {
+                                println!();
+                                return enable_private_mode(
+                                    &client,
+                                    &base_url,
+                                    &credentials.token,
+                                )
+                                .await
+                                .map_err(|error| {
+                                    anyhow::anyhow!(
+                                        "{error}\n  You are logged in, but your profile is still public. Run `tokens login --private` to retry."
+                                    )
+                                });
+                            }
                             println!(
                                 "{}",
                                 "  You can now use 'tokens submit' to share your usage.\n"
@@ -487,7 +602,7 @@ pub async fn login() -> Result<()> {
     }
 }
 
-pub async fn login_with_token(token: &str) -> Result<()> {
+pub async fn login_with_token(token: &str, private: bool) -> Result<()> {
     use colored::Colorize;
 
     let token = token.trim();
@@ -532,6 +647,16 @@ pub async fn login_with_token(token: &str) -> Result<()> {
         "\n  {}",
         format!("Success! Logged in as {}", credentials.username.bold()).green()
     );
+    if private {
+        println!();
+        return enable_private_mode(&client, &base_url, &credentials.token)
+            .await
+            .map_err(|error| {
+                anyhow::anyhow!(
+                    "{error}\n  You are logged in, but your profile is still public. Run `tokens login --private` to retry."
+                )
+            });
+    }
     println!(
         "{}",
         "  You can now use 'tokens submit' to share your usage.\n".bright_black()
@@ -595,3 +720,16 @@ pub fn whoami() -> Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::is_valid_read_token;
+
+    #[test]
+    fn read_token_must_be_prefixed_hex() {
+        assert!(is_valid_read_token("tkr_0123456789abcdef"));
+        assert!(!is_valid_read_token("tkr_"));
+        assert!(!is_valid_read_token("tt_0123456789abcdef"));
+        assert!(!is_valid_read_token("tkr_abc\u{1b}]0;pwned\u{7}"));
+        assert!(!is_valid_read_token("tkr_abc def"));
+    }
+}

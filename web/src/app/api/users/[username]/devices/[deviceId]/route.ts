@@ -8,9 +8,16 @@ import {
   getSingleUsernameMatch,
   usernameEqualsIgnoreCase,
 } from "@/lib/db/usernameLookup";
-import { deviceDisplayLabel, toIsoString } from "@/lib/devices/shared";
+import {
+  deviceDisplayLabel,
+  publicDeviceDisplayLabel,
+  toIsoString,
+} from "@/lib/devices/shared";
+import { PRIVATE_CACHE_CONTROL, getViewerAccess } from "@/lib/privacy";
 
-export const revalidate = 60;
+// Who is asking changes the answer (private accounts, masked device names), so
+// this can never be served from a per-path cache.
+export const dynamic = "force-dynamic";
 
 const UUID_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -24,12 +31,13 @@ interface RouteParams {
  *
  * Per-device detail: device metadata + ordered list of daily contributions
  * for that one device. Public read — matches the rest of the user-profile
- * read APIs (auth is only required for mutating actions).
+ * read APIs (auth is only required for mutating actions, and for reading a
+ * private account, which needs its owner's session or a read token).
  *
  * `deviceId` must be a valid uuid. Reject other shapes early so we don't even
  * touch the DB for obviously bogus input.
  */
-export async function GET(_request: Request, { params }: RouteParams) {
+export async function GET(request: Request, { params }: RouteParams) {
   try {
     const { username, deviceId } = await params;
 
@@ -47,6 +55,7 @@ export async function GET(_request: Request, { params }: RouteParams) {
         displayName: users.displayName,
         avatarUrl: users.avatarUrl,
         bannedAt: users.bannedAt,
+        isPrivate: users.isPrivate,
       })
       .from(users)
       .where(usernameEqualsIgnoreCase(username))
@@ -54,6 +63,11 @@ export async function GET(_request: Request, { params }: RouteParams) {
 
     const user = getSingleUsernameMatch(matchingUsers, username);
     if (!user) {
+      return NextResponse.json({ error: "User not found" }, { status: 404 });
+    }
+
+    const access = await getViewerAccess(request, user);
+    if (!access.allowed) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
 
@@ -128,7 +142,9 @@ export async function GET(_request: Request, { params }: RouteParams) {
       device: {
         id: device.id,
         deviceKey: device.deviceKey,
-        displayName: deviceDisplayLabel(device.deviceKey, device.displayName),
+        displayName: access.isOwner
+          ? deviceDisplayLabel(device.deviceKey, device.displayName)
+          : publicDeviceDisplayLabel(device.deviceKey, device.displayName),
         createdAt: toIsoString(device.createdAt),
         lastSubmittedAt: toIsoString(device.lastSubmittedAt),
       },
@@ -147,7 +163,9 @@ export async function GET(_request: Request, { params }: RouteParams) {
         outputTokens: Number(row.outputTokens) || 0,
         timestampMs: row.timestampMs == null ? null : Number(row.timestampMs),
       })),
-    });
+    }, user.isPrivate || access.isOwner
+      ? { headers: { "Cache-Control": PRIVATE_CACHE_CONTROL } }
+      : undefined);
   } catch (error) {
     if (error instanceof AmbiguousUsernameError) {
       return NextResponse.json(

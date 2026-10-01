@@ -51,6 +51,12 @@ export interface EmbedTodayUsage {
 
 export interface UserEmbedStats {
   user: {
+    id: string;
+    /**
+     * Private accounts still resolve here so a read token can unlock them;
+     * the embed and badge routes check access before rendering anything.
+     */
+    isPrivate: boolean;
     username: string;
     displayName: string | null;
     avatarUrl: string | null;
@@ -78,6 +84,7 @@ async function fetchUserEmbedStats(
       username: users.username,
       displayName: users.displayName,
       avatarUrl: users.avatarUrl,
+      isPrivate: users.isPrivate,
       totalTokens: sql<number>`COALESCE(${submissions.totalTokens}, 0)`,
       totalCost: sql<number>`COALESCE(CAST(${submissions.totalCost} AS DECIMAL(18,4)), 0)`,
       submissionCount: sql<number>`COALESCE(${submissions.submitCount}, 0)`,
@@ -121,7 +128,9 @@ async function fetchUserEmbedStats(
               }
           ) AS rank
         FROM submissions s
-        JOIN users u ON u.id = s.user_id AND u.banned_at IS NULL
+        JOIN users u ON u.id = s.user_id
+          AND u.banned_at IS NULL
+          AND NOT u.is_private
       )
       SELECT rank, (SELECT COUNT(*)::int FROM ranked) AS total
       FROM ranked WHERE user_id = ${result.id}
@@ -136,6 +145,8 @@ async function fetchUserEmbedStats(
 
   return {
     user: {
+      id: result.id,
+      isPrivate: result.isPrivate,
       username: result.username,
       displayName: result.displayName,
       avatarUrl: result.avatarUrl,

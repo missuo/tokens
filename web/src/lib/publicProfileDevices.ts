@@ -8,7 +8,12 @@ import {
   normalizeUsernameCacheKey,
   usernameEqualsIgnoreCase,
 } from "@/lib/db/usernameLookup";
-import { deviceDisplayLabel, toIsoString } from "@/lib/devices/shared";
+import {
+  deviceDisplayLabel,
+  publicDeviceDisplayLabel,
+  toIsoString,
+} from "@/lib/devices/shared";
+import { PRIVATE_CACHE_CONTROL, getViewerAccess } from "@/lib/privacy";
 
 interface PublicProfileDevicesRouteParams {
   params: Promise<{ username: string }>;
@@ -19,13 +24,15 @@ interface PublicProfileDevicesRouteParams {
  *
  * Returns the list of submission devices belonging to `username` with usage
  * totals aggregated from `daily_breakdown`. Public — no auth required, mirrors
- * the visibility model of GET /api/users/[username].
+ * the visibility model of GET /api/users/[username]: a private account answers
+ * 404 unless the request carries its owner's session or one of its read
+ * tokens. Device names are masked for everyone but the owner.
  *
  * Returned in `last_submitted_at DESC, created_at DESC` order so the device
  * the user just submitted from is always first.
  */
 export async function getPublicProfileDevicesResponse(
-  _request: Request,
+  request: Request,
   { params }: PublicProfileDevicesRouteParams,
 ) {
   try {
@@ -38,6 +45,7 @@ export async function getPublicProfileDevicesResponse(
         displayName: users.displayName,
         avatarUrl: users.avatarUrl,
         bannedAt: users.bannedAt,
+        isPrivate: users.isPrivate,
       })
       .from(users)
       .where(usernameEqualsIgnoreCase(username))
@@ -45,6 +53,11 @@ export async function getPublicProfileDevicesResponse(
 
     const user = getSingleUsernameMatch(matchingUsers, username);
     if (!user) {
+      return NextResponse.json({ error: "User not found" }, { status: 404 });
+    }
+
+    const access = await getViewerAccess(request, user);
+    if (!access.allowed) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
 
@@ -101,9 +114,12 @@ export async function getPublicProfileDevicesResponse(
         deviceKey: row.deviceKey,
         // Public consumers render the resolved fallback label; `customName`
         // carries the raw nullable value so owners (settings UI) can
-        // distinguish "user typed this" from "fallback label".
-        displayName: deviceDisplayLabel(row.deviceKey, row.displayName),
-        customName: row.displayName,
+        // distinguish "user typed this" from "fallback label". Only the owner
+        // gets either unmasked: a device name is often a hostname.
+        displayName: access.isOwner
+          ? deviceDisplayLabel(row.deviceKey, row.displayName)
+          : publicDeviceDisplayLabel(row.deviceKey, row.displayName),
+        customName: access.isOwner ? row.displayName : null,
         createdAt: toIsoString(row.createdAt),
         lastSubmittedAt: toIsoString(row.lastSubmittedAt),
         totalTokens: Number(row.totalTokens) || 0,
@@ -114,7 +130,9 @@ export async function getPublicProfileDevicesResponse(
         firstDay: row.firstDay,
         lastDay: row.lastDay,
       })),
-    });
+    }, user.isPrivate || access.isOwner
+      ? { headers: { "Cache-Control": PRIVATE_CACHE_CONTROL } }
+      : undefined);
   } catch (error) {
     console.error("Get user devices error:", error);
     return NextResponse.json(

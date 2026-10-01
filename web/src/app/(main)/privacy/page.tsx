@@ -121,9 +121,17 @@ export default function PrivacyPage() {
         <p>
           Tokens is a public leaderboard, so this matters more here than on most
           sites. Your username, display name, avatar, usage totals, per-client
-          and per-model breakdown, daily history, device names and rank are
-          visible to anyone, including people who are not signed in, and are
+          and per-model breakdown, daily history, device names (shown masked,
+          e.g. <code className="font-mono text-[13px]">jo****ro</code>) and rank
+          are visible to anyone, including people who are not signed in, and are
           served through our public API, embeddable cards and share images.
+        </p>
+        <p>
+          Unless you turn on private mode, in Settings or with{" "}
+          <code className="font-mono text-[13px]">tokens login --private</code>.
+          A private account is left off the leaderboard, and its profile, usage
+          data, devices and embeddable cards are shown only to you while signed
+          in, and to anyone you give one of your read tokens to.
         </p>
         <p>
           Your email address is never shown publicly and is not part of any API

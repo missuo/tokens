@@ -3775,8 +3775,23 @@ mod tests {
 
     #[test]
     fn test_lossy_jsonl_parser_versions_invalidate_v3_entries() {
-        assert_eq!(parser_version(ClientId::PrimeAgent), 4);
+        assert_eq!(parser_version(ClientId::PrimeAgent), 5);
         assert_eq!(parser_version(ClientId::Reasonix), 4);
+    }
+
+    /// v2 of the pi-format driver attributes proxied usage to the served
+    /// model (`responseModel`) instead of the proxy's routing alias. Source
+    /// files are byte-identical across the bump, so a warm v1 cache would
+    /// keep replaying alias attributions — only the version retires them.
+    #[test]
+    fn test_pi_format_parser_version_invalidates_v1_entries() {
+        // pi-format base 1 -> 2, applied to every family member's offset.
+        assert_eq!(parser_version(ClientId::Pi), 4);
+        assert_eq!(parser_version(ClientId::Kimchi), 3);
+        assert_eq!(parser_version(ClientId::Omp), 3);
+        assert_eq!(parser_version(ClientId::Senpi), 3);
+        assert_eq!(parser_version(ClientId::CraftAgent), 3);
+        assert_eq!(parser_version(ClientId::PrimeAgent), 5);
     }
 
     #[test]
@@ -3800,7 +3815,11 @@ mod tests {
             let _cache_env = sandbox_cache_env(temp_home.path());
             let source = write_temp_file(source_bytes);
             let current_identity = CacheIdentity::for_client(client);
-            assert_eq!(current_identity.parser_version, 4);
+            assert_eq!(
+                current_identity.parser_version,
+                parser_version(client),
+                "identity must track the client's live parser version"
+            );
             let stale_identity = CacheIdentity {
                 namespace: current_identity.namespace,
                 parser_version: 3,
@@ -3862,7 +3881,7 @@ mod tests {
 
             let warm = SourceMessageCache::load();
             let cached = warm.get(current_identity, source.path()).unwrap();
-            assert_eq!(cached.parser_version, 4);
+            assert_eq!(cached.parser_version, parser_version(client));
             assert_eq!(cached.messages, rebuilt);
         }
     }

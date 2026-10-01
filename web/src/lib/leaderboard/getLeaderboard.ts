@@ -6,7 +6,7 @@ import {
   normalizeUsernameCacheKey,
   usernameEqualsIgnoreCase,
 } from "@/lib/db/usernameLookup";
-import { eq, desc, sql, and, or, gte, lte, isNull } from "drizzle-orm";
+import { eq, desc, sql, and, or, gte, lte } from "drizzle-orm";
 import type { LeaderboardData, LeaderboardUser, Period, SortBy } from "@/lib/leaderboard/types";
 import {
   escapeLikePattern,
@@ -15,6 +15,7 @@ import {
   parseSearchDirectives,
 } from "@/lib/leaderboard/searchDirectives";
 import { SOCIAL_VERIFIED_THRESHOLD } from "@/lib/socialVerification";
+import { publicUserCondition } from "@/lib/privacy";
 
 export type { LeaderboardData, LeaderboardUser, Period, SortBy } from "@/lib/leaderboard/types";
 
@@ -344,7 +345,7 @@ async function fetchPeriodLeaderboardRows(
       and(
         gte(dailyBreakdown.date, dateRange.start),
         lte(dailyBreakdown.date, dateRange.end),
-        isNull(users.bannedAt)
+        publicUserCondition()
       )
     );
 
@@ -419,7 +420,7 @@ async function fetchLeaderboardData(
       })
       .from(submissions)
       .innerJoin(users, eq(submissions.userId, users.id))
-      .where(and(isNull(users.bannedAt), ...directiveConditions))
+      .where(and(publicUserCondition(), ...directiveConditions))
       .groupBy(users.id, users.username, users.displayName, users.avatarUrl)
       .as("ranked");
     const rankedSecondaryOrderByColumn = sortBy === "cost"
@@ -461,7 +462,7 @@ async function fetchLeaderboardData(
       })
       .from(submissions)
       .innerJoin(users, eq(submissions.userId, users.id))
-      .where(isNull(users.bannedAt));
+      .where(publicUserCondition());
 
     return {
       users: (results as RankedLeaderboardDbRow[]).map((row) => ({
@@ -506,7 +507,7 @@ async function fetchLeaderboardData(
     })
     .from(submissions)
     .innerJoin(users, eq(submissions.userId, users.id))
-    .where(isNull(users.bannedAt))
+    .where(publicUserCondition())
     .groupBy(users.id, users.username, users.displayName, users.avatarUrl)
     .orderBy(
       desc(orderByColumn),
@@ -526,7 +527,7 @@ async function fetchLeaderboardData(
       })
       .from(submissions)
       .innerJoin(users, eq(submissions.userId, users.id))
-      .where(isNull(users.bannedAt)),
+      .where(publicUserCondition()),
   ]);
 
   const totalUsers = Number(globalStats[0]?.uniqueUsers) || 0;
@@ -676,7 +677,7 @@ async function fetchAllTimeUserRank(
   const userResult = await db
     .select({ id: users.id, username: users.username, displayName: users.displayName, avatarUrl: users.avatarUrl, verified: verifiedExpr() })
     .from(users)
-    .where(and(usernameEqualsIgnoreCase(username), isNull(users.bannedAt)))
+    .where(and(usernameEqualsIgnoreCase(username), publicUserCondition()))
     .limit(USERNAME_LOOKUP_LIMIT);
 
   const user = getSingleUsernameMatch(userResult, username);
@@ -720,7 +721,7 @@ async function fetchAllTimeUserRank(
         })
         .from(submissions)
         .innerJoin(users, eq(submissions.userId, users.id))
-        .where(isNull(users.bannedAt))
+        .where(publicUserCondition())
         .groupBy(submissions.userId)
         .having(sql`${compareColumn} > ${userCompareValue}`)
         .as("higher_ranked")

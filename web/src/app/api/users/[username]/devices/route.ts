@@ -1,6 +1,8 @@
 import { getPublicProfileDevicesResponse } from "@/lib/publicProfileDevices";
 
-export const revalidate = 60;
+// Who is asking changes the answer (private accounts, masked device names), so
+// this can never be served from a per-path cache.
+export const dynamic = "force-dynamic";
 
 interface RouteParams {
   params: Promise<{ username: string }>;

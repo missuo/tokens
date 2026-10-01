@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useId, useRef } from "react";
 import { useRouter } from "nextjs-toploader/app";
-import { KeyIcon } from "lucide-react";
+import { EyeIcon, KeyIcon } from "lucide-react";
 import { toast } from "react-toastify";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -183,6 +183,42 @@ const AvatarImg = tw(
 );
 
 const TokenName = tw("p", "truncate font-medium");
+
+const PrivacyRow = tw(
+  "div",
+  "mb-5 flex items-center justify-between gap-4 rounded-xl border bg-muted p-4"
+);
+
+/** A plain on/off switch; the page has no form library to borrow one from. */
+function PrivacySwitch({
+  checked,
+  className,
+  ...props
+}: Omit<React.ComponentPropsWithoutRef<"button">, "role" | "type"> & {
+  checked: boolean;
+}) {
+  return (
+    <button
+      {...props}
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      className={cn(
+        "relative h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-60",
+        checked ? "border-primary bg-primary" : "bg-background",
+        className
+      )}
+    >
+      <span
+        aria-hidden="true"
+        className={cn(
+          "absolute top-1/2 size-4 -translate-y-1/2 rounded-full shadow-sm transition-all duration-150",
+          checked ? "left-[22px] bg-primary-foreground" : "left-[3px] bg-muted-foreground"
+        )}
+      />
+    </button>
+  );
+}
 
 // ============================================================================
 // Danger Zone
@@ -576,10 +612,13 @@ function DangerConfirmationModal({
  */
 function RevokeTokenModal({
   token,
+  consequence,
   onClose,
   onConfirm,
 }: {
   token: ApiToken;
+  /** What stops working once this token is gone. */
+  consequence: React.ReactNode;
   onClose: () => void;
   onConfirm: () => Promise<void>;
 }) {
@@ -604,9 +643,8 @@ function RevokeTokenModal({
     >
       <ModalTitle id={titleId}>⚠ Revoke token</ModalTitle>
       <ModalBody>
-        <strong>{token.name}</strong> will stop working immediately. Anything
-        submitting with it — CI, a machine running <code>tokens serve</code> —
-        will start failing until it is given a new token.
+        <strong>{token.name}</strong> will stop working immediately.{" "}
+        {consequence}
       </ModalBody>
       <ModalActions>
         <CancelButton onClick={onClose} disabled={isSubmitting}>
@@ -654,6 +692,20 @@ async function fetchApiTokens(): Promise<ApiToken[]> {
   return Array.isArray(tokensData.tokens) ? tokensData.tokens : [];
 }
 
+async function fetchReadTokens(): Promise<ApiToken[]> {
+  const response = await fetch("/api/settings/read-tokens");
+  if (!response.ok) throw new Error("Failed to load read tokens");
+  const data = await response.json();
+  return Array.isArray(data.tokens) ? data.tokens : [];
+}
+
+async function fetchPrivacy(): Promise<boolean> {
+  const response = await fetch("/api/settings/privacy");
+  if (!response.ok) throw new Error("Failed to load privacy settings");
+  const data = await response.json();
+  return data.private === true;
+}
+
 async function fetchDevices(username: string): Promise<SettingsDevice[]> {
   const devicesResponse = await fetch(
     `/api/users/${encodeURIComponent(username)}/devices`
@@ -690,6 +742,20 @@ export default function SettingsClient() {
   const [devicesLoadFailed, setDevicesLoadFailed] = useState(false);
   const [revokingToken, setRevokingToken] = useState<ApiToken | null>(null);
   const [revokingTokenId, setRevokingTokenId] = useState<string | null>(null);
+  // Privacy: null until loaded, so the switch never renders a guess.
+  const createReadTokenErrorId = useId();
+  const privacyDescriptionId = useId();
+  const [isPrivate, setIsPrivate] = useState<boolean | null>(null);
+  const [privacyLoadFailed, setPrivacyLoadFailed] = useState(false);
+  const [isSavingPrivacy, setIsSavingPrivacy] = useState(false);
+  const [readTokens, setReadTokens] = useState<ApiToken[]>([]);
+  const [readTokensLoadFailed, setReadTokensLoadFailed] = useState(false);
+  const [readTokenName, setReadTokenName] = useState("Read token");
+  const [createdReadToken, setCreatedReadToken] = useState<CreatedApiToken | null>(null);
+  const [isCreatingReadToken, setIsCreatingReadToken] = useState(false);
+  const [createReadTokenError, setCreateReadTokenError] = useState<string | null>(null);
+  const [revokingReadToken, setRevokingReadToken] = useState<ApiToken | null>(null);
+  const [revokingReadTokenId, setRevokingReadTokenId] = useState<string | null>(null);
 
   const loadTokens = useCallback(async () => {
     setTokensLoadFailed(false);
@@ -698,6 +764,25 @@ export default function SettingsClient() {
       setTokens((current) => mergeApiTokenList(loadedTokens, current));
     } catch {
       setTokensLoadFailed(true);
+    }
+  }, []);
+
+  const loadPrivacy = useCallback(async () => {
+    setPrivacyLoadFailed(false);
+    try {
+      setIsPrivate(await fetchPrivacy());
+    } catch {
+      setPrivacyLoadFailed(true);
+    }
+  }, []);
+
+  const loadReadTokens = useCallback(async () => {
+    setReadTokensLoadFailed(false);
+    try {
+      const loaded = await fetchReadTokens();
+      setReadTokens((current) => mergeApiTokenList(loaded, current));
+    } catch {
+      setReadTokensLoadFailed(true);
     }
   }, []);
 
@@ -729,6 +814,8 @@ export default function SettingsClient() {
 
         await Promise.all([
           loadTokens(),
+          loadPrivacy(),
+          loadReadTokens(),
           loadDevices(sessionData.user.username),
         ]);
       } catch {
@@ -742,7 +829,7 @@ export default function SettingsClient() {
     return () => {
       cancelled = true;
     };
-  }, [router, loadTokens, loadDevices]);
+  }, [router, loadTokens, loadPrivacy, loadReadTokens, loadDevices]);
 
   const handleRevokeToken = async (token: ApiToken) => {
     setRevokingTokenId(token.id);
@@ -760,6 +847,83 @@ export default function SettingsClient() {
     } finally {
       setRevokingTokenId(null);
     }
+  };
+
+  const handleTogglePrivacy = async () => {
+    if (isPrivate === null || isSavingPrivacy) return;
+    const next = !isPrivate;
+    setIsSavingPrivacy(true);
+    try {
+      const response = await fetch("/api/settings/privacy", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ private: next }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || typeof data.private !== "boolean") {
+        throw new Error(data.error || "Failed to update privacy");
+      }
+      setIsPrivate(data.private);
+      toast.success(
+        data.private
+          ? "Your profile is now private."
+          : "Your profile is now public."
+      );
+    } catch {
+      toast.error("Failed to update privacy. Please try again.");
+    } finally {
+      setIsSavingPrivacy(false);
+    }
+  };
+
+  const handleCreateReadToken = async () => {
+    setIsCreatingReadToken(true);
+    setCreateReadTokenError(null);
+    try {
+      const response = await fetch("/api/settings/read-tokens", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: readTokenName }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.token) {
+        throw new Error(data.error || "Failed to create read token");
+      }
+      setCreatedReadToken(data.token);
+      setReadTokens((current) =>
+        prependApiToken(current, apiTokenListItem(data.token))
+      );
+    } catch (error) {
+      setCreateReadTokenError(
+        error instanceof Error ? error.message : "Failed to create read token"
+      );
+    } finally {
+      setIsCreatingReadToken(false);
+    }
+  };
+
+  const handleRevokeReadToken = async (token: ApiToken) => {
+    setRevokingReadTokenId(token.id);
+    try {
+      const response = await fetch(`/api/settings/read-tokens/${token.id}`, {
+        method: "DELETE",
+      });
+      if (!response.ok) throw new Error("Failed to revoke read token");
+      setReadTokens((current) => current.filter((t) => t.id !== token.id));
+      setRevokingReadToken(null);
+      toast.success(`Revoked "${token.name}"`);
+    } catch {
+      toast.error("Failed to revoke read token. Please try again.");
+    } finally {
+      setRevokingReadTokenId(null);
+    }
+  };
+
+  const handleCopyCreatedReadToken = async () => {
+    if (!createdReadToken) return;
+    await navigator.clipboard.writeText(createdReadToken.token);
+    // Same as API tokens: shown once, dropped from state once copied.
+    setCreatedReadToken(null);
   };
 
   const handleDangerSuccess = useCallback(() => {
@@ -907,7 +1071,7 @@ export default function SettingsClient() {
         <Title style={{ color: "var(--foreground)" }}>
           Settings
         </Title>
-        <Subtitle>Manage your profile, API tokens, devices, and submitted data.</Subtitle>
+        <Subtitle>Manage your profile, privacy, API tokens, devices, and submitted data.</Subtitle>
 
         <Section>
           <SectionTitle style={{ color: "var(--foreground)" }}>
@@ -937,6 +1101,179 @@ export default function SettingsClient() {
           <InfoBanner style={{ marginTop: 16 }}>
             Profile information is synced from GitHub and cannot be edited here.
           </InfoBanner>
+        </Section>
+
+        <Section>
+          <SectionTitle style={{ color: "var(--foreground)" }}>
+            Privacy
+          </SectionTitle>
+
+          {privacyLoadFailed ? (
+            <Alert variant="destructive" className="mb-4">
+              <AlertTitle>Could not load your privacy settings</AlertTitle>
+              <AlertDescription>
+                Nothing has changed — this page just could not reach the
+                server.{" "}
+                <SecondaryButton
+                  type="button"
+                  className="ml-1 h-7 px-2 text-xs"
+                  onClick={loadPrivacy}
+                >
+                  Try again
+                </SecondaryButton>
+              </AlertDescription>
+            </Alert>
+          ) : (
+            <PrivacyRow>
+              <div className="min-w-0 flex-1">
+                <p className="mb-1 text-sm font-medium text-foreground">
+                  Private mode
+                </p>
+                <p
+                  id={privacyDescriptionId}
+                  className="text-[13px] text-muted-foreground"
+                >
+                  Hide your profile, devices, badges and embeds from everyone
+                  and leave the leaderboard. Only you, and anything holding one
+                  of the read tokens below, can see your data. You can also turn
+                  this on with{" "}
+                  <CodeText style={{ backgroundColor: "var(--muted)" }}>
+                    tokens login --private
+                  </CodeText>
+                  .
+                </p>
+              </div>
+              <PrivacySwitch
+                checked={isPrivate === true}
+                disabled={isPrivate === null || isSavingPrivacy}
+                aria-label="Private mode"
+                aria-describedby={privacyDescriptionId}
+                onClick={handleTogglePrivacy}
+              />
+            </PrivacyRow>
+          )}
+
+          <FieldLabel
+            htmlFor="read-token-name"
+            style={{ color: "var(--foreground)", marginTop: 8 }}
+          >
+            Read tokens
+          </FieldLabel>
+          <Description style={{ color: "var(--muted-foreground)" }}>
+            A read token unlocks your private profile — for the iOS app, or a
+            badge or embed you still want to show. Send it as{" "}
+            <CodeText style={{ backgroundColor: "var(--muted)" }}>
+              Authorization: Bearer tkr_…
+            </CodeText>{" "}
+            or append{" "}
+            <CodeText style={{ backgroundColor: "var(--muted)" }}>
+              ?token=tkr_…
+            </CodeText>{" "}
+            to a badge or embed URL. Read tokens can only read; they cannot
+            submit or change anything.
+          </Description>
+
+          <ActionRow>
+            <TextInput
+              id="read-token-name"
+              value={readTokenName}
+              onChange={(event) => setReadTokenName(event.target.value)}
+              maxLength={100}
+              aria-invalid={createReadTokenError ? true : undefined}
+              aria-describedby={
+                createReadTokenError ? createReadTokenErrorId : undefined
+              }
+            />
+            <PrimaryButton
+              type="button"
+              disabled={isCreatingReadToken}
+              onClick={handleCreateReadToken}
+            >
+              {isCreatingReadToken ? "Creating..." : "Create read token"}
+            </PrimaryButton>
+          </ActionRow>
+
+          {createReadTokenError && (
+            <Alert
+              id={createReadTokenErrorId}
+              variant="destructive"
+              className="mb-4"
+            >
+              <AlertTitle>Could not create the read token</AlertTitle>
+              <AlertDescription>{createReadTokenError}</AlertDescription>
+            </Alert>
+          )}
+
+          {createdReadToken && (
+            <TokenReveal>
+              <SmallText style={{ color: "var(--foreground)", fontWeight: 600 }}>
+                Copy this token now. It will not be shown again.
+              </SmallText>
+              <TokenCodeRow>
+                <TokenCode style={{ color: "var(--foreground)" }}>
+                  {createdReadToken.token}
+                </TokenCode>
+                <SecondaryButton type="button" onClick={handleCopyCreatedReadToken}>
+                  Copy
+                </SecondaryButton>
+              </TokenCodeRow>
+            </TokenReveal>
+          )}
+
+          {readTokensLoadFailed ? (
+            <Alert variant="destructive">
+              <AlertTitle>Could not load your read tokens</AlertTitle>
+              <AlertDescription>
+                Your tokens are still there — this page just could not reach the
+                server.{" "}
+                <SecondaryButton
+                  type="button"
+                  className="ml-1 h-7 px-2 text-xs"
+                  onClick={loadReadTokens}
+                >
+                  Try again
+                </SecondaryButton>
+              </AlertDescription>
+            </Alert>
+          ) : readTokens.length === 0 ? (
+            <EmptyState style={{ color: "var(--muted-foreground)" }}>
+              <EmptyIcon>
+                <EyeIcon size={32} />
+              </EmptyIcon>
+              <p>No read tokens yet.</p>
+            </EmptyState>
+          ) : (
+            <TokenList>
+              {readTokens.map((token) => (
+                <TokenItem key={token.id}>
+                  <TokenInfo>
+                    <IconWrapper>
+                      <EyeIcon size={20} />
+                    </IconWrapper>
+                    <div className="min-w-0">
+                      <TokenName style={{ color: "var(--foreground)" }}>
+                        {token.name}
+                      </TokenName>
+                      <SmallText style={{ color: "var(--muted-foreground)" }}>
+                        Created {new Date(token.createdAt).toLocaleDateString()}
+                        {token.lastUsedAt && (
+                          <> - Last used {new Date(token.lastUsedAt).toLocaleDateString()}</>
+                        )}
+                      </SmallText>
+                    </div>
+                  </TokenInfo>
+                  <DangerButton
+                    type="button"
+                    disabled={revokingReadTokenId === token.id}
+                    className="disabled:cursor-not-allowed disabled:opacity-60"
+                    onClick={() => setRevokingReadToken(token)}
+                  >
+                    {revokingReadTokenId === token.id ? "Revoking..." : "Revoke"}
+                  </DangerButton>
+                </TokenItem>
+              ))}
+            </TokenList>
+          )}
         </Section>
 
         <Section>
@@ -1075,7 +1412,8 @@ export default function SettingsClient() {
           </SectionTitle>
           <Description style={{ color: "var(--muted-foreground)" }}>
             Machines that have submitted usage data. Rename a device to tell
-            your machines apart — the name is shown on your public profile.
+            your machines apart. Only you see the full name: your public
+            profile shows it masked (first and last two characters).
           </Description>
 
           {deviceError && (
@@ -1225,8 +1563,30 @@ export default function SettingsClient() {
       {revokingToken && (
         <RevokeTokenModal
           token={revokingToken}
+          consequence={
+            <>
+              Anything submitting with it — CI, a machine running{" "}
+              <code>tokens serve</code> — will start failing until it is given a
+              new token.
+            </>
+          }
           onClose={() => setRevokingToken(null)}
           onConfirm={() => handleRevokeToken(revokingToken)}
+        />
+      )}
+
+      {revokingReadToken && (
+        <RevokeTokenModal
+          token={revokingReadToken}
+          consequence={
+            <>
+              Anything reading your private profile with it — the iOS app, a
+              badge or embed — will see &ldquo;not found&rdquo; until it is
+              given a new token.
+            </>
+          }
+          onClose={() => setRevokingReadToken(null)}
+          onConfirm={() => handleRevokeReadToken(revokingReadToken)}
         />
       )}
 
