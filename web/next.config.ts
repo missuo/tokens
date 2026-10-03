@@ -39,6 +39,14 @@ const nextConfig: NextConfig = {
     ],
   },
 
+  // Next streams metadata into <body> for clients it does not recognise as
+  // bots, and only blocks to put it in <head> for the ones it does. Profile
+  // HTML is cached at the edge by URL alone, so whichever reader fills the
+  // cache decides what every crawler gets — and a browser-filled entry put
+  // og:image ~14MB into the document, far past where X, Slack, Discord or
+  // Facebook stop reading. Treating every client as a bot keeps it in <head>.
+  htmlLimitedBots: /.*/,
+
   // Security headers for production
   headers: async () => [
     {

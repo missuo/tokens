@@ -34,8 +34,14 @@ import {
 import {
   createNonCrossingStackGeometry,
   pointToChartPercent,
-  type CubicValueBoundary,
 } from "./usageChartGeometry";
+import {
+  layerAreaPath,
+  layerLinePath,
+  xForIndex as plotX,
+  yForValue as plotY,
+  type ChartFrame,
+} from "./usageChartPaths";
 import { tw } from "@/lib/tw";
 import { cn } from "@/lib/utils";
 
@@ -89,75 +95,23 @@ interface ProviderCostRow {
   value: number;
 }
 
+const PLOT_FRAME: ChartFrame = {
+  left: PLOT_LEFT,
+  top: PLOT_TOP,
+  width: PLOT_WIDTH,
+  height: PLOT_HEIGHT,
+};
+
 function xForIndex(index: number, pointCount: number): number {
-  if (pointCount <= 1) return PLOT_LEFT + PLOT_WIDTH / 2;
-  return PLOT_LEFT + (index / (pointCount - 1)) * PLOT_WIDTH;
+  return plotX(index, pointCount, PLOT_FRAME);
 }
 
 function yForValue(value: number, maximum: number): number {
-  const safeMaximum = maximum > 0 ? maximum : 1;
-  const finiteValue = Number.isFinite(value) ? Math.max(0, value) : 0;
-  return PLOT_TOP + PLOT_HEIGHT - (finiteValue / safeMaximum) * PLOT_HEIGHT;
+  return plotY(value, maximum, PLOT_FRAME);
 }
 
 function clamp(value: number, minimum: number, maximum: number): number {
   return Math.max(minimum, Math.min(maximum, value));
-}
-
-function curvePath(boundary: CubicValueBoundary, maximum: number): string {
-  const pointCount = boundary.values.length;
-  if (pointCount === 0) return "";
-  if (pointCount === 1) {
-    const x = xForIndex(0, 1);
-    const y = yForValue(boundary.values[0] ?? 0, maximum);
-    return `M ${x - 4} ${y} L ${x + 4} ${y}`;
-  }
-  return [
-    `M ${xForIndex(0, pointCount)} ${yForValue(boundary.values[0] ?? 0, maximum)}`,
-    ...boundary.segments.map((segment) => {
-      const fromX = xForIndex(segment.index, pointCount);
-      const toX = xForIndex(segment.index + 1, pointCount);
-      const third = (toX - fromX) / 3;
-      return `C ${fromX + third} ${yForValue(segment.control1, maximum)} ${toX - third} ${yForValue(segment.control2, maximum)} ${toX} ${yForValue(segment.to, maximum)}`;
-    }),
-  ].join(" ");
-}
-
-function stackedAreaPath(
-  lower: CubicValueBoundary,
-  upper: CubicValueBoundary,
-  maximum: number,
-): string {
-  const pointCount = upper.values.length;
-  if (pointCount === 0) return "";
-  if (pointCount === 1) {
-    const x = xForIndex(0, 1);
-    return [
-      `M ${x - 4} ${yForValue(lower.values[0] ?? 0, maximum)}`,
-      `L ${x - 4} ${yForValue(upper.values[0] ?? 0, maximum)}`,
-      `L ${x + 4} ${yForValue(upper.values[0] ?? 0, maximum)}`,
-      `L ${x + 4} ${yForValue(lower.values[0] ?? 0, maximum)}`,
-      "Z",
-    ].join(" ");
-  }
-
-  return [
-    `M ${xForIndex(0, pointCount)} ${yForValue(upper.values[0] ?? 0, maximum)}`,
-    ...upper.segments.map((segment) => {
-      const fromX = xForIndex(segment.index, pointCount);
-      const toX = xForIndex(segment.index + 1, pointCount);
-      const third = (toX - fromX) / 3;
-      return `C ${fromX + third} ${yForValue(segment.control1, maximum)} ${toX - third} ${yForValue(segment.control2, maximum)} ${toX} ${yForValue(segment.to, maximum)}`;
-    }),
-    `L ${xForIndex(pointCount - 1, pointCount)} ${yForValue(lower.values.at(-1) ?? 0, maximum)}`,
-    ...[...lower.segments].reverse().map((segment) => {
-      const fromX = xForIndex(segment.index, pointCount);
-      const toX = xForIndex(segment.index + 1, pointCount);
-      const third = (toX - fromX) / 3;
-      return `C ${toX - third} ${yForValue(segment.control2, maximum)} ${fromX + third} ${yForValue(segment.control1, maximum)} ${fromX} ${yForValue(segment.from, maximum)}`;
-    }),
-    "Z",
-  ].join(" ");
 }
 
 function createChartStack(
@@ -182,12 +136,19 @@ function createChartStack(
     }
     return {
       series: item,
-      areaPath: stackedAreaPath(
+      areaPath: layerAreaPath(
         layerGeometry.lower,
         layerGeometry.upper,
+        layerGeometry.thickness,
         maximum,
+        PLOT_FRAME,
       ),
-      linePath: curvePath(layerGeometry.upper, maximum),
+      linePath: layerLinePath(
+        layerGeometry.upper,
+        layerGeometry.thickness,
+        maximum,
+        PLOT_FRAME,
+      ),
       upperValues: layerGeometry.upper.values,
     };
   });

@@ -7,6 +7,7 @@ import { BannedList, type BannedUser } from "@/components/shame/BannedList";
 import { CONTAINER } from "@/components/layout/Container";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { CONTACT_EMAIL } from "@/components/legal/LegalPage";
+import { ogImageUrl } from "@/lib/og/ogImage";
 import { cn } from "@/lib/utils";
 
 export const metadata: Metadata = {
@@ -20,7 +21,10 @@ export const metadata: Metadata = {
     siteName: "Tokens",
     images: [
       {
-        url: `/api/og?title=Hall+of+Shame&subtitle=Accounts+banned+for+submitting+fraudulent+usage+data.`,
+        url: ogImageUrl({
+          title: "Hall of Shame",
+          subtitle: "Accounts banned for submitting fraudulent usage data.",
+        }),
         width: 1200,
         height: 630,
       },

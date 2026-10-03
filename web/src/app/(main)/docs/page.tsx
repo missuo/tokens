@@ -15,6 +15,7 @@ import {
   SUPPORTED_CLIENTS,
 } from "@/lib/constants";
 import { PageHeader } from "@/components/layout/PageHeader";
+import { ogImageUrl } from "@/lib/og/ogImage";
 import { cn } from "@/lib/utils";
 
 export const metadata: Metadata = {
@@ -28,7 +29,7 @@ export const metadata: Metadata = {
     siteName: "Tokens",
     images: [
       {
-        url: `/api/og?title=Docs&subtitle=Install+the+Tokens+CLI,+or+get+the+iOS+app.`,
+        url: ogImageUrl({ title: "Docs", subtitle: "Install the Tokens CLI, or get the iOS app." }),
         width: 1200,
         height: 630,
       },

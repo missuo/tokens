@@ -8,6 +8,7 @@ import { ThemedToastContainer } from "@/components/layout/ThemedToastContainer";
 import "./globals.css";
 import "react-toastify/dist/ReactToastify.css";
 import { cn } from "@/lib/utils";
+import { ogImageUrl } from "@/lib/og/ogImage";
 
 // Geist carries interface text and JetBrains Mono carries every figure, so
 // numeric columns stay aligned when scanned down the page.
@@ -49,10 +50,10 @@ export const metadata: Metadata = {
     // the share card cannot drift from the brand the way a checked-in PNG did.
     images: [
       {
-        url: "https://tokens.ci/api/og?title=Tokens&subtitle=The%20leaderboard%20for%20AI%20coding%20usage",
+        url: ogImageUrl(),
         width: 1200,
         height: 630,
-        alt: "Tokens - AI Token Usage Tracker",
+        alt: "Tokens - The leaderboard for AI coding usage",
       },
     ],
   },
@@ -60,7 +61,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: "Tokens - AI Token Usage Tracker & Leaderboard",
     description: "Track, visualize, and compete on AI coding assistant token usage across Claude Code, Cursor, OpenCode, Codex, Gemini, Kimi, and Qwen.",
-    images: ["https://tokens.ci/api/og?title=Tokens&subtitle=The%20leaderboard%20for%20AI%20coding%20usage"],
+    images: [ogImageUrl()],
   },
 };
 

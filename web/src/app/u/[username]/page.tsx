@@ -1,7 +1,9 @@
 import type { Metadata } from 'next';
 import { notFound, permanentRedirect } from 'next/navigation';
 import type { ProfileDevice } from '@/components/profile';
+import { formatCurrency, formatNumber } from '@/lib/format';
 import { getGitHubSocialLinks } from '@/lib/githubSocials';
+import { encodeOgActivity, ogImageUrl, topOgClients } from '@/lib/og/ogImage';
 import { loadPublicProfileDevicesForPage } from '@/lib/publicProfileDevices';
 import { loadPublicProfileForPage } from '@/lib/publicProfileData';
 import ProfilePageClient, { type ProfileData } from './ProfilePageClient';
@@ -92,33 +94,51 @@ export async function generateMetadata({ params }: { params: Promise<{ username:
   // The card draws `title` large with `@handle` beneath it. Passing the
   // username as both printed the same word twice and never showed the person's
   // name; fall back to the username only when there is no display name.
+  const profile = data && !isBannedProfile(data) ? data : null;
   const displayName = data?.user?.displayName?.trim();
-  const og = new URLSearchParams({
-    title: displayName || username,
-    handle: username,
+  // Canonical casing, so the card and og:url match the page the link lands on.
+  const handle = data?.user?.username || username;
+  const image = ogImageUrl({
+    title: displayName || handle,
+    handle,
+    avatar: data?.user?.avatarUrl,
+    rank,
+    tokens: stats?.totalTokens || null,
+    cost: stats?.totalCost || null,
+    days: stats?.activeDays || null,
+    // More than the card shows: the renderer drops clients it has no logo for.
+    clients: profile ? topOgClients(profile.contributions, 8).join(",") : null,
+    activity: profile ? encodeOgActivity(profile.contributions) : null,
   });
-  if (data?.user?.avatarUrl) og.set("avatar", data.user.avatarUrl);
-  if (rank != null) og.set("rank", String(rank));
-  if (stats?.totalTokens) og.set("tokens", String(stats.totalTokens));
-  if (stats?.totalCost) og.set("cost", String(stats.totalCost));
-  const image = `/api/og?${og.toString()}`;
+
+  const shareTitle = displayName && displayName !== handle
+    ? `${displayName} (@${handle}) on Tokens`
+    : `@${handle} on Tokens`;
+  const shareDescription = stats
+    ? [
+        `${formatNumber(stats.totalTokens, true)} tokens`,
+        `${formatCurrency(stats.totalCost, true)} spent`,
+        rank != null ? `#${rank} on the leaderboard` : null,
+      ]
+        .filter(Boolean)
+        .join(" · ") + " — AI coding usage on Tokens."
+    : `AI coding token usage for @${handle} on Tokens.`;
 
   return {
-    title: `@${username} - Token Usage | Tokens`,
-    description: `AI coding token usage for ${username} on Tokens.`,
+    title: `@${handle} - Token Usage | Tokens`,
+    description: shareDescription,
     openGraph: {
-      title: `@${username} on Tokens`,
-      description: stats
-        ? `${username} has used ${stats.totalTokens.toLocaleString("en-US")} tokens across their AI coding clients.`
-        : `AI coding token usage for ${username}.`,
+      title: shareTitle,
+      description: shareDescription,
       type: "profile",
-      url: `https://tokens.ci/u/${username}`,
+      url: `https://tokens.ci/u/${handle}`,
       siteName: "Tokens",
-      images: [{ url: image, width: 1200, height: 630, alt: `@${username} on Tokens` }],
+      images: [{ url: image, width: 1200, height: 630, alt: shareTitle }],
     },
     twitter: {
       card: "summary_large_image",
-      title: `@${username} on Tokens`,
+      title: shareTitle,
+      description: shareDescription,
       images: [image],
     },
   };
