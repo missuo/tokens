@@ -146,7 +146,10 @@ const SecondaryButton = tw(
 );
 
 const EmptyState = tw("div", "py-8 text-center");
-const EmptyIcon = tw("div", "mx-auto mb-3 opacity-50");
+// Centered with flex, not `mx-auto`: preflight makes `svg` display:block, so
+// the icon is a block box the parent's `text-center` cannot move, and
+// `mx-auto` only centers this wrapper, which is already full width.
+const EmptyIcon = tw("div", "mb-3 flex justify-center opacity-50");
 const EmptyText = tw("p", "mt-2 text-sm");
 const TokenList = tw("div", "flex flex-col gap-3");
 
