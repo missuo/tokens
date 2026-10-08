@@ -35,10 +35,16 @@ use std::time::UNIX_EPOCH;
 // 7: OpenCode incremental marks record row provenance. Version-6 shards have a
 // wire migration below: unrelated clients retain their cache, while OpenCode
 // keeps its parsed messages and takes one full scan to acquire the new map.
-const CACHE_FORMAT_VERSION: u32 = 7;
+// 8: UnifiedMessage gained cache_write_1h, changing the bincode payload
+// layout. Version-7 shards have a wire migration below so no client loses its
+// cache; migrated Claude entries take one retention-provenance rebuild so the
+// live transcripts are re-parsed for the 1-hour cache split while compacted
+// history the cache alone still holds is carried forward.
+const CACHE_FORMAT_VERSION: u32 = 8;
 const LEGACY_CACHE_FORMAT_VERSION_V4: u32 = 4;
 const LEGACY_CACHE_FORMAT_VERSION_V5: u32 = 5;
 const LEGACY_CACHE_FORMAT_VERSION_V6: u32 = 6;
+const LEGACY_CACHE_FORMAT_VERSION_V7: u32 = 7;
 // V2 intentionally starts cold and leaves source-message-cache.bin untouched:
 // the monolith did not record a trustworthy parser owner for migration.
 const CACHE_SHARD_DIRNAME: &str = "source-message-cache-v2";
@@ -1683,8 +1689,90 @@ impl From<ForkUnifiedMessageV5> for UnifiedMessage {
             is_turn_start: message.is_turn_start,
             // Fork-5 predates conflict tracking, so no row was ever marked.
             model_attribution_conflicted: false,
+            cache_write_1h: 0,
         }
     }
+}
+
+/// Exact [`UnifiedMessage`] layout of formats 4 through 7: today's message
+/// without `cache_write_1h`, field order preserved.
+#[derive(Debug, Serialize, Deserialize)]
+struct LegacyUnifiedMessageV7 {
+    client: String,
+    model_id: String,
+    provider_id: String,
+    session_id: String,
+    workspace_key: Option<String>,
+    workspace_label: Option<String>,
+    timestamp: i64,
+    date: String,
+    tokens: crate::TokenBreakdown,
+    cost: f64,
+    cost_source: crate::CostSource,
+    duration_ms: Option<i64>,
+    message_count: i32,
+    agent: Option<String>,
+    dedup_key: Option<String>,
+    session_title: Option<String>,
+    is_turn_start: bool,
+    model_attribution_conflicted: bool,
+}
+
+impl From<LegacyUnifiedMessageV7> for UnifiedMessage {
+    fn from(message: LegacyUnifiedMessageV7) -> Self {
+        Self {
+            client: message.client,
+            model_id: message.model_id,
+            provider_id: message.provider_id,
+            session_id: message.session_id,
+            workspace_key: message.workspace_key,
+            workspace_label: message.workspace_label,
+            timestamp: message.timestamp,
+            date: message.date,
+            tokens: message.tokens,
+            cost: message.cost,
+            cost_source: message.cost_source,
+            duration_ms: message.duration_ms,
+            message_count: message.message_count,
+            agent: message.agent,
+            dedup_key: message.dedup_key,
+            session_title: message.session_title,
+            is_turn_start: message.is_turn_start,
+            model_attribution_conflicted: message.model_attribution_conflicted,
+            // These layouts never recorded the 1-hour split.
+            cache_write_1h: 0,
+        }
+    }
+}
+
+#[cfg(test)]
+impl From<UnifiedMessage> for LegacyUnifiedMessageV7 {
+    fn from(message: UnifiedMessage) -> Self {
+        Self {
+            client: message.client,
+            model_id: message.model_id,
+            provider_id: message.provider_id,
+            session_id: message.session_id,
+            workspace_key: message.workspace_key,
+            workspace_label: message.workspace_label,
+            timestamp: message.timestamp,
+            date: message.date,
+            tokens: message.tokens,
+            cost: message.cost,
+            cost_source: message.cost_source,
+            duration_ms: message.duration_ms,
+            message_count: message.message_count,
+            agent: message.agent,
+            dedup_key: message.dedup_key,
+            session_title: message.session_title,
+            is_turn_start: message.is_turn_start,
+            model_attribution_conflicted: message.model_attribution_conflicted,
+        }
+    }
+}
+
+fn migrate_legacy_messages(messages: Vec<LegacyUnifiedMessageV7>) -> Vec<UnifiedMessage> {
+    messages.into_iter().map(UnifiedMessage::from).collect()
 }
 
 /// Exact fork-5 entry layout.
@@ -1706,7 +1794,11 @@ impl From<ForkCachedSourceEntryV5> for CachedSourceEntry {
             parser_version: entry.parser_version,
             path: entry.path,
             fingerprint: entry.fingerprint,
-            messages: entry.messages.into_iter().map(UnifiedMessage::from).collect(),
+            messages: entry
+                .messages
+                .into_iter()
+                .map(UnifiedMessage::from)
+                .collect(),
             fallback_timestamp_indices: entry.fallback_timestamp_indices,
             codex_incremental: entry.codex_incremental,
             prime_accounting: None,
@@ -1725,7 +1817,7 @@ struct LegacyCachedSourceEntryV4 {
     parser_version: u32,
     path: CachedPath,
     fingerprint: SourceFingerprint,
-    messages: Vec<UnifiedMessage>,
+    messages: Vec<LegacyUnifiedMessageV7>,
     fallback_timestamp_indices: Vec<usize>,
     codex_incremental: Option<CodexIncrementalCache>,
 }
@@ -1737,7 +1829,7 @@ impl From<LegacyCachedSourceEntryV4> for CachedSourceEntry {
             parser_version: entry.parser_version,
             path: entry.path,
             fingerprint: entry.fingerprint,
-            messages: entry.messages,
+            messages: migrate_legacy_messages(entry.messages),
             fallback_timestamp_indices: entry.fallback_timestamp_indices,
             codex_incremental: entry.codex_incremental,
             prime_accounting: None,
@@ -1755,7 +1847,7 @@ struct LegacyCachedSourceEntryV5 {
     parser_version: u32,
     path: CachedPath,
     fingerprint: SourceFingerprint,
-    messages: Vec<UnifiedMessage>,
+    messages: Vec<LegacyUnifiedMessageV7>,
     fallback_timestamp_indices: Vec<usize>,
     codex_incremental: Option<CodexIncrementalCache>,
     prime_accounting: Option<crate::sessions::prime_agent::PrimeFileAccounting>,
@@ -1768,7 +1860,7 @@ impl From<LegacyCachedSourceEntryV5> for CachedSourceEntry {
             parser_version: entry.parser_version,
             path: entry.path,
             fingerprint: entry.fingerprint,
-            messages: entry.messages,
+            messages: migrate_legacy_messages(entry.messages),
             fallback_timestamp_indices: entry.fallback_timestamp_indices,
             codex_incremental: entry.codex_incremental,
             prime_accounting: entry.prime_accounting,
@@ -1802,7 +1894,7 @@ struct LegacyCachedSourceEntryV6 {
     parser_version: u32,
     path: CachedPath,
     fingerprint: SourceFingerprint,
-    messages: Vec<UnifiedMessage>,
+    messages: Vec<LegacyUnifiedMessageV7>,
     fallback_timestamp_indices: Vec<usize>,
     codex_incremental: Option<CodexIncrementalCache>,
     prime_accounting: Option<crate::sessions::prime_agent::PrimeFileAccounting>,
@@ -1816,13 +1908,62 @@ impl From<LegacyCachedSourceEntryV6> for CachedSourceEntry {
             parser_version: entry.parser_version,
             path: entry.path,
             fingerprint: entry.fingerprint,
-            messages: entry.messages,
+            messages: migrate_legacy_messages(entry.messages),
             fallback_timestamp_indices: entry.fallback_timestamp_indices,
             codex_incremental: entry.codex_incremental,
             prime_accounting: entry.prime_accounting,
             opencode_incremental: None,
         }
     }
+}
+
+/// Exact version-7 entry layout: today's entry with version-7 messages.
+#[derive(Debug, Serialize, Deserialize)]
+struct LegacyCachedSourceEntryV7 {
+    parser_namespace: String,
+    parser_version: u32,
+    path: CachedPath,
+    fingerprint: SourceFingerprint,
+    messages: Vec<LegacyUnifiedMessageV7>,
+    fallback_timestamp_indices: Vec<usize>,
+    codex_incremental: Option<CodexIncrementalCache>,
+    prime_accounting: Option<crate::sessions::prime_agent::PrimeFileAccounting>,
+    opencode_incremental: Option<crate::sessions::opencode_schema::OpenCodeIncrementalState>,
+}
+
+impl From<LegacyCachedSourceEntryV7> for CachedSourceEntry {
+    fn from(entry: LegacyCachedSourceEntryV7) -> Self {
+        Self {
+            parser_namespace: entry.parser_namespace,
+            parser_version: entry.parser_version,
+            path: entry.path,
+            fingerprint: entry.fingerprint,
+            messages: migrate_legacy_messages(entry.messages),
+            fallback_timestamp_indices: entry.fallback_timestamp_indices,
+            codex_incremental: entry.codex_incremental,
+            prime_accounting: entry.prime_accounting,
+            opencode_incremental: entry.opencode_incremental,
+        }
+    }
+}
+
+/// Finish migrating entries whose messages predate `cache_write_1h`.
+///
+/// A Claude entry's rows were parsed without the 1-hour cache split, so its
+/// live transcript has to be read again, but bumping Claude's parser version
+/// would discard the compacted history only this cache holds. Dropping the
+/// retention provenance marker instead routes the entry through the existing
+/// one-time provenance rebuild: the live file is re-parsed (and wins for every
+/// row it still contains) while rows it no longer contains are retained.
+fn finish_message_layout_migration(mut entries: Vec<CachedSourceEntry>) -> Vec<CachedSourceEntry> {
+    for entry in &mut entries {
+        if entry.is_claude_namespace() {
+            entry
+                .fallback_timestamp_indices
+                .retain(|index| *index != CLAUDE_RETENTION_PROVENANCE_MARKER);
+        }
+    }
+    entries
 }
 
 impl CachedSourceEntry {
@@ -2685,9 +2826,9 @@ fn read_shard_with_limit(
             .with_limit(max_shard_bytes)
             .deserialize::<Vec<ForkCachedSourceEntryV5>>(&envelope.payload)
         {
-            Ok(entries) => ShardReadStatus::Migrated(
+            Ok(entries) => ShardReadStatus::Migrated(finish_message_layout_migration(
                 entries.into_iter().map(CachedSourceEntry::from).collect(),
-            ),
+            )),
             Err(error) => ShardReadStatus::Invalid(error.to_string()),
         };
     }
@@ -2701,9 +2842,9 @@ fn read_shard_with_limit(
             .with_limit(max_shard_bytes)
             .deserialize::<Vec<LegacyCachedSourceEntryV4>>(&envelope.payload)
         {
-            Ok(entries) => ShardReadStatus::Migrated(
+            Ok(entries) => ShardReadStatus::Migrated(finish_message_layout_migration(
                 entries.into_iter().map(CachedSourceEntry::from).collect(),
-            ),
+            )),
             Err(error) => ShardReadStatus::Invalid(error.to_string()),
         };
     }
@@ -2712,9 +2853,9 @@ fn read_shard_with_limit(
             .with_limit(max_shard_bytes)
             .deserialize::<Vec<LegacyCachedSourceEntryV5>>(&envelope.payload)
         {
-            Ok(entries) => ShardReadStatus::Migrated(
+            Ok(entries) => ShardReadStatus::Migrated(finish_message_layout_migration(
                 entries.into_iter().map(CachedSourceEntry::from).collect(),
-            ),
+            )),
             Err(error) => ShardReadStatus::Invalid(error.to_string()),
         };
     }
@@ -2723,9 +2864,20 @@ fn read_shard_with_limit(
             .with_limit(max_shard_bytes)
             .deserialize::<Vec<LegacyCachedSourceEntryV6>>(&envelope.payload)
         {
-            Ok(entries) => ShardReadStatus::Migrated(
+            Ok(entries) => ShardReadStatus::Migrated(finish_message_layout_migration(
                 entries.into_iter().map(CachedSourceEntry::from).collect(),
-            ),
+            )),
+            Err(error) => ShardReadStatus::Invalid(error.to_string()),
+        };
+    }
+    if envelope.format_version == LEGACY_CACHE_FORMAT_VERSION_V7 {
+        return match bincode::options()
+            .with_limit(max_shard_bytes)
+            .deserialize::<Vec<LegacyCachedSourceEntryV7>>(&envelope.payload)
+        {
+            Ok(entries) => ShardReadStatus::Migrated(finish_message_layout_migration(
+                entries.into_iter().map(CachedSourceEntry::from).collect(),
+            )),
             Err(error) => ShardReadStatus::Invalid(error.to_string()),
         };
     }
@@ -6012,6 +6164,56 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
+    fn test_v7_shard_migrates_and_queues_claude_rebuild() {
+        let temp_home = TempDir::new().unwrap();
+        let _cache_env = sandbox_cache_env(temp_home.path());
+        let source = write_temp_file(b"{}\n");
+        let identity = CacheIdentity::for_client(ClientId::Claude);
+        let mut entry = test_entry(identity, source.path(), "v7-claude");
+        entry.fallback_timestamp_indices = vec![CLAUDE_RETENTION_PROVENANCE_MARKER];
+        assert!(!entry.needs_retention_provenance_migration());
+        let key = CacheKey::from_entry(&entry);
+        let legacy_path = shard_path(&cache_shard_dir().unwrap(), &key.shard());
+        ensure_cache_dir(legacy_path.parent().unwrap()).unwrap();
+        let expected = entry.messages.clone();
+        let legacy_entry = LegacyCachedSourceEntryV7 {
+            parser_namespace: entry.parser_namespace,
+            parser_version: entry.parser_version,
+            path: entry.path,
+            fingerprint: entry.fingerprint,
+            messages: entry.messages.into_iter().map(Into::into).collect(),
+            fallback_timestamp_indices: entry.fallback_timestamp_indices,
+            codex_incremental: entry.codex_incremental,
+            prime_accounting: entry.prime_accounting,
+            opencode_incremental: entry.opencode_incremental,
+        };
+        let envelope = CachedShardEnvelope {
+            format_version: LEGACY_CACHE_FORMAT_VERSION_V7,
+            parser_namespace: identity.namespace.to_string(),
+            parser_version: identity.parser_version,
+            payload: bincode::options().serialize(&vec![legacy_entry]).unwrap(),
+        };
+        let mut writer = BufWriter::new(File::create(&legacy_path).unwrap());
+        bincode::options()
+            .serialize_into(&mut writer, &envelope)
+            .unwrap();
+        writer.flush().unwrap();
+        drop(writer);
+
+        // Messages survive the layout change, and the Claude entry is queued
+        // for the one-time rebuild that re-reads the 1-hour cache split.
+        match read_shard(&legacy_path, identity) {
+            ShardReadStatus::Migrated(entries) => {
+                assert_eq!(entries.len(), 1);
+                assert_eq!(entries[0].messages, expected);
+                assert!(entries[0].needs_retention_provenance_migration());
+            }
+            _ => panic!("v7 shard must migrate"),
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
     fn test_v6_shard_is_foreign_to_this_fork_and_rebuilds() {
         // Upstream's format 6 was never written by a build of this fork.
         let temp_home = TempDir::new().unwrap();
@@ -6028,7 +6230,7 @@ mod tests {
             parser_version: entry.parser_version,
             path: entry.path,
             fingerprint: entry.fingerprint,
-            messages: entry.messages,
+            messages: entry.messages.into_iter().map(Into::into).collect(),
             fallback_timestamp_indices: entry.fallback_timestamp_indices,
             codex_incremental: entry.codex_incremental,
             prime_accounting: entry.prime_accounting,
@@ -6081,7 +6283,7 @@ mod tests {
             parser_version: entry.parser_version,
             path: entry.path,
             fingerprint: entry.fingerprint,
-            messages: entry.messages,
+            messages: entry.messages.into_iter().map(Into::into).collect(),
             fallback_timestamp_indices: entry.fallback_timestamp_indices,
             codex_incremental: entry.codex_incremental,
         };

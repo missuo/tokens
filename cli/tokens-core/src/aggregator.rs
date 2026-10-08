@@ -681,6 +681,7 @@ mod tests {
             session_title: None,
             is_turn_start: false,
             model_attribution_conflicted: false,
+            cache_write_1h: 0,
         }
     }
 
@@ -1330,6 +1331,7 @@ mod tests {
             session_title: None,
             is_turn_start: false,
             model_attribution_conflicted: false,
+            cache_write_1h: 0,
             duration_ms: None,
         }
     }

@@ -711,6 +711,7 @@ pub fn parse_claude_file_with_cache_and_home(
                     dedup_key,
                 );
                 unified.duration_ms = duration_ms;
+                unified.cache_write_1h = usage.cache_write_1h();
                 unified.agent = sidechain_agent.clone();
                 unified.set_workspace(workspace_key.clone(), workspace_label.clone());
                 // Mark the first assistant response after a user message as a turn start
@@ -898,6 +899,7 @@ fn merge_claude_duplicate(
     t.cache_write = t
         .cache_write
         .max(usage.cache_creation_input_tokens.unwrap_or(0).max(0));
+    existing.cache_write_1h = existing.cache_write_1h.max(usage.cache_write_1h());
 
     if let Some(timestamp_ms) = parsed_timestamp {
         if timestamp_ms >= existing.timestamp {
@@ -932,6 +934,7 @@ pub(crate) fn merge_message_completeness(
         .cache_write
         .max(candidate.tokens.cache_write);
     existing.tokens.reasoning = existing.tokens.reasoning.max(candidate.tokens.reasoning);
+    existing.cache_write_1h = existing.cache_write_1h.max(candidate.cache_write_1h);
     existing.duration_ms = match (existing.duration_ms, candidate.duration_ms) {
         (Some(left), Some(right)) => Some(left.max(right)),
         (None, right) => right,
@@ -1930,6 +1933,22 @@ mod tests {
             "Should keep the max output_tokens"
         );
         assert_eq!(messages[0].tokens.input, 10);
+    }
+
+    #[test]
+    fn test_cache_write_1h_split_is_parsed_and_merged_by_max() {
+        let content = r#"{"type":"assistant","timestamp":"2024-12-01T10:00:00.000Z","requestId":"req_001","message":{"id":"msg_001","model":"claude-3-5-sonnet","usage":{"input_tokens":10,"output_tokens":5,"cache_creation_input_tokens":500,"cache_creation":{"ephemeral_5m_input_tokens":200,"ephemeral_1h_input_tokens":300}}}}
+{"type":"assistant","timestamp":"2024-12-01T10:00:00.100Z","requestId":"req_001","message":{"id":"msg_001","model":"claude-3-5-sonnet","usage":{"input_tokens":10,"output_tokens":50,"cache_creation_input_tokens":500}}}
+{"type":"assistant","timestamp":"2024-12-01T10:00:01.000Z","requestId":"req_002","message":{"id":"msg_002","model":"claude-3-5-sonnet","usage":{"input_tokens":10,"output_tokens":5,"cache_creation_input_tokens":40}}}"#;
+        let file = create_test_file(content);
+
+        let messages = parse_claude_file(file.path());
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].tokens.cache_write, 500);
+        assert_eq!(messages[0].cache_write_1h, 300);
+        assert_eq!(messages[0].tokens.output, 50);
+        assert_eq!(messages[1].cache_write_1h, 0);
     }
 
     #[test]

@@ -2748,7 +2748,7 @@ fn strip_generic_provider_prefix(model_id: &str) -> Option<&str> {
     Some(terminal)
 }
 
-fn is_valid_price_value(value: f64) -> bool {
+pub(super) fn is_valid_price_value(value: f64) -> bool {
     value.is_finite() && value >= 0.0
 }
 

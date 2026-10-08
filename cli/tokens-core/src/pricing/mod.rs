@@ -624,6 +624,36 @@ impl PricingService {
             .calculate_cost_with_provider(model_id, provider_id, usage)
     }
 
+    /// Extra cost of the `cache_write_1h` share of `usage.cache_write` over
+    /// the 5-minute cache-write rate `calculate_cost_with_provider` charged it.
+    ///
+    /// Anthropic bills a 1-hour cache write at twice the base input rate,
+    /// against 1.25x for the 5-minute default, so the 1-hour rate is derived
+    /// from the resolved row's input rate rather than read from a source.
+    pub fn cache_write_1h_surcharge(
+        &self,
+        model_id: &str,
+        provider_id: Option<&str>,
+        usage: &TokenBreakdown,
+        cache_write_1h: i64,
+    ) -> f64 {
+        let tokens_1h = cache_write_1h.clamp(0, usage.cache_write.max(0));
+        if tokens_1h == 0 {
+            return 0.0;
+        }
+        let Some(result) = self.resolve_for_usage_with_provider(model_id, provider_id, usage)
+        else {
+            return 0.0;
+        };
+        let valid = |rate: Option<f64>| rate.filter(|rate| lookup::is_valid_price_value(*rate));
+        let Some(input_rate) = valid(result.pricing.input_cost_per_token) else {
+            return 0.0;
+        };
+        let cache_write_rate = valid(result.pricing.cache_creation_input_token_cost).unwrap_or(0.0);
+        let surcharge_per_token = (2.0 * input_rate - cache_write_rate).max(0.0);
+        tokens_1h as f64 * surcharge_per_token
+    }
+
     pub fn covers_usage_with_provider(
         &self,
         model_id: &str,
@@ -693,6 +723,46 @@ mod tests {
             output_cost_per_token: Some(output),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn test_cache_write_1h_surcharge_bills_twice_the_input_rate() {
+        let mut litellm = HashMap::new();
+        litellm.insert(
+            "claude-test-1h".to_string(),
+            ModelPricing {
+                input_cost_per_token: Some(4e-6),
+                output_cost_per_token: Some(2e-5),
+                cache_creation_input_token_cost: Some(5e-6),
+                cache_read_input_token_cost: Some(2e-7),
+                ..Default::default()
+            },
+        );
+        let service = PricingService::new(litellm, HashMap::new());
+        let usage = TokenBreakdown {
+            input: 10,
+            output: 100,
+            cache_read: 1_000,
+            cache_write: 1_000_000,
+            reasoning: 0,
+        };
+
+        // 1h writes cost 2x input (8e-6) instead of the 5m rate (5e-6).
+        let surcharge = service.cache_write_1h_surcharge("claude-test-1h", None, &usage, 600_000);
+        assert!((surcharge - 600_000.0 * 3e-6).abs() < 1e-9);
+
+        // Never more 1h tokens than cache-write tokens.
+        let clamped = service.cache_write_1h_surcharge("claude-test-1h", None, &usage, 5_000_000);
+        assert!((clamped - 1_000_000.0 * 3e-6).abs() < 1e-9);
+
+        assert_eq!(
+            service.cache_write_1h_surcharge("claude-test-1h", None, &usage, 0),
+            0.0
+        );
+        assert_eq!(
+            service.cache_write_1h_surcharge("unknown-model-xyz", None, &usage, 600_000),
+            0.0
+        );
     }
 
     fn custom_service(

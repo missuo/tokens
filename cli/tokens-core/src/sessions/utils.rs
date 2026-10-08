@@ -602,9 +602,29 @@ pub struct AnthropicUsage {
     pub output_tokens: Option<i64>,
     pub cache_read_input_tokens: Option<i64>,
     pub cache_creation_input_tokens: Option<i64>,
+    /// Per-TTL split of `cache_creation_input_tokens`, when the API reports it.
+    pub cache_creation: Option<AnthropicCacheCreation>,
+}
+
+/// The `usage.cache_creation` block. Anthropic bills 1-hour cache writes at a
+/// higher rate than 5-minute ones, so the split matters for cost.
+#[derive(Debug, Deserialize)]
+pub struct AnthropicCacheCreation {
+    pub ephemeral_1h_input_tokens: Option<i64>,
 }
 
 impl AnthropicUsage {
+    /// Cache-write tokens written with the 1-hour TTL, clamped to zero and to
+    /// the overall cache-write count.
+    pub fn cache_write_1h(&self) -> i64 {
+        self.cache_creation
+            .as_ref()
+            .and_then(|split| split.ephemeral_1h_input_tokens)
+            .unwrap_or(0)
+            .max(0)
+            .min(self.cache_creation_input_tokens.unwrap_or(0).max(0))
+    }
+
     /// Token breakdown with every field clamped at zero. This block carries no
     /// reasoning bucket, so `reasoning` is always 0.
     pub fn to_breakdown(&self) -> TokenBreakdown {

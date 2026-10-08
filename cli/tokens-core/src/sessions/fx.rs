@@ -345,6 +345,7 @@ pub fn parse_fx_file(path: &Path) -> Vec<UnifiedMessage> {
             session_title: None,
             is_turn_start: false,
             model_attribution_conflicted: false,
+            cache_write_1h: 0,
         });
     }
 
@@ -383,6 +384,7 @@ pub fn parse_fx_file(path: &Path) -> Vec<UnifiedMessage> {
                 session_title: None,
                 is_turn_start: false,
                 model_attribution_conflicted: false,
+                cache_write_1h: 0,
             });
         }
     }

@@ -50,6 +50,24 @@ You do not have to take that on faith. The whole pipeline is here:
 
 `tokens submit --dry-run` prints what would be uploaded without uploading it.
 
+If your gateway adds routing prefixes to model IDs, list those prefixes in
+`~/.config/tokens/settings.json` (or `$TOKENS_CONFIG_DIR/settings.json`):
+
+```json
+{
+  "modelIdPrefixesToStrip": ["gateway-a/", "gateway-b/"]
+}
+```
+
+This list is empty by default. Matching is case-insensitive; the longest matching
+prefix is removed once before the existing model normalization. Empty prefixes
+are ignored, and removal cannot produce an empty ID. Unlisted namespaces remain
+distinct. The rule affects local grouping and uploaded model IDs, unlike the
+presentation-only `modelAliases` setting. Pricing, token counts, costs, and raw
+session files and caches are unchanged. Subsequent submissions apply the rule to
+historical usage too. Use the same rules on devices that submit the same usage;
+changing the rules changes uploaded model identity.
+
 We are not asking anyone to run their own copy. This repo exists to be read.
 
 ## Supported clients

@@ -110,6 +110,11 @@ pub struct UnifiedMessage {
     /// Such rows must remain unpriced rather than accepting fallback attribution.
     #[serde(default)]
     pub model_attribution_conflicted: bool,
+    /// The part of `tokens.cache_write` written with Anthropic's 1-hour cache
+    /// TTL, which bills at a higher rate than the 5-minute default. Only used
+    /// for pricing; `tokens.cache_write` still carries the full count.
+    #[serde(default)]
+    pub cache_write_1h: i64,
 }
 
 const fn default_message_count() -> i32 {
@@ -388,6 +393,7 @@ impl UnifiedMessage {
             session_title: None,
             is_turn_start: false,
             model_attribution_conflicted: false,
+            cache_write_1h: 0,
         }
     }
 

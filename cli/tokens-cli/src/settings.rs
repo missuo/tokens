@@ -143,6 +143,10 @@ pub struct Settings {
     /// existed loading cleanly; an absent or empty map means no folding.
     #[serde(default)]
     pub model_aliases: tokens_core::ModelAliasMap,
+    /// Model ID prefixes to remove from local reports and uploaded usage.
+    /// Empty by default. Devices submitting the same usage must share these rules.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub model_id_prefixes_to_strip: Vec<String>,
     /// Pinned IANA timezone (e.g. `"Asia/Shanghai"`) used to bucket usage into
     /// calendar dates. Detected from the system once and persisted so date
     /// bucketing stays stable when the user travels or submits from another
@@ -202,6 +206,7 @@ impl Default for Settings {
             minutely_tab_enabled: false,
             autosubmit: AutosubmitSettings::default(),
             model_aliases: tokens_core::ModelAliasMap::default(),
+            model_id_prefixes_to_strip: Vec::new(),
             timezone: None,
         }
     }
@@ -223,13 +228,6 @@ pub fn load_scanner_settings() -> ScannerSettings {
     let mut scanner = settings.scanner;
     scanner.bucket_timezone = bucket_timezone;
     scanner
-}
-
-/// Loads the user's configured model aliases, honoring a `--home` override the
-/// same way [`load_scanner_settings_for_home`] does. A missing or malformed
-/// settings.json yields an empty map (no folding); this never errors.
-pub fn load_model_aliases() -> tokens_core::ModelAliasMap {
-    Settings::load().model_aliases
 }
 
 impl Settings {

@@ -10,6 +10,7 @@ pub mod http;
 pub mod mcp;
 mod message_cache;
 pub mod model_alias;
+pub mod model_normalization;
 pub mod opencode_model_name;
 mod parser;
 pub mod paths;
@@ -75,11 +76,9 @@ pub(crate) fn strip_parenthesized_reasoning_tier(model_id: &str) -> Option<&str>
 
 /// Canonical model identity — the model id that leaves the machine.
 ///
-/// This is `normalize_syntactic` with **no alias folding**: purely structural
-/// canonicalization (lowercase, strip a `(reasoning-tier)` suffix, strip a
-/// trailing `-YYYYMMDD` date, rewrite `.`→`-` inside claude version numbers, and
-/// fold an `anthropic/claude-…` prefix). It never consults the user's
-/// machine-local `modelAliases`.
+/// This applies `modelIdPrefixesToStrip` and structural normalization, but never
+/// the presentation-only `modelAliases`. Prefix removal is opt-in and affects
+/// uploaded identity. Devices submitting the same usage must use the same rules.
 ///
 /// Every path that submits, uploads, exports as raw data, or persists a model id
 /// MUST use this, not [`normalize_model_for_grouping`]. A machine-local alias
@@ -118,7 +117,7 @@ pub fn model_name_for_grouping(client: &str, provider_id: &str, model_id: &str) 
     }
 }
 
-/// Structural-only model-name normalization: lowercase, strip a
+/// Model-name normalization: lowercase, remove a configured prefix, strip a
 /// `(reasoning-tier)` suffix, strip a trailing `-YYYYMMDD` date, rewrite `.`→`-`
 /// inside claude version numbers, and fold an `anthropic/claude-…` prefix.
 ///
@@ -129,6 +128,10 @@ pub fn model_name_for_grouping(client: &str, provider_id: &str, model_id: &str) 
 /// `.`-vs-`-` spelling.
 pub(crate) fn normalize_syntactic(model_id: &str) -> String {
     let mut name = model_id.to_lowercase();
+
+    if let Some(model) = model_normalization::strip_prefix(&name) {
+        name = model.to_owned();
+    }
 
     if let Some(base_model) = strip_parenthesized_reasoning_tier(&name) {
         name = base_model.to_string();
@@ -5066,11 +5069,22 @@ fn apply_pricing_if_available(
         return;
     };
 
-    let calculated_cost = pricing.calculate_cost_with_provider(
+    let base_cost = pricing.calculate_cost_with_provider(
         &message.model_id,
         Some(&message.provider_id),
         &message.tokens,
-    ) * pricing_multiplier(message);
+    );
+    let cache_write_1h_surcharge = if base_cost > 0.0 {
+        pricing.cache_write_1h_surcharge(
+            &message.model_id,
+            Some(&message.provider_id),
+            &message.tokens,
+            message.cache_write_1h,
+        )
+    } else {
+        0.0
+    };
+    let calculated_cost = (base_cost + cache_write_1h_surcharge) * pricing_multiplier(message);
 
     if calculated_cost > 0.0 {
         message.cost = calculated_cost;
@@ -6567,6 +6581,7 @@ pub fn parsed_to_unified(msg: &ParsedMessage, cost: f64) -> UnifiedMessage {
         session_title: None,
         is_turn_start: false,
         model_attribution_conflicted: false,
+        cache_write_1h: 0,
     }
 }
 

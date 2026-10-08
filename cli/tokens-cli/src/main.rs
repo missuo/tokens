@@ -344,10 +344,10 @@ fn main() -> Result<()> {
 
     init_tracing();
 
-    // Install user-configured model aliases once, before any scan runs, so
-    // model-name variants fold consistently across every command. An empty or
-    // absent config is a strict no-op.
-    tokens_core::model_alias::set_global(&settings::load_model_aliases());
+    // Normalize configured alias keys with the same prefix rules as scanned IDs.
+    let settings = settings::Settings::load();
+    tokens_core::model_normalization::set_prefixes_to_strip(&settings.model_id_prefixes_to_strip);
+    tokens_core::model_alias::set_global(&settings.model_aliases);
 
     // Install OpenCode's configured model display names alongside the aliases.
     // Presentation only — the model id used for pricing, caching, and submit is
