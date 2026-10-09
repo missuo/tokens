@@ -136,7 +136,10 @@ pub(crate) fn normalize_syntactic(model_id: &str) -> String {
     if let Some(base_model) = strip_parenthesized_reasoning_tier(&name) {
         name = base_model.to_string();
     }
-    if name.len() > 9 {
+    // A non-ASCII model id (a Chinese alias, for instance) can put `len - 8`
+    // inside a multi-byte character. The date check is ASCII-only, so a name
+    // whose tail does not start on a character boundary cannot carry a date.
+    if name.len() > 9 && name.is_char_boundary(name.len() - 8) {
         let potential_date = &name[name.len() - 8..];
         if potential_date.chars().all(|c| c.is_ascii_digit())
             && name.as_bytes()[name.len() - 9] == b'-'
@@ -938,6 +941,16 @@ fn flush_message<S: MessageSink>(
     context: &FlushContext<'_>,
     sink: &mut S,
 ) {
+    // A non-ASCII model id is a display name, not a model id: pi writes the
+    // model's display name into `modelId`, so a Chinese alias such as "临时模型"
+    // arrives here whenever one is configured. Nothing can price or resolve
+    // such a name, so a row carrying one is dropped rather than counted under
+    // it. Keeping it out of the corpus also keeps the ASCII-only date-suffix
+    // strip in `normalize_syntactic` away from a multi-byte id.
+    if !message.model_id.is_ascii() {
+        return;
+    }
+
     if !context.include_all
         && !retain_for_requested_clients(
             &message.client,
@@ -7518,6 +7531,66 @@ mod tests {
             ],
         )
         .unwrap();
+    }
+
+    /// A non-ASCII model id is a display name rather than a model, so the row
+    /// never reaches the corpus: it is dropped in `flush_message`, which is the
+    /// one place every client's messages and every cache hit pass through.
+    #[test]
+    #[serial_test::serial]
+    fn test_non_ascii_model_ids_are_dropped_from_the_corpus() {
+        let cache_home = tempfile::TempDir::new().unwrap();
+        let source_home = tempfile::TempDir::new().unwrap();
+        let _cache_env = redirect_cache_home(cache_home.path());
+
+        let sessions_dir = source_home.path().join(".pi/agent/sessions/--fixture--");
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+        let record = |session: &str, model: &str, input: i64| {
+            format!(
+                r#"{{"type":"session","id":"{session}","timestamp":"2026-09-06T12:00:00.000Z","cwd":"/tmp/demo"}}"#,
+            ) + "\n"
+                + &format!(
+                    r#"{{"type":"message","id":"entry-{session}","parentId":"{session}","timestamp":"2026-09-06T12:00:00.000Z","message":{{"role":"assistant","provider":"cpa","model":"{model}","responseId":"resp-{session}","usage":{{"input":{input},"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":{input}}}}}}}"#
+                )
+                + "\n"
+        };
+        std::fs::write(
+            sessions_dir.join("session-cn.jsonl"),
+            record("session-cn", "临时模型", 100),
+        )
+        .unwrap();
+        std::fs::write(
+            sessions_dir.join("session-ascii.jsonl"),
+            record("session-ascii", "gpt-6-astra", 7),
+        )
+        .unwrap();
+
+        let clients = vec!["pi".to_string()];
+        for _ in 0..2 {
+            // Twice so the second run reads the same sources back through the
+            // persistent cache: the drop must hold on both paths.
+            let messages = parse_all_messages_with_pricing(
+                source_home.path().to_str().unwrap(),
+                &clients,
+                None,
+            );
+
+            assert_eq!(messages.len(), 1);
+            assert_eq!(messages[0].model_id, "gpt-6-astra");
+            assert_eq!(messages[0].tokens.input, 7);
+        }
+    }
+
+    #[test]
+    fn test_normalize_syntactic_accepts_non_ascii_model_ids() {
+        // 12 bytes, with '时' spanning bytes 3..6: `len - 8` is 4, mid-character.
+        assert_eq!(crate::normalize_syntactic("临时模型"), "临时模型");
+        assert_eq!(crate::normalize_syntactic("牛来"), "牛来");
+        assert_eq!(crate::normalize_syntactic("モデル"), "モデル");
+        // Non-ASCII prefix with a real ASCII date suffix still strips.
+        assert_eq!(crate::normalize_syntactic("模型-20250101"), "模型");
+        // The ASCII path is unchanged.
+        assert_eq!(crate::normalize_syntactic("gpt-5.4-20250101"), "gpt-5.4");
     }
 
     #[test]
