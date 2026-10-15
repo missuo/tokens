@@ -6,6 +6,8 @@
 // and update-time normalization. Keeping them here prevents a class of bugs
 // where one endpoint accepts an empty string and another doesn't.
 
+import { parseCloudDeviceKey } from "./cloud";
+
 export const LEGACY_DEVICE_KEY = "legacy-default";
 
 /** Fallback label used when `submitted_devices.display_name` is null/empty. */
@@ -16,6 +18,8 @@ export function deviceDisplayLabel(
   const trimmed = displayName?.trim();
   if (trimmed) return trimmed;
   if (deviceKey === LEGACY_DEVICE_KEY) return "Legacy submissions";
+  const cloud = parseCloudDeviceKey(deviceKey);
+  if (cloud) return cloud.label;
   return "Unnamed device";
 }
 
@@ -34,8 +38,8 @@ export function toIsoString(value: Date | string | null | undefined): string | n
  * middle is a fixed run of asterisks rather than one per character, so the
  * mask does not give away the length either.
  *
- * The fallback labels ("Unnamed device", "Legacy submissions") are ours, not
- * the user's, and are passed through untouched.
+ * The fallback labels ("Unnamed device", "Legacy submissions", "Claude Code
+ * cloud") are ours, not the user's, and are passed through untouched.
  */
 export function maskDeviceName(name: string): string {
   const chars = Array.from(name.trim());

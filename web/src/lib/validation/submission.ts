@@ -9,6 +9,7 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { SUPPORTED_CLIENT_TYPES } from "../types";
+import { isReservedCloudDeviceKey, parseCloudDeviceKey } from "../devices/cloud";
 
 // ============================================================================
 // SCHEMAS
@@ -285,6 +286,71 @@ const SubmissionProvenanceSchema = z.object({
   importer: z.string().trim().min(1).max(64).optional(),
 });
 
+/**
+ * Rules for a device in the reserved `cloud_` namespace (lib/devices/cloud.ts).
+ *
+ * A cloud device is one agent session's container, so it may only report the
+ * agent that ran there: a Claude Code cloud session reports `claude`, a Codex
+ * cloud session `codex`. Anything else in that container was put there, and
+ * letting it through would let a container replay a laptop's history for any
+ * client under a fresh device. Imported history and authoritative replacement
+ * are machine-level operations and are refused here for the same reason.
+ */
+function validateCloudDeviceSubmission(
+  submission: {
+    device?: { id: string };
+    contributions: Array<{ clients: Array<{ client: string }> }>;
+    clientManifest?: { clients: Array<{ client: string; coverage?: unknown }> };
+    provenance?: { origin: string };
+  },
+  ctx: z.RefinementCtx
+): void {
+  const deviceId = submission.device?.id;
+  if (!deviceId || !isReservedCloudDeviceKey(deviceId)) return;
+
+  const cloud = parseCloudDeviceKey(deviceId);
+  if (!cloud) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["device", "id"],
+      message: "cloud_ device ids must be cloud_<provider>_<32 hex> for a supported provider",
+    });
+    return;
+  }
+
+  const foreignClients = new Set<string>();
+  for (const day of submission.contributions) {
+    for (const client of day.clients) {
+      if (client.client !== cloud.client) foreignClients.add(client.client);
+    }
+  }
+  for (const entry of submission.clientManifest?.clients ?? []) {
+    if (entry.client !== cloud.client) foreignClients.add(entry.client);
+    if (entry.coverage) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["clientManifest"],
+        message: "cloud session devices cannot declare replacement coverage",
+      });
+    }
+  }
+  if (foreignClients.size > 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["contributions"],
+      message: `${cloud.label} devices may only report ${cloud.client} usage (got ${Array.from(foreignClients).sort().join(", ")})`,
+    });
+  }
+
+  if (submission.provenance?.origin === "backfill") {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["provenance", "origin"],
+      message: "cloud session devices cannot submit imported history",
+    });
+  }
+}
+
 const SubmissionDataSchema = z.preprocess(
   normalizeLegacySources,
   z.object({
@@ -297,6 +363,8 @@ const SubmissionDataSchema = z.preprocess(
     clientManifest: ClientManifestSchema.optional(),
     provenance: SubmissionProvenanceSchema.optional(),
   }).superRefine((submission, ctx) => {
+    validateCloudDeviceSubmission(submission, ctx);
+
     const clientRevisions = new Map<string, number>();
 
     submission.contributions.forEach((day, dayIndex) => {

@@ -219,6 +219,17 @@ and create or revoke read tokens, in [Settings](https://tokens.ci/settings).
 
 On every public profile, device names are shown masked (`jo****ro`).
 
+### Cloud agent sessions
+
+Claude Code on the web runs in a cloud VM that `tokens serve` never sees.
+`tokens cloud submit`, run from the session's own end-of-turn hook, reports that
+usage with the same totals-only payload. Each session is its own device, keyed
+by a hash of the session id (never the id itself) and labelled by the server, so
+a resumed session is merged rather than counted twice, and a cloud device may
+only report its own agent's client. Codex cloud is not supported: its agent does
+not run in the container. Setup, the full rules and what was tested are in
+[docs/cloud-sessions.md](docs/cloud-sessions.md).
+
 ## Who pays for this
 
 <div align="center">
