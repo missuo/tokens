@@ -2349,6 +2349,15 @@ fn parse_all_messages_streaming<S: MessageSink>(
         &mut source_cache,
         pricing,
         &mut all_messages,
+        ClientId::Muse,
+        sessions::muse::parse_muse_file,
+    );
+
+    parse_cached_lane(
+        &scan_result,
+        &mut source_cache,
+        pricing,
+        &mut all_messages,
         ClientId::Mcode,
         sessions::mcode::parse_mcode_file,
     );
@@ -6226,6 +6235,20 @@ pub fn parse_local_clients(options: LocalParseOptions) -> Result<ParsedMessages,
     let warp_count = summed_parsed_message_count(&warp_msgs);
     counts.set(ClientId::Warp, warp_count);
     messages.extend(warp_msgs);
+
+    let muse_msgs: Vec<ParsedMessage> = scan_result
+        .get(ClientId::Muse)
+        .par_iter()
+        .flat_map(|path| {
+            sessions::muse::parse_muse_file(path)
+                .into_iter()
+                .map(|msg| unified_to_parsed(&msg))
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    let muse_count = summed_parsed_message_count(&muse_msgs);
+    counts.set(ClientId::Muse, muse_count);
+    messages.extend(muse_msgs);
 
     // Devin CLI SQLite usage plus Desktop NDJSON event streams. The CLI
     // database is authoritative only when the CLI client itself is selected;
@@ -10156,6 +10179,98 @@ mod tests {
     /// upstream; `ListReducer` appends right after left), and the dedup filter
     /// runs sequentially over the result. This test would flake if any of
     /// those three legs were unordered.
+    #[test]
+    #[serial_test::serial]
+    fn test_muse_export_parses_in_both_lanes() {
+        let cache_home = tempfile::TempDir::new().unwrap();
+        let source_home = tempfile::TempDir::new().unwrap();
+        let _cache_env = redirect_cache_home(cache_home.path());
+
+        // The export lives at the client's registered scan root
+        // (`~/.config/tokens/muse-cache/muse-usage.json` under the source
+        // home), in the clawdboard daily-aggregate shape.
+        let export_dir = client_scan_root(source_home.path(), ClientId::Muse);
+        std::fs::create_dir_all(&export_dir).unwrap();
+        std::fs::write(
+            export_dir.join("muse-usage.json"),
+            r#"{
+                "dailyAggregates": [
+                    {
+                        "date": "2026-10-14",
+                        "source": "muse",
+                        "inputTokens": 300,
+                        "outputTokens": 30,
+                        "cacheCreationTokens": 0,
+                        "cacheReadTokens": 0,
+                        "totalCost": "0.0000",
+                        "modelsUsed": ["ipnext/avocado-5.16-v1", "ipnext/avocado-5.16-v4"],
+                        "modelBreakdowns": [
+                            {"modelName": "ipnext/avocado-5.16-v1", "inputTokens": 200, "outputTokens": 20, "cost": 0, "cacheCreationTokens": 0, "cacheReadTokens": 0},
+                            {"modelName": "ipnext/avocado-5.16-v4", "inputTokens": 100, "outputTokens": 10, "cost": 0, "cacheCreationTokens": 0, "cacheReadTokens": 0}
+                        ]
+                    },
+                    {
+                        "date": "2026-10-15",
+                        "source": "muse",
+                        "inputTokens": 50,
+                        "outputTokens": 5,
+                        "cacheCreationTokens": 0,
+                        "cacheReadTokens": 0,
+                        "totalCost": "0.0000",
+                        "modelsUsed": ["ipnext/avocado-5.16-v1"],
+                        "modelBreakdowns": [
+                            {"modelName": "ipnext/avocado-5.16-v1", "inputTokens": 50, "outputTokens": 5, "cost": 0, "cacheCreationTokens": 0, "cacheReadTokens": 0}
+                        ]
+                    }
+                ]
+            }"#,
+        )
+        .unwrap();
+
+        let clients = vec!["muse".to_string()];
+
+        // Streaming (submit) lane.
+        let messages = parse_all_messages_with_pricing_with_env_strategy(
+            source_home.path().to_str().unwrap(),
+            &clients,
+            None,
+            false,
+            &scanner::ScannerSettings::default(),
+        );
+        assert_eq!(messages.len(), 3);
+        assert!(messages.iter().all(|message| message.client == "muse"));
+        let input: i64 = messages.iter().map(|message| message.tokens.input).sum();
+        let output: i64 = messages.iter().map(|message| message.tokens.output).sum();
+        assert_eq!((input, output), (350, 35));
+        assert!(messages.iter().any(|message| {
+            message.date == "2026-10-14"
+                && message.model_id == "ipnext/avocado-5.16-v4"
+                && message.dedup_key.as_deref()
+                    == Some("muse:2026-10-14:ipnext/avocado-5.16-v4")
+        }));
+
+        // Local lane.
+        let parsed = parse_local_clients(LocalParseOptions {
+            home_dir: Some(source_home.path().to_str().unwrap().to_string()),
+            use_env_roots: false,
+            clients: Some(clients),
+            since: None,
+            until: None,
+            year: None,
+            scanner_settings: scanner::ScannerSettings::default(),
+        })
+        .unwrap();
+        assert_eq!(parsed.counts.get(ClientId::Muse), 3);
+        assert_eq!(parsed.messages.len(), 3);
+        let local_input: i64 = parsed.messages.iter().map(|message| message.input).sum();
+        let local_output: i64 = parsed
+            .messages
+            .iter()
+            .map(|message| message.output)
+            .sum();
+        assert_eq!((local_input, local_output), (350, 35));
+    }
+
     #[test]
     #[serial_test::serial]
     fn test_parse_local_clients_pi_conflicting_fork_copies_first_wins() {

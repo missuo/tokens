@@ -1071,6 +1071,23 @@ define_clients!(
         headless: false,
         parse_local: true,
         submit_default: true
+    },
+    // Muse is an agent runtime whose usage records never touch disk, so —
+    // like Cursor's dashboard export — the data arrives as an export file in
+    // the tokens cache directory (`~/.config/tokens/muse-cache/`), written
+    // by an exporter with access to the runtime's records. The parser emits
+    // one aggregate message per (day, model); there is no cost data to
+    // report, so rows price at $0 under local pricing.
+    Muse = 54 => {
+        id: "muse",
+        display: "Muse",
+        logo: Some("https://raw.githubusercontent.com/missuo/tokens/main/.github/assets/client-muse.png"),
+        root: PathRoot::Config,
+        relative: "muse-cache",
+        pattern: "muse-usage.json",
+        headless: false,
+        parse_local: true,
+        submit_default: true
     }
 );
 
@@ -1186,8 +1203,8 @@ mod tests {
 
     #[test]
     fn test_client_id_count() {
-        // 53 upstream clients plus this fork's Craft Agent.
-        assert_eq!(ClientId::COUNT, 54);
+        // 53 upstream clients plus this fork's Craft Agent and Muse.
+        assert_eq!(ClientId::COUNT, 55);
     }
 
     #[test]

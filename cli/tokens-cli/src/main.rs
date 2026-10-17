@@ -530,6 +530,7 @@ pub enum ClientFilter {
     Hindsight,
     #[value(name = "craft-agent")]
     CraftAgent,
+    Muse,
     Synthetic,
 }
 
@@ -594,6 +595,7 @@ impl ClientFilter {
             Self::Unsloth => "unsloth",
             Self::Hindsight => "hindsight",
             Self::CraftAgent => "craft-agent",
+            Self::Muse => "muse",
             Self::Synthetic => "synthetic",
         }
     }
@@ -661,6 +663,7 @@ impl ClientFilter {
             Self::Unsloth => Some(ClientId::Unsloth),
             Self::Hindsight => Some(ClientId::Hindsight),
             Self::CraftAgent => Some(ClientId::CraftAgent),
+            Self::Muse => Some(ClientId::Muse),
             Self::Synthetic => None,
         }
     }
@@ -724,6 +727,7 @@ impl ClientFilter {
             ClientId::Unsloth => Self::Unsloth,
             ClientId::Hindsight => Self::Hindsight,
             ClientId::CraftAgent => Self::CraftAgent,
+            ClientId::Muse => Self::Muse,
         }
     }
 

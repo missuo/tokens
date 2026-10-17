@@ -39,6 +39,7 @@ pub mod kiro;
 pub mod lmstudio;
 pub mod mcode;
 pub mod micode;
+pub mod muse;
 pub mod mux;
 pub mod omp;
 pub mod craft_agent;

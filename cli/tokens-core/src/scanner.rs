@@ -655,6 +655,7 @@ pub fn scan_directory(root: &str, pattern: &str) -> Vec<PathBuf> {
                 // directory under `~/.fx/sessions/<id>/`. WalkDir recursion
                 // picks up every session's snapshot.
                 "usage-v2.json" => file_name == "usage-v2.json",
+                "muse-usage.json" => file_name == "muse-usage.json",
                 "updates.jsonl" => file_name == "updates.jsonl",
                 "unified.jsonl" => file_name == "unified.jsonl",
                 "events.jsonl" => file_name == "events.jsonl",
