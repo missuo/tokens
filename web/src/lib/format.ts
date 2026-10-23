@@ -53,6 +53,27 @@ export function formatPercent(percent: number): string {
 }
 
 /**
+ * Format 0–100 shares as whole percents that add up to their own rounded total
+ * (largest remainder), so the parts of a split never disagree with the whole.
+ * A non-zero share that rounds to 0 shows as "<1%".
+ */
+export function formatWholePercents(percents: readonly number[]): string[] {
+  const whole = percents.map((percent) => Math.floor(percent));
+  let left =
+    Math.round(percents.reduce((sum, percent) => sum + percent, 0)) -
+    whole.reduce((sum, value) => sum + value, 0);
+  const byRemainder = percents
+    .map((percent, index) => ({ index, remainder: percent - whole[index] }))
+    .sort((a, b) => b.remainder - a.remainder);
+  for (const { index } of byRemainder) {
+    if (left <= 0) break;
+    whole[index] += 1;
+    left -= 1;
+  }
+  return whole.map((value, index) => (value === 0 && percents[index] > 0 ? "<1%" : `${value}%`));
+}
+
+/**
  * Format an ISO timestamp as a short relative time, e.g. "just now",
  * "5m ago", "3h ago", "12d ago", "2mo ago", "1y ago". Returns "never"
  * for null/invalid input so callers can render it directly.

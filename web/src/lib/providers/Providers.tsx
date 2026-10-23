@@ -2,12 +2,15 @@
 
 import React from "react";
 import { ThemeProvider } from "next-themes";
+import * as Tooltip from "@radix-ui/react-tooltip";
 
 /**
  * App-wide providers.
  *
- * Only next-themes, for the light/dark toggle (class strategy → `.dark` on
- * <html>, which the palette in globals.css reads).
+ * next-themes, for the light/dark toggle (class strategy → `.dark` on
+ * <html>, which the palette in globals.css reads), and the one Radix tooltip
+ * provider every tooltip shares, so moving between neighbouring tooltips skips
+ * the open delay.
  *
  * There used to be a react-aria `RouterProvider` here so HeroUI components
  * carrying `href` would navigate client-side. Every UI primitive now comes from
@@ -22,7 +25,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
       enableSystem
       disableTransitionOnChange
     >
-      {children}
+      <Tooltip.Provider delayDuration={150}>{children}</Tooltip.Provider>
     </ThemeProvider>
   );
 }
