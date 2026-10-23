@@ -12,11 +12,20 @@ on:
   push:
     branches:
       - deploy/self-hosted
-    # Docs and the CLI cannot change what this image contains.
+    # Nothing listed here can change what this image contains, so none of
+    # it is worth a production rebuild. The two sibling workflows qualify:
+    # neither runs during a deploy. This workflow itself is deliberately
+    # absent, because a change to it must take effect.
+    #
+    # `packages/**` is deliberately absent too: the Dockerfile copies it as
+    # a bun workspace member, so it does reach the build.
     paths-ignore:
       - "docs/**"
       - "cli/**"
       - "**/*.md"
+      - ".github/workflows/ci.yml"
+      - ".github/workflows/publish-cli.yml"
+      - ".github/assets/**"
   workflow_dispatch:
     inputs:
       skip_deploy:
