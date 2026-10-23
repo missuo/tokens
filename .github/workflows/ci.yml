@@ -13,18 +13,27 @@ name: CI
 # The publish workflow builds eight targets, but only on demand for a release.
 # This is the gate that runs before a PR merges.
 
+# Deliberately unfiltered, with the path decision moved into the `changes` job
+# below. A workflow skipped by a top-level `paths:` filter reports nothing at
+# all, so a check made required later would sit "Pending" forever and block the
+# merge; a *job* skipped by an `if:` reports the "skipped" conclusion, which
+# branch protection accepts. Always starting the workflow is what buys that,
+# and it costs one ~20s runner on a change that touches neither tree.
+#
+# One caveat, measured rather than assumed (PR #102): that guarantee holds for
+# `web`, but not for the matrix. A skipped matrix job never evaluates its
+# matrix, so GitHub cannot expand `name: ${{ matrix.name }}` and reports the
+# three platforms as a single check literally named `matrix.name` instead of
+# Linux/macOS/Windows. Nothing is a required check here today, so this is
+# cosmetic. If Linux, macOS or Windows is ever made required, those names will
+# never report on a web-only PR and will block the merge — at which point move
+# the `if:` off the matrix job and onto its Clippy/Build/Smoke/Test steps, so
+# each platform still reports under its own name for the price of a runner
+# start.
 on:
   pull_request:
-    paths:
-      - "cli/**"
-      - "web/**"
-      - ".github/workflows/ci.yml"
   push:
     branches: [main]
-    paths:
-      - "cli/**"
-      - "web/**"
-      - ".github/workflows/ci.yml"
 
 # A PR that gets three pushes in a minute should not tie up nine runners
 # answering a question about the first one.
@@ -40,8 +49,80 @@ env:
   CARGO_INCREMENTAL: 0
 
 jobs:
+  # Which trees does this push actually touch? Most PRs here are CLI-only or
+  # web-only, and before this job a web-only change still paid for three Rust
+  # runners (Windows alone is ~6 minutes).
+  #
+  # Hand-rolled rather than a third-party paths-filter action: the whole job is
+  # one `git diff`, and a dependency that reads the event payload and gates
+  # every other job is not worth adding for that.
+  changes:
+    name: Changes
+    runs-on: ubuntu-latest
+    outputs:
+      cli: ${{ steps.filter.outputs.cli }}
+      web: ${{ steps.filter.outputs.web }}
+    steps:
+      # Full history: the diff needs the base commit, which a shallow fetch
+      # does not have.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - id: filter
+        shell: bash
+        env:
+          # Via env rather than inline `${{ }}`: these come from the event
+          # payload, and a script body is the wrong place to paste them.
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          set -uo pipefail
+
+          # Fail open. A job that should have run and did not is a gate that
+          # lies; a job that ran for nothing costs minutes. So anything we
+          # cannot resolve — a first push to a branch, where `before` is all
+          # zeroes, a force-push, a base commit missing from the clone —
+          # runs everything.
+          if [ -z "$BASE_SHA" ] || ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
+            echo "base commit unavailable ($BASE_SHA); running every job" >&2
+            echo "cli=true" >> "$GITHUB_OUTPUT"
+            echo "web=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          changed=$(git diff --name-only "$BASE_SHA" HEAD) || {
+            echo "git diff failed; running every job" >&2
+            echo "cli=true" >> "$GITHUB_OUTPUT"
+            echo "web=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          }
+
+          echo "changed files:" >&2
+          printf '%s\n' "$changed" >&2
+
+          touches() { printf '%s\n' "$changed" | grep -Eq "$1"; }
+
+          # A change to this workflow re-runs everything it gates: the point of
+          # such a change is usually to find out whether the jobs still pass.
+          if touches '^cli/' || touches '^\.github/workflows/ci\.yml$'; then
+            cli=true
+          else
+            cli=false
+          fi
+          if touches '^web/' || touches '^\.github/workflows/ci\.yml$'; then
+            web=true
+          else
+            web=false
+          fi
+
+          echo "cli=$cli web=$web" >&2
+          echo "cli=$cli" >> "$GITHUB_OUTPUT"
+          echo "web=$web" >> "$GITHUB_OUTPUT"
+
   build:
     name: ${{ matrix.name }}
+    needs: changes
+    if: needs.changes.outputs.cli == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       # Not fail-fast: "builds on Linux, breaks on Windows" is the single most
@@ -104,15 +185,10 @@ jobs:
         run: cargo test --manifest-path cli/Cargo.toml
 
   # One runner: nothing here is platform-specific, unlike the CLI.
-  #
-  # This job runs even for a CLI-only change, and the CLI matrix runs even for a
-  # web-only change. Filtering per job would need either a third-party
-  # paths-filter action or a hand-rolled changes job, and both make the skipped
-  # jobs report as such — which quietly blocks a merge the day one of these is
-  # made a required check. A few spare runner-minutes buys a check status that
-  # always means what it says.
   web:
     name: Web
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
     runs-on: ubuntu-latest
 
     steps:
