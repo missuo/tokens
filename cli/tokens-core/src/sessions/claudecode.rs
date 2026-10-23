@@ -16,6 +16,7 @@ use super::{
 /// `sessions::claudecode::ClaudeUsage` still resolves to the same four fields
 /// after the type moved into `sessions::utils`.
 pub use super::utils::AnthropicUsage as ClaudeUsage;
+use crate::speed::InferenceSpeed;
 use crate::{pricing, provider_identity, TokenBreakdown};
 use serde::Deserialize;
 use serde_json::Value;
@@ -712,6 +713,8 @@ pub fn parse_claude_file_with_cache_and_home(
                 );
                 unified.duration_ms = duration_ms;
                 unified.cache_write_1h = usage.cache_write_1h();
+                unified.inference_speed =
+                    InferenceSpeed::claude(usage.speed.as_ref().and_then(Value::as_str));
                 unified.agent = sidechain_agent.clone();
                 unified.set_workspace(workspace_key.clone(), workspace_label.clone());
                 // Mark the first assistant response after a user message as a turn start
@@ -889,6 +892,9 @@ fn merge_claude_duplicate(
     usage: &AnthropicUsage,
     parsed_timestamp: Option<i64>,
 ) {
+    if let Some(speed) = InferenceSpeed::claude(usage.speed.as_ref().and_then(Value::as_str)) {
+        existing.inference_speed = Some(speed);
+    }
     // Per-field max merge: each token field is updated independently.
     let t = &mut existing.tokens;
     t.input = t.input.max(usage.input_tokens.unwrap_or(0).max(0));
@@ -935,6 +941,8 @@ pub(crate) fn merge_message_completeness(
         .max(candidate.tokens.cache_write);
     existing.tokens.reasoning = existing.tokens.reasoning.max(candidate.tokens.reasoning);
     existing.cache_write_1h = existing.cache_write_1h.max(candidate.cache_write_1h);
+    // A partial replay must not erase speed reported for this same response.
+    existing.inference_speed = existing.inference_speed.or(candidate.inference_speed);
     existing.duration_ms = match (existing.duration_ms, candidate.duration_ms) {
         (Some(left), Some(right)) => Some(left.max(right)),
         (None, right) => right,
@@ -1327,6 +1335,7 @@ struct ClaudeHeadlessState {
     /// stream deltas until its matching stop event so they cannot leak into the
     /// next real response.
     skipping_synthetic_stream: bool,
+    inference_speed: Option<InferenceSpeed>,
 }
 
 fn parse_claude_headless_json(
@@ -1475,7 +1484,7 @@ fn extract_claude_headless_message(
     let model = canonicalize_claude_model(&raw_model);
     let timestamp = extract_claude_timestamp(value).unwrap_or(fallback_timestamp);
 
-    Some(UnifiedMessage::new(
+    let mut message = UnifiedMessage::new(
         client_id,
         model,
         provider_id,
@@ -1493,7 +1502,9 @@ fn extract_claude_headless_message(
             reasoning: 0,
         },
         0.0,
-    ))
+    );
+    message.inference_speed = InferenceSpeed::claude(usage.get("speed").and_then(Value::as_str));
+    Some(message)
 }
 
 /// Internal Claude Code system/tool tags that should NOT be counted as human turns.
@@ -1670,6 +1681,9 @@ fn extract_claude_timestamp(value: &Value) -> Option<i64> {
 }
 
 fn update_claude_usage(state: &mut ClaudeHeadlessState, usage: &Value) {
+    if let Some(speed) = InferenceSpeed::claude(usage.get("speed").and_then(Value::as_str)) {
+        state.inference_speed = Some(speed);
+    }
     if let Some(input) = extract_i64(usage.get("input_tokens")) {
         state.input = state.input.max(input);
     }
@@ -1707,7 +1721,7 @@ fn finalize_headless_state(
         return None;
     }
 
-    let message = UnifiedMessage::new(
+    let mut message = UnifiedMessage::new(
         client_id,
         model,
         provider_id,
@@ -1722,6 +1736,7 @@ fn finalize_headless_state(
         },
         0.0,
     );
+    message.inference_speed = state.inference_speed;
 
     *state = ClaudeHeadlessState::default();
     Some(message)

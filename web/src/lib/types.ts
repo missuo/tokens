@@ -1,3 +1,7 @@
+import type { SpeedUsage } from "./speedUsage";
+
+export type { InferenceSpeed, SpeedUsage, SpeedSource } from "./speedUsage";
+
 export const SUPPORTED_CLIENT_TYPES = [
   "opencode",
   "claude",
@@ -81,6 +85,8 @@ export interface ModelBreakdownData {
   cacheWrite: number;
   reasoning: number;
   messages: number;
+  /** Known-speed usage only; absent entries and the remainder mean Unknown. */
+  speedUsage?: SpeedUsage[];
 }
 
 /**
@@ -97,6 +103,8 @@ export interface ClientContribution {
   tokens: TokenBreakdown;
   cost: number;
   messages: number;
+  /** CLI format only: known-speed usage for this client/model contribution. */
+  speedUsage?: SpeedUsage[];
   /** Present when data comes from database (grouped by client with nested models) */
   models?: Record<string, ModelBreakdownData>;
 }

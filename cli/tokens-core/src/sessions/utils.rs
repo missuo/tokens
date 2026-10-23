@@ -604,6 +604,8 @@ pub struct AnthropicUsage {
     pub cache_creation_input_tokens: Option<i64>,
     /// Per-TTL split of `cache_creation_input_tokens`, when the API reports it.
     pub cache_creation: Option<AnthropicCacheCreation>,
+    /// Keep unknown/wrong-typed speed metadata from discarding valid usage.
+    pub speed: Option<serde_json::Value>,
 }
 
 /// The `usage.cache_creation` block. Anthropic bills 1-hour cache writes at a

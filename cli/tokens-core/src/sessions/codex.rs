@@ -16,6 +16,7 @@ use super::utils::{
 };
 use super::{normalize_workspace_key, workspace_label_from_key, UnifiedMessage};
 use crate::provider_identity::inferred_provider_from_model;
+use crate::speed::InferenceSpeed;
 use crate::TokenBreakdown;
 use serde::Deserialize;
 use serde_json::Value;
@@ -89,6 +90,9 @@ pub struct CodexPayload {
     /// system-injected context (`<environment_context>`, `<system-reminder>`,
     /// `<user_instructions>`, …) begins with `<`.
     pub message: Option<String>,
+    /// Settings snapshots identify their owner, including in copied fork history.
+    pub thread_id: Option<String>,
+    pub thread_settings: Option<Value>,
 }
 
 /// Lenient `Option<i64>` deserializer for `CodexPayload::started_at`. Coerces
@@ -236,9 +240,22 @@ impl CodexTotals {
     }
 }
 
+/// Inference speed scoped to the model named by a settings snapshot.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub(crate) struct ModelSpeed {
+    pub model: String,
+    pub speed: InferenceSpeed,
+}
+
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub(crate) struct CodexParseState {
     pub current_model: Option<String>,
+    /// Explicit thread selection, scoped to its model. Not a served-tier report.
+    #[serde(default)]
+    pub selected_speed: Option<ModelSpeed>,
+    /// Capture at turn_context so a settings change does not relabel a running turn.
+    #[serde(default)]
+    pub turn_speed: Option<ModelSpeed>,
     #[serde(default)]
     pub current_turn_start_ms: Option<i64>,
     #[serde(default)]
@@ -544,6 +561,36 @@ fn parse_codex_reader<R: BufRead>(
                     state.turn_id_announced_by_task_started = false;
                 }
 
+                if entry.entry_type == "event_msg"
+                    && payload.payload_type.as_deref() == Some("thread_settings_applied")
+                {
+                    let owner = state
+                        .forked_child_session_id
+                        .as_deref()
+                        .or(state.session_id_from_meta.as_deref())
+                        .unwrap_or(session_id);
+                    let owns_snapshot = payload.thread_id.as_deref().map_or(
+                        !state.forked_child_waiting_for_turn_context,
+                        |id| id == owner,
+                    );
+                    if owns_snapshot {
+                        // A snapshot replaces the preference, including unset/unsupported
+                        // tiers. Never carry Fast through a switch back to auto/defaults.
+                        state.selected_speed =
+                            payload.thread_settings.as_ref().and_then(|settings| {
+                                let model = settings.get("model")?.as_str()?;
+                                let speed = InferenceSpeed::codex(
+                                    settings.get("service_tier").and_then(Value::as_str),
+                                )?;
+                                Some(ModelSpeed {
+                                    model: model.to_string(),
+                                    speed,
+                                })
+                            });
+                    }
+                    handled = true;
+                }
+
                 if state.forked_child_waiting_for_turn_context {
                     if entry.entry_type == "turn_context"
                         && forked_child_turn_starts_own_session(&state, payload.turn_id.as_deref())
@@ -632,6 +679,10 @@ fn parse_codex_reader<R: BufRead>(
                         state.session_is_headless = true;
                     }
                     if let Some(ref id) = payload.id {
+                        if state.session_id_from_meta.as_ref() != Some(id) {
+                            state.selected_speed = None;
+                            state.turn_speed = None;
+                        }
                         state.session_id_from_meta = Some(id.clone());
                     }
                     let forked_from_id = payload
@@ -692,6 +743,10 @@ fn parse_codex_reader<R: BufRead>(
                 // Extract model from turn_context
                 if entry.entry_type == "turn_context" {
                     state.current_model = payload_model.clone();
+                    state.turn_speed = state
+                        .selected_speed
+                        .clone()
+                        .filter(|selection| state.current_model.as_ref() == Some(&selection.model));
                     let turn_start_ms = parse_codex_entry_timestamp(entry.timestamp.as_deref());
                     state.current_turn_start_ms = turn_start_ms;
                     state.last_accepted_token_timestamp_ms = turn_start_ms;
@@ -879,6 +934,11 @@ fn parse_codex_reader<R: BufRead>(
                     // way: a `turn_context` without an id that comes later
                     // starts another turn, not this one.
                     state.turn_id_announced_by_task_started = false;
+                    message.inference_speed = state
+                        .turn_speed
+                        .as_ref()
+                        .filter(|selection| model.as_ref() == Some(&selection.model))
+                        .map(|selection| selection.speed);
                     // Apply a deferred human-turn marker from a preceding
                     // user_message to this assistant reply — the first
                     // token-bearing message after the human input.

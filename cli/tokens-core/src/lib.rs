@@ -20,6 +20,7 @@ mod provider_identity;
 pub mod scanner;
 pub mod sessionize;
 pub mod sessions;
+pub mod speed;
 pub mod tui_signal;
 pub mod wiki;
 
@@ -465,6 +466,8 @@ pub struct ClientContribution {
     pub tokens: TokenBreakdown,
     pub cost: f64,
     pub messages: i32,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub speed_usage: Vec<speed::SpeedUsage>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -6583,6 +6586,7 @@ pub fn parsed_to_unified(msg: &ParsedMessage, cost: f64) -> UnifiedMessage {
         is_turn_start: false,
         model_attribution_conflicted: false,
         cache_write_1h: 0,
+        inference_speed: None,
     }
 }
 
@@ -9373,6 +9377,11 @@ mod tests {
             assert_eq!(merged.session_id, live_file_name.trim_end_matches(".jsonl"));
             assert_eq!(merged.workspace_key.as_deref(), Some("myproject"));
             assert_eq!(merged.workspace_label.as_deref(), Some("myproject"));
+            assert_eq!(
+                merged.inference_speed,
+                crate::speed::InferenceSpeed::claude(Some("fast")),
+                "the completed observation's speed survives a partial replay"
+            );
             assert_eq!(merged.cost_source, sessions::CostSource::Estimated);
             assert!(
                 (merged.cost - 2.498).abs() < 1e-9,
@@ -9409,7 +9418,7 @@ mod tests {
     /// test and a divergence would only restate the pair above.
     const CLAUDE_MERGE_PARTIAL: &str = r#"{"type":"assistant","timestamp":"2024-12-01T10:05:00.000Z","requestId":"req_shared","provider":"anthropic","message":{"id":"msg_shared","model":"claude-3-5-sonnet","provider":"anthropic","usage":{"input_tokens":500,"output_tokens":60}}}"#;
     /// The completed observation of that same response.
-    const CLAUDE_MERGE_COMPLETED: &str = r#"{"type":"assistant","timestamp":"2024-12-01T10:05:01.000Z","requestId":"req_shared","provider":"anthropic","message":{"id":"msg_shared","model":"claude-3-5-sonnet","provider":"anthropic","usage":{"input_tokens":200,"output_tokens":999}}}"#;
+    const CLAUDE_MERGE_COMPLETED: &str = r#"{"type":"assistant","timestamp":"2024-12-01T10:05:01.000Z","requestId":"req_shared","provider":"anthropic","message":{"id":"msg_shared","model":"claude-3-5-sonnet","provider":"anthropic","usage":{"input_tokens":200,"output_tokens":999,"speed":"fast"}}}"#;
 
     #[test]
     #[serial_test::serial]

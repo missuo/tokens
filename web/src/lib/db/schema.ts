@@ -18,6 +18,7 @@ import {
   USERS_USERNAME_LOWER_UNIQUE_INDEX,
   usernameLowerExpression,
 } from "./usernameIndex";
+import type { SpeedUsage } from "../speedUsage";
 
 // ============================================================================
 // USERS
@@ -314,6 +315,8 @@ export const dailyBreakdown = pgTable(
             cacheWrite: number;
             reasoning: number;
             messages: number;
+            /** Known-speed usage only; absent/remainder means Unknown. */
+            speedUsage?: SpeedUsage[];
           }>;
           provenance?: {
             schemaVersion: number;

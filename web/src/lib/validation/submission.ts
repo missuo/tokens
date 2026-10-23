@@ -10,6 +10,12 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { SUPPORTED_CLIENT_TYPES } from "../types";
 import { isReservedCloudDeviceKey, parseCloudDeviceKey } from "../devices/cloud";
+import {
+  INFERENCE_SPEEDS,
+  MAX_SPEED_USAGE_ENTRIES,
+  SPEED_SOURCES,
+  mergeSpeedUsage,
+} from "../speedUsage";
 
 // ============================================================================
 // SCHEMAS
@@ -59,6 +65,14 @@ const ClientContributionProvenanceSchema = z.object({
   origin: z.enum(["cli", "backfill"]).optional(),
 });
 
+// Known-speed usage only; the uncovered remainder of a contribution is Unknown.
+const SpeedUsageSchema = z.object({
+  speed: z.enum(INFERENCE_SPEEDS),
+  source: z.enum(SPEED_SOURCES),
+  tokens: NonNegativeIntegerSchema,
+  messages: NonNegativeIntegerSchema,
+});
+
 const CcMirrorSourceSchema = z.string().regex(
   /^cc-mirror\/[a-z0-9][a-z0-9._-]{0,95}$/,
   "Invalid cc-mirror variant client id"
@@ -73,6 +87,7 @@ const ClientContributionSchema = z.object({
   cost: NonNegativeNumberSchema,
   messages: NonNegativeIntegerSchema,
   provenance: ClientContributionProvenanceSchema.optional(),
+  speedUsage: z.array(SpeedUsageSchema).max(MAX_SPEED_USAGE_ENTRIES).optional(),
 }).superRefine((contribution, ctx) => {
   const maxRevision = contribution.client === "codex"
     ? MAX_SUPPORTED_CODEX_PROVENANCE_SCHEMA_VERSION
@@ -84,6 +99,41 @@ const ClientContributionSchema = z.object({
       path: ["provenance", "schemaVersion"],
       message: `${contribution.client} provenance schemaVersion must be at most ${maxRevision}`,
     });
+  }
+
+  if (contribution.speedUsage) {
+    const seenPairs = new Set<string>();
+    let speedTokens = 0;
+    let speedMessages = 0;
+    contribution.speedUsage.forEach((entry, entryIndex) => {
+      const pair = `${entry.speed}/${entry.source}`;
+      if (seenPairs.has(pair)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["speedUsage", entryIndex],
+          message: `duplicate speedUsage entry ${pair}`,
+        });
+      }
+      seenPairs.add(pair);
+      speedTokens += entry.tokens;
+      speedMessages += entry.messages;
+    });
+
+    const contributionTokens = tokenTotal(contribution.tokens);
+    if (speedTokens > contributionTokens) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["speedUsage"],
+        message: `speedUsage tokens (${speedTokens}) exceed contribution tokens (${contributionTokens})`,
+      });
+    }
+    if (speedMessages > contribution.messages) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["speedUsage"],
+        message: `speedUsage messages (${speedMessages}) exceed contribution messages (${contribution.messages})`,
+      });
+    }
   }
 });
 
@@ -821,11 +871,21 @@ export function generateSubmissionHash(data: SubmissionData): string {
             messages: client.messages,
             // provenance intentionally excluded: it is derived metadata that can
             // be back-filled without changing usage data, so it must not affect
-            // idempotency. Hash ordering uses client/providerId/modelId only.
+            // idempotency. Hash ordering starts with client/providerId/modelId.
+            //
+            // speedUsage participates only when nonempty, in canonical
+            // (speed, source) order. When absent or empty the key is undefined
+            // and JSON.stringify omits it, so legacy hashes are unchanged.
+            speedUsage: mergeSpeedUsage(client.speedUsage),
           }))
           .sort((a, b) =>
             `${a.client}\u0000${a.providerId ?? ""}\u0000${a.modelId}`.localeCompare(
               `${b.client}\u0000${b.providerId ?? ""}\u0000${b.modelId}`
+            ) ||
+            // Tie-break only on speed metadata so legacy payloads (where it is
+            // always absent) keep their previous stable-sort order.
+            JSON.stringify(a.speedUsage ?? []).localeCompare(
+              JSON.stringify(b.speedUsage ?? [])
             )
           ),
       }))

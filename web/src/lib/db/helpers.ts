@@ -2,6 +2,8 @@
  * Client-level merge helpers for submission API
  */
 
+import { mergeSpeedUsage, type SpeedUsage } from "../speedUsage";
+
 export interface ModelBreakdownData {
   tokens: number;
   cost: number;
@@ -11,6 +13,11 @@ export interface ModelBreakdownData {
   cacheWrite: number;
   reasoning: number;
   messages: number;
+  /**
+   * Known-speed usage for this model only (absent === all Unknown). Lives on
+   * the nested model, never on the client-level totals.
+   */
+  speedUsage?: SpeedUsage[];
 }
 
 interface ClientBreakdownProvenanceData {
@@ -154,6 +161,72 @@ function withDerivedProvenance(breakdown: ClientBreakdownData): ClientBreakdownD
   };
 }
 
+/**
+ * Add `model` into `models[modelId]`, summing counters and speed metadata.
+ * Never mutates `model` or any speedUsage array it references.
+ */
+export function addModelBreakdown(
+  models: Record<string, ModelBreakdownData>,
+  modelId: string,
+  model: ModelBreakdownData
+): void {
+  const existing = models[modelId];
+  const speedUsage = mergeSpeedUsage(existing?.speedUsage, model.speedUsage);
+  const next: ModelBreakdownData = {
+    tokens: (existing?.tokens || 0) + (model.tokens || 0),
+    cost: (existing?.cost || 0) + (model.cost || 0),
+    input: (existing?.input || 0) + (model.input || 0),
+    output: (existing?.output || 0) + (model.output || 0),
+    cacheRead: (existing?.cacheRead || 0) + (model.cacheRead || 0),
+    cacheWrite: (existing?.cacheWrite || 0) + (model.cacheWrite || 0),
+    reasoning: (existing?.reasoning || 0) + (model.reasoning || 0),
+    messages: (existing?.messages || 0) + (model.messages || 0),
+  };
+  if (existing?.speedUsage || model.speedUsage) {
+    next.speedUsage = speedUsage ?? [];
+  }
+  models[modelId] = next;
+}
+
+/**
+ * "kilocode" is a legacy alias of "kilo". A stored source_breakdown can still
+ * carry a "kilocode" key written before submit-time normalization existed;
+ * fold it into "kilo" so merges treat both as the SAME client instead of
+ * summing them as disjoint clients.
+ */
+const LEGACY_CLIENT_ALIASES: Record<string, string> = { kilocode: "kilo" };
+
+export function normalizeClientBreakdownAliases(
+  breakdown: Record<string, ClientBreakdownData>
+): Record<string, ClientBreakdownData> {
+  const normalized: Record<string, ClientBreakdownData> = {};
+
+  for (const [rawClientName, data] of Object.entries(breakdown)) {
+    const clientName = LEGACY_CLIENT_ALIASES[rawClientName] ?? rawClientName;
+    const existing = normalized[clientName];
+
+    if (!existing) {
+      normalized[clientName] = { ...data, models: { ...data.models } };
+      continue;
+    }
+
+    existing.tokens += data.tokens || 0;
+    existing.cost += data.cost || 0;
+    existing.input += data.input || 0;
+    existing.output += data.output || 0;
+    existing.cacheRead += data.cacheRead || 0;
+    existing.cacheWrite += data.cacheWrite || 0;
+    existing.reasoning = (existing.reasoning || 0) + (data.reasoning || 0);
+    existing.messages += data.messages || 0;
+    for (const [modelId, modelData] of Object.entries(data.models || {})) {
+      addModelBreakdown(existing.models, modelId, modelData);
+    }
+    existing.provenance = deriveClientBreakdownProvenance(existing);
+  }
+
+  return normalized;
+}
+
 export function aggregateIncomingClientBreakdowns(
   contributions: IncomingClientModelBreakdown[]
 ): Record<string, ClientBreakdownData> {
@@ -164,9 +237,19 @@ export function aggregateIncomingClientBreakdowns(
     const existing = aggregated[client];
 
     if (!existing) {
+      const models: Record<string, ModelBreakdownData> = {};
+      addModelBreakdown(models, modelId, breakdown);
       const clientBreakdown: ClientBreakdownData = {
-        ...breakdown,
-        models: { [modelId]: { ...breakdown } },
+        // Client-level totals only: speed metadata stays on the nested model.
+        tokens: breakdown.tokens,
+        cost: breakdown.cost,
+        input: breakdown.input,
+        output: breakdown.output,
+        cacheRead: breakdown.cacheRead,
+        cacheWrite: breakdown.cacheWrite,
+        reasoning: breakdown.reasoning,
+        messages: breakdown.messages,
+        models,
         provenance: {
           schemaVersion: Math.max(1, provenance?.schemaVersion ?? 1),
           messageCount: Math.max(0, provenance?.messageCount ?? 0),
@@ -185,20 +268,7 @@ export function aggregateIncomingClientBreakdowns(
     existing.cacheWrite += breakdown.cacheWrite;
     existing.reasoning = (existing.reasoning || 0) + breakdown.reasoning;
     existing.messages += breakdown.messages;
-
-    const existingModel = existing.models[modelId];
-    if (existingModel) {
-      existingModel.tokens += breakdown.tokens;
-      existingModel.cost += breakdown.cost;
-      existingModel.input += breakdown.input;
-      existingModel.output += breakdown.output;
-      existingModel.cacheRead += breakdown.cacheRead;
-      existingModel.cacheWrite += breakdown.cacheWrite;
-      existingModel.reasoning = (existingModel.reasoning || 0) + breakdown.reasoning;
-      existingModel.messages += breakdown.messages;
-    } else {
-      existing.models[modelId] = { ...breakdown };
-    }
+    addModelBreakdown(existing.models, modelId, breakdown);
 
     existing.provenance = deriveClientBreakdownProvenance({
       ...existing,
@@ -340,6 +410,21 @@ export function mergeClientBreakdownsWithRegressionGuard(
       continue;
     }
 
+    // An older CLI can still add usage without knowing this optional field.
+    // Keep previously identified usage as a subset; only the added remainder
+    // becomes Unknown. A new CLI's explicit [] can clear stale attribution.
+    if (existingWithProvenance && incomingSchemaVersion === existingSchemaVersion) {
+      nextClient.models = { ...nextClient.models };
+      for (const [modelId, model] of Object.entries(nextClient.models)) {
+        const previous = existingWithProvenance.models?.[modelId];
+        if (
+          model.speedUsage === undefined && previous?.speedUsage &&
+          model.tokens >= previous.tokens && model.messages >= previous.messages
+        ) {
+          nextClient.models[modelId] = { ...model, speedUsage: previous.speedUsage };
+        }
+      }
+    }
     merged[clientName] = nextClient;
   }
 
@@ -352,9 +437,11 @@ export function clientContributionToBreakdownData(
     cost: number;
     modelId: string;
     messages: number;
+    speedUsage?: readonly SpeedUsage[];
   }
 ): ModelBreakdownData {
   const { input, output, cacheRead, cacheWrite, reasoning = 0 } = client_contrib.tokens;
+  const speedUsage = mergeSpeedUsage(client_contrib.speedUsage);
   return {
     tokens: input + output + cacheRead + cacheWrite + reasoning,
     cost: client_contrib.cost,
@@ -364,6 +451,7 @@ export function clientContributionToBreakdownData(
     cacheWrite,
     reasoning,
     messages: client_contrib.messages,
+    ...(client_contrib.speedUsage ? { speedUsage: speedUsage ?? [] } : {}),
   };
 }
 

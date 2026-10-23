@@ -115,6 +115,9 @@ pub struct UnifiedMessage {
     /// for pricing; `tokens.cache_write` still carries the full count.
     #[serde(default)]
     pub cache_write_1h: i64,
+    /// Explicit evidence only; None means unknown, not Standard.
+    #[serde(default)]
+    pub inference_speed: Option<crate::speed::InferenceSpeed>,
 }
 
 const fn default_message_count() -> i32 {
@@ -394,6 +397,7 @@ impl UnifiedMessage {
             is_turn_start: false,
             model_attribution_conflicted: false,
             cache_write_1h: 0,
+            inference_speed: None,
         }
     }
 

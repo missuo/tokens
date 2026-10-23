@@ -12,6 +12,8 @@ import {
 import { buildSubmissionFreshness } from "@/lib/submissionFreshness";
 import { SOCIAL_VERIFIED_THRESHOLD } from "@/lib/socialVerification";
 import { PRIVATE_CACHE_CONTROL, getViewerAccess } from "@/lib/privacy";
+import { addModelBreakdown, type ModelBreakdownData } from "@/lib/db/helpers";
+import { mergeSpeedUsage } from "@/lib/speedUsage";
 
 const LEGACY_CLIENT_ALIASES: Record<string, string> = { kilocode: "kilo" };
 function normalizeClientId(id: string): string {
@@ -263,16 +265,8 @@ export async function getPublicProfileResponse(
     const archivedDayCount = Number(archivedResult[0]?.days ?? 0);
     const rank = (rankResult as unknown as { rank: number }[])[0]?.rank || null;
 
-    type ModelData = {
-      tokens: number;
-      cost: number;
-      input: number;
-      output: number;
-      cacheRead: number;
-      cacheWrite: number;
-      reasoning: number;
-      messages: number;
-    };
+    // Nested model shape, including optional known-speed metadata.
+    type ModelData = ModelBreakdownData;
 
     type ClientBreakdown = {
       tokens: number;
@@ -295,29 +289,7 @@ export async function getPublicProfileResponse(
       if (!modelId) return;
 
       client.models ??= {};
-      const existingModel = client.models[modelId];
-      if (existingModel) {
-        existingModel.tokens += model.tokens || 0;
-        existingModel.cost += model.cost || 0;
-        existingModel.input += model.input || 0;
-        existingModel.output += model.output || 0;
-        existingModel.cacheRead += model.cacheRead || 0;
-        existingModel.cacheWrite += model.cacheWrite || 0;
-        existingModel.reasoning += model.reasoning || 0;
-        existingModel.messages += model.messages || 0;
-        return;
-      }
-
-      client.models[modelId] = {
-        tokens: model.tokens || 0,
-        cost: model.cost || 0,
-        input: model.input || 0,
-        output: model.output || 0,
-        cacheRead: model.cacheRead || 0,
-        cacheWrite: model.cacheWrite || 0,
-        reasoning: model.reasoning || 0,
-        messages: model.messages || 0,
-      };
+      addModelBreakdown(client.models, modelId, model);
     };
 
     const materializeLegacyClientModel = (client: ClientBreakdown) => {
@@ -592,12 +564,19 @@ export async function getPublicProfileResponse(
 
     const activeDays = scopedContributions.filter((c) => c.tokens > 0).length;
 
-    const modelUsageMap = new Map<string, { tokens: number; cost: number }>();
+    const modelUsageMap = new Map<
+      string,
+      Pick<ModelBreakdownData, "tokens" | "cost" | "speedUsage">
+    >();
     for (const day of scopedContributions) {
       for (const [model, data] of Object.entries(day.models)) {
         const existing = modelUsageMap.get(model) || { tokens: 0, cost: 0 };
         existing.tokens += data.tokens;
         existing.cost += data.cost;
+        existing.speedUsage = mergeSpeedUsage(
+          existing.speedUsage,
+          ...Object.values(day.clients).map((client) => client.models?.[model]?.speedUsage),
+        );
         modelUsageMap.set(model, existing);
       }
     }
@@ -611,6 +590,7 @@ export async function getPublicProfileResponse(
         model,
         tokens: data.tokens,
         cost: data.cost,
+        speedUsage: data.speedUsage,
         percentage: totalModelCost > 0 ? (data.cost / totalModelCost) * 100 : 0,
       }))
       .sort((a, b) => b.cost - a.cost || b.tokens - a.tokens);

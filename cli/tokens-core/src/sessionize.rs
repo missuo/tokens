@@ -509,6 +509,7 @@ mod tests {
             is_turn_start: false,
             model_attribution_conflicted: false,
             cache_write_1h: 0,
+            inference_speed: None,
             duration_ms: None,
         }
     }
