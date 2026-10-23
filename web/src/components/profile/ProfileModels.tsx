@@ -15,7 +15,10 @@ import {
 } from "./listStyles";
 import { tw } from "@/lib/tw";
 import { cn } from "@/lib/utils";
+import { formatWholePercents } from "@/lib/format";
+import { getSpeedTierRows } from "@/lib/speedUsage";
 import { ModelIcon } from "./ModelIcon";
+import { SpeedTierLabel } from "./SpeedTier";
 import type { ModelUsage } from "./types";
 
 export interface ProfileModelsProps {
@@ -30,6 +33,48 @@ const ModelName = tw(
   "span",
   "overflow-hidden text-ellipsis whitespace-nowrap text-foreground max-[639px]:whitespace-normal max-[639px]:[overflow-wrap:anywhere]"
 );
+
+// Mirrors the day-detail tier list in ProfileContributionGraph so the same
+// breakdown reads the same way in both places.
+const SpeedTierList = tw("div", "mt-1 grid gap-0.5 pl-[1.375rem]");
+
+const SpeedTierLine = tw(
+  "div",
+  "flex min-w-0 items-start gap-1.5 text-[0.6875rem] font-normal leading-snug text-muted-foreground"
+);
+
+/**
+ * Speed tiers for one model over the scoped period.
+ *
+ * Nested inside the model cell rather than given its own columns: the table's
+ * "Share" column is a share of total *cost*, while a tier's share is of its
+ * model's *tokens*. Putting the two in one column would invite reading one as
+ * the other. Messages are omitted because the period-scoped `modelUsage` has
+ * no message total to measure the Unknown remainder against.
+ */
+function ModelSpeedTiers({ usage }: { usage: ModelUsage }) {
+  const tiers = getSpeedTierRows(usage.speedUsage, usage.tokens, 0);
+  if (tiers.length === 0) return null;
+  const percents = formatWholePercents(
+    tiers.map((tier) => (usage.tokens > 0 ? (tier.tokens / usage.tokens) * 100 : 0)),
+  );
+
+  return (
+    <SpeedTierList>
+      {tiers.map((tier, index) => (
+        <SpeedTierLine key={tier.speed}>
+          <SpeedTierLabel
+            tier={tier}
+            className={cn("flex-none", tier.speed !== "unknown" && "text-foreground")}
+          />
+          <span className="min-w-0">
+            {formatNumber(tier.tokens)} tokens · {percents[index]}
+          </span>
+        </SpeedTierLine>
+      ))}
+    </SpeedTierList>
+  );
+}
 
 // ListCard already carries the border and colours; these only add the bits
 // that differed from it.
@@ -82,13 +127,19 @@ export function ProfileModels({
             </tr>
           </ListHead>
           <ListBody>
-            {filteredUsage.map((usage) => (
-              <ListRow key={usage.model}>
+            {filteredUsage.map((usage) => {
+              const hasTiers = getSpeedTierRows(usage.speedUsage, usage.tokens, 0).length > 0;
+              return (
+              // Tier lines make the model cell taller, so the numeric cells
+              // top-align with the model name instead of floating to the
+              // middle of the grown row.
+              <ListRow key={usage.model} className={cn(hasTiers && "[&>*]:align-top")}>
                 <ListPrimaryCell scope="row">
                   <ModelIdentity>
                     <ModelIcon model={usage.model} size={14} />
                     <ModelName>{usage.model}</ModelName>
                   </ModelIdentity>
+                  <ModelSpeedTiers usage={usage} />
                 </ListPrimaryCell>
                 <ListCell data-label="Tokens" $align="right">
                   <NumericValue title={usage.tokens.toLocaleString("en-US")}>
@@ -104,7 +155,8 @@ export function ProfileModels({
                   <NumericValue>{usage.percentage.toFixed(1)}%</NumericValue>
                 </ListCell>
               </ListRow>
-            ))}
+              );
+            })}
           </ListBody>
         </ListTable>
       </ListCard>

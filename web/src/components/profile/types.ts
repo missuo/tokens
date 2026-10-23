@@ -1,3 +1,5 @@
+import type { SpeedUsage } from "@/lib/speedUsage";
+
 /**
  * Providers we render icons for. GitHub's social_accounts API also returns
  * "generic" and other unrecognized providers — those are intentionally
@@ -46,5 +48,8 @@ export interface ModelUsage {
   model: string;
   tokens: number;
   cost: number;
+  /** Share of total cost, not of tokens. */
   percentage: number;
+  /** Known-speed usage across the scoped period; absent === all Unknown. */
+  speedUsage?: SpeedUsage[];
 }
