@@ -72,7 +72,7 @@ We are not asking anyone to run their own copy. This repo exists to be read.
 
 ## Supported clients
 
-All 41 are detected automatically — if it is installed and has
+All 42 are detected automatically — if it is installed and has
 written sessions, it is counted.
 
 |  |  |  |  |
@@ -86,7 +86,7 @@ written sessions, it is counted.
 | <img src=".github/assets/client-kimi.png" width="16" height="16" alt="" /> Kimi | <img src=".github/assets/client-kiro.jpg" width="16" height="16" alt="" /> Kiro | <img src=".github/assets/client-micode.jpg" width="16" height="16" alt="" /> MiMo Code | <img src=".github/assets/client-mux.png" width="16" height="16" alt="" /> Mux |
 | <img src=".github/assets/client-openclaw.jpg" width="16" height="16" alt="" /> OpenClaw | <img src=".github/assets/client-opencode.png" width="16" height="16" alt="" /> OpenCode | <img src=".github/assets/client-opencodereview.png" width="16" height="16" alt="" /> OpenCodeReview | <img src=".github/assets/client-orca.png" width="16" height="16" alt="" /> Orca |
 | <img src=".github/assets/client-pi.png" width="16" height="16" alt="" /> Pi | <img src=".github/assets/client-qwen.png" width="16" height="16" alt="" /> Qwen | <img src=".github/assets/client-generic.svg" width="16" height="16" alt="" /> Reasonix | <img src=".github/assets/client-roocode.png" width="16" height="16" alt="" /> Roo Code |
-| <img src=".github/assets/client-trae.png" width="16" height="16" alt="" /> Trae |   |   |   |
+| <img src=".github/assets/client-paseo.svg" width="16" height="16" alt="" /> Paseo | <img src=".github/assets/client-trae.png" width="16" height="16" alt="" /> Trae |   |   |
 | <img src=".github/assets/client-warp.png" width="16" height="16" alt="" /> Warp | <img src=".github/assets/client-workbuddy.png" width="16" height="16" alt="" /> WorkBuddy | <img src=".github/assets/client-zcode.png" width="16" height="16" alt="" /> ZCode | <img src=".github/assets/client-zed.webp" width="16" height="16" alt="" /> Zed Agent |
 
 <details>
@@ -125,6 +125,25 @@ written sessions, it is counted.
 | [Fx](https://github.com/vercel-labs/fx) | `~/.fx/sessions/<sessionId>/usage-v2.json` (per-session aggregates) |
 
 </details>
+
+### Paseo
+
+[Paseo](https://github.com/getpaseo/paseo) runs agents through their native
+providers. Usage is reported under the underlying supported client (for example,
+Claude Code or Codex CLI), including sessions launched from Paseo.
+
+For Claude and Codex profiles with separate data directories, Tokens also reads
+`agents.providers` in `~/.paseo/config.json` (or `$PASEO_HOME/config.json`). It
+finds absolute `env.CLAUDE_CONFIG_DIR` and `env.CODEX_HOME` paths on built-in
+providers and profiles that `extends` them, including inherited base settings.
+Claude projects, subagents and transcripts, plus active and archived Codex
+sessions, use the existing parsers and file deduplication. Paseo's agent records
+and timelines are not counted again.
+
+Run Tokens on the daemon host, where the session files live. Relative provider
+paths and paths set only in the daemon's launch environment cannot be discovered
+from this config; use absolute provider paths or Tokens' existing
+`scanner.extraScanPaths` setting for those installations.
 
 Clients that expose usage only through an account API need a sync step first —
 `tokens cursor sync`, `tokens antigravity sync`, `tokens trae sync`,
@@ -218,6 +237,17 @@ machine that is already logged in switches that account. Turn private mode off,
 and create or revoke read tokens, in [Settings](https://tokens.ci/settings).
 
 On every public profile, device names are shown masked (`jo****ro`).
+
+### Cloud agent sessions
+
+Claude Code on the web runs in a cloud VM that `tokens serve` never sees.
+`tokens cloud submit`, run from the session's own end-of-turn hook, reports that
+usage with the same totals-only payload. Each session is its own device, keyed
+by a hash of the session id (never the id itself) and labelled by the server, so
+a resumed session is merged rather than counted twice, and a cloud device may
+only report its own agent's client. Codex cloud is not supported: its agent does
+not run in the container. Setup, the full rules and what was tested are in
+[docs/cloud-sessions.md](docs/cloud-sessions.md).
 
 ## Who pays for this
 

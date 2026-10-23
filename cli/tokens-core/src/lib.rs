@@ -13,6 +13,7 @@ pub mod model_alias;
 pub mod model_normalization;
 pub mod opencode_model_name;
 mod parser;
+mod paseo;
 pub mod paths;
 pub mod pricing;
 mod provider_identity;

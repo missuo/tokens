@@ -151,7 +151,7 @@ export const SOURCE_LOGOS: Record<ClientType, string> = {
   cherrystudio: `${GITHUB_CDN_BASE}/client-cherrystudio.png`,
   dsh: `${GITHUB_CDN_BASE}/client-dsh.png`,
   mcode: `${GITHUB_CDN_BASE}/client-mcode.jpg`,
-  omp: `${GITHUB_CDN_BASE}/client-omp.jpg`,
+  omp: `${GITHUB_CDN_BASE}/client-omp.png`,
   lmstudio: `${GITHUB_CDN_BASE}/client-lmstudio.png`,
   unsloth: `${GITHUB_CDN_BASE}/client-unsloth.png`,
   hindsight: `${GITHUB_CDN_BASE}/client-hindsight.png`,

@@ -15,6 +15,7 @@ import {
   NumericValue,
 } from "./listStyles";
 import { tw } from "@/lib/tw";
+import { groupCloudDevices } from "@/lib/devices/cloud";
 import { cn } from "@/lib/utils";
 
 /** Public device usage shape returned by the profile devices route. */
@@ -32,6 +33,8 @@ export interface ProfileDevice {
   activeDays: number;
   firstDay: string | null;
   lastDay: string | null;
+  /** Cloud session devices only: active days across the provider's sessions. */
+  cloudGroupActiveDays?: number;
 }
 
 export interface ProfileDevicesProps {
@@ -68,6 +71,9 @@ const LastSubmitted = tw(
 /** Compact per-device usage for public profiles. */
 export function ProfileDevices({ devices, className }: ProfileDevicesProps) {
   if (devices.length === 0) return null;
+  // Each cloud agent session is its own device server-side; show one row per
+  // cloud provider instead of one per session.
+  const rows = groupCloudDevices(devices);
 
   return (
     <DevicesSection
@@ -96,11 +102,15 @@ export function ProfileDevices({ devices, className }: ProfileDevicesProps) {
             </tr>
           </ListHead>
           <ListBody>
-            {devices.map((device) => (
+            {rows.map((device) => (
               <ListRow key={device.id}>
                 <ListPrimaryCell scope="row">
                   <DeviceName>{device.displayName}</DeviceName>
                   <LastSubmitted>
+                    {device.cloudSessions != null &&
+                      `${device.cloudSessions.toLocaleString("en-US")} ${
+                        device.cloudSessions === 1 ? "session" : "sessions"
+                      } · `}
                     Last submitted{" "}
                     <time
                       dateTime={device.lastSubmittedAt ?? undefined}

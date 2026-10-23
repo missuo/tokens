@@ -4,6 +4,7 @@ import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { db, submittedDevices } from "@/lib/db";
 import { getSessionFromRequest } from "@/lib/auth/requestSession";
+import { isReservedCloudDeviceKey } from "@/lib/devices/cloud";
 import {
   normalizeUsernameCacheKey,
   revalidateUsernamePaths,
@@ -87,6 +88,35 @@ export async function PATCH(request: Request, { params }: RouteParams) {
     }
 
     const { name } = parsed.data;
+
+    // Look the device up scoped to the caller first, so another user's device
+    // still 404s without leaking existence. Cloud session devices carry a
+    // fixed server-side label and cannot be renamed.
+    const [existing] = await db
+      .select({ deviceKey: submittedDevices.deviceKey })
+      .from(submittedDevices)
+      .where(
+        and(
+          eq(submittedDevices.id, deviceId),
+          eq(submittedDevices.userId, session.id)
+        )
+      )
+      .limit(1);
+
+    if (!existing) {
+      return NextResponse.json(
+        { error: "Device not found" },
+        { status: 404 }
+      );
+    }
+
+    if (isReservedCloudDeviceKey(existing.deviceKey)) {
+      return NextResponse.json(
+        { error: "Cloud session devices are named by the server and cannot be renamed" },
+        { status: 400 }
+      );
+    }
+
     const updatedAt = new Date();
 
     const [updated] = await db

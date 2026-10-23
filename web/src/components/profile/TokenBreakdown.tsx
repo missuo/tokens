@@ -2,6 +2,7 @@
 
 import { useId, type CSSProperties } from "react";
 import { formatNumber } from "@/lib/utils";
+import { formatPercent } from "@/lib/format";
 import type { ProfileStatsData } from "./types";
 import { tw } from "@/lib/tw";
 
@@ -202,7 +203,7 @@ export function TokenBreakdown({ stats, className }: TokenBreakdownProps) {
                 </LabelRow>
                 <ValueRow>
                   {formatNumber(type.value)}
-                  <Percentage>{percentage.toFixed(1)}%</Percentage>
+                  <Percentage>{formatPercent(percentage)}</Percentage>
                 </ValueRow>
               </BreakdownItem>
             );

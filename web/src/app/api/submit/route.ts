@@ -23,6 +23,7 @@ import {
 } from "@/lib/db/helpers";
 import { normalizeUsernameCacheKey, revalidateUsernamePaths } from "@/lib/db/usernameLookup";
 import { LEGACY_DEVICE_KEY } from "@/lib/devices/shared";
+import { parseCloudDeviceKey } from "@/lib/devices/cloud";
 
 const LEGACY_SUBMIT_DEVICE_KEY = LEGACY_DEVICE_KEY;
 const LEGACY_SUBMIT_DEVICE_NAME = "Legacy submissions";
@@ -129,12 +130,18 @@ function normalizeSubmissionData(data: unknown): void {
 //       so daily_breakdown rows are keyed by submittedDeviceId.
 // The submissions row keeps the GREATEST() of stored vs. incoming so a single
 // device-aware submit cannot regress an account back to v1 hash semantics.
-function getSubmitDevice(data: SubmissionData): { key: string; name: string | null; schemaVersion: number } {
+function getSubmitDevice(
+  data: SubmissionData
+): { key: string; name: string | null; schemaVersion: number; isCloud: boolean } {
   if (data.device) {
+    const isCloud = parseCloudDeviceKey(data.device.id) != null;
     return {
       key: data.device.id,
-      name: data.device.name ?? null,
+      // A cloud session's name comes from its key (deviceDisplayLabel), never
+      // from the payload: nothing the container reports about itself is kept.
+      name: isCloud ? null : data.device.name ?? null,
       schemaVersion: 2,
+      isCloud,
     };
   }
 
@@ -142,6 +149,7 @@ function getSubmitDevice(data: SubmissionData): { key: string; name: string | nu
     key: LEGACY_SUBMIT_DEVICE_KEY,
     name: LEGACY_SUBMIT_DEVICE_NAME,
     schemaVersion: data.contributions.some((c) => c.timestampMs != null) ? 1 : 0,
+    isCloud: false,
   };
 }
 
@@ -420,7 +428,10 @@ export async function POST(request: Request) {
       if (
         existingDeviceDays.length === 0 &&
         !isNewSubmission &&
-        submitDevice.key !== LEGACY_SUBMIT_DEVICE_KEY
+        submitDevice.key !== LEGACY_SUBMIT_DEVICE_KEY &&
+        // A cloud session holds one session's usage; it is never the machine
+        // that wrote the legacy history, so it must not inherit it.
+        !submitDevice.isCloud
       ) {
         // The first device-aware submit after the migration should continue
         // the user's legacy bucket instead of counting the same history twice.
@@ -948,7 +959,11 @@ export async function POST(request: Request) {
               data.timeMetrics.sessionCount
             ),
           } : {}),
-          mcpServers: mcpServers && mcpServers.length > 0 ? mcpServers : null,
+          // A cloud container's MCP config belongs to the repository it ran
+          // in, so a cloud submit leaves the account's list as it was.
+          ...(submitDevice.isCloud
+            ? {}
+            : { mcpServers: mcpServers && mcpServers.length > 0 ? mcpServers : null }),
           updatedAt: new Date(),
         })
         .where(eq(submissions.id, submissionId));

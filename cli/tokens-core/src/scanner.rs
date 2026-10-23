@@ -761,7 +761,7 @@ pub fn built_in_extra_scan_paths_for(
     enabled: &HashSet<ClientId>,
     use_env_roots: bool,
 ) -> Vec<(ClientId, PathBuf)> {
-    let mut paths = Vec::new();
+    let mut paths = crate::paseo::discover_scan_paths(Path::new(home_dir), enabled, use_env_roots);
 
     if enabled.contains(&ClientId::Claude) {
         // `transcripts` is a sibling of the registered `projects` root, not a

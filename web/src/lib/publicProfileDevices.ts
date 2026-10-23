@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { unstable_cache } from "next/cache";
-import { desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { db, dailyBreakdown, submittedDevices, users } from "@/lib/db";
 import {
   USERNAME_LOOKUP_LIMIT,
@@ -8,6 +8,7 @@ import {
   normalizeUsernameCacheKey,
   usernameEqualsIgnoreCase,
 } from "@/lib/db/usernameLookup";
+import { CLOUD_DEVICE_KEY_PATTERN, parseCloudDeviceKey } from "@/lib/devices/cloud";
 import {
   deviceDisplayLabel,
   publicDeviceDisplayLabel,
@@ -103,33 +104,72 @@ export async function getPublicProfileDevicesResponse(
         desc(submittedDevices.createdAt)
       );
 
+    // Cloud session devices are folded into one row per provider for display
+    // (groupCloudDevices), and that row's active days are a union across its
+    // sessions, which the per-device counts cannot reconstruct. Count it here,
+    // with the same definition as `activeDays`. Selected by the key regex
+    // rather than LIKE ('_' is a LIKE wildcard); a provider the server does not
+    // know is in the result but never looked up.
+    const cloudActiveDayRows = rows.some((row) => parseCloudDeviceKey(row.deviceKey))
+      ? await db
+          .select({
+            provider: sql<string>`split_part(${submittedDevices.deviceKey}, '_', 2)`,
+            activeDays: sql<string>`COUNT(DISTINCT ${dailyBreakdown.date})`,
+          })
+          .from(dailyBreakdown)
+          .innerJoin(
+            submittedDevices,
+            eq(dailyBreakdown.submittedDeviceId, submittedDevices.id)
+          )
+          .where(
+            and(
+              eq(submittedDevices.userId, user.id),
+              sql`${submittedDevices.deviceKey} ~ ${CLOUD_DEVICE_KEY_PATTERN}`,
+              sql`${dailyBreakdown.tokens} > 0`
+            )
+          )
+          .groupBy(sql`split_part(${submittedDevices.deviceKey}, '_', 2)`)
+      : [];
+    const cloudActiveDays = new Map(
+      cloudActiveDayRows.map((row) => [row.provider, Number(row.activeDays) || 0])
+    );
+
     return NextResponse.json({
       user: {
         username: user.username,
         displayName: user.displayName,
         avatarUrl: user.avatarUrl,
       },
-      devices: rows.map((row) => ({
-        id: row.id,
-        deviceKey: row.deviceKey,
-        // Public consumers render the resolved fallback label; `customName`
-        // carries the raw nullable value so owners (settings UI) can
-        // distinguish "user typed this" from "fallback label". Only the owner
-        // gets either unmasked: a device name is often a hostname.
-        displayName: access.isOwner
-          ? deviceDisplayLabel(row.deviceKey, row.displayName)
-          : publicDeviceDisplayLabel(row.deviceKey, row.displayName),
-        customName: access.isOwner ? row.displayName : null,
-        createdAt: toIsoString(row.createdAt),
-        lastSubmittedAt: toIsoString(row.lastSubmittedAt),
-        totalTokens: Number(row.totalTokens) || 0,
-        totalCost: Number(row.totalCost) || 0,
-        inputTokens: Number(row.inputTokens) || 0,
-        outputTokens: Number(row.outputTokens) || 0,
-        activeDays: Number(row.activeDays) || 0,
-        firstDay: row.firstDay,
-        lastDay: row.lastDay,
-      })),
+      devices: rows.map((row) => {
+        const cloud = parseCloudDeviceKey(row.deviceKey);
+        return {
+          id: row.id,
+          deviceKey: row.deviceKey,
+          // Public consumers render the resolved fallback label; `customName`
+          // carries the raw nullable value so owners (settings UI) can
+          // distinguish "user typed this" from "fallback label". Only the owner
+          // gets either unmasked: a device name is often a hostname.
+          displayName: access.isOwner
+            ? deviceDisplayLabel(row.deviceKey, row.displayName)
+            : publicDeviceDisplayLabel(row.deviceKey, row.displayName),
+          // Cloud session devices have a fixed label and no editable name.
+          customName: access.isOwner && !cloud ? row.displayName : null,
+          createdAt: toIsoString(row.createdAt),
+          lastSubmittedAt: toIsoString(row.lastSubmittedAt),
+          totalTokens: Number(row.totalTokens) || 0,
+          totalCost: Number(row.totalCost) || 0,
+          inputTokens: Number(row.inputTokens) || 0,
+          outputTokens: Number(row.outputTokens) || 0,
+          activeDays: Number(row.activeDays) || 0,
+          firstDay: row.firstDay,
+          lastDay: row.lastDay,
+          // Distinct active days across all of this provider's cloud sessions;
+          // only on well-formed cloud session devices.
+          ...(cloud
+            ? { cloudGroupActiveDays: cloudActiveDays.get(cloud.provider) ?? 0 }
+            : {}),
+        };
+      }),
     }, user.isPrivate || access.isOwner
       ? { headers: { "Cache-Control": PRIVATE_CACHE_CONTROL } }
       : undefined);

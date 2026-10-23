@@ -6,6 +6,7 @@ import { EyeIcon, KeyIcon } from "lucide-react";
 import { toast } from "react-toastify";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
+import { groupCloudDevices, isReservedCloudDeviceKey } from "@/lib/devices/cloud";
 import { deviceDisplayLabel } from "@/lib/devices/shared";
 import { tw } from "@/lib/tw";
 import { cn, formatNumber, formatCurrency } from "@/lib/utils";
@@ -44,6 +45,8 @@ interface SettingsDevice {
   totalTokens: number;
   totalCost: number;
   activeDays: number;
+  /** Cloud session devices only: active days across the provider's sessions. */
+  cloudGroupActiveDays?: number;
 }
 
 // Mirror the server-side RenameBodySchema in
@@ -1416,7 +1419,8 @@ export default function SettingsClient() {
           <Description style={{ color: "var(--muted-foreground)" }}>
             Machines that have submitted usage data. Rename a device to tell
             your machines apart. Only you see the full name: your public
-            profile shows it masked (first and last two characters).
+            profile shows it masked (first and last two characters). Cloud
+            agent sessions are grouped into one row per provider.
           </Description>
 
           {deviceError && (
@@ -1456,7 +1460,9 @@ export default function SettingsClient() {
             </EmptyState>
           ) : (
             <TokenList>
-              {devices.map((device) => (
+              {/* One row per cloud provider, as on the profile: each cloud
+                  session is its own device, with a fixed label and no rename. */}
+              {groupCloudDevices(devices).map((device) => (
                 <TokenItem key={device.id}>
                   {editingDeviceId === device.id ? (
                     <DeviceEditRow>
@@ -1504,6 +1510,10 @@ export default function SettingsClient() {
                             {device.displayName}
                           </TokenName>
                           <SmallText style={{ color: "var(--muted-foreground)" }}>
+                            {device.cloudSessions != null &&
+                              `${device.cloudSessions.toLocaleString("en-US")} ${
+                                device.cloudSessions === 1 ? "session" : "sessions"
+                              } · `}
                             {formatNumber(device.totalTokens)} tokens
                             {" · "}
                             {formatCurrency(device.totalCost)}
@@ -1515,12 +1525,15 @@ export default function SettingsClient() {
                           </SmallText>
                         </div>
                       </TokenInfo>
-                      <SecondaryButton
-                        type="button"
-                        onClick={() => startEditingDevice(device)}
-                      >
-                        Rename
-                      </SecondaryButton>
+                      {/* Cloud session devices are named by the server. */}
+                      {!isReservedCloudDeviceKey(device.deviceKey) && (
+                        <SecondaryButton
+                          type="button"
+                          onClick={() => startEditingDevice(device)}
+                        >
+                          Rename
+                        </SecondaryButton>
+                      )}
                     </>
                   )}
                 </TokenItem>

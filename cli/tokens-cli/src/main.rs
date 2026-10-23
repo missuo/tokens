@@ -1,5 +1,6 @@
 mod antigravity;
 mod auth;
+mod cloud;
 mod commands;
 mod cursor;
 mod device;
@@ -147,6 +148,58 @@ enum Commands {
     },
     #[command(about = "Delete all submitted usage data from the server")]
     DeleteSubmittedData,
+    #[command(about = "Report usage from a cloud agent session (Claude Code cloud, Codex cloud)")]
+    Cloud {
+        #[command(subcommand)]
+        subcommand: CloudSubcommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum CloudSubcommand {
+    #[command(
+        about = "Submit this cloud session's usage; safe to run from a Stop/notify hook (never fails the hook)"
+    )]
+    Submit {
+        #[arg(
+            long,
+            value_enum,
+            help = "Cloud provider (auto-detected for Claude Code; or $TOKENS_CLOUD_PROVIDER)"
+        )]
+        provider: Option<cloud::CloudProvider>,
+        #[arg(
+            long,
+            help = "Session id to key this session's device on (or $TOKENS_CLOUD_SESSION_ID); only its hash is sent"
+        )]
+        session_id: Option<String>,
+        #[arg(
+            long,
+            value_name = "MINUTES",
+            default_value_t = 0,
+            help = "Optional throttle: skip if this session submitted less than MINUTES ago (default 0 = submit every time, so a session's last turns are never dropped)"
+        )]
+        min_interval: u64,
+        #[arg(long, help = "Submit even if the last submit was recent")]
+        force: bool,
+        #[arg(long, help = "Exit non-zero on failure instead of always exiting 0")]
+        strict: bool,
+        #[arg(long, help = "Show what would be submitted without submitting")]
+        dry_run: bool,
+        #[arg(
+            hide = true,
+            help = "Hook payload JSON (Codex passes it as the last argument); only the session id is read"
+        )]
+        payload: Option<String>,
+    },
+    #[command(about = "Show the detected cloud provider and the device this session submits as")]
+    Status {
+        #[arg(long, value_enum)]
+        provider: Option<cloud::CloudProvider>,
+        #[arg(long)]
+        session_id: Option<String>,
+        #[arg(long, help = "Output as JSON")]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -400,6 +453,7 @@ fn main() -> Result<()> {
                 dry_run,
                 SubmitMode::Interactive,
                 replacement,
+                None,
             )
         }
         Some(Commands::Serve { clients, interval }) => {
@@ -438,6 +492,9 @@ fn main() -> Result<()> {
         }
         Some(Commands::DeleteSubmittedData) => {
             run_delete_data_command()
+        }
+        Some(Commands::Cloud { subcommand }) => {
+            run_cloud_command(subcommand)
         }
         None => {
             // The dashboard and the report commands are gone, so a bare
@@ -2305,6 +2362,7 @@ fn run_autosubmit_command(subcommand: commands::autosubmit::AutosubmitSubcommand
                 false,
                 SubmitMode::Autosubmit,
                 None,
+                None,
             ) {
                 Ok(()) => {
                     commands::autosubmit::record_run_success(
@@ -2320,6 +2378,108 @@ fn run_autosubmit_command(subcommand: commands::autosubmit::AutosubmitSubcommand
             }
         }
     }
+}
+
+fn run_cloud_command(subcommand: CloudSubcommand) -> Result<()> {
+    match subcommand {
+        CloudSubcommand::Status {
+            provider,
+            session_id,
+            json,
+        } => {
+            let inputs = cloud::DetectInputs::from_process(provider, session_id, None);
+            let detected = cloud::detect(&inputs);
+            if json {
+                let value = match &detected {
+                    Ok(session) => serde_json::json!({
+                        "cloud": true,
+                        "provider": session.provider.as_str(),
+                        "client": session.provider.client_id(),
+                        "sessionIdSource": session.session_source.describe(),
+                        "device": session.submit_device(),
+                        "loggedIn": auth::resolve_api_token().is_some(),
+                    }),
+                    Err(err) => serde_json::json!({ "cloud": false, "reason": err.to_string() }),
+                };
+                println!("{}", serde_json::to_string_pretty(&value)?);
+                return Ok(());
+            }
+            match detected {
+                Ok(session) => {
+                    let device = session.submit_device();
+                    println!("Cloud session: {}", session.provider.as_str());
+                    println!("  Client submitted: {}", session.provider.client_id());
+                    println!("  Session id from: {}", session.session_source.describe());
+                    println!("  Device id (hashed): {}", device.id);
+                    println!("  Device name: {}", device.name.unwrap_or_default());
+                    println!(
+                        "  Logged in: {}",
+                        if auth::resolve_api_token().is_some() { "yes" } else { "no (set TOKENS_API_TOKEN)" }
+                    );
+                }
+                Err(err) => println!("Not a cloud session: {err}"),
+            }
+            Ok(())
+        }
+        CloudSubcommand::Submit {
+            provider,
+            session_id,
+            min_interval,
+            force,
+            strict,
+            dry_run,
+            payload,
+        } => {
+            let result = run_cloud_submit(provider, session_id, min_interval, force, dry_run, payload);
+            match result {
+                Ok(()) => Ok(()),
+                // A hook that exits non-zero can block or clutter the agent's
+                // turn, and a missed submit is caught up by the next one, so
+                // failures are reported but not propagated unless asked.
+                Err(err) if !strict => {
+                    eprintln!("tokens cloud submit: {err:#}");
+                    Ok(())
+                }
+                Err(err) => Err(err),
+            }
+        }
+    }
+}
+
+fn run_cloud_submit(
+    provider: Option<cloud::CloudProvider>,
+    session_id: Option<String>,
+    min_interval: u64,
+    force: bool,
+    dry_run: bool,
+    payload: Option<String>,
+) -> Result<()> {
+    let payload = payload.or_else(cloud::read_stdin_payload);
+    let inputs = cloud::DetectInputs::from_process(provider, session_id, payload);
+    let session = cloud::detect(&inputs)?;
+    let device = session.submit_device();
+
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    if !force && !dry_run && cloud::throttled(&device.id, min_interval, now_ms) {
+        println!("tokens cloud submit: submitted less than {min_interval} min ago; skipping.");
+        return Ok(());
+    }
+
+    run_submit_command(
+        Some(vec![session.provider.client_id().to_string()]),
+        None,
+        None,
+        None,
+        dry_run,
+        SubmitMode::Autosubmit,
+        None,
+        Some(&session),
+    )?;
+
+    if !dry_run {
+        cloud::record_submit(&device.id, now_ms)?;
+    }
+    Ok(())
 }
 
 /// Run one submission as a child `tokens submit` process and wait for it.
@@ -2355,6 +2515,7 @@ fn serve_startup_jitter(interval: std::time::Duration) -> std::time::Duration {
     Duration::from_secs(nanos % (max + 1))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_submit_command(
     clients: Option<Vec<String>>,
     since: Option<String>,
@@ -2363,6 +2524,7 @@ fn run_submit_command(
     dry_run: bool,
     mode: SubmitMode,
     replacement: Option<SubmitReplacementCoverage>,
+    cloud_session: Option<&cloud::CloudSession>,
 ) -> Result<()> {
     use colored::Colorize;
     use std::io::IsTerminal;
@@ -2606,9 +2768,19 @@ fn run_submit_command(
 
     let api_url = auth::get_api_base_url();
 
-    let submit_device = device::resolve_submit_device()?;
-    let submit_payload =
+    // A cloud session submits as a device keyed to the session, never the
+    // container's device.json (see cloud.rs).
+    let submit_device = match cloud_session {
+        Some(session) => session.submit_device(),
+        None => device::resolve_submit_device()?,
+    };
+    let mut submit_payload =
         to_ts_token_contribution_data(&graph_result, Some(&submit_device), replacement.as_ref());
+    if cloud_session.is_some() {
+        // The container's MCP config is the repository's, not the user's, and
+        // the server would otherwise replace the account's list with it.
+        submit_payload.mcp_servers = None;
+    }
 
     // `tokens serve` drives this unattended, so the request must be bounded.
     // The overall budget is more generous than the 30s used elsewhere because a

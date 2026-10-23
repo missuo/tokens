@@ -44,6 +44,15 @@ export function formatCurrency(value: number, compact = false): string {
 }
 
 /**
+ * Format a 0–100 share with one decimal. A non-zero share that would round to
+ * "0.0%" shows as "<0.1%" so a used category never reads as unused.
+ */
+export function formatPercent(percent: number): string {
+  if (percent > 0 && percent < 0.05) return "<0.1%";
+  return `${percent.toFixed(1)}%`;
+}
+
+/**
  * Format an ISO timestamp as a short relative time, e.g. "just now",
  * "5m ago", "3h ago", "12d ago", "2mo ago", "1y ago". Returns "never"
  * for null/invalid input so callers can render it directly.

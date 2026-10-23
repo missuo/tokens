@@ -22,7 +22,7 @@ import { CONTAINER } from "@/components/layout/Container";
 import { SourceLogo } from "@/components/SourceLogo";
 import { ProfileSocialLinks } from "./ProfileSocialLinks";
 import { cn } from "@/lib/utils";
-import { formatCurrency, formatNumber } from "@/lib/format";
+import { formatCurrency, formatNumber, formatPercent } from "@/lib/format";
 import type { ProfileSocialLink } from "./types";
 
 export interface ProfileViewStats {
@@ -110,25 +110,24 @@ function Stat({
 /**
  * Composition of the token total.
  *
- * Rendered as one proportional bar rather than five separate figures: the
- * useful question here is "how much of this is cache reads", which is a shape,
- * not a number. Exact values stay underneath for anyone who wants them.
+ * Rendered as one proportional bar: the useful question here is "how much of
+ * this is cache reads", which the bar answers at a glance. Exact values and
+ * shares stay underneath for anyone who wants them.
  */
 function TokenComposition({ stats }: { stats: ProfileViewStats }) {
-  const parts = useMemo(
-    () =>
-      [
-        { key: "Input", value: stats.inputTokens, className: "bg-chart-1" },
-        { key: "Output", value: stats.outputTokens, className: "bg-chart-2" },
-        { key: "Cache read", value: stats.cacheReadTokens, className: "bg-chart-3" },
-        { key: "Cache write", value: stats.cacheWriteTokens, className: "bg-chart-4" },
-        { key: "Reasoning", value: stats.reasoningTokens ?? 0, className: "bg-chart-5" },
-      ].filter((p) => p.value > 0),
-    [stats]
-  );
+  const parts = useMemo(() => {
+    const nonZero = [
+      { key: "Input", value: stats.inputTokens, className: "bg-chart-1" },
+      { key: "Output", value: stats.outputTokens, className: "bg-chart-2" },
+      { key: "Cache read", value: stats.cacheReadTokens, className: "bg-chart-3" },
+      { key: "Cache write", value: stats.cacheWriteTokens, className: "bg-chart-4" },
+      { key: "Reasoning", value: stats.reasoningTokens ?? 0, className: "bg-chart-5" },
+    ].filter((p) => p.value > 0);
+    const total = nonZero.reduce((sum, p) => sum + p.value, 0);
+    return nonZero.map((p) => ({ ...p, share: (p.value / total) * 100 }));
+  }, [stats]);
 
-  const total = parts.reduce((sum, p) => sum + p.value, 0);
-  if (total === 0) return null;
+  if (parts.length === 0) return null;
 
   return (
     <div className="flex flex-col gap-3">
@@ -137,7 +136,7 @@ function TokenComposition({ stats }: { stats: ProfileViewStats }) {
           <div
             key={p.key}
             className={p.className}
-            style={{ width: `${(p.value / total) * 100}%` }}
+            style={{ width: `${p.share}%` }}
             title={`${p.key}: ${formatNumber(p.value, true)}`}
           />
         ))}
@@ -147,8 +146,9 @@ function TokenComposition({ stats }: { stats: ProfileViewStats }) {
           <div key={p.key} className="flex items-center gap-2">
             <span className={cn("size-2 rounded-full", p.className)} aria-hidden="true" />
             <dt className="text-xs text-muted-foreground">{p.key}</dt>
-            <dd className="font-mono text-xs tabular-nums">
-              {formatNumber(p.value, true)}
+            <dd className="whitespace-nowrap font-mono text-xs tabular-nums">
+              {formatNumber(p.value, true)}{" "}
+              <span className="text-muted-foreground">{formatPercent(p.share)}</span>
             </dd>
           </div>
         ))}

@@ -4,7 +4,7 @@ import { useMemo } from "react";
 import { SourceLogo } from "@/components/SourceLogo";
 import { ModelIcon } from "./ModelIcon";
 import { cn } from "@/lib/utils";
-import { formatCurrency, formatNumber } from "@/lib/format";
+import { formatCurrency, formatNumber, formatPercent } from "@/lib/format";
 import {
   createContributionClientDetails,
   getContributionDayMessageCount,
@@ -82,7 +82,14 @@ export function ProfileToday({ day, className }: ProfileTodayProps) {
       }
     }
     const sum = COMPOSITION.reduce((acc, part) => acc + totals[part.key], 0);
-    return { totals, sum, parts: COMPOSITION.filter((p) => totals[p.key] > 0) };
+    return {
+      totals,
+      sum,
+      parts: COMPOSITION.filter((p) => totals[p.key] > 0).map((p) => ({
+        ...p,
+        share: (totals[p.key] / sum) * 100,
+      })),
+    };
   }, [clients]);
 
   // Busiest client first: the one that did the work should read first.
@@ -123,9 +130,7 @@ export function ProfileToday({ day, className }: ProfileTodayProps) {
                   <div
                     key={part.key}
                     className={part.className}
-                    style={{
-                      width: `${(composition.totals[part.key] / composition.sum) * 100}%`,
-                    }}
+                    style={{ width: `${part.share}%` }}
                     title={`${part.label}: ${formatNumber(composition.totals[part.key], true)}`}
                   />
                 ))}
@@ -138,8 +143,9 @@ export function ProfileToday({ day, className }: ProfileTodayProps) {
                       aria-hidden="true"
                     />
                     <dt className="text-xs text-muted-foreground">{part.label}</dt>
-                    <dd className="font-mono text-xs tabular-nums">
-                      {formatNumber(composition.totals[part.key], true)}
+                    <dd className="whitespace-nowrap font-mono text-xs tabular-nums">
+                      {formatNumber(composition.totals[part.key], true)}{" "}
+                      <span className="text-muted-foreground">{formatPercent(part.share)}</span>
                     </dd>
                   </div>
                 ))}
