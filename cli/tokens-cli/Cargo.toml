@@ -11,6 +11,11 @@ description = "CLI for tokens - AI token usage analytics"
 name = "tokens"
 path = "src/main.rs"
 
+# Windowless launcher the Windows autosubmit task runs; see src/bin/tokensw.rs.
+[[bin]]
+name = "tokensw"
+path = "src/bin/tokensw.rs"
+
 [dependencies]
 tokens-core = { workspace = true }
 

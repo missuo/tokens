@@ -598,7 +598,10 @@ fn render_cron_spec(exe: &Path, settings: &AutosubmitSettings) -> Result<Schedul
 
 fn render_windows_task_spec(exe: &Path, settings: &AutosubmitSettings) -> Result<SchedulerSpec> {
     let (schedule, modifier) = windows_schedule(settings.interval_minutes)?;
-    let task = format!(r#""{}" autosubmit run"#, exe.display());
+    let task = format!(
+        r#""{}" autosubmit run"#,
+        windows_task_executable(exe).display()
+    );
     Ok(SchedulerSpec {
         files: Vec::new(),
         cron_block: None,
@@ -627,6 +630,18 @@ fn render_windows_task_spec(exe: &Path, settings: &AutosubmitSettings) -> Result
             ],
         )],
     })
+}
+
+/// `tokens.exe` is a console program, so Task Scheduler opens a console window
+/// for it on every run. Point the task at the windowless `tokensw.exe` shipped
+/// next to it instead; an install that predates it keeps the console binary.
+fn windows_task_executable(exe: &Path) -> PathBuf {
+    let launcher = exe.with_file_name("tokensw.exe");
+    if launcher.is_file() {
+        launcher
+    } else {
+        exe.to_path_buf()
+    }
 }
 
 fn windows_schedule(interval_minutes: u64) -> Result<(String, String)> {
