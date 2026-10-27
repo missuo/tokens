@@ -122,6 +122,20 @@ services:
     # reaches it, and it is what holds the certificate.
     ports:
       - "127.0.0.1:${APP_PORT:-3000}:3000"
+    volumes:
+      # Static assets outlive the deploy that built them.
+      #
+      # Next names each chunk after a hash of its contents, so every build
+      # reissues them under new names — while the HTML referencing the old ones
+      # lives on in CDN edge entries and in already-open browser tabs. Without
+      # this volume those chunks vanish with the container, the origin 404s
+      # them as text/plain, and the page dies with Next's client-side exception
+      # screen. Because each edge caches independently, it hits only some
+      # visitors, which reads as though it depended on their IP.
+      #
+      # docker-entrypoint.sh layers each deploy's files in and sweeps anything
+      # no deploy has shipped for 30 days. ~2 MB per build.
+      - nextstatic:/app/web/.next/static
     networks:
       - internal
     healthcheck:
@@ -163,3 +177,7 @@ networks:
 
 volumes:
   pgdata:
+  # Seeded from the image on first start, then appended to by the entrypoint on
+  # every deploy. Safe to delete: the next start repopulates it with the running
+  # build's assets, losing only the older ones that keep stale HTML working.
+  nextstatic:
