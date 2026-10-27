@@ -87,6 +87,184 @@ const CURSOR_JSON_PAGE_SIZE: usize = 500;
 /// above this admits up to a quarter-million events.
 const CURSOR_MAX_JSON_PAGES: usize = 500;
 
+/// How far back of already-cached history an incremental sync re-fetches.
+///
+/// Cursor keeps revising an event for a while after it lands — the token counts
+/// grow and the metered cents follow. Refetching the last hour means those
+/// corrections are collected rather than frozen at whatever the first snapshot
+/// said.
+const CURSOR_USAGE_CORRECTION_WINDOW_MS: i64 = 60 * 60 * 1000;
+
+/// Slack for the local clock running ahead of Cursor's. Subtracted from the
+/// window above so a fast clock cannot skip events recorded "before" the
+/// watermark it computed.
+const CURSOR_USAGE_CLOCK_SKEW_MS: i64 = 5 * 60 * 1000;
+
+/// The dashboard request body. `startDate` is only sent for an incremental
+/// sync; omitting it asks for the full history, which is what a cold cache
+/// needs. A server that ignored the bound would simply return everything, and
+/// the merge would still produce the right cache — only the time saving is lost.
+fn usage_events_request_body(
+    page: usize,
+    page_size: usize,
+    sync_start: Option<i64>,
+) -> serde_json::Value {
+    match sync_start {
+        Some(sync_start) => serde_json::json!({
+            "teamId": 0,
+            "startDate": sync_start,
+            "page": page,
+            "pageSize": page_size,
+        }),
+        None => serde_json::json!({
+            "teamId": 0,
+            "page": page,
+            "pageSize": page_size,
+        }),
+    }
+}
+
+/// The events array of a cached usage-events file, or empty when there is no
+/// usable cache. A malformed cache is treated as absent: a full sync replaces
+/// it, which is what should happen to a file nothing can read.
+fn cached_usage_events(json_text: Option<&str>) -> Vec<serde_json::Value> {
+    json_text
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok())
+        .and_then(|value| {
+            value
+                .get("usageEventsDisplay")
+                .and_then(|events| events.as_array())
+                .cloned()
+        })
+        .unwrap_or_default()
+}
+
+/// A row's identity for the merge.
+///
+/// `usageEventId`, when present, identifies the event itself — Cursor reports
+/// one event as a series of snapshots under that id, so keying on it is what
+/// lets a freshly fetched snapshot replace its cached predecessor instead of
+/// being stored beside it. Without an id the row is keyed on the projection the
+/// report parser treats as immutable; its token counts are part of that key, so
+/// two snapshots of one id-less event do remain distinct. That is the
+/// conservative direction: a kept duplicate is collapsed later by
+/// `dedupe_cursor_event_snapshots`, while a wrongly merged row would be gone.
+fn cursor_usage_event_identity(event: &serde_json::Value) -> String {
+    if let Some(usage_event_id) = event
+        .get("usageEventId")
+        .and_then(|id| id.as_str())
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+    {
+        return format!("id:{usage_event_id}");
+    }
+
+    let field = |name: &str| {
+        event
+            .get(name)
+            .map(|value| value.to_string())
+            .unwrap_or_default()
+    };
+    let usage = event.get("tokenUsage");
+    let usage_field = |name: &str| {
+        usage
+            .and_then(|usage| usage.get(name))
+            .map(|value| value.to_string())
+            .unwrap_or_default()
+    };
+    format!(
+        "row:{}|{}|{}|{}|{}|{}|{}",
+        field("conversationId"),
+        field("model"),
+        field("timestamp"),
+        usage_field("inputTokens"),
+        usage_field("outputTokens"),
+        usage_field("cacheReadTokens"),
+        usage_field("cacheWriteTokens"),
+    )
+}
+
+/// The newest event timestamp in `events`, in epoch ms.
+///
+/// Timestamps arrive as a string or a number depending on the endpoint, so both
+/// are accepted. A row without a usable timestamp cannot move the watermark.
+fn usage_events_watermark_ms(events: &[serde_json::Value]) -> Option<i64> {
+    events
+        .iter()
+        .filter_map(|event| {
+            let value = event.get("timestamp")?;
+            value
+                .as_i64()
+                .or_else(|| value.as_str()?.trim().parse::<i64>().ok())
+        })
+        .filter(|ms| *ms > 0)
+        .max()
+}
+
+/// Where an incremental sync should start fetching, given the cache's
+/// watermark: back off by the correction window and the clock slack.
+///
+/// `None` means there is nothing to be incremental about and the caller should
+/// fetch the full history.
+fn incremental_sync_start_ms(cached: &[serde_json::Value]) -> Option<i64> {
+    let watermark = usage_events_watermark_ms(cached)?;
+    Some(
+        watermark
+            .saturating_sub(CURSOR_USAGE_CORRECTION_WINDOW_MS)
+            .saturating_sub(CURSOR_USAGE_CLOCK_SKEW_MS)
+            .max(0),
+    )
+}
+
+/// Union of the cache and a freshly fetched window, incoming authoritative.
+///
+/// Every cached row survives unless the fetch returned a row with the same
+/// identity, so an incremental fetch covering only recent history never drops
+/// the rest of it. Cache order is preserved, and rows the fetch introduced are
+/// appended, so the result stays stable across syncs that change nothing.
+fn merge_cursor_usage_events(
+    cached: Vec<serde_json::Value>,
+    incoming: Vec<serde_json::Value>,
+) -> Vec<serde_json::Value> {
+    if cached.is_empty() {
+        return incoming;
+    }
+
+    let mut replacement: HashMap<String, serde_json::Value> = HashMap::new();
+    let mut order: Vec<String> = Vec::with_capacity(incoming.len());
+    for event in incoming {
+        let identity = cursor_usage_event_identity(&event);
+        if replacement.insert(identity.clone(), event).is_none() {
+            order.push(identity);
+        }
+    }
+
+    let mut merged = Vec::with_capacity(cached.len() + replacement.len());
+    let mut consumed: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for event in cached {
+        let identity = cursor_usage_event_identity(&event);
+        match replacement.get(&identity) {
+            Some(fresh) => {
+                // Only the first cached row of an identity takes the fresh copy;
+                // further cached duplicates of it are dropped rather than
+                // multiplied by the replacement.
+                if consumed.insert(identity) {
+                    merged.push(fresh.clone());
+                }
+            }
+            None => merged.push(event),
+        }
+    }
+    for identity in order {
+        if !consumed.contains(&identity) {
+            if let Some(event) = replacement.get(&identity) {
+                merged.push(event.clone());
+            }
+        }
+    }
+    merged
+}
+
 /// Cumulative ceiling on the usage-events JSON downloaded in one fetch, enforced
 /// *while* each page is read rather than after it has all arrived, and counted
 /// across every page so a paginated response can't sidestep it. Without it a
@@ -225,20 +403,6 @@ fn build_cursor_json_headers(session_token: &str) -> reqwest::header::HeaderMap 
     headers.insert("Content-Type", HeaderValue::from_static("application/json"));
     headers.insert("Origin", HeaderValue::from_static("https://cursor.com"));
     headers
-}
-
-/// Count events in an aggregated usage-events JSON document. Invalid JSON or a
-/// missing `usageEventsDisplay` array counts as zero.
-fn count_cursor_json_events(json_text: &str) -> usize {
-    serde_json::from_str::<serde_json::Value>(json_text)
-        .ok()
-        .and_then(|value| {
-            value
-                .get("usageEventsDisplay")
-                .and_then(|events| events.as_array())
-                .map(|events| events.len())
-        })
-        .unwrap_or(0)
 }
 
 fn atomic_write_file(path: &std::path::Path, contents: &str) -> Result<()> {
@@ -1083,6 +1247,7 @@ pub async fn validate_cursor_session(token: &str) -> ValidateSessionResult {
 pub async fn fetch_cursor_usage_events_json(
     session_token: &str,
     timeout_override: Option<Duration>,
+    sync_start: Option<i64>,
 ) -> Result<String> {
     fetch_cursor_usage_events_json_from(
         USAGE_EVENTS_JSON_ENDPOINT,
@@ -1090,6 +1255,7 @@ pub async fn fetch_cursor_usage_events_json(
         timeout_override,
         CURSOR_MAX_JSON_BYTES,
         CURSOR_JSON_PAGE_SIZE,
+        sync_start,
     )
     .await
 }
@@ -1110,6 +1276,7 @@ async fn fetch_cursor_usage_events_json_from(
     timeout_override: Option<Duration>,
     max_body_bytes: usize,
     page_size: usize,
+    sync_start: Option<i64>,
 ) -> Result<String> {
     let client = build_cursor_http_client()?;
     let mut all_events: Vec<serde_json::Value> = Vec::new();
@@ -1133,11 +1300,7 @@ async fn fetch_cursor_usage_events_json_from(
             );
         }
 
-        let body = serde_json::json!({
-            "teamId": 0,
-            "page": page,
-            "pageSize": page_size,
-        });
+        let body = usage_events_request_body(page, page_size, sync_start);
 
         let req = client
             .post(url)
@@ -1286,7 +1449,7 @@ async fn read_cursor_body_with_cap(
 
 async fn sync_cursor_cache_with_fetcher<F, Fut>(fetch_usage_json: F) -> SyncCursorResult
 where
-    F: Fn(String) -> Fut,
+    F: Fn(String, Option<i64>) -> Fut,
     Fut: std::future::Future<Output = Result<String>>,
 {
     let home_dir = match home_dir() {
@@ -1308,7 +1471,7 @@ async fn sync_cursor_cache_with_fetcher_in_home<F, Fut>(
     fetch_usage_json: F,
 ) -> SyncCursorResult
 where
-    F: Fn(String) -> Fut,
+    F: Fn(String, Option<i64>) -> Fut,
     Fut: std::future::Future<Output = Result<String>>,
 {
     migrate_cache_dir_from_old_path_in_home(home_dir);
@@ -1353,31 +1516,67 @@ where
     for (account_id, credentials) in &store.accounts {
         let is_active = account_id == &store.active_account_id;
 
-        match fetch_usage_json(credentials.session_token.clone()).await {
-            Ok(json_text) => {
-                let file_path = if is_active {
-                    cache_dir.join("usage.json")
-                } else {
-                    cache_dir.join(format!(
-                        "usage.{}.json",
-                        sanitize_account_id_for_filename(account_id)
-                    ))
-                };
+        let file_path = if is_active {
+            cache_dir.join("usage.json")
+        } else {
+            cache_dir.join(format!(
+                "usage.{}.json",
+                sanitize_account_id_for_filename(account_id)
+            ))
+        };
 
-                let event_count = count_cursor_json_events(&json_text);
+        // Fetch only what the cache does not already cover. The full history
+        // grows without bound and the implicit sync's budget does not, so a
+        // download of everything is what eventually stops fitting (#90).
+        let cached_json = fs::read_to_string(&file_path).ok();
+        let cached_events = cached_usage_events(cached_json.as_deref());
+        let sync_start = incremental_sync_start_ms(&cached_events);
+
+        match fetch_usage_json(credentials.session_token.clone(), sync_start).await {
+            Ok(json_text) => {
+                let fetched_events = cached_usage_events(Some(&json_text));
                 let legacy_csv = file_path.with_extension("csv");
+
+                // An incremental fetch returning nothing means no new usage in
+                // the window, which is the ordinary case for an idle account —
+                // not the suspicious empty result below. The cache already holds
+                // the history, so leave it exactly as it is.
+                if sync_start.is_some() && fetched_events.is_empty() {
+                    total_rows += cached_events.len();
+                    success_count += 1;
+                    continue;
+                }
 
                 // A zero-event result is suspicious once cached history exists:
                 // overwriting `usage.json` with nothing and archiving the legacy
                 // CSV would strip real usage from reports. Keep both caches intact
                 // and record it so the next sync can recover instead.
-                if event_count == 0 && (file_path.exists() || legacy_csv.exists()) {
+                if fetched_events.is_empty() && (file_path.exists() || legacy_csv.exists()) {
                     errors.push(format!(
                         "{}: sync returned zero events; keeping existing cache",
                         account_id
                     ));
                     continue;
                 }
+
+                // Incoming is authoritative for what it covers; everything older
+                // than the window survives from the cache.
+                let merged = if sync_start.is_some() {
+                    merge_cursor_usage_events(cached_events, fetched_events)
+                } else {
+                    fetched_events
+                };
+                let event_count = merged.len();
+                let json_text = match serde_json::to_string(&serde_json::json!({
+                    "totalUsageEventsCount": event_count,
+                    "usageEventsDisplay": merged,
+                })) {
+                    Ok(text) => text,
+                    Err(e) => {
+                        errors.push(format!("{}: {}", account_id, e));
+                        continue;
+                    }
+                };
 
                 if let Err(e) = atomic_write_file(&file_path, &json_text) {
                     errors.push(format!("{}: {}", account_id, e));
@@ -1479,8 +1678,13 @@ pub async fn sync_cursor_cache(explicit: bool) -> SyncCursorResult {
     // This avoids stale manually-pasted cookies after Cursor refreshes its JWT.
     let _ = ensure_credentials_from_local_cursor();
 
-    sync_cursor_cache_with_fetcher(move |session_token| async move {
-        fetch_cursor_usage_events_json(&session_token, sync_timeout_override(explicit)).await
+    sync_cursor_cache_with_fetcher(move |session_token, sync_start| async move {
+        fetch_cursor_usage_events_json(
+            &session_token,
+            sync_timeout_override(explicit),
+            sync_start,
+        )
+        .await
     })
     .await
 }
@@ -1807,4 +2011,196 @@ pub fn run_cursor_switch(name: &str) -> Result<()> {
     );
 
     Ok(())
+}
+
+#[cfg(test)]
+mod incremental_sync_tests {
+    use super::*;
+
+    fn event(id: Option<&str>, ts: &str, tokens: i64) -> serde_json::Value {
+        let mut value = serde_json::json!({
+            "timestamp": ts,
+            "model": "gpt-5.5",
+            "conversationId": "conv-1",
+            "tokenUsage": {
+                "inputTokens": tokens,
+                "outputTokens": 1,
+                "cacheReadTokens": 0,
+                "cacheWriteTokens": 0,
+            },
+        });
+        if let Some(id) = id {
+            value["usageEventId"] = serde_json::json!(id);
+        }
+        value
+    }
+
+    fn ids(events: &[serde_json::Value]) -> Vec<String> {
+        events
+            .iter()
+            .map(|event| {
+                event
+                    .get("usageEventId")
+                    .and_then(|id| id.as_str())
+                    .unwrap_or("-")
+                    .to_string()
+            })
+            .collect()
+    }
+
+    /// The property the whole design rests on: an incremental fetch covers only
+    /// recent history, so everything older has to survive from the cache. A
+    /// merge that dropped those rows would silently delete real usage, and
+    /// unlike a kept duplicate nothing downstream could recover it.
+    #[test]
+    fn merge_keeps_cached_events_the_incoming_window_does_not_cover() {
+        let cached = vec![
+            event(Some("old-1"), "1000", 10),
+            event(Some("old-2"), "2000", 20),
+            event(Some("recent"), "9000", 30),
+        ];
+        let incoming = vec![event(Some("recent"), "9000", 55), event(Some("new"), "9500", 7)];
+
+        let merged = merge_cursor_usage_events(cached, incoming);
+        assert_eq!(ids(&merged), vec!["old-1", "old-2", "recent", "new"]);
+        // The refetched snapshot is authoritative for the event it covers.
+        assert_eq!(merged[2]["tokenUsage"]["inputTokens"], 55);
+    }
+
+    /// A re-fetched snapshot replaces its cached predecessor rather than being
+    /// stored beside it — keying on the event id is what makes that possible.
+    #[test]
+    fn merge_replaces_a_snapshot_instead_of_accumulating_it() {
+        let cached = vec![event(Some("e1"), "1000", 10)];
+        let incoming = vec![event(Some("e1"), "1000", 99)];
+
+        let merged = merge_cursor_usage_events(cached, incoming);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0]["tokenUsage"]["inputTokens"], 99);
+    }
+
+    /// Duplicates already sitting in a cache written before snapshot collapse
+    /// must not be multiplied by the replacement.
+    #[test]
+    fn merge_collapses_cached_duplicates_of_one_event() {
+        let cached = vec![
+            event(Some("e1"), "1000", 10),
+            event(Some("e1"), "1000", 20),
+            event(Some("e1"), "1000", 30),
+        ];
+        let incoming = vec![event(Some("e1"), "1000", 44)];
+
+        let merged = merge_cursor_usage_events(cached, incoming);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0]["tokenUsage"]["inputTokens"], 44);
+    }
+
+    /// Without an id a row is keyed on its projection, so an identical row is
+    /// recognized while a row differing in tokens stays separate.
+    #[test]
+    fn merge_keys_id_less_rows_on_their_projection() {
+        let cached = vec![event(None, "1000", 10), event(None, "1000", 20)];
+        let incoming = vec![event(None, "1000", 10)];
+
+        let merged = merge_cursor_usage_events(cached, incoming);
+        assert_eq!(merged.len(), 2, "the differing row is not merged away");
+    }
+
+    /// A cold cache has nothing to merge, and the fetch is the whole history.
+    #[test]
+    fn merge_on_an_empty_cache_is_the_incoming_history() {
+        let incoming = vec![event(Some("a"), "1", 1), event(Some("b"), "2", 2)];
+        assert_eq!(merge_cursor_usage_events(Vec::new(), incoming).len(), 2);
+    }
+
+    #[test]
+    fn watermark_reads_both_string_and_numeric_timestamps() {
+        let events = vec![
+            event(Some("a"), "1000", 1),
+            serde_json::json!({"timestamp": 5000, "model": "m"}),
+            event(Some("c"), "3000", 1),
+        ];
+        assert_eq!(usage_events_watermark_ms(&events), Some(5000));
+    }
+
+    #[test]
+    fn watermark_ignores_rows_without_a_usable_timestamp() {
+        let events = vec![
+            serde_json::json!({"model": "m"}),
+            serde_json::json!({"timestamp": "not-a-number", "model": "m"}),
+            serde_json::json!({"timestamp": 0, "model": "m"}),
+            event(Some("a"), "700", 1),
+        ];
+        assert_eq!(usage_events_watermark_ms(&events), Some(700));
+    }
+
+    #[test]
+    fn sync_start_backs_off_by_the_correction_window_and_clock_slack() {
+        let watermark = 10_000_000_000_i64;
+        let cached = vec![event(Some("a"), &watermark.to_string(), 1)];
+        assert_eq!(
+            incremental_sync_start_ms(&cached),
+            Some(watermark - CURSOR_USAGE_CORRECTION_WINDOW_MS - CURSOR_USAGE_CLOCK_SKEW_MS)
+        );
+    }
+
+    /// Never negative, and an empty or unusable cache asks for everything.
+    #[test]
+    fn sync_start_is_absent_without_a_usable_cache() {
+        assert_eq!(incremental_sync_start_ms(&[]), None);
+        assert_eq!(
+            incremental_sync_start_ms(&[serde_json::json!({"model": "m"})]),
+            None
+        );
+        let early = vec![event(Some("a"), "5", 1)];
+        assert_eq!(incremental_sync_start_ms(&early), Some(0));
+    }
+
+    #[test]
+    fn cached_events_treats_malformed_or_absent_json_as_empty() {
+        assert!(cached_usage_events(None).is_empty());
+        assert!(cached_usage_events(Some("not json")).is_empty());
+        assert!(cached_usage_events(Some("{}")).is_empty());
+        assert_eq!(
+            cached_usage_events(Some(r#"{"usageEventsDisplay":[{"model":"m"}]}"#)).len(),
+            1
+        );
+    }
+
+    #[test]
+    fn request_body_sends_a_date_bound_only_when_syncing_incrementally() {
+        let full = usage_events_request_body(1, 500, None);
+        assert!(full.get("startDate").is_none());
+        assert_eq!(full["pageSize"], 500);
+
+        let incremental = usage_events_request_body(2, 500, Some(1_700_000_000_000));
+        assert_eq!(incremental["startDate"], 1_700_000_000_000_i64);
+        assert_eq!(incremental["page"], 2);
+    }
+
+    /// The identity is the event id when there is one, so two snapshots of one
+    /// event collide while two different events never do.
+    #[test]
+    fn identity_prefers_the_event_id_over_the_projection() {
+        let a = event(Some("e1"), "1000", 10);
+        let b = event(Some("e1"), "1000", 999);
+        let c = event(Some("e2"), "1000", 10);
+        assert_eq!(
+            cursor_usage_event_identity(&a),
+            cursor_usage_event_identity(&b)
+        );
+        assert_ne!(
+            cursor_usage_event_identity(&a),
+            cursor_usage_event_identity(&c)
+        );
+    }
+
+    #[test]
+    fn identity_ignores_a_blank_event_id() {
+        let blank = serde_json::json!({
+            "usageEventId": "   ", "timestamp": "1000", "model": "m",
+            "conversationId": "c", "tokenUsage": {"inputTokens": 1},
+        });
+        assert!(cursor_usage_event_identity(&blank).starts_with("row:"));
+    }
 }
