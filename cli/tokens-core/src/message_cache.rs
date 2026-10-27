@@ -1408,7 +1408,13 @@ fn parser_version(client: ClientId) -> u32 {
         // `chargedCents`) so plan-included rows keep Cursor's own figure instead
         // of landing unpriced, and uses a UTC-stable synthetic id for the id-less
         // fallback.
-        ClientId::Cursor => 3,
+        // v3->v4: `usageEventsDisplay` is a log of snapshots, not of independent
+        // events — one event is re-reported with its running token totals under
+        // the same `usageEventId`. The parser now keeps only each id's largest
+        // snapshot. Reparse: the fingerprints stay valid because only the
+        // parser changed, so without this bump a warm entry would keep
+        // replaying the inflated totals it cached.
+        ClientId::Cursor => 4,
         // Initial Reasonix implementation. The fingerprint samples the
         // append-only stats JSONL source so appended records are reparsed.
         // v1->v2: strip a leading BOM and recover records containing
@@ -5024,7 +5030,10 @@ mod tests {
 
     #[test]
     fn test_cursor_parser_version_invalidates_incorrect_token_and_cost_rows() {
-        assert_eq!(parser_version(ClientId::Cursor), 3);
+        // v4 retires the rows cached before snapshot collapse: a warm entry
+        // keeps a valid fingerprint when only the parser changes, so the bump
+        // is the one thing that stops the inflated totals being replayed.
+        assert_eq!(parser_version(ClientId::Cursor), 4);
     }
 
     #[test]
