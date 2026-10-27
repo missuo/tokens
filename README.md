@@ -149,6 +149,12 @@ Clients that expose usage only through an account API need a sync step first —
 `tokens cursor sync`, `tokens antigravity sync`, `tokens trae sync`,
 `tokens warp sync` — after which they submit like everything else.
 
+For Cursor accounts merged into the unified Grok billing system, the legacy
+Cursor API may stop returning new usage. Export the unified dashboard CSV and
+use `tokens cursor import` to add the missing Cursor rows offline; see
+[Unified Cursor usage import](docs/cursor-unified-import.md) for the cutoff,
+deduplication, and cost semantics.
+
 Pricing comes from a combination of
 [LiteLLM](https://github.com/BerriAI/litellm),
 [OpenRouter](https://openrouter.ai) and

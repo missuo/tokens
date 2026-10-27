@@ -241,7 +241,7 @@ fn count_cursor_json_events(json_text: &str) -> usize {
         .unwrap_or(0)
 }
 
-fn atomic_write_file(path: &std::path::Path, contents: &str) -> Result<()> {
+pub(crate) fn atomic_write_file(path: &std::path::Path, contents: &str) -> Result<()> {
     let parent = path
         .parent()
         .ok_or_else(|| anyhow::anyhow!("Invalid cache path"))?;
