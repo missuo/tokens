@@ -544,6 +544,11 @@ fn parse_codex_reader<R: BufRead>(
                     None
                 };
                 let event_model = payload_model.clone().or(info_model.clone());
+                let same_compaction_context = entry.entry_type == "turn_context"
+                    && payload.turn_id.is_some()
+                    && payload.turn_id == state.current_turn_id
+                    && payload_model.is_some()
+                    && payload_model == state.current_model;
 
                 // The turn the following token_count rows belong to. Both
                 // `task_started` and `turn_context` start a turn, so each
@@ -659,17 +664,46 @@ fn parse_codex_reader<R: BufRead>(
                 }
 
                 if entry.entry_type == "token_usage_record" {
-                    state.pending_compaction = payload
-                        .usage
-                        .as_ref()
-                        .zip(payload.response_id.as_ref())
-                        .map(|(usage, id)| (CodexTotals::from_usage(usage), id.clone(), false));
+                    let owner = state
+                        .forked_child_session_id
+                        .as_deref()
+                        .or(state.session_id_from_meta.as_deref())
+                        .unwrap_or(session_id);
+                    state.pending_compaction = if payload
+                        .thread_id
+                        .as_deref()
+                        .is_none_or(|id| id == owner)
+                    {
+                        payload
+                            .usage
+                            .as_ref()
+                            .zip(payload.response_id.as_ref())
+                            .map(|(usage, id)| (CodexTotals::from_usage(usage), id.clone(), false))
+                    } else {
+                        None
+                    };
                 } else if entry.entry_type == "compacted" {
                     if let Some((_, _, compacted)) = &mut state.pending_compaction {
                         *compacted = true;
                     }
                 } else if !is_token_count {
-                    state.pending_compaction = None;
+                    let owner = state
+                        .forked_child_session_id
+                        .as_deref()
+                        .or(state.session_id_from_meta.as_deref())
+                        .unwrap_or(session_id);
+                    let compaction_metadata = entry.entry_type == "world_state"
+                        || same_compaction_context
+                        || (entry.entry_type == "event_msg"
+                            && payload.payload_type.as_deref() == Some("thread_settings_applied")
+                            && payload.thread_id.as_deref() == Some(owner));
+                    if !state
+                        .pending_compaction
+                        .as_ref()
+                        .is_some_and(|(_, _, compacted)| *compacted && compaction_metadata)
+                    {
+                        state.pending_compaction = None;
+                    }
                 }
 
                 if !pending_model_messages.is_empty()
@@ -1697,6 +1731,12 @@ mod tests {
         "\n",
         r#"{"type":"compacted","payload":{"message":"","replacement_history":[]}}"#,
         "\n",
+        r#"{"type":"world_state","payload":{}}"#,
+        "\n",
+        r#"{"type":"turn_context","payload":{"turn_id":"turn-2","model":"gpt-5.5"}}"#,
+        "\n",
+        r#"{"type":"event_msg","payload":{"type":"thread_settings_applied","thread_id":"session"}}"#,
+        "\n",
         r#"{"timestamp":"2026-10-01T00:02:07Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"cached_input_tokens":80,"output_tokens":10},"last_token_usage":{"input_tokens":0,"cached_input_tokens":0,"output_tokens":0}}}}"#,
         "\n",
         r#"{"timestamp":"2026-10-01T00:02:08Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"cached_input_tokens":80,"output_tokens":10},"last_token_usage":{"input_tokens":0,"cached_input_tokens":0,"output_tokens":0}}}}"#,
@@ -1721,6 +1761,40 @@ mod tests {
         );
         assert_eq!(messages.len(), 3);
         assert_ne!(messages[0].dedup_key, messages[1].dedup_key);
+    }
+
+    #[test]
+    fn compaction_does_not_cross_a_different_context_or_thread() {
+        let original = concat!(
+            r#"{"type":"world_state","payload":{}}"#,
+            "\n",
+            r#"{"type":"turn_context","payload":{"turn_id":"turn-2","model":"gpt-5.5"}}"#
+        );
+        for replacement in [
+            original.replace("turn-2", "turn-other"),
+            original.replace("gpt-5.5", "other-model"),
+        ] {
+            let fixture = CODEX_COMPACTION_FIXTURE.replacen(original, &replacement, 1);
+            let file = create_test_file(&fixture);
+            let messages = parse_codex_file(file.path());
+            assert_eq!(messages.iter().map(|m| m.tokens.total()).sum::<i64>(), 165);
+        }
+
+        let fixture = CODEX_COMPACTION_FIXTURE.replace(
+            r#"{"type":"event_msg","payload":{"type":"thread_settings_applied","thread_id":"session"}}"#,
+            r#"{"type":"event_msg","payload":{"type":"thread_settings_applied","thread_id":"other"}}"#,
+        );
+        let file = create_test_file(&fixture);
+        let messages = parse_codex_file(file.path());
+        assert_eq!(messages.iter().map(|m| m.tokens.total()).sum::<i64>(), 165);
+
+        let fixture = CODEX_COMPACTION_FIXTURE.replace(
+            r#""thread_id":"session","turn_id":"turn-2","response_id":"resp-2""#,
+            r#""thread_id":"other","turn_id":"turn-2","response_id":"resp-2""#,
+        );
+        let file = create_test_file(&fixture);
+        let messages = parse_codex_file(file.path());
+        assert_eq!(messages.iter().map(|m| m.tokens.total()).sum::<i64>(), 165);
     }
 
     #[test]
