@@ -93,6 +93,8 @@ pub struct CodexPayload {
     /// Settings snapshots identify their owner, including in copied fork history.
     pub thread_id: Option<String>,
     pub thread_settings: Option<Value>,
+    pub response_id: Option<String>,
+    pub usage: Option<CodexTokenUsage>,
 }
 
 /// Lenient `Option<i64>` deserializer for `CodexPayload::started_at`. Coerces
@@ -346,6 +348,9 @@ pub(crate) struct CodexParseState {
     /// makes each one's dedup key unique within the thread.
     #[serde(default)]
     pub headless_turn_ordinal: u32,
+    /// A response immediately followed by `compacted`, awaiting its snapshot.
+    #[serde(default)]
+    pub pending_compaction: Option<(CodexTotals, String, bool)>,
 }
 
 /// Dedup-key prefix of usage read from a `codex exec --json` capture.
@@ -653,6 +658,20 @@ fn parse_codex_reader<R: BufRead>(
                     }
                 }
 
+                if entry.entry_type == "token_usage_record" {
+                    state.pending_compaction = payload
+                        .usage
+                        .as_ref()
+                        .zip(payload.response_id.as_ref())
+                        .map(|(usage, id)| (CodexTotals::from_usage(usage), id.clone(), false));
+                } else if entry.entry_type == "compacted" {
+                    if let Some((_, _, compacted)) = &mut state.pending_compaction {
+                        *compacted = true;
+                    }
+                } else if !is_token_count {
+                    state.pending_compaction = None;
+                }
+
                 if !pending_model_messages.is_empty()
                     && event_model.is_none()
                     && !is_token_count
@@ -816,6 +835,12 @@ fn parse_codex_reader<R: BufRead>(
                     // dedup and monotonicity checks — never as a direct delta source.
                     let total_usage = info.total_token_usage.as_ref().map(CodexTotals::from_usage);
                     let last_usage = info.last_token_usage.as_ref().map(CodexTotals::from_usage);
+                    let compaction = state.pending_compaction.take().filter(|(_, _, compacted)| {
+                        *compacted
+                            && total_usage.is_some()
+                            && total_usage == Some(state.previous_totals.unwrap_or_default())
+                            && last_usage == Some(CodexTotals::default())
+                    });
 
                     // Forked child logs can replay more than one parent
                     // token_count row after the first child turn_context,
@@ -831,7 +856,9 @@ fn parse_codex_reader<R: BufRead>(
                     state.forked_child_inherited_baseline = None;
                     state.forked_child_inherited_reported_total = None;
 
-                    let (tokens, next_totals) =
+                    let (tokens, next_totals) = if let Some((usage, _, _)) = &compaction {
+                        (usage.into_tokens(), total_usage)
+                    } else {
                         match (total_usage, last_usage, state.previous_totals) {
                             // Both present with previous baseline (standard path)
                             (Some(total), Some(last), Some(previous)) => {
@@ -871,7 +898,8 @@ fn parse_codex_reader<R: BufRead>(
                             (None, Some(last), None) => (last.into_tokens(), None),
                             // Neither
                             (None, None, _) => continue,
-                        };
+                        }
+                    };
 
                     // Skip zero-token snapshots without advancing the baseline so
                     // that post-compaction zero totals don't inflate later deltas.
@@ -928,6 +956,9 @@ fn parse_codex_reader<R: BufRead>(
                         0.0,
                         agent,
                     );
+                    if let Some((_, response_id, _)) = compaction {
+                        message.dedup_key = Some(format!("codex:response:{response_id}"));
+                    }
                     message.duration_ms = duration_ms;
                     state.turn_coverage.record(state.current_turn_id.as_deref());
                     // The announced turn has produced usage, so it is under
@@ -1649,6 +1680,83 @@ mod tests {
         file.write_all(content.as_bytes()).unwrap();
         file.flush().unwrap();
         file
+    }
+
+    const CODEX_COMPACTION_FIXTURE: &str = concat!(
+        r#"{"type":"session_meta","payload":{"id":"session"}}"#,
+        "\n",
+        r#"{"type":"turn_context","payload":{"turn_id":"turn-1","model":"gpt-5.5"}}"#,
+        "\n",
+        r#"{"timestamp":"2026-10-01T00:01:05Z","type":"token_usage_record","payload":{"thread_id":"session","turn_id":"turn-1","response_id":"resp-1","usage":{"input_tokens":100,"cached_input_tokens":80,"output_tokens":10}}}"#,
+        "\n",
+        r#"{"timestamp":"2026-10-01T00:01:06Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"cached_input_tokens":80,"output_tokens":10},"last_token_usage":{"input_tokens":100,"cached_input_tokens":80,"output_tokens":10}}}}"#,
+        "\n",
+        r#"{"type":"turn_context","payload":{"turn_id":"turn-2","model":"gpt-5.5"}}"#,
+        "\n",
+        r#"{"timestamp":"2026-10-01T00:02:05Z","type":"token_usage_record","payload":{"thread_id":"session","turn_id":"turn-2","response_id":"resp-2","usage":{"input_tokens":500,"cached_input_tokens":200,"output_tokens":40}}}"#,
+        "\n",
+        r#"{"type":"compacted","payload":{"message":"","replacement_history":[]}}"#,
+        "\n",
+        r#"{"timestamp":"2026-10-01T00:02:07Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"cached_input_tokens":80,"output_tokens":10},"last_token_usage":{"input_tokens":0,"cached_input_tokens":0,"output_tokens":0}}}}"#,
+        "\n",
+        r#"{"timestamp":"2026-10-01T00:02:08Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"cached_input_tokens":80,"output_tokens":10},"last_token_usage":{"input_tokens":0,"cached_input_tokens":0,"output_tokens":0}}}}"#,
+        "\n",
+        r#"{"type":"turn_context","payload":{"turn_id":"turn-3","model":"gpt-5.5"}}"#,
+        "\n",
+        r#"{"timestamp":"2026-10-01T00:03:05Z","type":"token_usage_record","payload":{"thread_id":"session","turn_id":"turn-3","response_id":"resp-3","usage":{"input_tokens":50,"cached_input_tokens":0,"output_tokens":5}}}"#,
+        "\n",
+        r#"{"timestamp":"2026-10-01T00:03:06Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":150,"cached_input_tokens":80,"output_tokens":15},"last_token_usage":{"input_tokens":50,"cached_input_tokens":0,"output_tokens":5}}}}"#,
+        "\n"
+    );
+
+    #[test]
+    fn compaction_usage_is_counted_once_when_totals_do_not_advance() {
+        let file = create_test_file(CODEX_COMPACTION_FIXTURE);
+
+        let messages = parse_codex_file(file.path());
+        assert_eq!(messages.iter().map(|m| m.tokens.total()).sum::<i64>(), 705);
+        assert_eq!(
+            messages.iter().map(|m| m.tokens.cache_read).sum::<i64>(),
+            280
+        );
+        assert_eq!(messages.len(), 3);
+        assert_ne!(messages[0].dedup_key, messages[1].dedup_key);
+    }
+
+    #[test]
+    fn compaction_incremental_parse_matches_full_parse_at_every_line() {
+        let full = parse_codex_reader(
+            Cursor::new(CODEX_COMPACTION_FIXTURE),
+            "session",
+            0,
+            0,
+            CodexParseState::default(),
+        );
+        let mut state = CodexParseState::default();
+        let mut messages = Vec::new();
+        for line in CODEX_COMPACTION_FIXTURE.split_inclusive('\n') {
+            let parsed = parse_codex_reader(Cursor::new(line), "session", 0, 0, state);
+            messages.extend(parsed.messages);
+            state = bincode::deserialize(&bincode::serialize(&parsed.state).unwrap()).unwrap();
+        }
+        assert_eq!(messages, full.messages);
+        assert_eq!(messages.iter().map(|m| m.tokens.total()).sum::<i64>(), 705);
+    }
+
+    #[test]
+    fn compaction_already_in_snapshot_is_not_counted_twice() {
+        let fixture = CODEX_COMPACTION_FIXTURE
+            .replace(
+                r#"{"input_tokens":100,"cached_input_tokens":80,"output_tokens":10},"last_token_usage":{"input_tokens":0,"cached_input_tokens":0,"output_tokens":0}"#,
+                r#"{"input_tokens":600,"cached_input_tokens":280,"output_tokens":50},"last_token_usage":{"input_tokens":500,"cached_input_tokens":200,"output_tokens":40}"#,
+            )
+            .replace(
+                r#"{"input_tokens":150,"cached_input_tokens":80,"output_tokens":15}"#,
+                r#"{"input_tokens":650,"cached_input_tokens":280,"output_tokens":55}"#,
+            );
+        let messages = parse_codex_file(create_test_file(&fixture).path());
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages.iter().map(|m| m.tokens.total()).sum::<i64>(), 705);
     }
 
     struct FailAfterFirstLine {
