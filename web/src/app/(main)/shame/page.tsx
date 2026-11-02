@@ -13,7 +13,7 @@ import { getTranslator } from "@/lib/i18n/server";
 import { richText } from "@/lib/i18n/rich";
 
 export async function generateMetadata(): Promise<Metadata> {
-  const { t } = await getTranslator();
+  const { locale, t } = await getTranslator();
 
   return {
     title: t("shame.meta.title"),
@@ -28,6 +28,7 @@ export async function generateMetadata(): Promise<Metadata> {
           url: ogImageUrl({
             title: t("shame.meta.ogImageTitle"),
             subtitle: t("shame.meta.ogImageSubtitle"),
+            locale,
           }),
           width: 1200,
           height: 630,

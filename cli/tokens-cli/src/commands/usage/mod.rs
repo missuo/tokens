@@ -8,7 +8,6 @@
 pub mod codex;
 pub mod helpers;
 
-
 // ── Shared types ──
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -87,4 +86,3 @@ pub struct UsageAccount {
     #[serde(default)]
     pub is_active: bool,
 }
-

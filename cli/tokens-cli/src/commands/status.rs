@@ -1,4 +1,4 @@
-use crate::{auth, device, paths};
+use crate::{auth, device, paths, t, tr};
 use anyhow::Result;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -172,13 +172,13 @@ fn build_status_report() -> Result<StatusReport> {
 
     let mut notes = Vec::new();
     if auth_token.is_none() {
-        notes.push("Run `tokens login` before starting background submission.".to_string());
+        notes.push(t!("commands.status.noteLogin").to_string());
     }
     if serve_pids.is_empty() {
-        notes.push("Start background submission with `brew services start tokens`.".to_string());
+        notes.push(t!("commands.status.noteStartService").to_string());
     }
     if device_inspection.device.is_none() {
-        notes.push("Device metadata is created on the next non-dry-run submit.".to_string());
+        notes.push(t!("commands.status.noteDeviceMetadata").to_string());
     }
 
     Ok(StatusReport {
@@ -223,29 +223,55 @@ pub fn run(json: bool) -> Result<()> {
         return Ok(());
     }
 
-    println!("\n  {}\n", "Tokens - Local Status".cyan());
+    println!("\n  {}\n", t!("commands.status.title").cyan());
 
     if report.auth.logged_in {
-        let source = report.auth.source.unwrap_or("unknown");
-        let user = report.auth.username.as_deref().unwrap_or("unknown user");
+        let source = report.auth.source.unwrap_or(t!("commands.status.unknown"));
+        let user = report
+            .auth
+            .username
+            .as_deref()
+            .unwrap_or(t!("commands.status.unknownUser"));
         println!(
             "{}",
-            format!("  Auth: logged in as {user} ({source})").green()
+            tr!("commands.status.authLoggedIn", user = user, source = source).green()
         );
     } else {
-        println!("{}", "  Auth: not logged in".yellow());
+        println!("{}", t!("commands.status.authLoggedOut").yellow());
     }
-    println!("{}", format!("  API: {}", report.api_url).bright_black());
+    println!(
+        "{}",
+        tr!("commands.status.api", url = report.api_url).bright_black()
+    );
 
     if report.device.configured {
-        let id = report.device.id.as_deref().unwrap_or("unknown");
-        let source = report.device.source.unwrap_or("unknown");
+        let id = report
+            .device
+            .id
+            .as_deref()
+            .unwrap_or(t!("commands.status.unknown"));
+        let source = report
+            .device
+            .source
+            .unwrap_or(t!("commands.status.unknown"));
         match report.device.name.as_deref() {
-            Some(name) => println!("{}", format!("  Device: {name} ({id}, {source})").green()),
-            None => println!("{}", format!("  Device: {id} ({source})").green()),
+            Some(name) => println!(
+                "{}",
+                tr!(
+                    "commands.status.deviceWithName",
+                    name = name,
+                    id = id,
+                    source = source
+                )
+                .green()
+            ),
+            None => println!(
+                "{}",
+                tr!("commands.status.device", id = id, source = source).green()
+            ),
         }
     } else {
-        println!("{}", "  Device: not initialized".yellow());
+        println!("{}", t!("commands.status.deviceNotInitialized").yellow());
     }
 
     if report.service.serve_running {
@@ -258,50 +284,56 @@ pub fn run(json: bool) -> Result<()> {
             .join(", ");
         println!(
             "{}",
-            format!(
-                "  Service: tokens serve running (pid {pids}, current-env interval {} min)",
-                report.service.interval_minutes
+            tr!(
+                "commands.status.serviceRunning",
+                pids = pids,
+                interval = report.service.interval_minutes
             )
             .green()
         );
     } else {
         println!(
             "{}",
-            format!(
-                "  Service: tokens serve not detected (current-env interval {} min)",
-                report.service.interval_minutes
+            tr!(
+                "commands.status.serviceNotDetected",
+                interval = report.service.interval_minutes
             )
             .yellow()
         );
     }
 
-
     println!(
         "{}",
-        format!("  Config: {}", report.paths.config_dir).bright_black()
+        tr!("commands.status.config", path = report.paths.config_dir).bright_black()
     );
     println!(
         "{}",
-        format!("  Cache: {}", report.paths.cache_dir).bright_black()
+        tr!("commands.status.cache", path = report.paths.cache_dir).bright_black()
     );
     println!(
         "{}",
-        format!("  Credentials: {}", report.auth.credentials_path).bright_black()
+        tr!(
+            "commands.status.credentials",
+            path = report.auth.credentials_path
+        )
+        .bright_black()
     );
     println!(
         "{}",
-        format!("  Device file: {}", report.device.path).bright_black()
+        tr!("commands.status.deviceFile", path = report.device.path).bright_black()
     );
 
     if !report.notes.is_empty() {
         println!();
-        println!("{}", "  Notes:".white());
+        println!("{}", t!("commands.status.notes").white());
         for note in report.notes {
-            println!("{}", format!("    - {note}").bright_black());
+            println!(
+                "{}",
+                tr!("commands.status.noteItem", note = note).bright_black()
+            );
         }
     }
     println!();
 
     Ok(())
 }
-

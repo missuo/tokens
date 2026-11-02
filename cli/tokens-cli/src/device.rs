@@ -1,3 +1,4 @@
+use crate::tr;
 use anyhow::{anyhow, Context, Result};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -55,9 +56,9 @@ pub fn resolve_submit_device() -> Result<SubmitDevice> {
 
     if path.exists() {
         let content = std::fs::read_to_string(&path)
-            .with_context(|| format!("failed to read {}", path.display()))?;
+            .with_context(|| tr!("top.device.readFile", path = path.display()))?;
         let stored: StoredDevice = serde_json::from_str(&content)
-            .with_context(|| format!("failed to parse {}", path.display()))?;
+            .with_context(|| tr!("top.device.parseFile", path = path.display()))?;
         return Ok(SubmitDevice {
             id: validate_device_id(&stored.id)?,
             name: name_override.or(stored.name),
@@ -102,9 +103,9 @@ pub fn inspect_submit_device() -> Result<SubmitDeviceInspection> {
     }
 
     let content = std::fs::read_to_string(&path)
-        .with_context(|| format!("failed to read {}", path.display()))?;
+        .with_context(|| tr!("top.device.readFile", path = path.display()))?;
     let stored: StoredDevice = serde_json::from_str(&content)
-        .with_context(|| format!("failed to parse {}", path.display()))?;
+        .with_context(|| tr!("top.device.parseFile", path = path.display()))?;
     let name_override = env_value(DEVICE_NAME_ENV)
         .map(|name| validate_device_name(&name))
         .transpose()?;
@@ -133,23 +134,23 @@ fn device_file_path() -> PathBuf {
 fn validate_device_id(id: &str) -> Result<String> {
     let trimmed = id.trim();
     if trimmed.is_empty() {
-        return Err(anyhow!("{} must not be empty", DEVICE_ID_ENV));
+        return Err(anyhow!(tr!(
+            "top.device.envMustNotBeEmpty",
+            env = DEVICE_ID_ENV
+        )));
     }
     if trimmed.len() > MAX_DEVICE_ID_LEN {
-        return Err(anyhow!(
-            "{} must be at most {} characters",
-            DEVICE_ID_ENV,
-            MAX_DEVICE_ID_LEN
-        ));
+        return Err(anyhow!(tr!(
+            "top.device.envTooLong",
+            env = DEVICE_ID_ENV,
+            max = MAX_DEVICE_ID_LEN
+        )));
     }
     if !trimmed
         .chars()
         .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.' | ':'))
     {
-        return Err(anyhow!(
-            "{} may only contain ASCII letters, numbers, '.', '_', '-', or ':'",
-            DEVICE_ID_ENV
-        ));
+        return Err(anyhow!(tr!("top.device.envIdCharset", env = DEVICE_ID_ENV)));
     }
     Ok(trimmed.to_string())
 }
@@ -157,14 +158,17 @@ fn validate_device_id(id: &str) -> Result<String> {
 fn validate_device_name(name: &str) -> Result<String> {
     let trimmed = name.trim();
     if trimmed.is_empty() {
-        return Err(anyhow!("{} must not be empty", DEVICE_NAME_ENV));
+        return Err(anyhow!(tr!(
+            "top.device.envMustNotBeEmpty",
+            env = DEVICE_NAME_ENV
+        )));
     }
     if trimmed.len() > MAX_DEVICE_NAME_LEN {
-        return Err(anyhow!(
-            "{} must be at most {} characters",
-            DEVICE_NAME_ENV,
-            MAX_DEVICE_NAME_LEN
-        ));
+        return Err(anyhow!(tr!(
+            "top.device.envTooLong",
+            env = DEVICE_NAME_ENV,
+            max = MAX_DEVICE_NAME_LEN
+        )));
     }
     Ok(trimmed.to_string())
 }
@@ -172,15 +176,15 @@ fn validate_device_name(name: &str) -> Result<String> {
 fn write_stored_device(path: &Path, device: &StoredDevice) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
-            .with_context(|| format!("failed to create {}", parent.display()))?;
+            .with_context(|| tr!("top.device.createDir", path = parent.display()))?;
     }
 
     let tmp_path = path.with_extension("json.tmp");
     let content = serde_json::to_string_pretty(device)?;
     std::fs::write(&tmp_path, content)
-        .with_context(|| format!("failed to write {}", tmp_path.display()))?;
+        .with_context(|| tr!("top.device.writeFile", path = tmp_path.display()))?;
     tokens_core::fs_atomic::replace_file(&tmp_path, path)
-        .with_context(|| format!("failed to replace {}", path.display()))?;
+        .with_context(|| tr!("top.device.replaceFile", path = path.display()))?;
     Ok(())
 }
 

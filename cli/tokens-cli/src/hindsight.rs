@@ -20,6 +20,7 @@
 //! Only token counters, timing metadata, operation, model, and bank identifiers
 //! are retained.
 
+use crate::{t, tr};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -247,17 +248,17 @@ pub fn read_ledger_file(path: &Path) -> Result<Vec<HindsightLedgerRow>> {
     if !path.exists() {
         return Ok(Vec::new());
     }
-    let file =
-        File::open(path).with_context(|| format!("Failed to open ledger file: {:?}", path))?;
+    let file = File::open(path)
+        .with_context(|| tr!("top.hindsight.openLedgerFile", path = path.display()))?;
     let reader = BufReader::new(file);
     let mut rows = Vec::new();
 
     for (line_num, line_result) in reader.lines().enumerate() {
         let line = line_result.with_context(|| {
-            format!(
-                "Failed to read line {} from ledger file {:?}",
-                line_num + 1,
-                path
+            tr!(
+                "top.hindsight.readLineFromLedger",
+                line = line_num + 1,
+                path = path.display()
             )
         })?;
         let trimmed = line.trim();
@@ -265,10 +266,10 @@ pub fn read_ledger_file(path: &Path) -> Result<Vec<HindsightLedgerRow>> {
             continue;
         }
         let row: HindsightLedgerRow = serde_json::from_str(trimmed).with_context(|| {
-            format!(
-                "Failed to parse JSON ledger row at line {} in {:?}",
-                line_num + 1,
-                path
+            tr!(
+                "top.hindsight.parseLedgerRow",
+                line = line_num + 1,
+                path = path.display()
             )
         })?;
         rows.push(row);
@@ -307,9 +308,9 @@ pub fn merge_ledger_rows(
 pub fn write_ledger_file_atomic(path: &Path, rows: &[HindsightLedgerRow]) -> Result<()> {
     let parent = path
         .parent()
-        .context("Ledger path does not have a parent directory")?;
+        .context(t!("top.hindsight.ledgerParentMissing"))?;
     fs::create_dir_all(parent)
-        .with_context(|| format!("Failed to create directory: {:?}", parent))?;
+        .with_context(|| tr!("top.hindsight.createDirectory", path = parent.display()))?;
 
     let filename = path
         .file_name()
@@ -320,22 +321,27 @@ pub fn write_ledger_file_atomic(path: &Path, rows: &[HindsightLedgerRow]) -> Res
 
     {
         let mut file = File::create(&temp_path)
-            .with_context(|| format!("Failed to create temporary file: {:?}", temp_path))?;
+            .with_context(|| tr!("top.hindsight.createTempFile", path = temp_path.display()))?;
         for row in rows {
             let json = serde_json::to_string(row)
-                .with_context(|| format!("Failed to serialize ledger row: {:?}", row.id))?;
+                .with_context(|| tr!("top.hindsight.serializeLedgerRow", id = row.id))?;
             file.write_all(json.as_bytes())
-                .with_context(|| format!("Failed to write to temp file: {:?}", temp_path))?;
+                .with_context(|| tr!("top.hindsight.writeTempFile", path = temp_path.display()))?;
             file.write_all(b"\n").with_context(|| {
-                format!("Failed to write newline to temp file: {:?}", temp_path)
+                tr!("top.hindsight.writeTempNewline", path = temp_path.display())
             })?;
         }
         file.flush()
-            .with_context(|| format!("Failed to flush temp file: {:?}", temp_path))?;
+            .with_context(|| tr!("top.hindsight.flushTempFile", path = temp_path.display()))?;
     }
 
-    fs::rename(&temp_path, path)
-        .with_context(|| format!("Failed to atomically rename {:?} to {:?}", temp_path, path))?;
+    fs::rename(&temp_path, path).with_context(|| {
+        tr!(
+            "top.hindsight.renameTempFile",
+            from = temp_path.display(),
+            to = path.display()
+        )
+    })?;
 
     Ok(())
 }
@@ -365,7 +371,7 @@ pub async fn sync_hindsight_ledger(options: &SyncHindsightOptions) -> SyncHindsi
                 total_requests: 0,
                 new_requests: 0,
                 total_tokens: 0,
-                error: Some(format!("Failed to build HTTP client: {}", e)),
+                error: Some(tr!("top.hindsight.buildHttpClientFailed", error = e)),
             };
         }
     };
@@ -385,7 +391,7 @@ pub async fn sync_hindsight_ledger(options: &SyncHindsightOptions) -> SyncHindsi
                 total_requests: 0,
                 new_requests: 0,
                 total_tokens: 0,
-                error: Some(format!("Failed to reach Hindsight banks endpoint: {}", e)),
+                error: Some(tr!("top.hindsight.banksUnreachable", error = e)),
             };
         }
     };
@@ -397,7 +403,7 @@ pub async fn sync_hindsight_ledger(options: &SyncHindsightOptions) -> SyncHindsi
             total_requests: 0,
             new_requests: 0,
             total_tokens: 0,
-            error: Some(format!("Hindsight banks endpoint returned HTTP {}", status)),
+            error: Some(tr!("top.hindsight.banksHttpStatus", status = status)),
         };
     }
 
@@ -409,7 +415,7 @@ pub async fn sync_hindsight_ledger(options: &SyncHindsightOptions) -> SyncHindsi
                 total_requests: 0,
                 new_requests: 0,
                 total_tokens: 0,
-                error: Some(format!("Failed to parse Hindsight banks response: {}", e)),
+                error: Some(tr!("top.hindsight.banksParseFailed", error = e)),
             };
         }
     };
@@ -455,16 +461,20 @@ pub async fn sync_hindsight_ledger(options: &SyncHindsightOptions) -> SyncHindsi
             let resp = match req.send().await {
                 Ok(r) => r,
                 Err(e) => {
-                    sync_warning = Some(format!("Error querying bank '{}': {}", bank_id, e));
+                    sync_warning = Some(tr!(
+                        "top.hindsight.bankQueryFailed",
+                        bank = bank_id,
+                        error = e
+                    ));
                     break;
                 }
             };
 
             if !resp.status().is_success() {
-                sync_warning = Some(format!(
-                    "Bank '{}' requests endpoint returned HTTP {}",
-                    bank_id,
-                    resp.status()
+                sync_warning = Some(tr!(
+                    "top.hindsight.bankHttpStatus",
+                    bank = bank_id,
+                    status = resp.status()
                 ));
                 break;
             }
@@ -472,9 +482,10 @@ pub async fn sync_hindsight_ledger(options: &SyncHindsightOptions) -> SyncHindsi
             let page: ApiLlmRequestsPage = match resp.json().await {
                 Ok(p) => p,
                 Err(e) => {
-                    sync_warning = Some(format!(
-                        "Failed to parse LLM requests for bank '{}': {}",
-                        bank_id, e
+                    sync_warning = Some(tr!(
+                        "top.hindsight.bankParseFailed",
+                        bank = bank_id,
+                        error = e
                     ));
                     break;
                 }
@@ -514,9 +525,10 @@ pub async fn sync_hindsight_ledger(options: &SyncHindsightOptions) -> SyncHindsi
                     total_requests: observed_requests_count,
                     new_requests: newly_added_count,
                     total_tokens: newly_added_tokens,
-                    error: Some(format!(
-                        "Failed to read existing ledger {:?}: {}",
-                        month_file, e
+                    error: Some(tr!(
+                        "top.hindsight.readLedgerFailed",
+                        path = format!("{:?}", month_file),
+                        error = e
                     )),
                 };
             }
@@ -533,7 +545,11 @@ pub async fn sync_hindsight_ledger(options: &SyncHindsightOptions) -> SyncHindsi
                     total_requests: observed_requests_count,
                     new_requests: newly_added_count,
                     total_tokens: newly_added_tokens,
-                    error: Some(format!("Failed to write ledger {:?}: {}", month_file, e)),
+                    error: Some(tr!(
+                        "top.hindsight.writeLedgerFailed",
+                        path = format!("{:?}", month_file),
+                        error = e
+                    )),
                 };
             }
         }
@@ -554,7 +570,7 @@ pub fn run_hindsight_sync(options: SyncHindsightOptions) -> Result<()> {
     use tokio::runtime::Runtime;
 
     let json = options.json;
-    let rt = Runtime::new().context("Failed to initialize Tokio runtime for Hindsight sync")?;
+    let rt = Runtime::new().context(crate::i18n::t("top.hindsight.runtimeInit"))?;
     let result = rt.block_on(sync_hindsight_ledger(&options));
 
     if json {
@@ -562,23 +578,28 @@ pub fn run_hindsight_sync(options: SyncHindsightOptions) -> Result<()> {
         return Ok(());
     }
 
-    println!("\n  {}\n", "Hindsight - Sync".cyan());
+    println!("\n  {}\n", t!("top.hindsight.title").cyan());
     if result.synced {
         println!(
             "{}",
-            format!(
-                "  Synced {} new Hindsight LLM request(s) ({} total, {} tokens).",
-                result.new_requests, result.total_requests, result.total_tokens
+            tr!(
+                "top.hindsight.synced",
+                added = result.new_requests,
+                total = result.total_requests,
+                tokens = result.total_tokens
             )
             .green()
         );
         if let Some(error) = result.error {
-            println!("{}", format!("  Warning: {}", error).yellow());
+            println!("{}", tr!("top.hindsight.warning", error = error).yellow());
         }
     } else if let Some(error) = result.error {
-        println!("{}", format!("  Sync failed: {}", error).red());
+        println!(
+            "{}",
+            tr!("top.hindsight.syncFailedWith", error = error).red()
+        );
     } else {
-        println!("{}", "  Sync failed.".red());
+        println!("{}", t!("top.hindsight.syncFailed").red());
     }
     println!();
 

@@ -61,6 +61,15 @@ counts, and `richText()` from `web/src/lib/i18n/rich.tsx` when a sentence has to
 contain a link. Numbers and relative times go through `Intl` — see
 `web/src/lib/format.ts`.
 
+The CLI reads the same choice: `--lang`, then `TOKENS_LANG`, then `settings.json`,
+then your system locale, falling back to English. `tokens --lang ja status`
+renders one run in Japanese without changing anything stored.
+
+Share cards follow the same rule: `/api/og?locale=ja` draws the Japanese card
+and the URL is the cache key, so each language is its own immutable entry. An
+absent or unknown `locale` renders English, which is what every card minted
+before this existed already asks for.
+
 ## Why this repository is public
 
 So you can check what we send.

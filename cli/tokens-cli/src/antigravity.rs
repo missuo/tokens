@@ -1,4 +1,5 @@
 use crate::process_liveness::pid_is_alive;
+use crate::{t, tr};
 use anyhow::{Context, Result};
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
@@ -53,7 +54,7 @@ impl SyncDeadline {
     fn remaining_timeout(&self) -> Result<Duration> {
         let remaining = self.expires_at.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
-            anyhow::bail!("Antigravity implicit sync deadline expired")
+            anyhow::bail!(t!("top.antigravity.implicitDeadlineExpired"))
         }
         Ok(remaining.min(DEFAULT_RPC_TIMEOUT))
     }
@@ -99,7 +100,7 @@ fn remember_rpc_transport(port: u16, transport: RpcTransport) {
 }
 
 fn home_dir() -> Result<PathBuf> {
-    crate::paths::home_dir().context("Could not determine home directory")
+    crate::paths::home_dir().context(t!("top.antigravity.noHomeDir"))
 }
 
 fn antigravity_data_roots() -> Result<Vec<PathBuf>> {
@@ -507,38 +508,55 @@ fn sync_antigravity_cache_impl_with_deadline(
     let count = next_manifest.sessions.len();
 
     if explicit {
-        println!("\n  {}", "Antigravity sync".cyan());
+        println!("\n  {}", t!("top.antigravity.syncTitle").cyan());
+        println!("  {}", t!("top.antigravity.syncSummary").bright_black());
         println!(
             "  {}",
-            "Synced local Antigravity cache from running language servers.".bright_black()
+            tr!("top.antigravity.summaryCache", path = cache_dir.display()).bright_black()
         );
         println!(
             "  {}",
-            format!("cache: {}", cache_dir.display()).bright_black()
+            tr!(
+                "top.antigravity.summaryKnownSessions",
+                count = manifest.sessions.len()
+            )
+            .bright_black()
         );
         println!(
             "  {}",
-            format!("known sessions: {}", manifest.sessions.len()).bright_black()
+            tr!(
+                "top.antigravity.summaryDetectedConnections",
+                count = connections.len()
+            )
+            .bright_black()
         );
         println!(
             "  {}",
-            format!("detected connections: {}", connections.len()).bright_black()
+            tr!(
+                "top.antigravity.summaryDetectedSessions",
+                count = summaries.len()
+            )
+            .bright_black()
         );
         println!(
             "  {}",
-            format!("detected sessions: {}", summaries.len()).bright_black()
+            tr!(
+                "top.antigravity.summaryFilesystemCandidates",
+                count = filesystem_candidates.len()
+            )
+            .bright_black()
         );
         println!(
             "  {}",
-            format!("filesystem candidates: {}", filesystem_candidates.len()).bright_black()
+            tr!(
+                "top.antigravity.summaryExportCandidates",
+                count = export_candidates.len()
+            )
+            .bright_black()
         );
         println!(
             "  {}",
-            format!("export candidates: {}", export_candidates.len()).bright_black()
-        );
-        println!(
-            "  {}",
-            format!("cached sessions after sync: {}", count).bright_black()
+            tr!("top.antigravity.summaryCachedSessions", count = count).bright_black()
         );
         println!();
     }
@@ -563,11 +581,12 @@ fn report_sync_outcome(result: SyncAntigravityResult) -> Result<()> {
         if let Some(err) = result.error {
             eprintln!(
                 "  {}",
-                format!(
-                    "Warning: {} session{} could not be refreshed and {} were kept from the cache: {err}",
-                    result.failed_sessions,
-                    if result.failed_sessions == 1 { "" } else { "s" },
-                    result.retained_sessions,
+                tr!(
+                    "top.antigravity.partialSyncWarning",
+                    failed = result.failed_sessions,
+                    plural = if result.failed_sessions == 1 { "" } else { "s" },
+                    retained = result.retained_sessions,
+                    error = err
                 )
                 .yellow()
             );
@@ -606,37 +625,50 @@ pub fn run_antigravity_status(json: bool) -> Result<()> {
         return Ok(());
     }
 
-    println!("\n  {}", "Antigravity status".cyan());
+    println!("\n  {}", t!("top.antigravity.statusTitle").cyan());
     println!(
         "  {}",
-        format!("cache dir: {}", status.cache_dir).bright_black()
+        tr!("top.antigravity.statusCacheDir", path = status.cache_dir).bright_black()
     );
     println!(
         "  {}",
-        format!("sessions dir: {}", bool_label(status.sessions_dir_exists)).bright_black()
+        tr!(
+            "top.antigravity.statusSessionsDir",
+            value = bool_label(status.sessions_dir_exists)
+        )
+        .bright_black()
     );
     println!(
         "  {}",
-        format!("manifest: {}", bool_label(status.manifest_exists)).bright_black()
+        tr!(
+            "top.antigravity.statusManifest",
+            value = bool_label(status.manifest_exists)
+        )
+        .bright_black()
     );
     println!(
         "  {}",
-        format!("detected connections: {}", status.detected_connections).bright_black()
+        tr!(
+            "top.antigravity.statusDetectedConnections",
+            count = status.detected_connections
+        )
+        .bright_black()
     );
     println!(
         "  {}",
-        format!("cached sessions: {}", status.cached_sessions).bright_black()
+        tr!(
+            "top.antigravity.statusCachedSessions",
+            count = status.cached_sessions
+        )
+        .bright_black()
     );
     if let Some(last_synced_at) = &status.last_synced_at {
         println!(
             "  {}",
-            format!("last synced: {}", last_synced_at).bright_black()
+            tr!("top.antigravity.statusLastSynced", time = last_synced_at).bright_black()
         );
     }
-    println!(
-        "  {}",
-        "Run `tokens antigravity sync` to refresh the local cache before reporting.".bright_black()
-    );
+    println!("  {}", t!("top.antigravity.statusSyncHint").bright_black());
     println!();
     Ok(())
 }
@@ -645,7 +677,8 @@ pub fn run_antigravity_purge_cache() -> Result<()> {
     use colored::Colorize;
 
     let cache_dir = get_antigravity_cache_dir()?;
-    let cache_lock = CacheOperationLockGuard::acquire(&cache_dir, "Antigravity cache operation")?;
+    let cache_lock =
+        CacheOperationLockGuard::acquire(&cache_dir, t!("top.antigravity.operationCacheOp"))?;
     if cache_dir.exists() {
         // Hold the same legacy-visible lock as sync while purging. An old
         // binary does not know the parent lock, so a pre-delete PID check
@@ -665,10 +698,13 @@ pub fn run_antigravity_purge_cache() -> Result<()> {
         }
         println!(
             "\n  {}\n",
-            format!("✓ Deleted {}", cache_dir.display()).green()
+            tr!("top.antigravity.deletedCache", path = cache_dir.display()).green()
         );
     } else {
-        println!("\n  {}\n", "No Antigravity cache to delete.".bright_black());
+        println!(
+            "\n  {}\n",
+            t!("top.antigravity.noCacheToDelete").bright_black()
+        );
     }
     Ok(())
 }
@@ -716,12 +752,8 @@ impl CacheOperationLockGuard {
     fn acquire(cache_dir: &Path, operation: &str) -> Result<Self> {
         let lock_path = cache_dir.with_extension("lock");
         if let Some(parent) = lock_path.parent() {
-            std::fs::create_dir_all(parent).with_context(|| {
-                format!(
-                    "Failed to create Antigravity lock directory at {}",
-                    parent.display()
-                )
-            })?;
+            std::fs::create_dir_all(parent)
+                .with_context(|| tr!("top.antigravity.createLockDir", path = parent.display()))?;
         }
 
         let file = std::fs::OpenOptions::new()
@@ -730,20 +762,19 @@ impl CacheOperationLockGuard {
             .create(true)
             .truncate(false)
             .open(&lock_path)
-            .with_context(|| {
-                format!(
-                    "Failed to open Antigravity cache operation lock at {}",
-                    lock_path.display()
-                )
-            })?;
+            .with_context(|| tr!("top.antigravity.openCacheLock", path = lock_path.display()))?;
 
         match file.try_lock_exclusive() {
             Ok(()) => Ok(Self { _file: file }),
             Err(err) if crate::commands::autosubmit::is_lock_contention(&err) => {
-                anyhow::bail!("Another tokens {operation} is in progress; aborting")
+                anyhow::bail!(tr!(
+                    "top.antigravity.operationInProgress",
+                    operation = operation
+                ))
             }
-            Err(err) => Err(anyhow::Error::new(err)
-                .context("Failed to acquire Antigravity cache operation lock")),
+            Err(err) => {
+                Err(anyhow::Error::new(err).context(t!("top.antigravity.acquireCacheLock")))
+            }
         }
     }
 }
@@ -767,7 +798,8 @@ impl SyncLockGuard {
     /// holding the companion lock. After a crash, a surviving visible record
     /// fails closed and requires the documented user-mediated recovery.
     fn acquire(cache_dir: &Path) -> Result<Self> {
-        let cache_lock = CacheOperationLockGuard::acquire(cache_dir, "antigravity sync")?;
+        let cache_lock =
+            CacheOperationLockGuard::acquire(cache_dir, t!("top.antigravity.operationSync"))?;
         Self::acquire_with_cache_lock(cache_dir, cache_lock)
     }
 
@@ -777,10 +809,7 @@ impl SyncLockGuard {
     ) -> Result<Self> {
         if !cache_dir.exists() {
             std::fs::create_dir_all(cache_dir).with_context(|| {
-                format!(
-                    "Failed to create Antigravity cache directory at {}",
-                    cache_dir.display()
-                )
+                tr!("top.antigravity.createCacheDir", path = cache_dir.display())
             })?;
         }
 
@@ -794,12 +823,7 @@ impl SyncLockGuard {
             .create(true)
             .truncate(false)
             .open(&os_path)
-            .with_context(|| {
-                format!(
-                    "Failed to open Antigravity OS sync lock at {}",
-                    os_path.display()
-                )
-            })?;
+            .with_context(|| tr!("top.antigravity.openOsSyncLock", path = os_path.display()))?;
 
         match os_file.try_lock_exclusive() {
             Ok(()) => {}
@@ -811,12 +835,10 @@ impl SyncLockGuard {
                     .filter(|(pid, _)| pid_is_alive(*pid))
                     .map(|(pid, _)| format!(" (pid {pid})"))
                     .unwrap_or_default();
-                anyhow::bail!("Another tokens antigravity sync is in progress{owner}; aborting");
+                anyhow::bail!(tr!("top.antigravity.syncInProgress", owner = owner));
             }
             Err(err) => {
-                return Err(
-                    anyhow::Error::new(err).context("Failed to acquire Antigravity sync lock")
-                );
+                return Err(anyhow::Error::new(err).context(t!("top.antigravity.acquireSyncLock")));
             }
         }
 
@@ -856,9 +878,9 @@ fn publish_legacy_readable_lock(lock_path: &Path) -> Result<String> {
         .write(true)
         .open(&temp_path)
         .with_context(|| {
-            format!(
-                "Failed to prepare Antigravity sync lock at {}",
-                temp_path.display()
+            tr!(
+                "top.antigravity.prepareSyncLock",
+                path = temp_path.display()
             )
         })?;
     writeln!(
@@ -882,28 +904,24 @@ fn publish_legacy_readable_lock(lock_path: &Path) -> Result<String> {
                 .filter(|(pid, _)| pid_is_alive(*pid))
                 .map(|(pid, _)| format!(" (pid {pid})"))
                 .unwrap_or_default();
-            anyhow::bail!("Another tokens antigravity sync is in progress{owner}; aborting")
+            anyhow::bail!(tr!("top.antigravity.syncInProgress", owner = owner))
         }
-        Err(err) => {
-            Err(anyhow::Error::new(err)
-                .context("Failed to publish Antigravity sync lock atomically"))
-        }
+        Err(err) => Err(anyhow::Error::new(err).context(t!("top.antigravity.publishSyncLock"))),
     }
 }
 
 fn existing_sync_lock_error(lock_path: &Path) -> anyhow::Error {
     if let Some((pid, _)) = read_sync_lock(lock_path).filter(|(pid, _)| pid_is_alive(*pid)) {
-        anyhow::anyhow!(
-            "Another tokens Antigravity sync may be in progress (pid {pid}); do not remove '{}' until that process has stopped. If it has stopped, remove '{}' and retry.",
-            lock_path.display(),
-            lock_path.display()
-        )
+        anyhow::anyhow!(tr!(
+            "top.antigravity.lockHeldByPid",
+            pid = pid,
+            path = lock_path.display()
+        ))
     } else {
-        anyhow::anyhow!(
-            "Antigravity sync lock at '{}' already exists. To avoid overlapping a possible active sync during a rolling upgrade, tokens will not replace it automatically. Confirm no tokens Antigravity sync is running, then remove '{}' and retry.",
-            lock_path.display(),
-            lock_path.display()
-        )
+        anyhow::anyhow!(tr!(
+            "top.antigravity.lockAlreadyExists",
+            path = lock_path.display()
+        ))
     }
 }
 
@@ -933,9 +951,9 @@ pub fn load_antigravity_manifest() -> Result<AntigravityManifest> {
     }
 
     let content = fs::read_to_string(&manifest_path).with_context(|| {
-        format!(
-            "Failed to read Antigravity manifest at {}",
-            manifest_path.display()
+        tr!(
+            "top.antigravity.readManifest",
+            path = manifest_path.display()
         )
     })?;
 
@@ -944,30 +962,37 @@ pub fn load_antigravity_manifest() -> Result<AntigravityManifest> {
         Err(err) => {
             let backup_path = backup_corrupted_manifest(&manifest_path);
             eprintln!(
-                "Warning: Antigravity manifest at {} is corrupted: {err}; starting fresh{}",
-                manifest_path.display(),
-                backup_path
-                    .map(|p| format!(" (moved aside to {})", p.display()))
-                    .unwrap_or_default()
+                "{}",
+                tr!(
+                    "top.antigravity.manifestCorrupted",
+                    path = manifest_path.display(),
+                    error = err,
+                    backup = backup_path
+                        .map(|p| tr!("top.antigravity.manifestMovedAside", path = p.display()))
+                        .unwrap_or_default()
+                )
             );
             return Ok(AntigravityManifest::default());
         }
     };
 
     if manifest.version > ANTIGRAVITY_MANIFEST_VERSION {
-        anyhow::bail!(
-            "Manifest from a newer tokens version detected; refusing to overwrite (got version {}, supported {})",
-            manifest.version,
-            ANTIGRAVITY_MANIFEST_VERSION
-        );
+        anyhow::bail!(tr!(
+            "top.antigravity.manifestTooNew",
+            found = manifest.version,
+            supported = ANTIGRAVITY_MANIFEST_VERSION
+        ));
     }
 
     if manifest.version < ANTIGRAVITY_MANIFEST_VERSION {
         eprintln!(
-            "Info: Antigravity manifest at {} is at version {} (current {}); starting fresh",
-            manifest_path.display(),
-            manifest.version,
-            ANTIGRAVITY_MANIFEST_VERSION
+            "{}",
+            tr!(
+                "top.antigravity.manifestTooOld",
+                path = manifest_path.display(),
+                found = manifest.version,
+                current = ANTIGRAVITY_MANIFEST_VERSION
+            )
         );
         return Ok(AntigravityManifest::default());
     }
@@ -1040,7 +1065,7 @@ fn resolve_cache_relative_artifact_path(relative_path: &str) -> Result<PathBuf> 
     let normalized = normalize_artifact_path_separators(relative_path);
     let relative = Path::new(&normalized);
     if relative.is_absolute() {
-        anyhow::bail!("Artifact path must stay within cache root");
+        anyhow::bail!(t!("top.antigravity.artifactOutsideCacheRoot"));
     }
 
     if relative.components().any(|component| {
@@ -1051,12 +1076,12 @@ fn resolve_cache_relative_artifact_path(relative_path: &str) -> Result<PathBuf> 
                 | std::path::Component::Prefix(_)
         )
     }) {
-        anyhow::bail!("Artifact path must stay within cache root");
+        anyhow::bail!(t!("top.antigravity.artifactOutsideCacheRoot"));
     }
 
     let path_text = relative.to_string_lossy();
     if !path_text.starts_with("sessions/") || !path_text.ends_with(".jsonl") {
-        anyhow::bail!("Artifact path must point to a session artifact");
+        anyhow::bail!(t!("top.antigravity.artifactNotSessionArtifact"));
     }
 
     let cache_dir = get_antigravity_cache_dir()?;
@@ -1069,13 +1094,13 @@ fn resolve_cache_relative_artifact_path(relative_path: &str) -> Result<PathBuf> 
 
     if candidate.exists() {
         let canonical_candidate = candidate.canonicalize().with_context(|| {
-            format!(
-                "Failed to canonicalize artifact path {}",
-                candidate.display()
+            tr!(
+                "top.antigravity.canonicalizeArtifact",
+                path = candidate.display()
             )
         })?;
         if !canonical_candidate.starts_with(&canonical_sessions) {
-            anyhow::bail!("Artifact path must stay within sessions cache root");
+            anyhow::bail!(t!("top.antigravity.artifactOutsideSessionsRoot"));
         }
         return Ok(canonical_candidate);
     }
@@ -1223,7 +1248,7 @@ fn cached_manifest_session_entry(
 fn atomic_write_file(path: &Path, contents: &str) -> Result<()> {
     let parent = path
         .parent()
-        .ok_or_else(|| anyhow::anyhow!("Invalid cache path"))?;
+        .ok_or_else(|| anyhow::anyhow!(t!("top.antigravity.invalidCachePath")))?;
     if !parent.exists() {
         fs::create_dir_all(parent)?;
     }
@@ -1258,12 +1283,12 @@ fn atomic_write_file(path: &Path, contents: &str) -> Result<()> {
 
     if let Err(err) = tokens_core::fs_atomic::replace_file(&temp_path, path) {
         let _ = fs::remove_file(&temp_path);
-        return Err(anyhow::anyhow!(
-            "Failed to persist file atomically (temp: {}, final: {}): {}",
-            temp_path.display(),
-            path.display(),
-            err
-        ));
+        return Err(anyhow::anyhow!(tr!(
+            "top.antigravity.persistAtomicallyFailed",
+            temp = temp_path.display(),
+            final_path = path.display(),
+            error = err
+        )));
     }
 
     Ok(())
@@ -1271,9 +1296,9 @@ fn atomic_write_file(path: &Path, contents: &str) -> Result<()> {
 
 fn bool_label(value: bool) -> &'static str {
     if value {
-        "yes"
+        t!("top.antigravity.yes")
     } else {
-        "no"
+        t!("top.antigravity.no")
     }
 }
 
@@ -1407,23 +1432,21 @@ fn detect_windows_process_candidates() -> Result<Vec<ProcessCandidate>> {
     let script = "$ErrorActionPreference = 'Stop'; Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,ExecutablePath,CommandLine | ConvertTo-Json -Compress";
     let output = run_windows_powershell(script)?;
     if output.trim().is_empty() {
-        anyhow::bail!(
-            "Windows process discovery returned no data; cannot discover Antigravity language servers"
-        );
+        anyhow::bail!(t!("top.antigravity.windowsDiscoveryNoData"));
     }
     parse_windows_process_candidates(&output)
 }
 
 #[cfg(any(test, target_os = "windows"))]
 fn parse_windows_process_candidates(output: &str) -> Result<Vec<ProcessCandidate>> {
-    let value: Value = serde_json::from_str(output.trim())
-        .context("Failed to parse Windows process discovery JSON")?;
+    let value: Value =
+        serde_json::from_str(output.trim()).context(t!("top.antigravity.windowsDiscoveryParse"))?;
     let items: Vec<&Value> = match &value {
         Value::Array(values) => values.iter().collect(),
         Value::Object(_) => vec![&value],
         Value::Null => Vec::new(),
         _ => {
-            anyhow::bail!("Windows process discovery JSON must be an object or array");
+            anyhow::bail!(t!("top.antigravity.windowsDiscoveryShape"));
         }
     };
     let mut candidates = Vec::new();
@@ -1603,7 +1626,7 @@ fn find_unix_listening_ports(pid: u32) -> Result<Vec<u16>> {
 #[cfg(target_os = "windows")]
 fn find_windows_listening_ports(pid: u32) -> Result<Vec<u16>> {
     let output = run_command_required("netstat", &["-ano", "-p", "TCP"])
-        .context("Failed to discover Windows TCP listeners with netstat")?;
+        .context(t!("top.antigravity.windowsNetstatDiscover"))?;
     Ok(parse_windows_netstat_ports(&output, pid))
 }
 
@@ -1645,8 +1668,11 @@ fn run_port_query(program: &str, warning_label: &str, args: &[&str]) -> Result<V
         Ok(output) => Ok(parse_ports(&output)),
         Err(err) if is_command_not_found(&err) => {
             eprintln!(
-                "Warning: {} is unavailable; skipping port discovery",
-                warning_label
+                "{}",
+                tr!(
+                    "top.antigravity.portToolUnavailable",
+                    program = warning_label
+                )
             );
             Ok(Vec::new())
         }
@@ -1993,15 +2019,18 @@ fn run_command(program: &str, args: &[&str]) -> Result<String> {
     if !output.status.success() && output.stdout.is_empty() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         eprintln!(
-            "Warning: {} {} exited with status {}{}",
-            program,
-            args.join(" "),
-            output.status,
-            if stderr.trim().is_empty() {
-                String::new()
-            } else {
-                format!(": {}", stderr.trim())
-            }
+            "{}",
+            tr!(
+                "top.antigravity.commandWarning",
+                program = program,
+                args = args.join(" "),
+                status = output.status,
+                stderr = if stderr.trim().is_empty() {
+                    String::new()
+                } else {
+                    tr!("top.antigravity.commandStderr", stderr = stderr.trim())
+                }
+            )
         );
         return Ok(String::new());
     }
@@ -2014,17 +2043,17 @@ fn run_command_required(program: &str, args: &[&str]) -> Result<String> {
     let output = run_command_output(program, args)?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!(
-            "{} {} exited with status {}{}",
-            program,
-            args.join(" "),
-            output.status,
-            if stderr.trim().is_empty() {
+        anyhow::bail!(tr!(
+            "top.antigravity.commandFailed",
+            program = program,
+            args = args.join(" "),
+            status = output.status,
+            stderr = if stderr.trim().is_empty() {
                 String::new()
             } else {
-                format!(": {}", stderr.trim())
+                tr!("top.antigravity.commandStderr", stderr = stderr.trim())
             }
-        );
+        ));
     }
 
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
@@ -2048,10 +2077,13 @@ fn run_windows_powershell(script: &str) -> Result<String> {
 }
 
 fn run_command_output(program: &str, args: &[&str]) -> Result<std::process::Output> {
-    let output = Command::new(program)
-        .args(args)
-        .output()
-        .with_context(|| format!("Failed to run {} {}", program, args.join(" ")))?;
+    let output = Command::new(program).args(args).output().with_context(|| {
+        tr!(
+            "top.antigravity.runCommandFailed",
+            program = program,
+            args = args.join(" ")
+        )
+    })?;
     Ok(output)
 }
 
@@ -2072,8 +2104,12 @@ fn list_trajectory_summaries_with_errors(
             Ok(response) => response,
             Err(err) => {
                 eprintln!(
-                    "Warning: failed to list Antigravity trajectories for {}: {err:#}",
-                    connection.fingerprint
+                    "{}",
+                    tr!(
+                        "top.antigravity.warnListTrajectories",
+                        connection = connection.fingerprint,
+                        error = format!("{err:#}")
+                    )
                 );
                 errors.push(err);
                 continue;
@@ -2323,7 +2359,7 @@ fn rpc_request_with_deadline(
             body,
             rpc_timeout_for_deadline(deadline)?,
         )
-        .with_context(|| format!("HTTPS RPC failed for Antigravity RPC {method}"));
+        .with_context(|| tr!("top.antigravity.httpsRpcFailed", method = method));
     }
 
     match rpc_request_plain_http(
@@ -2348,8 +2384,10 @@ fn rpc_request_with_deadline(
                 rpc_timeout_for_deadline(deadline)?,
             )
             .with_context(|| {
-                format!(
-                    "HTTP RPC failed ({http_err:#}); HTTPS fallback also failed for Antigravity RPC {method}"
+                tr!(
+                    "top.antigravity.httpRpcAndHttpsFallbackFailed",
+                    http_error = format!("{http_err:#}"),
+                    method = method
                 )
             })?;
             remember_rpc_transport(connection.port, RpcTransport::Https);
@@ -2517,16 +2555,16 @@ fn https_rpc_request(
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()
-            .with_context(|| "Failed to execute curl.exe for Windows RPC fallback")?;
+            .with_context(|| t!("top.antigravity.curlSpawnFailed"))?;
 
         let child_stdout = child
             .stdout
             .take()
-            .context("curl.exe stdout unavailable for Windows RPC fallback")?;
+            .context(t!("top.antigravity.curlStdoutUnavailable"))?;
         let child_stderr = child
             .stderr
             .take()
-            .context("curl.exe stderr unavailable for Windows RPC fallback")?;
+            .context(t!("top.antigravity.curlStderrUnavailable"))?;
 
         // stderr gets its own thread, started before anything is written to
         // stdin, and that thread reads it to EOF. Reading one pipe to EOF on
@@ -2550,9 +2588,9 @@ fn https_rpc_request(
         child
             .stdin
             .take()
-            .context("curl.exe stdin unavailable for Windows RPC fallback")?
+            .context(t!("top.antigravity.curlStdinUnavailable"))?
             .write_all(config.as_bytes())
-            .context("Failed to write curl.exe config for Windows RPC fallback")?;
+            .context(t!("top.antigravity.curlConfigWrite"))?;
 
         // The cap is enforced while curl is still transferring, not once the
         // whole response is already in memory: at most max_rpc_body_bytes() + 1
@@ -2572,8 +2610,7 @@ fn https_rpc_request(
                 let _ = child.kill();
                 let _ = child.wait();
                 let _ = stderr_drain.join();
-                let bytes =
-                    outcome.context("Failed to read curl.exe response for Windows RPC fallback")?;
+                let bytes = outcome.context(t!("top.antigravity.curlResponseRead"))?;
                 return Err(anyhow::Error::new(RpcBodyCapError {
                     length: bytes.len(),
                     cap,
@@ -2583,42 +2620,42 @@ fn https_rpc_request(
 
         let status = child
             .wait()
-            .with_context(|| "Failed to execute curl.exe for Windows RPC fallback")?;
+            .with_context(|| t!("top.antigravity.curlSpawnFailed"))?;
         let stderr_bytes = stderr_drain.join().unwrap_or_default();
 
         if !status.success() {
-            anyhow::bail!(
-                "Windows curl.exe RPC fallback failed (exit code {}): {}",
-                status
+            anyhow::bail!(tr!(
+                "top.antigravity.curlFallbackFailed",
+                code = status
                     .code()
                     .map(|c| c.to_string())
                     .unwrap_or_else(|| "unknown".into()),
-                String::from_utf8_lossy(&stderr_bytes)
-            );
+                stderr = String::from_utf8_lossy(&stderr_bytes)
+            ));
         }
 
         let stdout = String::from_utf8_lossy(&stdout_bytes);
-        let (response_body, status_line) = stdout.rsplit_once('\n').with_context(|| {
-            format!("curl.exe returned no HTTP status for Antigravity RPC {method}")
-        })?;
+        let (response_body, status_line) = stdout
+            .rsplit_once('\n')
+            .with_context(|| tr!("top.antigravity.curlNoHttpStatus", method = method))?;
         let status: u16 = status_line.trim().parse().with_context(|| {
-            format!(
-                "curl.exe returned unparseable HTTP status {:?} for Antigravity RPC {method}",
-                status_line.trim()
+            tr!(
+                "top.antigravity.curlUnparseableStatus",
+                status = format!("{:?}", status_line.trim()),
+                method = method
             )
         })?;
         if !(200..300).contains(&status) {
-            anyhow::bail!(
-                "Antigravity HTTPS RPC {} failed with status {}: {}",
-                method,
-                status,
-                response_body
-            );
+            anyhow::bail!(tr!(
+                "top.antigravity.httpsRpcStatusFailed",
+                method = method,
+                status = status,
+                body = response_body
+            ));
         }
 
-        serde_json::from_str(response_body).with_context(|| {
-            format!("Failed to parse Antigravity RPC {method} response from curl.exe")
-        })
+        serde_json::from_str(response_body)
+            .with_context(|| tr!("top.antigravity.curlParseFailed", method = method))
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -2647,9 +2684,10 @@ fn https_rpc_request(
                     .join()
             });
         joined.unwrap_or_else(|_| {
-            Err(anyhow::anyhow!(
-                "Antigravity HTTPS RPC {method} worker thread panicked"
-            ))
+            Err(anyhow::anyhow!(tr!(
+                "top.antigravity.httpsRpcPanicked",
+                method = method
+            )))
         })
     }
 }
@@ -2681,12 +2719,12 @@ async fn https_rpc_once(
     let status = response.status();
     let response_body = read_reqwest_response_with_cap(response, max_rpc_body_bytes()).await?;
     if !status.is_success() {
-        anyhow::bail!(
-            "Antigravity HTTPS RPC {} failed with status {}: {}",
-            method,
-            status,
-            response_body
-        );
+        anyhow::bail!(tr!(
+            "top.antigravity.httpsRpcStatusFailed",
+            method = method,
+            status = status,
+            body = response_body
+        ));
     }
     Ok(serde_json::from_str(&response_body)?)
 }
@@ -2766,12 +2804,8 @@ fn rpc_request_plain_http(
     timeout: Duration,
 ) -> Result<Value> {
     let address = std::net::SocketAddr::from(([127, 0, 0, 1], connection.port));
-    let mut stream = TcpStream::connect_timeout(&address, timeout).with_context(|| {
-        format!(
-            "Failed to connect to Antigravity RPC on port {}",
-            connection.port
-        )
-    })?;
+    let mut stream = TcpStream::connect_timeout(&address, timeout)
+        .with_context(|| tr!("top.antigravity.connectRpcPort", port = connection.port))?;
 
     stream.set_read_timeout(Some(timeout))?;
     stream.set_write_timeout(Some(timeout.min(Duration::from_secs(5))))?;
@@ -2796,7 +2830,7 @@ fn rpc_request_plain_http(
         .split_whitespace()
         .nth(1)
         .and_then(|value| value.parse::<u16>().ok())
-        .ok_or_else(|| anyhow::anyhow!("Malformed HTTP response from Antigravity RPC"))?;
+        .ok_or_else(|| anyhow::anyhow!(t!("top.antigravity.malformedHttpResponse")))?;
 
     let mut content_length: Option<usize> = None;
     let mut chunked = false;
@@ -2843,12 +2877,12 @@ fn rpc_request_plain_http(
     };
 
     if status_code != 200 {
-        return Err(anyhow::anyhow!(
-            "Antigravity RPC {} failed with status {}: {}",
-            method,
-            status_code,
-            response_body
-        ));
+        return Err(anyhow::anyhow!(tr!(
+            "top.antigravity.rpcStatusFailed",
+            method = method,
+            status = status_code,
+            body = response_body
+        )));
     }
 
     Ok(serde_json::from_str(&response_body)?)
@@ -2926,10 +2960,10 @@ fn parse_chunk_size_line(size_line: &str) -> Result<usize> {
         .next()
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| anyhow::anyhow!("Missing chunk size"))?;
+        .ok_or_else(|| anyhow::anyhow!(t!("top.antigravity.missingChunkSize")))?;
 
     usize::from_str_radix(chunk_size, 16)
-        .with_context(|| format!("Invalid chunk size line: {trimmed}"))
+        .with_context(|| tr!("top.antigravity.invalidChunkSizeLine", line = trimmed))
 }
 
 fn normalize_trajectory_summaries(response: &Value, fingerprint: &str) -> Vec<TrajectorySummary> {
@@ -3131,8 +3165,12 @@ impl std::fmt::Display for RpcBodyCapError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "Antigravity RPC body of {} bytes exceeds {} cap",
-            self.length, self.cap
+            "{}",
+            tr!(
+                "top.antigravity.rpcBodyCap",
+                length = self.length,
+                cap = self.cap
+            )
         )
     }
 }
@@ -3155,13 +3193,17 @@ fn fetch_usage_timestamps(
     deadline: Option<&SyncDeadline>,
 ) -> Result<HashMap<String, i64>> {
     if !budget.should_attempt(&connection.fingerprint) {
-        let err = anyhow::anyhow!(
-            "trajectory enrichment budget exhausted or circuit breaker open for connection {}",
-            connection.fingerprint
-        );
+        let err = anyhow::anyhow!(tr!(
+            "top.antigravity.enrichmentBudgetExhausted",
+            connection = connection.fingerprint
+        ));
         eprintln!(
-            "Warning: skipping Antigravity trajectory timestamp enrichment for session {}: {err:#}",
-            summary.session_id
+            "{}",
+            tr!(
+                "top.antigravity.warnSkippingEnrichment",
+                session = summary.session_id,
+                error = format!("{err:#}")
+            )
         );
         return Err(err);
     }
@@ -3179,8 +3221,12 @@ fn fetch_usage_timestamps(
         }
         Err(err) => {
             eprintln!(
-                "Warning: failed to fetch Antigravity trajectory timestamps for session {}: {err:#}",
-                summary.session_id
+                "{}",
+                tr!(
+                    "top.antigravity.warnFetchTimestamps",
+                    session = summary.session_id,
+                    error = format!("{err:#}")
+                )
             );
             let is_cap_error = is_rpc_cap_error(&err);
             if is_cap_error {
@@ -3200,10 +3246,10 @@ fn try_fetch_session_artifact(
     deadline: Option<&SyncDeadline>,
 ) -> Result<Option<SessionArtifact>> {
     if !budget.metadata_should_attempt(&connection.fingerprint) {
-        let err = anyhow::anyhow!(
-            "Antigravity metadata budget exhausted or circuit breaker open for connection {}",
-            connection.fingerprint
-        );
+        let err = anyhow::anyhow!(tr!(
+            "top.antigravity.metadataBudgetExhausted",
+            connection = connection.fingerprint
+        ));
         return Err(err);
     }
 
@@ -3221,8 +3267,12 @@ fn try_fetch_session_artifact(
         Err(err) => {
             budget.record_metadata_failure(&connection.fingerprint, metadata_started.elapsed());
             eprintln!(
-                "Warning: failed to fetch Antigravity metadata for session {}: {err:#}",
-                summary.session_id
+                "{}",
+                tr!(
+                    "top.antigravity.warnFetchMetadata",
+                    session = summary.session_id,
+                    error = format!("{err:#}")
+                )
             );
             return Err(err);
         }
@@ -3244,8 +3294,12 @@ fn try_fetch_session_artifact(
                 let cached = cached_usage_timestamps(&summary.session_id);
                 if !cached.is_empty() {
                     eprintln!(
-                        "Warning: failed to enrich Antigravity timestamps for session {}: {err:#}; reusing timestamps from the cached session artifact",
-                        summary.session_id
+                        "{}",
+                        tr!(
+                            "top.antigravity.warnEnrichReuseCached",
+                            session = summary.session_id,
+                            error = format!("{err:#}")
+                        )
                     );
                 } else if cached_artifact_has_timestamps(&summary.session_id) {
                     // Timestamped usage lines that carry neither a responseId
@@ -3253,8 +3307,12 @@ fn try_fetch_session_artifact(
                     // recorded, or usage with no identity at all. Nothing can
                     // be matched back, so say so instead of resetting quietly.
                     eprintln!(
-                        "Warning: failed to enrich Antigravity timestamps for session {}: {err:#}; the cached session artifact has timestamps but none carry a responseId or messageId to reuse, so timestamps come from the current metadata only",
-                        summary.session_id
+                        "{}",
+                        tr!(
+                            "top.antigravity.warnEnrichNoIdentity",
+                            session = summary.session_id,
+                            error = format!("{err:#}")
+                        )
                     );
                 }
                 cached
@@ -3623,6 +3681,24 @@ mod tests {
     use serial_test::serial;
     use std::ffi::OsString;
 
+    /// The catalogue text up to its first placeholder. Asserting on it instead
+    /// of a hand-copied English fragment keeps these tests independent of the
+    /// active language and of any wording change.
+    fn text_before_placeholder(key: &str) -> String {
+        let text = crate::i18n::t(key);
+        text.split('{').next().unwrap_or(text).to_string()
+    }
+
+    /// A lock refusal, whichever lock the contender lost first: the cache
+    /// operation lock is taken before the sync lock, so both are legitimate.
+    fn in_progress_refusal(err: &anyhow::Error) -> bool {
+        let rendered = err.to_string();
+        rendered.contains(&text_before_placeholder("top.antigravity.syncInProgress"))
+            || rendered.contains(&text_before_placeholder(
+                "top.antigravity.operationInProgress",
+            ))
+    }
+
     /// RAII guard that redirects every tokens config-dir lookup into a
     /// caller-supplied directory and restores the previous environment on
     /// drop (including on panic). Setting `HOME` alone is not sufficient on
@@ -3956,7 +4032,10 @@ mod tests {
     #[test]
     fn parse_chunk_size_line_rejects_invalid_sizes() {
         let err = parse_chunk_size_line("bogus\r\n").unwrap_err();
-        assert!(err.to_string().contains("Invalid chunk size line"));
+        assert_eq!(
+            err.to_string(),
+            tr!("top.antigravity.invalidChunkSizeLine", line = "bogus")
+        );
     }
 
     #[test]
@@ -4394,14 +4473,23 @@ mod tests {
         let _env = TestEnvGuard::redirect_to(temp_dir.path());
 
         let err = delete_artifact_relative_path("../outside.jsonl").unwrap_err();
-        assert!(err.to_string().contains("cache root"));
+        assert_eq!(
+            err.to_string(),
+            t!("top.antigravity.artifactOutsideCacheRoot")
+        );
 
         let absolute = temp_dir.path().join("outside.jsonl");
         let err = delete_artifact_relative_path(absolute.to_str().unwrap()).unwrap_err();
-        assert!(err.to_string().contains("cache root"));
+        assert_eq!(
+            err.to_string(),
+            t!("top.antigravity.artifactOutsideCacheRoot")
+        );
 
         let err = delete_artifact_relative_path("manifest.json").unwrap_err();
-        assert!(err.to_string().contains("session artifact"));
+        assert_eq!(
+            err.to_string(),
+            t!("top.antigravity.artifactNotSessionArtifact")
+        );
     }
 
     /// A manifest written on Windows stores `sessions\<id>.jsonl`, because
@@ -4461,7 +4549,10 @@ mod tests {
         symlink(&outside_file, &symlink_path).unwrap();
 
         let err = delete_artifact_relative_path("sessions/escape.jsonl").unwrap_err();
-        assert!(err.to_string().contains("sessions cache root"));
+        assert_eq!(
+            err.to_string(),
+            t!("top.antigravity.artifactOutsideSessionsRoot")
+        );
         assert!(outside_file.exists());
     }
 
@@ -5045,7 +5136,10 @@ mod tests {
             length: 5000,
             cap: 1024,
         });
-        let wrapped = root.context("HTTPS RPC failed for Antigravity RPC GetCascadeTrajectory");
+        let wrapped = root.context(tr!(
+            "top.antigravity.httpsRpcFailed",
+            method = "GetCascadeTrajectory"
+        ));
         assert!(is_rpc_cap_error(&wrapped));
         assert_eq!(
             wrapped
@@ -5613,7 +5707,14 @@ mod tests {
         .unwrap();
 
         let err = load_antigravity_manifest().unwrap_err();
-        assert!(err.to_string().contains("newer tokens version"));
+        assert_eq!(
+            err.to_string(),
+            tr!(
+                "top.antigravity.manifestTooNew",
+                found = 2,
+                supported = ANTIGRAVITY_MANIFEST_VERSION
+            )
+        );
     }
 
     #[test]
@@ -5691,7 +5792,9 @@ mod tests {
 
         let err = SyncLockGuard::acquire(&cache_dir).unwrap_err();
         assert!(
-            err.to_string().contains("already exists"),
+            err.to_string().contains(&text_before_placeholder(
+                "top.antigravity.lockAlreadyExists"
+            )),
             "a held lock must never be evicted, got: {err:#}"
         );
 
@@ -5710,7 +5813,7 @@ mod tests {
 
         let guard = SyncLockGuard::acquire(&cache_dir).unwrap();
         let err = SyncLockGuard::acquire(&cache_dir).unwrap_err();
-        assert!(err.to_string().contains("in progress"), "got: {err:#}");
+        assert!(in_progress_refusal(&err), "got: {err:#}");
 
         drop(guard);
         SyncLockGuard::acquire(&cache_dir)
@@ -5728,7 +5831,9 @@ mod tests {
 
         let owner = SyncLockGuard::acquire(&cache_dir).unwrap();
         let err = SyncLockGuard::acquire(&cache_dir).unwrap_err();
-        assert!(err.to_string().contains("in progress"));
+        // Either refusal is correct here: a contender can lose the cache
+        // operation lock before it ever reaches the sync lock.
+        assert!(in_progress_refusal(&err), "got: {err:#}");
         assert!(lock_path.exists(), "only the owner's record is visible");
 
         drop(owner);
@@ -5762,7 +5867,9 @@ mod tests {
         std::fs::write(&lock_path, "999999 1776000000").unwrap();
 
         let err = SyncLockGuard::acquire(&cache_dir).unwrap_err();
-        assert!(err.to_string().contains("already exists"));
+        assert!(err.to_string().contains(&text_before_placeholder(
+            "top.antigravity.lockAlreadyExists"
+        )));
         assert!(lock_path.exists());
     }
 
@@ -5774,9 +5881,14 @@ mod tests {
 
         let err = existing_sync_lock_error(&lock_path).to_string();
         let quoted_path = format!("'{}'", lock_path.display());
+        assert_eq!(
+            err,
+            tr!(
+                "top.antigravity.lockAlreadyExists",
+                path = lock_path.display()
+            )
+        );
         assert!(err.contains(&quoted_path));
-        assert!(err.contains("Confirm no tokens Antigravity sync is running"));
-        assert!(err.contains("remove"));
     }
 
     /// During a rolling upgrade an older binary still uses `sync.lock` as a
@@ -5791,10 +5903,14 @@ mod tests {
         std::fs::write(&lock_path, format!("{} 1\n", std::process::id())).unwrap();
 
         let err = SyncLockGuard::acquire(&cache_dir).unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("Another tokens Antigravity sync may be in progress"),
-            "a live legacy owner must be preserved, got: {err:#}"
+        assert_eq!(
+            err.to_string(),
+            tr!(
+                "top.antigravity.lockHeldByPid",
+                pid = std::process::id(),
+                path = lock_path.display()
+            ),
+            "a live legacy owner must be preserved"
         );
         assert_eq!(
             read_sync_lock(&lock_path).map(|(pid, _)| pid),
@@ -5879,10 +5995,13 @@ mod tests {
 
         let sync = SyncLockGuard::acquire(&cache_dir).unwrap();
         let err = run_antigravity_purge_cache().unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("Another tokens Antigravity cache operation is in progress"),
-            "purge must not unlink an active sync lock, got: {err:#}"
+        assert_eq!(
+            err.to_string(),
+            tr!(
+                "top.antigravity.operationInProgress",
+                operation = t!("top.antigravity.operationCacheOp")
+            ),
+            "purge must not unlink an active sync lock"
         );
         assert!(cache_dir.join("sync.lock").exists());
         assert!(cache_dir.join("manifest.json").exists());
@@ -6110,7 +6229,8 @@ mod tests {
         });
         remember_rpc_transport(port, RpcTransport::PlainHttp);
 
-        let result = sync_antigravity_cache_with_connections(&[enrichment_test_connection(port)], true);
+        let result =
+            sync_antigravity_cache_with_connections(&[enrichment_test_connection(port)], true);
         assert!(result.partial, "a recoverable metadata failure is partial");
         assert_eq!(result.failed_sessions, 1);
         assert!(result.error.is_some());

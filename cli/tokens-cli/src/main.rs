@@ -5,6 +5,7 @@ mod commands;
 mod cursor;
 mod device;
 mod hindsight;
+mod i18n;
 mod paths;
 mod process_liveness;
 mod settings;
@@ -13,8 +14,8 @@ mod trae;
 mod warp;
 
 use anyhow::Result;
-use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
-use std::io::{IsTerminal};
+use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum};
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -27,6 +28,11 @@ struct Cli {
     // gone. The subcommands that still need them declare their own.
     #[command(subcommand)]
     command: Option<Commands>,
+
+    /// Terminal language: `en`, `zh-CN`, `ja`, or `auto` (the default, which
+    /// follows `TOKENS_LANG`, then settings.json, then your system locale).
+    #[arg(long, global = true, value_name = "LANG")]
+    lang: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -382,7 +388,7 @@ fn init_tracing() {
     }
 
     let Ok(env_filter) = tracing_subscriber::EnvFilter::try_new(&filter) else {
-        eprintln!("[tokens] Ignoring invalid TOKENS_LOG filter: {}", filter);
+        eprintln!("{}", tr!("cli.tracing.invalidFilter", filter = filter));
         return;
     };
 
@@ -392,44 +398,221 @@ fn init_tracing() {
         .try_init();
 }
 
-fn main() -> Result<()> {
-    let cli = Cli::parse();
+/// Read `--lang <value>` / `--lang=<value>` straight out of the process
+/// arguments.
+///
+/// The language has to be known before clap parses, because `get_matches`
+/// prints `--help` itself and that text only becomes translatable once
+/// [`apply_localized_help`] has replaced it. Scanning is deliberately shallow:
+/// the flag is global so its value is simply the next argument, and `--` ends
+/// the part clap will still interpret as flags.
+fn lang_flag_from_args() -> Option<String> {
+    let mut args = std::env::args_os().skip(1);
+    while let Some(arg) = args.next() {
+        let Some(arg) = arg.to_str() else {
+            continue;
+        };
+        if arg == "--" {
+            return None;
+        }
+        if arg == "--lang" {
+            return args
+                .next()
+                .map(|value| value.to_string_lossy().into_owned());
+        }
+        if let Some(value) = arg.strip_prefix("--lang=") {
+            return Some(value.to_string());
+        }
+    }
+    None
+}
 
+/// Replace clap's compile-time help text with the catalogue's, in place.
+///
+/// `#[command(about = ...)]` and `#[arg(help = ...)]` are frozen when the
+/// derive runs, so the only way to make them follow `--lang` is to rewrite the
+/// built [`clap::Command`] before it parses or prints. Keys are derived from
+/// the tree position (`cli.<command>.<element>`), using `Command::get_name`
+/// for subcommands and `Arg::get_id` for arguments; `value_name`, `hide` and
+/// everything else are left alone.
+///
+/// clap hardcodes its section titles except for subcommands, so the usage line
+/// is re-templated and every argument is pinned to a localized heading. The
+/// templates reproduce clap's defaults exactly, which keeps an English run
+/// byte-identical.
+fn apply_localized_help(command: &mut clap::Command) {
+    let mut localized = localized_texts(command.clone(), "");
+
+    // clap only creates `--help`/`--version` while building, and they need a
+    // heading too — otherwise they form their own untranslated "Options" group
+    // ahead of the translated one. Text lookups run first so the generated
+    // `help` subcommand never has to be keyed.
+    localized.build();
+    localized = localized_headings(localized);
+
+    *command = localized;
+}
+
+/// Rewrite the authored text and the section titles on the declared tree.
+fn localized_texts(mut command: clap::Command, path: &str) -> clap::Command {
+    let about_key = if path.is_empty() {
+        "cli.root.about".to_string()
+    } else {
+        format!("cli.{path}.about")
+    };
+    if let Some(about) = localized_text(&about_key) {
+        command = command.about(about);
+    }
+
+    // This mirrors clap's `DEFAULT_TEMPLATE` byte for byte apart from the usage
+    // title, so an English run renders exactly as it did before.
+    command = command
+        .help_template(usage_template())
+        .subcommand_help_heading(t!("cli.heading.commands"));
+
+    command = command.mut_args(|arg| {
+        let help_key = if path.is_empty() {
+            format!("cli.root.{}.help", arg.get_id())
+        } else {
+            format!("cli.{path}.{}.help", arg.get_id())
+        };
+        match localized_text(&help_key) {
+            Some(help) => arg.help(help),
+            None => arg,
+        }
+    });
+
+    command.mut_subcommands(|subcommand| {
+        let child_path = if path.is_empty() {
+            subcommand.get_name().to_string()
+        } else {
+            format!("{path}.{}", subcommand.get_name())
+        };
+        localized_texts(subcommand, &child_path)
+    })
+}
+
+/// clap's default help template with only the usage title swapped. Kept in one
+/// place so the generated `help` subcommand gets the same treatment.
+fn usage_template() -> String {
+    format!(
+        "{{before-help}}{{about-with-newline}}\n{} {{usage}}\n\n{{all-args}}{{after-help}}",
+        t!("cli.heading.usage")
+    )
+}
+
+/// Pin every built argument (the generated flags included) to a localized
+/// heading. `mut_args` rewrites in place, unlike `mut_arg`, which appends and
+/// would reorder positionals out from under `trailing_var_arg`.
+fn localized_headings(mut command: clap::Command) -> clap::Command {
+    let arguments_heading = t!("cli.heading.arguments");
+    let options_heading = t!("cli.heading.options");
+    let help_text = t!("cli.heading.helpAction");
+    let version_text = t!("cli.heading.versionAction");
+    let help_subcommand_about = t!("cli.heading.helpSubcommand");
+    let mut positional_order = 0;
+
+    command = command.mut_args(|arg| {
+        let arg = if arg.get_index().is_some() {
+            // clap's heading groups sort options by flag but flagless args by
+            // id, so the declaration order is restored as a display order.
+            let ordinal = positional_order;
+            positional_order += 1;
+            arg.help_heading(arguments_heading).display_order(ordinal)
+        } else {
+            arg.help_heading(options_heading)
+        };
+
+        match arg.get_id().as_str() {
+            "help" => arg.help(help_text),
+            "version" => arg.help(version_text),
+            _ => arg,
+        }
+    });
+
+    command.mut_subcommands(|subcommand| {
+        // The `help` subcommand is generated during `build`, after the text
+        // pass, so its own page is finished here.
+        let subcommand = if subcommand.get_name() == "help" {
+            subcommand
+                .about(help_subcommand_about)
+                .help_template(usage_template())
+                .subcommand_help_heading(t!("cli.heading.commands"))
+        } else {
+            subcommand
+        };
+        localized_headings(subcommand)
+    })
+}
+
+/// The catalogue entry for `key`, or `None` when it is absent so the clap
+/// default stays in place.
+fn localized_text(key: &str) -> Option<&'static str> {
+    // `t` answers an absent key with a `debug_assert`, so a help-less argument
+    // needs the miss caught rather than aborting the whole help page.
+    std::panic::catch_unwind(|| crate::i18n::t(key))
+        .ok()
+        .filter(|text| *text != key)
+}
+
+fn main() -> Result<()> {
     init_tracing();
 
-    // Normalize configured alias keys with the same prefix rules as scanned IDs.
+    // The language is resolved before clap runs so its generated help is
+    // already translated, and from the raw arguments rather than the parsed
+    // ones because parsing is exactly what prints.
     let settings = settings::Settings::load();
+    let lang_flag = lang_flag_from_args();
+
+    // Before anything prints. clap's own usage errors stay English; every
+    // message this program writes from here on is in the resolved language.
+    // An unparseable `--lang` falls through the chain so the error itself can
+    // be printed in whichever language that chain lands on.
+    i18n::set_lang(i18n::resolve(
+        lang_flag.as_deref(),
+        settings.language.as_deref(),
+    ));
+
+    if let Some(raw) = lang_flag.as_deref().filter(|raw| *raw != "auto") {
+        if i18n::Lang::parse(raw).is_none() {
+            use i18n::Lang;
+            let options = [Lang::En, Lang::ZhCn, Lang::Ja].map(Lang::tag).join(", ");
+            return Err(anyhow::anyhow!(tr!(
+                "cli.root.unknownLang",
+                value = raw,
+                options = options
+            )));
+        }
+    }
+
+    // Build the command by hand instead of `Cli::parse()` so the help text can
+    // be localized first: `get_matches` prints `--help`/usage errors itself.
+    let mut command = Cli::command();
+    apply_localized_help(&mut command);
+    let cli = Cli::from_arg_matches(&command.clone().get_matches())?;
+
+    // Normalize configured alias keys with the same prefix rules as scanned IDs.
     tokens_core::model_normalization::set_prefixes_to_strip(&settings.model_id_prefixes_to_strip);
     tokens_core::model_alias::set_global(&settings.model_aliases);
 
     // Install OpenCode's configured model display names alongside the aliases.
     // Presentation only — the model id used for pricing, caching, and submit is
     // untouched. An absent or unreadable OpenCode config is a strict no-op.
-    tokens_core::opencode_model_name::set_global(
-        tokens_core::opencode_model_name::load_for_home(None),
-    );
+    tokens_core::opencode_model_name::set_global(tokens_core::opencode_model_name::load_for_home(
+        None,
+    ));
 
     match cli.command {
-        Some(Commands::Login { token, private }) => {
-            run_login_command(token, private)
-        }
-        Some(Commands::Logout) => {
-            run_logout_command()
-        }
-        Some(Commands::Whoami) => {
-            run_whoami_command()
-        }
-        Some(Commands::Status { json }) => {
-            commands::status::run(json)
-        }
+        Some(Commands::Login { token, private }) => run_login_command(token, private),
+        Some(Commands::Logout) => run_logout_command(),
+        Some(Commands::Whoami) => run_whoami_command(),
+        Some(Commands::Status { json }) => commands::status::run(json),
         Some(Commands::Import {
             file,
             format,
             output,
             dry_run,
-        }) => {
-            run_import_command(file, format, output, dry_run)
-        }
+        }) => run_import_command(file, format, output, dry_run),
         Some(Commands::Submit {
             clients,
             date,
@@ -460,46 +643,26 @@ fn main() -> Result<()> {
             let clients = build_client_filter_with_defaults(clients, &[]);
             run_serve(interval, clients)
         }
-        Some(Commands::Autosubmit { subcommand }) => {
-            run_autosubmit_command(subcommand)
-        }
+        Some(Commands::Autosubmit { subcommand }) => run_autosubmit_command(subcommand),
         Some(Commands::Headless {
             source,
             args,
             format,
             output,
             no_auto_flags,
-        }) => {
-            run_headless_command(&source, args, format, output, no_auto_flags)
-        }
-        Some(Commands::Cursor { subcommand }) => {
-            run_cursor_command(subcommand)
-        }
-        Some(Commands::Antigravity { subcommand }) => {
-            run_antigravity_command(subcommand)
-        }
-        Some(Commands::Codex { subcommand }) => {
-            run_codex_command(subcommand)
-        }
-        Some(Commands::Trae { subcommand }) => {
-            run_trae_command(subcommand)
-        }
-        Some(Commands::Warp { subcommand }) => {
-            run_warp_command(subcommand)
-        }
-        Some(Commands::Hindsight { subcommand }) => {
-            run_hindsight_command(subcommand)
-        }
-        Some(Commands::DeleteSubmittedData) => {
-            run_delete_data_command()
-        }
-        Some(Commands::Cloud { subcommand }) => {
-            run_cloud_command(subcommand)
-        }
+        }) => run_headless_command(&source, args, format, output, no_auto_flags),
+        Some(Commands::Cursor { subcommand }) => run_cursor_command(subcommand),
+        Some(Commands::Antigravity { subcommand }) => run_antigravity_command(subcommand),
+        Some(Commands::Codex { subcommand }) => run_codex_command(subcommand),
+        Some(Commands::Trae { subcommand }) => run_trae_command(subcommand),
+        Some(Commands::Warp { subcommand }) => run_warp_command(subcommand),
+        Some(Commands::Hindsight { subcommand }) => run_hindsight_command(subcommand),
+        Some(Commands::DeleteSubmittedData) => run_delete_data_command(),
+        Some(Commands::Cloud { subcommand }) => run_cloud_command(subcommand),
         None => {
             // The dashboard and the report commands are gone, so a bare
             // `tokens` prints usage rather than rendering anything.
-            Cli::command().print_help()?;
+            command.print_help()?;
             println!();
             Ok(())
         }
@@ -940,23 +1103,22 @@ fn cursor_setup_warnings(clients: &Option<Vec<String>>) -> Vec<String> {
     }
 
     let Some(state) = cursor_setup_state() else {
-        return vec![
-            "Cursor usage requires the Tokens Cursor API cache, but the home directory could not be resolved. Run `tokens cursor login` and `tokens cursor sync --json`. Tokens does not parse local `~/.cursor` session data.".to_string(),
-        ];
+        return vec![t!("cli.warning.cursorNoHome").to_string()];
     };
     if state.has_cache {
         return Vec::new();
     }
 
     let action = if state.has_credentials {
-        "run `tokens cursor sync --json`"
+        t!("cli.warning.actionCursorSync")
     } else {
-        "run `tokens cursor login` and `tokens cursor sync --json`"
+        t!("cli.warning.actionCursorLoginSync")
     };
 
-    vec![format!(
-        "Cursor usage requires the Tokens Cursor API cache at `{}`; {}. Tokens does not parse local `~/.cursor` session data.",
-        state.cache_glob, action
+    vec![tr!(
+        "cli.warning.cursorNeedsCache",
+        path = state.cache_glob,
+        action = action
     )]
 }
 
@@ -967,7 +1129,7 @@ fn emit_cursor_setup_warnings(warnings: &[String]) {
 
     use colored::Colorize;
     for warning in warnings {
-        eprintln!("{}", format!("  Warning: {}", warning).yellow());
+        eprintln!("{}", tr!("cli.warning", warning = warning).yellow());
     }
 }
 
@@ -982,14 +1144,15 @@ fn warp_setup_warnings(clients: &Option<Vec<String>>) -> Vec<String> {
 
     let cache_glob = "~/.config/tokens/warp-cache/usage*.json".to_string();
     let action = if warp::has_credentials() {
-        "run `tokens warp sync`"
+        t!("cli.warning.actionWarpSync")
     } else {
-        "run `tokens warp login` and `tokens warp sync`"
+        t!("cli.warning.actionWarpLoginSync")
     };
 
-    vec![format!(
-        "Warp usage requires the Tokens aggregate API cache at `{}`; {}. Tokens does not parse local Warp/Oz session transcripts and does not infer tokens from request counts.",
-        cache_glob, action
+    vec![tr!(
+        "cli.warning.warpNeedsCache",
+        path = cache_glob,
+        action = action
     )]
 }
 
@@ -1005,10 +1168,7 @@ fn hindsight_setup_warnings(clients: &Option<Vec<String>>) -> Vec<String> {
         _ => "~/.hindsight/usage/*.jsonl".to_string(),
     };
 
-    vec![format!(
-        "Hindsight usage requires the Tokens Hindsight ledger cache at `{}`; run `tokens hindsight sync`. Tokens does not parse the local Hindsight database.",
-        cache_glob
-    )]
+    vec![tr!("cli.warning.hindsightNeedsCache", path = cache_glob)]
 }
 
 fn setup_warnings(clients: &Option<Vec<String>>) -> Vec<String> {
@@ -1026,7 +1186,6 @@ fn default_submit_clients() -> Vec<String> {
     clients.push("synthetic".to_string());
     clients
 }
-
 
 fn build_date_filter(date: &DateRangeFlags) -> (Option<String>, Option<String>) {
     build_date_filter_for_date(date, timezone::current().today())
@@ -1265,31 +1424,27 @@ fn resolve_submit_replacement(
         return Ok(None);
     }
     if date.today || date.yesterday || date.week || date.month || date.year.is_some() {
-        return Err(anyhow::anyhow!(
-            "--replace only accepts explicit --since and --until bounds; remove --today/--yesterday/--week/--month/--year"
-        ));
+        return Err(anyhow::anyhow!(t!("cli.submit.replaceOnlyExplicitBounds")));
     }
 
     let replacement_clients = clients
         .filter(|clients| !clients.is_empty())
         .map(<[String]>::to_vec)
-        .ok_or_else(|| anyhow::anyhow!("--replace requires at least one explicit --client"))?;
+        .ok_or_else(|| anyhow::anyhow!(t!("cli.submit.replaceNeedsClient")))?;
     let start = date
         .since
         .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("--replace requires a bounded --since date"))?;
+        .ok_or_else(|| anyhow::anyhow!(t!("cli.submit.replaceNeedsSince")))?;
     let end = date
         .until
         .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("--replace requires a bounded --until date"))?;
+        .ok_or_else(|| anyhow::anyhow!(t!("cli.submit.replaceNeedsUntil")))?;
     let start_date = chrono::NaiveDate::parse_from_str(start, "%Y-%m-%d")
-        .map_err(|_| anyhow::anyhow!("--replace --since must use YYYY-MM-DD"))?;
+        .map_err(|_| anyhow::anyhow!(t!("cli.submit.replaceSinceFormat")))?;
     let end_date = chrono::NaiveDate::parse_from_str(end, "%Y-%m-%d")
-        .map_err(|_| anyhow::anyhow!("--replace --until must use YYYY-MM-DD"))?;
+        .map_err(|_| anyhow::anyhow!(t!("cli.submit.replaceUntilFormat")))?;
     if start_date > end_date {
-        return Err(anyhow::anyhow!(
-            "--replace --until must be on or after --since"
-        ));
+        return Err(anyhow::anyhow!(t!("cli.submit.replaceUntilAfterSince")));
     }
 
     Ok(Some(SubmitReplacementCoverage {
@@ -1522,55 +1677,62 @@ fn run_delete_data_command() -> Result<()> {
     use std::io::{self, Write};
     use tokio::runtime::Runtime;
 
-    let auth_token = auth::resolve_api_token().ok_or_else(|| {
-        anyhow::anyhow!("Not logged in. Run `tokens login` or set TOKENS_API_TOKEN.")
-    })?;
+    let auth_token = auth::resolve_api_token()
+        .ok_or_else(|| anyhow::anyhow!(t!("cli.delete-submitted-data.notLoggedIn")))?;
 
-    println!("\n{}", "  ⚠ Delete all submitted usage data".red().bold());
-    println!("{}", "  This will permanently remove:".bright_black());
-    println!("{}", "    • Leaderboard entries".bright_black());
-    println!("{}", "    • Public profile stats".bright_black());
-    println!("{}", "    • Daily usage history".bright_black());
+    println!("\n{}", t!("cli.delete-submitted-data.title").red().bold());
+    println!("{}", t!("cli.delete-submitted-data.intro").bright_black());
     println!(
         "{}",
-        "  Your account and API tokens will stay active.\n".bright_black()
+        t!("cli.delete-submitted-data.leaderboard").bright_black()
+    );
+    println!("{}", t!("cli.delete-submitted-data.profile").bright_black());
+    println!("{}", t!("cli.delete-submitted-data.history").bright_black());
+    println!(
+        "{}",
+        t!("cli.delete-submitted-data.accountStays").bright_black()
     );
 
-    print!(
-        "{}",
-        "  Are you sure you want to delete all submitted data? (y/N): ".white()
-    );
+    print!("{}", t!("cli.delete-submitted-data.confirmFirst").white());
     io::stdout().flush()?;
     let mut input = String::new();
     io::stdin().read_line(&mut input)?;
     if input.trim().to_lowercase() != "y" {
-        println!("{}", "  Cancelled.".bright_black());
+        println!(
+            "{}",
+            t!("cli.delete-submitted-data.cancelled").bright_black()
+        );
         return Ok(());
     }
 
-    print!(
-        "{}",
-        "  This cannot be undone. You will lose all historical token/cost data. Continue? (y/N): "
-            .white()
-    );
+    print!("{}", t!("cli.delete-submitted-data.confirmSecond").white());
     io::stdout().flush()?;
     input.clear();
     io::stdin().read_line(&mut input)?;
     if input.trim().to_lowercase() != "y" {
-        println!("{}", "  Cancelled.".bright_black());
+        println!(
+            "{}",
+            t!("cli.delete-submitted-data.cancelled").bright_black()
+        );
         return Ok(());
     }
 
-    print!("{}", "  Type \"delete my data\" to confirm: ".white());
+    print!("{}", t!("cli.delete-submitted-data.typeToConfirm").white());
     io::stdout().flush()?;
     input.clear();
     io::stdin().read_line(&mut input)?;
     if input.trim().to_lowercase() != "delete my data" {
-        println!("{}", "  Confirmation failed. Cancelled.".bright_black());
+        println!(
+            "{}",
+            t!("cli.delete-submitted-data.confirmFailed").bright_black()
+        );
         return Ok(());
     }
 
-    println!("\n{}", "  Deleting submitted data...".bright_black());
+    println!(
+        "\n{}",
+        t!("cli.delete-submitted-data.deleting").bright_black()
+    );
 
     let api_url = auth::get_api_base_url();
     let rt = Runtime::new()?;
@@ -1598,20 +1760,19 @@ fn run_delete_data_command() -> Result<()> {
                 DeleteSubmittedDataOutcome::Deleted(count) => {
                     println!(
                         "{}",
-                        format!(
-                            "  ✓ Deleted {} submission(s). Leaderboard and profile will refresh shortly.",
-                            count
-                        )
-                        .green()
+                        tr!("cli.delete-submitted-data.deleted", count = count).green()
                     );
                 }
                 DeleteSubmittedDataOutcome::NotFound => {
-                    println!("{}", "  No submitted data found for this account.".yellow());
+                    println!("{}", t!("cli.delete-submitted-data.none").yellow());
                 }
             }
         }
         Err(e) => {
-            return Err(anyhow::anyhow!("Request failed: {}", e));
+            return Err(anyhow::anyhow!(tr!(
+                "cli.delete-submitted-data.requestFailed",
+                error = e
+            )));
         }
     }
 
@@ -1648,7 +1809,11 @@ fn interpret_delete_submitted_data_response(
             .get("error")
             .and_then(|v| v.as_str())
             .unwrap_or("Unknown error");
-        Err(anyhow::anyhow!("Failed ({}): {}", status, err))
+        Err(anyhow::anyhow!(tr!(
+            "cli.delete-submitted-data.serverFailed",
+            status = status,
+            error = err
+        )))
     }
 }
 
@@ -1768,19 +1933,13 @@ fn prompt_star_repo(username: &str) -> Result<()> {
     }
 
     println!();
-    println!("{}", "  Help us grow! \u{2b50}".cyan());
-    println!(
-        "{}",
-        "  Starring tokens helps others discover the project.".bright_black()
-    );
+    println!("{}", t!("cli.star.heading").cyan());
+    println!("{}", t!("cli.star.body").bright_black());
     println!(
         "  {}\n",
         osc8_link("https://github.com/missuo/tokens").bright_black()
     );
-    print!(
-        "{}",
-        "  \u{2b50} Would you like to star Tokens? (Y/n): ".white()
-    );
+    print!("{}", t!("cli.star.prompt").white());
     io::stdout().flush()?;
 
     let mut input = String::new();
@@ -1806,17 +1965,11 @@ fn prompt_star_repo(username: &str) -> Result<()> {
         .status();
     match status {
         Ok(s) if s.success() => {
-            println!(
-                "{}",
-                "  \u{2713} Starred! Thank you for your support.\n".green()
-            );
+            println!("{}", t!("cli.star.starred").green());
             save_star_cache(username, true);
         }
         _ => {
-            println!(
-                "{}",
-                "  Failed to star via gh CLI. Continuing to submit...\n".yellow()
-            );
+            println!("{}", t!("cli.star.failed").yellow());
         }
     }
 
@@ -1840,71 +1993,75 @@ fn run_import_command(
 
     let fmt = format.trim().to_lowercase();
     if !commands::import::SUPPORTED_FORMATS.contains(&fmt.as_str()) {
-        return Err(anyhow::anyhow!(
-            "Unsupported import format '{}'. Supported: {}",
-            format,
-            commands::import::SUPPORTED_FORMATS.join(", ")
-        ));
+        return Err(anyhow::anyhow!(tr!(
+            "cli.import.unsupportedFormat",
+            format = format,
+            supported = commands::import::SUPPORTED_FORMATS.join(", ")
+        )));
     }
 
     // All human-readable banners/summaries/warnings go to stderr so stdout
     // stays pure JSON when no --output path is given (matching `tokens
     // graph`'s behavior) — e.g. `tokens import export.json > out.json`
     // must produce a valid JSON file.
-    eprintln!("\n  {}\n", "Tokens - Import Usage Data".cyan());
+    eprintln!("\n  {}\n", t!("cli.import.title").cyan());
 
     let contents = std::fs::read_to_string(&file)
-        .map_err(|e| anyhow::anyhow!("Failed to read '{}': {}", file, e))?;
+        .map_err(|e| anyhow::anyhow!(tr!("cli.import.readFailed", file = file, error = e)))?;
     let outcome = commands::import::parse_export(&fmt, &contents)?;
     let graph = &outcome.graph;
 
-    eprintln!("{}", "  Imported data:".white());
+    eprintln!("{}", t!("cli.import.importedData").white());
     eprintln!(
         "{}",
-        format!(
-            "    Date range: {} to {}",
-            graph.meta.date_range_start, graph.meta.date_range_end
+        tr!(
+            "cli.import.dateRange",
+            start = graph.meta.date_range_start,
+            end = graph.meta.date_range_end
         )
         .bright_black()
     );
     eprintln!(
         "{}",
-        format!("    Active days: {}", graph.summary.active_days).bright_black()
+        tr!("cli.import.activeDays", days = graph.summary.active_days).bright_black()
     );
     eprintln!(
         "{}",
-        format!(
-            "    Total tokens: {}",
-            format_tokens_with_commas(graph.summary.total_tokens)
+        tr!(
+            "cli.import.totalTokens",
+            tokens = format_tokens_with_commas(graph.summary.total_tokens)
         )
         .bright_black()
     );
     eprintln!(
         "{}",
-        format!(
-            "    Total cost: {}",
-            format_currency(graph.summary.total_cost)
+        tr!(
+            "cli.import.totalCost",
+            cost = format_currency(graph.summary.total_cost)
         )
         .bright_black()
     );
     if !graph.summary.clients.is_empty() {
         eprintln!(
             "{}",
-            format!("    Clients: {}", graph.summary.clients.join(", ")).bright_black()
+            tr!(
+                "cli.import.clients",
+                clients = graph.summary.clients.join(", ")
+            )
+            .bright_black()
         );
     }
     eprintln!(
         "{}",
-        format!("    Models: {}", graph.summary.models.len()).bright_black()
+        tr!("cli.import.models", count = graph.summary.models.len()).bright_black()
     );
 
     if outcome.agent_attributed_rows > 0 {
         eprintln!(
             "{}",
-            format!(
-                "    Client attribution: exact, from the export's per-agent breakdowns \
-                 ({} row(s))",
-                outcome.agent_attributed_rows
+            tr!(
+                "cli.import.clientAttribution",
+                rows = outcome.agent_attributed_rows
             )
             .bright_black()
         );
@@ -1913,10 +2070,9 @@ fn run_import_command(
     if !outcome.unknown_clients.is_empty() {
         eprintln!(
             "\n  {}",
-            format!(
-                "Warning: unrecognized client id(s): {}. The leaderboard only \
-                 accepts known clients, so these would be rejected on submit.",
-                outcome.unknown_clients.join(", ")
+            tr!(
+                "cli.import.unknownClients",
+                clients = outcome.unknown_clients.join(", ")
             )
             .yellow()
         );
@@ -1925,10 +2081,9 @@ fn run_import_command(
     if outcome.negative_values_clamped > 0 {
         eprintln!(
             "{}",
-            format!(
-                "\n  Warning: {} negative token/cost value(s) in the export were clamped to \
-                 zero.",
-                outcome.negative_values_clamped
+            tr!(
+                "cli.import.negativeValues",
+                count = outcome.negative_values_clamped
             )
             .yellow()
         );
@@ -1937,35 +2092,23 @@ fn run_import_command(
     if outcome.suspect_cost_rows > 0 {
         eprintln!(
             "{}",
-            format!(
-                "\n  Warning: {} modelBreakdown row(s) have cost > 0 but all token fields are \
-                 0. The server rejects submissions shaped like this (\"Cost submitted without \
-                 tokens\"), so these rows would be rejected if ever uploaded.",
-                outcome.suspect_cost_rows
-            )
-            .yellow()
+            tr!("cli.import.suspectCost", count = outcome.suspect_cost_rows).yellow()
         );
     }
 
     if outcome.future_dated_rows > 0 {
         eprintln!(
             "{}",
-            format!(
-                "\n  Warning: {} row(s) are dated in the future. The submit endpoint rejects \
-                 dates too far ahead, so these rows would be rejected if ever uploaded.",
-                outcome.future_dated_rows
-            )
-            .yellow()
+            tr!("cli.import.futureDated", count = outcome.future_dated_rows).yellow()
         );
     }
 
     if outcome.unparseable_cost_rows > 0 {
         eprintln!(
             "{}",
-            format!(
-                "\n  Warning: {} totalCost value(s) in the export could not be parsed and were \
-                 treated as 0.",
-                outcome.unparseable_cost_rows
+            tr!(
+                "cli.import.unparseableCost",
+                count = outcome.unparseable_cost_rows
             )
             .yellow()
         );
@@ -1974,10 +2117,9 @@ fn run_import_command(
     if outcome.non_finite_cost_rows > 0 {
         eprintln!(
             "{}",
-            format!(
-                "\n  Warning: {} cost value(s) in the export were non-finite (NaN/Infinity) \
-                 and were sanitized to 0.",
-                outcome.non_finite_cost_rows
+            tr!(
+                "cli.import.nonFiniteCost",
+                count = outcome.non_finite_cost_rows
             )
             .yellow()
         );
@@ -1986,24 +2128,20 @@ fn run_import_command(
     if outcome.multi_model_fallback_rows > 0 {
         eprintln!(
             "{}",
-            format!(
-                "\n  Warning: {} row(s) had no per-model breakdown and multiple models used; \
-                 all usage in those rows was attributed to the first model only.",
-                outcome.multi_model_fallback_rows
+            tr!(
+                "cli.import.multiModelFallback",
+                count = outcome.multi_model_fallback_rows
             )
             .yellow()
         );
     }
 
     for warning in &outcome.breakdown_reconciliation_warnings {
-        eprintln!("{}", format!("\n  Warning: {}", warning).yellow());
+        eprintln!("{}", tr!("cli.warning", warning = warning).yellow());
     }
 
     if dry_run {
-        eprintln!(
-            "{}",
-            "\n  Dry run - not emitting normalized JSON.\n".yellow()
-        );
+        eprintln!("{}", t!("cli.import.dryRun").yellow());
         return Ok(());
     }
 
@@ -2018,23 +2156,14 @@ fn run_import_command(
 
     if let Some(output_path) = output {
         std::fs::write(&output_path, json_output)?;
-        eprintln!(
-            "{}",
-            format!("\n  ✓ Normalized tokens data written to {}", output_path).green()
-        );
+        eprintln!("{}", tr!("cli.import.written", path = output_path).green());
     } else {
         println!("{}", json_output);
     }
 
     // Be explicit about the upload boundary so nobody assumes `import` puts
     // data on the leaderboard.
-    eprintln!(
-        "{}",
-        "\n  Note: import only converts data to tokens's format; it does not \
-         upload to the leaderboard.\n  Uploading backfilled history needs \
-         server-side support for tagging it distinctly from live CLI usage.\n"
-            .bright_black()
-    );
+    eprintln!("{}", t!("cli.import.note").bright_black());
 
     Ok(())
 }
@@ -2224,11 +2353,7 @@ fn report_excluded_tokenless_rows(excluded: &[ExcludedTokenlessRow]) {
 
     println!(
         "{}",
-        format!(
-            "  Excluded {} aggregate/cost-only row(s) with no token data:",
-            excluded.len()
-        )
-        .yellow()
+        tr!("cli.submit.excludedRows", count = excluded.len()).yellow()
     );
 
     for row in excluded.iter().take(MAX_DETAIL_ROWS) {
@@ -2239,9 +2364,13 @@ fn report_excluded_tokenless_rows(excluded: &[ExcludedTokenlessRow]) {
         };
         println!(
             "{}",
-            format!(
-                "    - {}/{}{} on {}: ${:.4}",
-                row.client, row.model_id, provider, row.date, row.cost
+            tr!(
+                "cli.submit.excludedRow",
+                client = row.client,
+                model = row.model_id,
+                provider = provider,
+                date = row.date,
+                cost = format!("{:.4}", row.cost)
             )
             .bright_black()
         );
@@ -2250,15 +2379,19 @@ fn report_excluded_tokenless_rows(excluded: &[ExcludedTokenlessRow]) {
     if excluded.len() > MAX_DETAIL_ROWS {
         println!(
             "{}",
-            format!("    ... and {} more", excluded.len() - MAX_DETAIL_ROWS).bright_black()
+            tr!(
+                "cli.submit.excludedMore",
+                count = excluded.len() - MAX_DETAIL_ROWS
+            )
+            .bright_black()
         );
     }
 
     println!(
         "{}",
-        format!(
-            "    Excluded {} total; the rest is submitted.",
-            format_currency(total_cost)
+        tr!(
+            "cli.submit.excludedTotal",
+            cost = format_currency(total_cost)
         )
         .bright_black()
     );
@@ -2288,18 +2421,19 @@ fn run_serve(interval_min: Option<u64>, clients: Option<Vec<String>>) -> Result<
     // Fail fast if not authenticated so the supervisor surfaces a clear error
     // instead of spinning forever on a login prompt.
     if auth::resolve_api_token().is_none() {
-        eprintln!("\n  {}", "Not logged in.".yellow());
-        eprintln!(
-            "{}",
-            "  Run 'tokens login' before starting the service.\n".bright_black()
-        );
+        eprintln!("\n  {}", t!("cli.serve.notLoggedIn").yellow());
+        eprintln!("{}", t!("cli.serve.loginFirst").bright_black());
         std::process::exit(1);
     }
 
     let jitter = serve_startup_jitter(interval);
     println!(
-        "  {} submitting every {interval_min} min (SIGTERM/Ctrl-C to stop)",
-        "tokens serve:".cyan()
+        "{}",
+        tr!(
+            "cli.serve.started",
+            label = "tokens serve:".cyan(),
+            minutes = interval_min
+        )
     );
 
     loop {
@@ -2312,15 +2446,26 @@ fn run_serve(interval_min: Option<u64>, clients: Option<Vec<String>>) -> Result<
         // child do the work and exit hands all of that memory back every cycle,
         // keeping the resident daemon tiny regardless of how many sessions exist.
         match run_submit_subprocess(clients.as_deref()) {
-            Ok(true) => println!("  {} [{ts}] submit complete", "•".green()),
+            Ok(true) => println!(
+                "{}",
+                tr!("cli.serve.submitComplete", mark = "•".green(), ts = ts)
+            ),
             Ok(false) => {
                 eprintln!(
-                    "  {} [{ts}] submit exited with a non-zero status",
-                    "✗".yellow()
+                    "{}",
+                    tr!("cli.serve.submitNonZero", mark = "✗".yellow(), ts = ts)
                 )
             }
             // Never crash the daemon on a transient failure — log and retry next cycle.
-            Err(error) => eprintln!("  {} [{ts}] submit failed: {error}", "✗".yellow()),
+            Err(error) => eprintln!(
+                "{}",
+                tr!(
+                    "cli.serve.submitFailed",
+                    mark = "✗".yellow(),
+                    ts = ts,
+                    error = error
+                )
+            ),
         }
         std::thread::sleep(interval + jitter);
     }
@@ -2338,13 +2483,16 @@ fn run_autosubmit_command(subcommand: commands::autosubmit::AutosubmitSubcommand
             let (settings, decision) = commands::autosubmit::load_run_config(force, now_ms)?;
             match decision {
                 AutosubmitRunDecision::Disabled => {
-                    println!("Autosubmit is disabled.");
+                    println!("{}", t!("cli.autosubmit.disabled"));
                     return Ok(());
                 }
                 AutosubmitRunDecision::NotDue { next_run_at_ms } => {
                     println!(
-                        "Autosubmit is not due yet. Next run: {}.",
-                        commands::autosubmit::format_timestamp_ms(next_run_at_ms)
+                        "{}",
+                        tr!(
+                            "cli.autosubmit.notDue",
+                            next = commands::autosubmit::format_timestamp_ms(next_run_at_ms)
+                        )
                     );
                     return Ok(());
                 }
@@ -2352,7 +2500,7 @@ fn run_autosubmit_command(subcommand: commands::autosubmit::AutosubmitSubcommand
             }
 
             let Some(_lock) = commands::autosubmit::try_acquire_run_lock()? else {
-                println!("Autosubmit is already running.");
+                println!("{}", t!("cli.autosubmit.alreadyRunning"));
                 return Ok(());
             };
 
@@ -2410,17 +2558,42 @@ fn run_cloud_command(subcommand: CloudSubcommand) -> Result<()> {
             match detected {
                 Ok(session) => {
                     let device = session.submit_device();
-                    println!("Cloud session: {}", session.provider.as_str());
-                    println!("  Client submitted: {}", session.provider.client_id());
-                    println!("  Session id from: {}", session.session_source.describe());
-                    println!("  Device id (hashed): {}", device.id);
-                    println!("  Device name: {}", device.name.unwrap_or_default());
                     println!(
-                        "  Logged in: {}",
-                        if auth::resolve_api_token().is_some() { "yes" } else { "no (set TOKENS_API_TOKEN)" }
+                        "{}",
+                        tr!("cli.cloud.session", provider = session.provider.as_str())
+                    );
+                    println!(
+                        "{}",
+                        tr!("cli.cloud.client", client = session.provider.client_id())
+                    );
+                    println!(
+                        "{}",
+                        tr!(
+                            "cli.cloud.sessionIdFrom",
+                            source = session.session_source.describe()
+                        )
+                    );
+                    println!("{}", tr!("cli.cloud.deviceId", id = device.id));
+                    println!(
+                        "{}",
+                        tr!(
+                            "cli.cloud.deviceName",
+                            name = device.name.unwrap_or_default()
+                        )
+                    );
+                    println!(
+                        "{}",
+                        tr!(
+                            "cli.cloud.loggedIn",
+                            state = if auth::resolve_api_token().is_some() {
+                                t!("cli.cloud.yes")
+                            } else {
+                                t!("cli.cloud.no")
+                            }
+                        )
                     );
                 }
-                Err(err) => println!("Not a cloud session: {err}"),
+                Err(err) => println!("{}", tr!("cli.cloud.notCloud", error = err)),
             }
             Ok(())
         }
@@ -2433,14 +2606,15 @@ fn run_cloud_command(subcommand: CloudSubcommand) -> Result<()> {
             dry_run,
             payload,
         } => {
-            let result = run_cloud_submit(provider, session_id, min_interval, force, dry_run, payload);
+            let result =
+                run_cloud_submit(provider, session_id, min_interval, force, dry_run, payload);
             match result {
                 Ok(()) => Ok(()),
                 // A hook that exits non-zero can block or clutter the agent's
                 // turn, and a missed submit is caught up by the next one, so
                 // failures are reported but not propagated unless asked.
                 Err(err) if !strict => {
-                    eprintln!("tokens cloud submit: {err:#}");
+                    eprintln!("{}", tr!("cli.cloud.submitFailed", error = err));
                     Ok(())
                 }
                 Err(err) => Err(err),
@@ -2464,7 +2638,7 @@ fn run_cloud_submit(
 
     let now_ms = chrono::Utc::now().timestamp_millis();
     if !force && !dry_run && cloud::throttled(&device.id, min_interval, now_ms) {
-        println!("tokens cloud submit: submitted less than {min_interval} min ago; skipping.");
+        println!("{}", tr!("cli.cloud.throttled", minutes = min_interval));
         return Ok(());
     }
 
@@ -2531,22 +2705,17 @@ fn run_submit_command(
 ) -> Result<()> {
     use colored::Colorize;
     use std::io::IsTerminal;
-    use tokio::runtime::Runtime;
     use tokens_core::{generate_graph, GroupBy, ReportOptions};
+    use tokio::runtime::Runtime;
 
     let auth_token = match auth::resolve_api_token() {
         Some(token) => token,
         None => {
             if mode == SubmitMode::Autosubmit {
-                return Err(anyhow::anyhow!(
-                    "Autosubmit requires login. Run `tokens login` or set TOKENS_API_TOKEN."
-                ));
+                return Err(anyhow::anyhow!(t!("cli.submit.autosubmitRequiresLogin")));
             }
-            eprintln!("\n  {}", "Not logged in.".yellow());
-            eprintln!(
-                "{}",
-                "  Run 'tokens login' or set TOKENS_API_TOKEN.\n".bright_black()
-            );
+            eprintln!("\n  {}", t!("cli.submit.notLoggedIn").yellow());
+            eprintln!("{}", t!("cli.submit.loginOrEnv").bright_black());
             std::process::exit(1);
         }
     };
@@ -2561,7 +2730,7 @@ fn run_submit_command(
         }
     }
 
-    println!("\n  {}\n", "Tokens - Submit Usage Data".cyan());
+    println!("\n  {}\n", t!("cli.submit.title").cyan());
 
     // Persist the detected timezone on first submit so every later submission —
     // including ones made from another timezone while traveling — buckets usage
@@ -2578,19 +2747,19 @@ fn run_submit_command(
         .is_none_or(|s| s.iter().any(|src| src == "cursor"));
     let has_cursor_cache = has_cursor_usage_cache();
     if include_cursor && cursor::is_cursor_logged_in() {
-        println!("{}", "  Syncing Cursor usage data...".bright_black());
+        println!("{}", t!("cli.submit.syncingCursor").bright_black());
         let rt_sync = Runtime::new()?;
         let sync_result = rt_sync.block_on(async { cursor::sync_cursor_cache(false).await });
         if sync_result.synced {
             println!(
                 "{}",
-                format!("  Cursor: {} usage events synced", sync_result.rows).bright_black()
+                tr!("cli.submit.cursorSynced", rows = sync_result.rows).bright_black()
             );
         } else if let Some(err) = sync_result.error {
             if has_cursor_cache {
                 println!(
                     "{}",
-                    format!("  Cursor sync failed; using cached data: {}", err).yellow()
+                    tr!("cli.submit.cursorSyncFailedCached", error = err).yellow()
                 );
             }
         }
@@ -2603,7 +2772,7 @@ fn run_submit_command(
     if include_antigravity {
         match antigravity::detect_antigravity_connections() {
             Ok(active_connections) if !active_connections.is_empty() => {
-                println!("{}", "  Syncing Antigravity usage data...".bright_black());
+                println!("{}", t!("cli.submit.syncingAntigravity").bright_black());
                 let sync_result = antigravity::sync_antigravity_cache_with_connections(
                     &active_connections,
                     false,
@@ -2611,12 +2780,12 @@ fn run_submit_command(
                 if sync_result.synced {
                     println!(
                         "{}",
-                        format!(
-                            "  Antigravity: {} session{} synced from {} active connection{}",
-                            sync_result.sessions,
-                            if sync_result.sessions == 1 { "" } else { "s" },
-                            sync_result.connections,
-                            if sync_result.connections == 1 {
+                        tr!(
+                            "cli.submit.antigravitySynced",
+                            sessions = sync_result.sessions,
+                            session_suffix = if sync_result.sessions == 1 { "" } else { "s" },
+                            connections = sync_result.connections,
+                            connection_suffix = if sync_result.connections == 1 {
                                 ""
                             } else {
                                 "s"
@@ -2627,13 +2796,16 @@ fn run_submit_command(
                 } else if sync_result.partial {
                     println!(
                         "{}",
-                        format!(
-                            "  Antigravity sync was partial: {} session{} refreshed, {} retained from cache, {} failed: {}",
-                            sync_result.sessions,
-                            if sync_result.sessions == 1 { "" } else { "s" },
-                            sync_result.retained_sessions,
-                            sync_result.failed_sessions,
-                            sync_result.error.as_deref().unwrap_or("unknown sync error")
+                        tr!(
+                            "cli.submit.antigravityPartial",
+                            sessions = sync_result.sessions,
+                            session_suffix = if sync_result.sessions == 1 { "" } else { "s" },
+                            retained = sync_result.retained_sessions,
+                            failed = sync_result.failed_sessions,
+                            error = sync_result
+                                .error
+                                .as_deref()
+                                .unwrap_or(t!("cli.submit.unknownSyncError"))
                         )
                         .yellow()
                     );
@@ -2641,11 +2813,13 @@ fn run_submit_command(
                     if has_antigravity_cache {
                         println!(
                             "{}",
-                            format!("  Antigravity sync failed; using cached data: {}", err)
-                                .yellow()
+                            tr!("cli.submit.antigravitySyncFailedCached", error = err).yellow()
                         );
                     } else {
-                        println!("{}", format!("  Antigravity sync failed: {}", err).yellow());
+                        println!(
+                            "{}",
+                            tr!("cli.submit.antigravitySyncFailed", error = err).yellow()
+                        );
                     }
                 }
             }
@@ -2654,13 +2828,12 @@ fn run_submit_command(
                 if has_antigravity_cache {
                     println!(
                         "{}",
-                        format!("  Antigravity discovery failed; using cached data: {}", err)
-                            .yellow()
+                        tr!("cli.submit.antigravityDiscoveryFailedCached", error = err).yellow()
                     );
                 } else {
                     println!(
                         "{}",
-                        format!("  Antigravity discovery failed: {}", err).yellow()
+                        tr!("cli.submit.antigravityDiscoveryFailed", error = err).yellow()
                     );
                 }
             }
@@ -2671,7 +2844,7 @@ fn run_submit_command(
         emit_cursor_setup_warnings(&cursor_setup_warnings);
     }
 
-    println!("{}", "  Scanning local session data...".bright_black());
+    println!("{}", t!("cli.submit.scanning").bright_black());
 
     let rt = Runtime::new()?;
     let mut graph_result = rt
@@ -2708,66 +2881,79 @@ fn run_submit_command(
                 .iter()
                 .any(|day| day.clients.iter().any(|entry| &entry.client == client));
             if !has_contribution {
-                return Err(anyhow::anyhow!(
-                    "--replace found no {} contributions in {} to {}; refusing an unanchored replacement",
-                    client,
-                    replacement.start,
-                    replacement.end
-                ));
+                return Err(anyhow::anyhow!(tr!(
+                    "cli.submit.replaceNoContributions",
+                    client = client,
+                    start = replacement.start,
+                    end = replacement.end
+                )));
             }
         }
     }
 
-    println!("{}", "  Data to submit:".white());
+    println!("{}", t!("cli.submit.dataToSubmit").white());
     println!(
         "{}",
-        format!(
-            "    Date range: {} to {}",
-            graph_result.meta.date_range_start, graph_result.meta.date_range_end,
+        tr!(
+            "cli.submit.dateRange",
+            start = graph_result.meta.date_range_start,
+            end = graph_result.meta.date_range_end,
         )
         .bright_black()
     );
     println!(
         "{}",
-        format!("    Active days: {}", graph_result.summary.active_days).bright_black()
-    );
-    println!(
-        "{}",
-        format!(
-            "    Total tokens: {}",
-            format_tokens_with_commas(graph_result.summary.total_tokens)
+        tr!(
+            "cli.submit.activeDays",
+            days = graph_result.summary.active_days
         )
         .bright_black()
     );
     println!(
         "{}",
-        format!(
-            "    Total cost: {}",
-            format_currency(graph_result.summary.total_cost)
+        tr!(
+            "cli.submit.totalTokens",
+            tokens = format_tokens_with_commas(graph_result.summary.total_tokens)
         )
         .bright_black()
     );
     println!(
         "{}",
-        format!("    Clients: {}", graph_result.summary.clients.join(", ")).bright_black()
+        tr!(
+            "cli.submit.totalCost",
+            cost = format_currency(graph_result.summary.total_cost)
+        )
+        .bright_black()
     );
     println!(
         "{}",
-        format!("    Models: {} models", graph_result.summary.models.len()).bright_black()
+        tr!(
+            "cli.submit.clients",
+            clients = graph_result.summary.clients.join(", ")
+        )
+        .bright_black()
+    );
+    println!(
+        "{}",
+        tr!(
+            "cli.submit.models",
+            count = graph_result.summary.models.len()
+        )
+        .bright_black()
     );
     println!();
 
     if graph_result.summary.total_tokens == 0 {
-        println!("{}", "  No usage data found to submit.\n".yellow());
+        println!("{}", t!("cli.submit.noData").yellow());
         return Ok(());
     }
 
     if dry_run {
-        println!("{}", "  Dry run - not submitting data.\n".yellow());
+        println!("{}", t!("cli.submit.dryRun").yellow());
         return Ok(());
     }
 
-    println!("{}", "  Submitting to server...".bright_black());
+    println!("{}", t!("cli.submit.submitting").bright_black());
 
     let api_url = auth::get_api_base_url();
 
@@ -2806,9 +2992,7 @@ fn run_submit_command(
     match response {
         Ok(resp) => {
             let status = resp.status();
-            let raw = rt
-                .block_on(async { resp.text().await })
-                .unwrap_or_default();
+            let raw = rt.block_on(async { resp.text().await }).unwrap_or_default();
             // Keep the parse failure rather than swallowing it: a 2xx whose body
             // we cannot read still means we are showing the user nothing the
             // server said, including its warnings. That must be loud.
@@ -2821,10 +3005,7 @@ fn run_submit_command(
                 username: None,
                 metrics: None,
                 warnings: None,
-                error: Some(format!(
-                    "Server returned {} with unparseable response",
-                    status
-                )),
+                error: Some(tr!("cli.submit.unparseableResponse", status = status)),
                 details: None,
             });
 
@@ -2832,11 +3013,14 @@ fn run_submit_command(
                 let error = body
                     .error
                     .clone()
-                    .unwrap_or_else(|| "Submission failed".to_string());
-                eprintln!("\n  {}", format!("Error: {}", error).red());
+                    .unwrap_or_else(|| t!("cli.submit.failed").to_string());
+                eprintln!("\n  {}", tr!("cli.submit.error", error = error).red());
                 if let Some(details) = body.details {
                     for detail in details {
-                        eprintln!("{}", format!("    - {}", detail).bright_black());
+                        eprintln!(
+                            "{}",
+                            tr!("cli.submit.detail", detail = detail).bright_black()
+                        );
                     }
                 }
                 eprintln!();
@@ -2846,40 +3030,38 @@ fn run_submit_command(
                 std::process::exit(1);
             }
 
-            println!("\n  {}", "Successfully submitted!".green());
+            println!("\n  {}", t!("cli.submit.success").green());
             println!();
             if let Some(err) = &parse_error {
-                eprintln!(
-                    "{}",
-                    format!(
-                        "  Note: the server accepted the submission but its response \
-                         could not be read ({err}); any warnings it returned are not \
-                         shown below."
-                    )
-                    .yellow()
-                );
+                eprintln!("{}", tr!("cli.submit.unreadableNote", error = err).yellow());
                 println!();
             }
-            println!("{}", "  Summary:".white());
+            println!("{}", t!("cli.submit.summary").white());
             if let Some(id) = body.submission_id {
-                println!("{}", format!("    Submission ID: {}", id).bright_black());
+                println!("{}", tr!("cli.submit.submissionId", id = id).bright_black());
             }
             if let Some(metrics) = &body.metrics {
                 if let Some(tokens) = metrics.total_tokens {
                     println!(
                         "{}",
-                        format!("    Total tokens: {}", format_tokens_with_commas(tokens))
-                            .bright_black()
+                        tr!(
+                            "cli.submit.totalTokens",
+                            tokens = format_tokens_with_commas(tokens)
+                        )
+                        .bright_black()
                     );
                 }
                 if let Some(cost) = metrics.total_cost {
                     println!(
                         "{}",
-                        format!("    Total cost: {}", format_currency(cost)).bright_black()
+                        tr!("cli.submit.totalCost", cost = format_currency(cost)).bright_black()
                     );
                 }
                 if let Some(days) = metrics.active_days {
-                    println!("{}", format!("    Active days: {}", days).bright_black());
+                    println!(
+                        "{}",
+                        tr!("cli.submit.activeDays", days = days).bright_black()
+                    );
                 }
             }
             if let Some(username) = body
@@ -2892,7 +3074,11 @@ fn run_submit_command(
                     "{}",
                     osc8_link_with_text(
                         &format!("{}/u/{}", api_url, username),
-                        &format!("  View your profile: {}/u/{}", api_url, username),
+                        &tr!(
+                            "cli.submit.profileLink",
+                            base_url = api_url,
+                            username = username
+                        ),
                     )
                     .cyan()
                 );
@@ -2901,19 +3087,22 @@ fn run_submit_command(
 
             if let Some(warnings) = body.warnings {
                 if !warnings.is_empty() {
-                    println!("{}", "  Warnings:".yellow());
+                    println!("{}", t!("cli.submit.warningsHeading").yellow());
                     for warning in warnings {
-                        println!("{}", format!("    - {}", warning).bright_black());
+                        println!(
+                            "{}",
+                            tr!("cli.submit.warning", warning = warning).bright_black()
+                        );
                     }
                     println!();
                 }
             }
         }
         Err(err) => {
-            eprintln!("\n  {}", "Error: Failed to connect to server.".red());
+            eprintln!("\n  {}", t!("cli.submit.connectFailed").red());
             eprintln!("{}\n", format!("  {}", err).bright_black());
             if mode == SubmitMode::Autosubmit {
-                return Err(anyhow::anyhow!("Failed to connect to server: {err}"));
+                return Err(anyhow::anyhow!(tr!("cli.submit.connectError", error = err)));
             }
             std::process::exit(1);
         }
@@ -2921,7 +3110,6 @@ fn run_submit_command(
 
     Ok(())
 }
-
 
 fn run_cursor_command(subcommand: CursorSubcommand) -> Result<()> {
     match subcommand {
@@ -2974,7 +3162,7 @@ fn parse_variant_arg(arg: Option<&str>) -> Result<Option<trae::auth::TraeVariant
     match arg {
         Some("solo") => Ok(Some(trae::auth::TraeVariant::Solo)),
         Some("ide") => Ok(Some(trae::auth::TraeVariant::Ide)),
-        Some(other) => anyhow::bail!("unknown variant: {other}, valid values: solo, ide"),
+        Some(other) => anyhow::bail!(tr!("cli.trae.unknownVariant", variant = other)),
         None => Ok(None),
     }
 }
@@ -2991,32 +3179,22 @@ fn run_trae_command(subcommand: TraeSubcommand) -> Result<()> {
                 let selected =
                     parse_variant_arg(variant.as_deref())?.unwrap_or(trae::auth::TraeVariant::Solo);
                 println!();
-                println!("  {}", "Trae Manual Token Login".cyan());
-                println!(
-                    "  {}",
-                    "Paste your JWT access token from the browser DevTools:".bright_black()
-                );
-                println!(
-                    "  {}",
-                    "1. Open https://www.trae.ai/account-setting#usage".bright_black()
-                );
-                println!(
-                    "  {}",
-                    "2. F12 → Network → filter 'query_user_usage' → copy Authorization value"
-                        .bright_black()
-                );
-                print!("  Token: ");
+                println!("  {}", t!("cli.trae.manualTitle").cyan());
+                println!("  {}", t!("cli.trae.pastePrompt").bright_black());
+                println!("  {}", t!("cli.trae.step1").bright_black());
+                println!("  {}", t!("cli.trae.step2").bright_black());
+                print!("{}", t!("cli.trae.tokenPrompt"));
                 io::stdout().flush()?;
                 let mut token = String::new();
                 io::stdin().read_line(&mut token)?;
                 let token = token.trim().to_string();
                 if token.is_empty() {
-                    anyhow::bail!("token must not be empty");
+                    anyhow::bail!(t!("cli.trae.emptyToken"));
                 }
                 trae::auth::save_manual_token(selected, token, None)?;
                 println!(
                     "\n  {}",
-                    format!("Token saved for {}", selected.client_str()).green()
+                    tr!("cli.trae.tokenSaved", client = selected.client_str()).green()
                 );
             } else {
                 let variants: Vec<trae::auth::TraeVariant> =
@@ -3029,20 +3207,26 @@ fn run_trae_command(subcommand: TraeSubcommand) -> Result<()> {
                 for v in variants {
                     match rt.block_on(trae::auth::resolve_token(v)) {
                         Ok(_) => {
-                            println!("  {} logged in (auto-detected)", v.client_str().green());
+                            println!(
+                                "{}",
+                                tr!("cli.trae.loggedIn", client = v.client_str().green())
+                            );
                             any_success = true;
                         }
                         Err(e) => {
-                            println!("  {} auto-login failed: {}", v.client_str().yellow(), e);
+                            println!(
+                                "{}",
+                                tr!(
+                                    "cli.trae.autoLoginFailed",
+                                    client = v.client_str().yellow(),
+                                    error = e
+                                )
+                            );
                         }
                     }
                 }
                 if !any_success {
-                    println!(
-                        "  {}",
-                        "No Trae credentials found. Use --manual to paste a token by hand."
-                            .yellow()
-                    );
+                    println!("{}", t!("cli.trae.noCredentials").yellow());
                 }
             }
             Ok(())
@@ -3055,7 +3239,10 @@ fn run_trae_command(subcommand: TraeSubcommand) -> Result<()> {
                 };
             for v in variants {
                 trae::auth::logout(v)?;
-                println!("  {} logged out", v.client_str().green());
+                println!(
+                    "{}",
+                    tr!("cli.trae.loggedOut", client = v.client_str().green())
+                );
             }
             Ok(())
         }
@@ -3067,13 +3254,16 @@ fn run_trae_command(subcommand: TraeSubcommand) -> Result<()> {
                     status.insert(v.client_str().to_string(), serde_json::Value::Bool(has));
                 } else {
                     println!(
-                        "  {}: {}",
-                        v.client_str(),
-                        if has {
-                            "authenticated".green()
-                        } else {
-                            "not authenticated".yellow()
-                        }
+                        "{}",
+                        tr!(
+                            "cli.trae.statusLine",
+                            client = v.client_str(),
+                            state = if has {
+                                t!("cli.trae.authenticated").green()
+                            } else {
+                                t!("cli.trae.notAuthenticated").yellow()
+                            }
+                        )
                     );
                 }
             }
@@ -3089,7 +3279,7 @@ fn run_trae_command(subcommand: TraeSubcommand) -> Result<()> {
             // empty range. Reject both at the CLI boundary instead of
             // forwarding garbage to the sync layer.
             if days <= 0 {
-                anyhow::bail!("--since must be a positive number of days (got {days})");
+                anyhow::bail!(tr!("cli.trae.sincePositive", days = days));
             }
             // Trae IDE and Trae Solo share account-level usage data, so we
             // always sync once using whichever credential source is available.
@@ -3154,13 +3344,13 @@ fn report_unpriced_submission_usage(unpriced: &[tokens_core::UnpricedSubmissionU
     for row in ranked.iter().take(MAX_DETAIL_ROWS) {
         println!(
             "{}",
-            format!(
-                "  Warning: submitting {} unpriced {}/{} message(s) ({} tokens) at $0.00: {}.",
-                row.message_count,
-                row.provider_id,
-                row.model_id,
-                format_tokens_with_commas(row.total_tokens),
-                row.reason,
+            tr!(
+                "cli.submit.unpricedRow",
+                messages = row.message_count,
+                provider = row.provider_id,
+                model = row.model_id,
+                tokens = format_tokens_with_commas(row.total_tokens),
+                reason = row.reason,
             )
             .yellow()
         );
@@ -3170,7 +3360,7 @@ fn report_unpriced_submission_usage(unpriced: &[tokens_core::UnpricedSubmissionU
         let capped = &ranked[MAX_DETAIL_ROWS..];
         println!(
             "{}",
-            format!("    ... and {} more at $0.00:", capped.len()).bright_black()
+            tr!("cli.submit.unpricedMore", count = capped.len()).bright_black()
         );
         for chunk in capped.chunks(TAIL_IDS_PER_LINE) {
             let ids = chunk
@@ -3190,11 +3380,11 @@ fn report_unpriced_submission_usage(unpriced: &[tokens_core::UnpricedSubmissionU
         .fold(0i64, |acc, row| acc.saturating_add(row.total_tokens));
     println!(
         "{}",
-        format!(
-            "  Unpriced total: {} message(s) ({} tokens) at $0.00 across {} provider/model(s).",
-            total_messages,
-            format_tokens_with_commas(total_tokens),
-            unpriced.len(),
+        tr!(
+            "cli.submit.unpricedTotal",
+            messages = total_messages,
+            tokens = format_tokens_with_commas(total_tokens),
+            providers = unpriced.len(),
         )
         .bright_black()
     );
@@ -3202,11 +3392,7 @@ fn report_unpriced_submission_usage(unpriced: &[tokens_core::UnpricedSubmissionU
     let pricing_path = crate::paths::get_config_dir().join("custom-pricing.json");
     println!(
         "{}",
-        format!(
-            "  Hint: unpriced usage counts toward tokens with zero cost. Add exact-match entries to\n          {}\n          keyed by the model id (the `model` half of `provider/model` above); an explicit 0\n          declares a free model. Re-check with `tokens submit --dry-run`, then resubmit.",
-            pricing_path.display(),
-        )
-        .bright_black()
+        tr!("cli.submit.unpricedHint", path = pricing_path.display()).bright_black()
     );
 }
 
@@ -3255,19 +3441,25 @@ fn run_capture_command(
         .stderr(std::process::Stdio::inherit())
         .stdin(std::process::Stdio::inherit())
         .spawn()
-        .map_err(|e| anyhow::anyhow!("Failed to spawn '{}': {}", command, e))?;
+        .map_err(|e| {
+            anyhow::anyhow!(tr!(
+                "cli.headless.spawnFailed",
+                command = command,
+                error = e
+            ))
+        })?;
 
     let stdout = child
         .stdout
         .take()
-        .ok_or_else(|| anyhow::anyhow!("Failed to capture stdout from command"))?;
+        .ok_or_else(|| anyhow::anyhow!(t!("cli.headless.captureStdoutFailed")))?;
 
     let mut output_file = std::fs::File::create(output_path).map_err(|e| {
-        anyhow::anyhow!(
-            "Failed to create output file '{}': {}",
-            output_path.display(),
-            e
-        )
+        anyhow::anyhow!(tr!(
+            "cli.headless.createOutputFailed",
+            path = output_path.display(),
+            error = e
+        ))
     })?;
 
     // The pump reports completion over a channel rather than only through its
@@ -3280,14 +3472,14 @@ fn run_capture_command(
             loop {
                 match reader.read(&mut buffer) {
                     Ok(0) => return Ok(()),
-                    Ok(n) => output_file
-                        .write_all(&buffer[..n])
-                        .map_err(|e| anyhow::anyhow!("Failed to write to output file: {}", e))?,
+                    Ok(n) => output_file.write_all(&buffer[..n]).map_err(|e| {
+                        anyhow::anyhow!(tr!("cli.headless.writeOutputFailed", error = e))
+                    })?,
                     Err(e) => {
-                        return Err(anyhow::anyhow!(
-                            "Failed to read from subprocess stdout: {}",
-                            e
-                        ));
+                        return Err(anyhow::anyhow!(tr!(
+                            "cli.headless.readStdoutFailed",
+                            error = e
+                        )));
                     }
                 }
             }
@@ -3301,7 +3493,7 @@ fn run_capture_command(
     let status = loop {
         if let Some(status) = child
             .try_wait()
-            .map_err(|e| anyhow::anyhow!("Failed to wait for subprocess: {}", e))?
+            .map_err(|e| anyhow::anyhow!(tr!("cli.headless.waitFailed", error = e)))?
         {
             break status;
         }
@@ -3311,7 +3503,7 @@ fn run_capture_command(
             let _ = child.kill();
             break child
                 .wait()
-                .map_err(|e| anyhow::anyhow!("Failed to wait for timed-out subprocess: {}", e))?;
+                .map_err(|e| anyhow::anyhow!(tr!("cli.headless.waitTimeoutFailed", error = e)))?;
         }
 
         thread::sleep(Duration::from_millis(25));
@@ -3346,15 +3538,13 @@ fn run_capture_command(
                 // Report rather than silently truncate: the child succeeded, so
                 // returning Ok here would present a capture file we cannot show
                 // is complete.
-                return Err(anyhow::anyhow!(
-                    "Subprocess '{}' exited but its stdout stayed open past the capture deadline, \
-                     which happens when it leaves a background process holding the pipe. \
-                     The output file may be incomplete.",
-                    command
-                ));
+                return Err(anyhow::anyhow!(tr!(
+                    "cli.headless.stdoutHeldOpen",
+                    command = command
+                )));
             }
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                return Err(anyhow::anyhow!("Subprocess stdout reader thread panicked"));
+                return Err(anyhow::anyhow!(t!("cli.headless.readerPanicked")));
             }
         }
     }
@@ -3377,29 +3567,29 @@ fn run_headless_command(
 
     let source_lower = source.to_lowercase();
     if source_lower != "codex" && source_lower != "mcode" {
-        eprintln!("\n  Error: Unknown headless source '{}'.", source);
-        eprintln!("  Supported sources are 'codex' and 'mcode'.\n");
+        eprintln!("\n  {}", tr!("cli.headless.unknownSource", source = source));
+        eprintln!("{}", t!("cli.headless.supportedSources"));
         std::process::exit(1);
     }
 
     let resolved_format = match format {
         Some(f) if f == "json" || f == "jsonl" => f,
         Some(f) => {
-            eprintln!("\n  Error: Invalid format '{}'. Use json or jsonl.\n", f);
+            eprintln!("\n  {}", tr!("cli.headless.invalidFormat", format = f));
             std::process::exit(1);
         }
         None => "jsonl".to_string(),
     };
 
     if source_lower == "mcode" && resolved_format != "jsonl" {
-        eprintln!("\n  Error: MiniMax Code headless capture requires jsonl output.\n");
+        eprintln!("\n  {}", t!("cli.headless.mcodeRequiresJsonl"));
         std::process::exit(1);
     }
 
     let final_args = prepare_headless_args(&source_lower, args, no_auto_flags)?;
 
     let home_dir =
-        dirs::home_dir().ok_or_else(|| anyhow::anyhow!("Could not determine home directory"))?;
+        dirs::home_dir().ok_or_else(|| anyhow::anyhow!(t!("cli.headless.homeFailed")))?;
     let headless_roots = get_headless_roots(&home_dir);
 
     let output_path = if let Some(custom_output) = output {
@@ -3436,12 +3626,18 @@ fn run_headless_command(
     let timeout = settings.get_native_timeout();
 
     use colored::Colorize;
-    println!("\n  {}", "Headless capture".cyan());
-    println!("  {}", format!("source: {}", source_lower).bright_black());
-    println!("  {}", format!("output: {}", output_path).bright_black());
+    println!("\n  {}", t!("cli.headless.title").cyan());
     println!(
         "  {}",
-        format!("timeout: {}s", timeout.as_secs()).bright_black()
+        tr!("cli.headless.source", source = source_lower).bright_black()
+    );
+    println!(
+        "  {}",
+        tr!("cli.headless.output", path = output_path).bright_black()
+    );
+    println!(
+        "  {}",
+        tr!("cli.headless.timeout", seconds = timeout.as_secs()).bright_black()
     );
     println!();
 
@@ -3451,17 +3647,14 @@ fn run_headless_command(
     if outcome.timed_out {
         eprintln!(
             "{}",
-            format!("\n  Subprocess timed out after {}s", timeout.as_secs()).red()
+            tr!("cli.headless.timedOut", seconds = timeout.as_secs()).red()
         );
-        eprintln!("{}", "  Partial output saved. Increase timeout with TOKENS_NATIVE_TIMEOUT_MS or settings.json".bright_black());
+        eprintln!("{}", t!("cli.headless.partialSaved").bright_black());
         println!();
         std::process::exit(124);
     }
 
-    println!(
-        "{}",
-        format!("✓ Saved headless output to {}", output_path).green()
-    );
+    println!("{}", tr!("cli.headless.saved", path = output_path).green());
     println!();
 
     if outcome.exit_code != 0 {
@@ -3487,9 +3680,10 @@ fn prepare_headless_args(
         return Ok(args);
     }
 
-    let exec_index = args.iter().position(|arg| arg == "exec").ok_or_else(|| {
-        anyhow::anyhow!("MiniMax Code headless capture requires the `exec` subcommand")
-    })?;
+    let exec_index = args
+        .iter()
+        .position(|arg| arg == "exec")
+        .ok_or_else(|| anyhow::anyhow!(t!("cli.headless.execRequired")))?;
     let has_output_format = args.iter().any(|arg| {
         arg == "--output-format"
             || arg.starts_with("--output-format=")
@@ -3503,4 +3697,231 @@ fn prepare_headless_args(
         );
     }
     Ok(args)
+}
+
+#[cfg(test)]
+mod help_catalogues {
+    use super::*;
+    use serial_test::serial;
+    use std::collections::HashMap;
+
+    fn catalogue(lang: &str) -> HashMap<String, String> {
+        let text = match lang {
+            "zh-CN" => include_str!("../locales/zh-CN/cli.json"),
+            "ja" => include_str!("../locales/ja/cli.json"),
+            _ => include_str!("../locales/en/cli.json"),
+        };
+        serde_json::from_str(text).expect("help catalogue is JSON")
+    }
+
+    /// `(key, original text)` for every clap element that carries help text.
+    fn help_texts(command: &clap::Command, path: &str, out: &mut Vec<(String, String)>) {
+        if let Some(about) = command.get_about() {
+            let about_key = if path.is_empty() {
+                "cli.root.about".to_string()
+            } else {
+                format!("cli.{path}.about")
+            };
+            out.push((about_key, about.to_string()));
+        }
+        for arg in command.get_arguments() {
+            if let Some(help) = arg.get_help() {
+                let help_key = if path.is_empty() {
+                    format!("cli.root.{}.help", arg.get_id())
+                } else {
+                    format!("cli.{path}.{}.help", arg.get_id())
+                };
+                out.push((help_key, help.to_string()));
+            }
+        }
+
+        for subcommand in command.get_subcommands() {
+            let child_path = if path.is_empty() {
+                subcommand.get_name().to_string()
+            } else {
+                format!("{path}.{}", subcommand.get_name())
+            };
+            help_texts(subcommand, &child_path, out);
+        }
+    }
+
+    /// Every key the localizer probes, whether or not the element has text.
+    fn probe_keys(command: &clap::Command, path: &str, out: &mut Vec<String>) {
+        out.push(if path.is_empty() {
+            "cli.root.about".to_string()
+        } else {
+            format!("cli.{path}.about")
+        });
+        for arg in command.get_arguments() {
+            out.push(if path.is_empty() {
+                format!("cli.root.{}.help", arg.get_id())
+            } else {
+                format!("cli.{path}.{}.help", arg.get_id())
+            });
+        }
+        for subcommand in command.get_subcommands() {
+            let child_path = if path.is_empty() {
+                subcommand.get_name().to_string()
+            } else {
+                format!("{path}.{}", subcommand.get_name())
+            };
+            probe_keys(subcommand, &child_path, out);
+        }
+    }
+
+    fn all_probe_keys() -> Vec<String> {
+        let mut out = Vec::new();
+        probe_keys(&Cli::command(), "", &mut out);
+        out
+    }
+
+    fn all_texts() -> Vec<(String, String)> {
+        let mut out = Vec::new();
+        help_texts(&Cli::command(), "", &mut out);
+        out
+    }
+
+    #[test]
+    fn english_catalogue_matches_the_clap_tree() {
+        let english = catalogue("en");
+        let texts = all_texts();
+
+        for (key, original) in &texts {
+            assert_eq!(
+                english.get(key).map(String::as_str),
+                Some(original.as_str()),
+                "`{key}` must keep today's English wording"
+            );
+        }
+
+        // Every probed element must have an entry, even one whose English text
+        // comes from the catalogue rather than the (unset) attribute.
+        let probed = all_probe_keys();
+        let mut missing: Vec<&String> = probed
+            .iter()
+            .filter(|key| !english.contains_key(*key))
+            .collect();
+        missing.sort();
+        assert!(missing.is_empty(), "unmapped elements: {missing:?}");
+
+        // Only clap-shaped entries (`*.about` / `*.help`) must still exist in
+        // the tree; the catalogue also carries the terminal messages.
+        let mut unmapped: Vec<&String> = english
+            .keys()
+            .filter(|key| key.ends_with(".about") || key.ends_with(".help"))
+            .filter(|key| !probed.iter().any(|probed_key| probed_key == *key))
+            .collect();
+        unmapped.sort();
+        assert!(unmapped.is_empty(), "stale entries: {unmapped:?}");
+    }
+
+    /// `cargo test dump_help_keys -- --nocapture` prints every key and its
+    /// current English text, newest line last — the source for the catalogue.
+    #[test]
+    fn dump_help_keys() {
+        for (key, text) in all_texts() {
+            println!("{key}\t{text}");
+        }
+    }
+
+    #[test]
+    fn every_catalogue_carries_the_same_keys() {
+        let english = catalogue("en");
+
+        for lang in ["zh-CN", "ja"] {
+            let other = catalogue(lang);
+            let mut missing: Vec<&String> = english
+                .keys()
+                .filter(|key| !other.contains_key(*key))
+                .collect();
+            missing.sort();
+            let mut extra: Vec<&String> = other
+                .keys()
+                .filter(|key| !english.contains_key(*key))
+                .collect();
+            extra.sort();
+            assert!(missing.is_empty(), "{lang} is missing {missing:?}");
+            assert!(extra.is_empty(), "{lang} has stray {extra:?}");
+        }
+    }
+
+    #[test]
+    fn translations_keep_the_english_placeholders() {
+        fn placeholder(text: &str) -> Vec<&str> {
+            let mut names: Vec<&str> = text
+                .split('{')
+                .skip(1)
+                .filter_map(|rest| rest.split('}').next())
+                .filter(|name| {
+                    !name.is_empty()
+                        && name
+                            .chars()
+                            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+                })
+                .collect();
+            names.sort_unstable();
+            names.dedup();
+            names
+        }
+
+        let english = catalogue("en");
+        for lang in ["zh-CN", "ja"] {
+            let other = catalogue(lang);
+            for (key, text) in &other {
+                for name in placeholder(text) {
+                    assert!(
+                        english[key].contains(&format!("{{{name}}}")),
+                        "{lang} `{key}` uses {{{name}}}, absent from English"
+                    );
+                }
+            }
+        }
+    }
+
+    // Switching the global language races parallel tests that print output, so
+    // this shares the serial lock the output-asserting tests already take.
+    #[test]
+    #[serial]
+    fn apply_localized_help_replaces_every_text() {
+        i18n::set_lang(i18n::Lang::Ja);
+
+        let mut command = Cli::command();
+        apply_localized_help(&mut command);
+
+        let japanese = catalogue("ja");
+        let mut localized = Vec::new();
+        help_texts(&command, "", &mut localized);
+
+        // The generated `help`/`version` flags and the `help` subcommand are
+        // not in the catalogue, so only authored keys are compared one by one.
+        for (key, text) in &localized {
+            if let Some(expected) = japanese.get(key) {
+                assert_eq!(text, expected, "`{key}` was not localized");
+            }
+        }
+
+        assert_eq!(
+            command.get_subcommand_help_heading(),
+            Some(japanese["cli.heading.commands"].as_str())
+        );
+        let rendered = command.render_help().to_string();
+        assert!(rendered.contains(&japanese["cli.heading.usage"]));
+        assert!(rendered.contains(&japanese["cli.heading.helpAction"]));
+        assert!(!rendered.contains("Usage:"));
+        assert!(!rendered.contains("Print help"));
+
+        let login = command
+            .find_subcommand_mut("login")
+            .expect("login subcommand");
+        let token = login
+            .get_arguments()
+            .find(|arg| arg.get_id().as_str() == "token")
+            .expect("login --token");
+        assert_eq!(
+            token.get_help_heading(),
+            Some(japanese["cli.heading.options"].as_str())
+        );
+
+        i18n::set_lang(i18n::Lang::En);
+    }
 }

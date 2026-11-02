@@ -22,7 +22,7 @@ import { localizeHref } from "@/lib/i18n/config";
 import { richText } from "@/lib/i18n/rich";
 
 export async function generateMetadata(): Promise<Metadata> {
-  const { t } = await getTranslator();
+  const { locale, t } = await getTranslator();
   const description = t("docs.meta.description");
 
   return {
@@ -35,7 +35,7 @@ export async function generateMetadata(): Promise<Metadata> {
       siteName: "Tokens",
       images: [
         {
-          url: ogImageUrl({ title: t("docs.title"), subtitle: t("docs.meta.ogImageSubtitle") }),
+          url: ogImageUrl({ title: t("docs.title"), subtitle: t("docs.meta.ogImageSubtitle"), locale }),
           width: 1200,
           height: 630,
         },

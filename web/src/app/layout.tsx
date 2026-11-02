@@ -41,7 +41,7 @@ const jetbrainsMono = JetBrains_Mono({
  * linked to from outside.
  */
 export async function generateMetadata(): Promise<Metadata> {
-  const { t } = await getTranslator();
+  const { locale, t } = await getTranslator();
   const title = t("meta.title");
   const description = t("meta.description");
 
@@ -71,7 +71,7 @@ export async function generateMetadata(): Promise<Metadata> {
       // the share card cannot drift from the brand the way a checked-in PNG did.
       images: [
         {
-          url: ogImageUrl(),
+          url: ogImageUrl({ locale }),
           width: 1200,
           height: 630,
           alt: t("meta.ogAlt"),
@@ -82,7 +82,7 @@ export async function generateMetadata(): Promise<Metadata> {
       card: "summary_large_image",
       title,
       description,
-      images: [ogImageUrl()],
+      images: [ogImageUrl({ locale })],
     },
   };
 }

@@ -1,3 +1,4 @@
+use crate::{t, tr};
 use anyhow::Result;
 use chrono::{NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
@@ -86,12 +87,11 @@ impl ActivityFetchError {
         let (status, message) = match self {
             Self::UnsupportedCli => (
                 CodexAccountActivityStatus::UnsupportedCli,
-                "The installed Codex CLI does not support account activity.".to_string(),
+                t!("commands.codex_activity.unsupportedCli").to_string(),
             ),
             Self::UnsupportedAuth => (
                 CodexAccountActivityStatus::UnsupportedAuth,
-                "Codex account activity requires supported Codex-service authentication."
-                    .to_string(),
+                t!("commands.codex_activity.unsupportedAuth").to_string(),
             ),
             Self::Unavailable(message) => (CodexAccountActivityStatus::Unavailable, message.into()),
         };
@@ -135,7 +135,9 @@ impl AppServerTransport {
             .spawn()
             .map_err(|error| match error.kind() {
                 std::io::ErrorKind::NotFound => ActivityFetchError::UnsupportedCli,
-                _ => ActivityFetchError::Unavailable("Could not start Codex app-server."),
+                _ => ActivityFetchError::Unavailable(t!(
+                    "commands.codex_activity.startAppServerFailed"
+                )),
             })?;
 
         let stdin = child.stdin.take();
@@ -144,9 +146,9 @@ impl AppServerTransport {
         let (Some(stdin), Some(stdout), Some(stderr)) = (stdin, stdout, stderr) else {
             let _ = child.kill();
             let _ = child.wait();
-            return Err(ActivityFetchError::Unavailable(
-                "Codex app-server did not expose its required standard streams.",
-            ));
+            return Err(ActivityFetchError::Unavailable(t!(
+                "commands.codex_activity.missingStreams"
+            )));
         };
         let (sender, frames) = mpsc::sync_channel(MAX_PENDING_FRAMES);
 
@@ -161,12 +163,12 @@ impl AppServerTransport {
 
     fn write_message(&mut self, message: &Value) -> std::result::Result<(), ActivityFetchError> {
         serde_json::to_writer(&mut self.stdin, message).map_err(|_| {
-            ActivityFetchError::Unavailable("Could not encode Codex app-server input.")
+            ActivityFetchError::Unavailable(t!("commands.codex_activity.encodeInputFailed"))
         })?;
         self.stdin
             .write_all(b"\n")
             .and_then(|_| self.stdin.flush())
-            .map_err(|_| ActivityFetchError::Unavailable("Codex app-server closed its input."))
+            .map_err(|_| ActivityFetchError::Unavailable(t!("commands.codex_activity.inputClosed")))
     }
 
     fn wait_for_response(
@@ -176,43 +178,41 @@ impl AppServerTransport {
     ) -> std::result::Result<Value, ActivityFetchError> {
         loop {
             let remaining = deadline.checked_duration_since(Instant::now()).ok_or(
-                ActivityFetchError::Unavailable("Timed out waiting for Codex account activity."),
+                ActivityFetchError::Unavailable(t!("commands.codex_activity.timeout")),
             )?;
             let frame = self
                 .frames
                 .as_ref()
-                .ok_or(ActivityFetchError::Unavailable(
-                    "Codex app-server closed before returning account activity.",
-                ))?
+                .ok_or(ActivityFetchError::Unavailable(t!(
+                    "commands.codex_activity.closedEarly"
+                )))?
                 .recv_timeout(remaining)
                 .map_err(|error| match error {
-                    mpsc::RecvTimeoutError::Timeout => ActivityFetchError::Unavailable(
-                        "Timed out waiting for Codex account activity.",
-                    ),
-                    mpsc::RecvTimeoutError::Disconnected => ActivityFetchError::Unavailable(
-                        "Codex app-server closed before returning account activity.",
-                    ),
+                    mpsc::RecvTimeoutError::Timeout => {
+                        ActivityFetchError::Unavailable(t!("commands.codex_activity.timeout"))
+                    }
+                    mpsc::RecvTimeoutError::Disconnected => {
+                        ActivityFetchError::Unavailable(t!("commands.codex_activity.closedEarly"))
+                    }
                 })?;
             let line = match frame {
                 AppServerFrame::Json(line) => line,
                 AppServerFrame::Oversized => {
-                    return Err(ActivityFetchError::Unavailable(
-                        "Codex app-server returned an oversized protocol message.",
-                    ));
+                    return Err(ActivityFetchError::Unavailable(t!(
+                        "commands.codex_activity.oversizedMessage"
+                    )));
                 }
                 AppServerFrame::InvalidUtf8 => {
-                    return Err(ActivityFetchError::Unavailable(
-                        "Codex app-server returned a non-text protocol message.",
-                    ));
+                    return Err(ActivityFetchError::Unavailable(t!(
+                        "commands.codex_activity.nonTextMessage"
+                    )));
                 }
             };
             if line.trim().is_empty() {
                 continue;
             }
             let message = serde_json::from_str::<Value>(&line).map_err(|_| {
-                ActivityFetchError::Unavailable(
-                    "Codex app-server returned an invalid protocol message.",
-                )
+                ActivityFetchError::Unavailable(t!("commands.codex_activity.invalidMessage"))
             })?;
 
             if is_server_request(&message) {
@@ -383,9 +383,9 @@ fn fetch_activity_from_app_server(
     }
     let result = activity_response
         .get("result")
-        .ok_or(ActivityFetchError::Unavailable(
-            "Codex app-server returned an invalid account activity response.",
-        ))?;
+        .ok_or(ActivityFetchError::Unavailable(t!(
+            "commands.codex_activity.invalidResponse"
+        )))?;
 
     parse_activity_result(result)
 }
@@ -412,7 +412,7 @@ fn classify_rpc_error(response: &Value) -> ActivityFetchError {
         return ActivityFetchError::UnsupportedAuth;
     }
 
-    ActivityFetchError::Unavailable("Codex app-server could not read account activity.")
+    ActivityFetchError::Unavailable(t!("commands.codex_activity.readFailed"))
 }
 
 fn parse_activity_result(
@@ -420,9 +420,7 @@ fn parse_activity_result(
 ) -> std::result::Result<CodexAccountActivitySnapshot, ActivityFetchError> {
     let activity: AppServerActivityResult =
         serde_json::from_value(result.clone()).map_err(|_| {
-            ActivityFetchError::Unavailable(
-                "Codex app-server returned an invalid account activity response.",
-            )
+            ActivityFetchError::Unavailable(t!("commands.codex_activity.invalidResponse"))
         })?;
     let daily_usage_buckets = activity
         .daily_usage_buckets
@@ -431,9 +429,9 @@ fn parse_activity_result(
                 .into_iter()
                 .map(|bucket| {
                     NaiveDate::parse_from_str(&bucket.start_date, "%Y-%m-%d").map_err(|_| {
-                        ActivityFetchError::Unavailable(
-                            "Codex app-server returned an invalid daily activity date.",
-                        )
+                        ActivityFetchError::Unavailable(t!(
+                            "commands.codex_activity.invalidDailyDate"
+                        ))
                     })?;
                     Ok(CodexAccountActivityDailyBucket {
                         start_date: bucket.start_date,
@@ -494,27 +492,54 @@ fn activity_json(activity: &CodexAccountActivitySnapshot) -> Value {
 fn render_activity(activity: &CodexAccountActivitySnapshot) {
     use colored::Colorize;
 
-    println!("\n  {}\n", "Codex - Account activity (supplemental)".cyan());
+    println!("\n  {}\n", t!("commands.codex_activity.title").cyan());
     println!(
         "  {}",
-        format!("Source: {}", activity.source).bright_black()
+        tr!("commands.codex_activity.source", source = activity.source).bright_black()
     );
-    println!("  {}", "Cost: N/A".bright_black());
+    println!(
+        "  {}",
+        t!("commands.codex_activity.costUnavailable").bright_black()
+    );
     match activity.status {
         CodexAccountActivityStatus::Available => {
             if let Some(fetched_at) = &activity.fetched_at {
-                println!("  {}", format!("Fetched: {fetched_at}").bright_black());
+                println!(
+                    "  {}",
+                    tr!("commands.codex_activity.fetched", timestamp = fetched_at).bright_black()
+                );
             }
-            render_optional_count("Lifetime tokens", activity.lifetime_tokens);
-            render_optional_count("Peak daily tokens", activity.peak_daily_tokens);
-            render_optional_count("Longest turn (seconds)", activity.longest_running_turn_sec);
-            render_optional_count("Current streak (days)", activity.current_streak_days);
-            render_optional_count("Longest streak (days)", activity.longest_streak_days);
+            render_optional_count(
+                t!("commands.codex_activity.lifetimeTokens"),
+                activity.lifetime_tokens,
+            );
+            render_optional_count(
+                t!("commands.codex_activity.peakDailyTokens"),
+                activity.peak_daily_tokens,
+            );
+            render_optional_count(
+                t!("commands.codex_activity.longestTurn"),
+                activity.longest_running_turn_sec,
+            );
+            render_optional_count(
+                t!("commands.codex_activity.currentStreak"),
+                activity.current_streak_days,
+            );
+            render_optional_count(
+                t!("commands.codex_activity.longestStreak"),
+                activity.longest_streak_days,
+            );
             if let Some(buckets) = &activity.daily_usage_buckets {
                 if buckets.is_empty() {
-                    println!("  {}", "Daily buckets: none returned".bright_black());
+                    println!(
+                        "  {}",
+                        t!("commands.codex_activity.noDailyBuckets").bright_black()
+                    );
                 } else {
-                    println!("  {}", "Daily activity:".bright_black());
+                    println!(
+                        "  {}",
+                        t!("commands.codex_activity.dailyActivity").bright_black()
+                    );
                     for bucket in buckets {
                         println!("    {}  {}", bucket.start_date, bucket.tokens);
                     }
@@ -527,17 +552,21 @@ fn render_activity(activity: &CodexAccountActivitySnapshot) {
             }
         }
     }
-    println!(
-        "{}\n",
-        "  Not included in local totals, reports, exports, or submissions.".bright_black()
-    );
+    println!("{}\n", t!("commands.codex_activity.footer").bright_black());
 }
 
 fn render_optional_count(label: &str, value: Option<u64>) {
     use colored::Colorize;
 
     if let Some(value) = value {
-        println!("  {}", format!("{label}: {value}").white());
+        println!(
+            "  {}",
+            tr!(
+                "commands.codex_activity.countLabel",
+                label = label,
+                value = value
+            )
+            .white()
+        );
     }
 }
-

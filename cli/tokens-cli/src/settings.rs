@@ -1,3 +1,4 @@
+use crate::{t, tr};
 use std::fs;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -94,6 +95,10 @@ impl AutosubmitSettings {
 pub struct Settings {
     #[serde(default = "default_color_palette")]
     pub color_palette: String,
+    /// Stored terminal language (`en`, `zh-CN`, `ja`). Overridden by
+    /// `--lang` and `TOKENS_LANG`; see `i18n::resolve`.
+    #[serde(default)]
+    pub language: Option<String>,
     #[serde(default)]
     pub auto_refresh_enabled: bool,
     #[serde(default = "default_auto_refresh_ms")]
@@ -196,6 +201,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             color_palette: default_color_palette(),
+            language: None,
             auto_refresh_enabled: false,
             auto_refresh_ms: DEFAULT_AUTO_REFRESH_MS,
             include_unused_models: false,
@@ -301,8 +307,15 @@ impl Settings {
                 static WARNED: std::sync::atomic::AtomicBool =
                     std::sync::atomic::AtomicBool::new(false);
                 if !WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
-                    eprintln!("  Warning: failed to parse {}: {}", path.display(), error);
-                    eprintln!("  Continuing with default settings.");
+                    eprintln!(
+                        "{}",
+                        tr!(
+                            "top.settings.parseWarning",
+                            path = path.display(),
+                            error = error
+                        )
+                    );
+                    eprintln!("{}", t!("top.settings.usingDefaults"));
                 }
                 Settings::default()
             }
@@ -352,4 +365,3 @@ impl Settings {
         Duration::from_millis(clamped)
     }
 }
-

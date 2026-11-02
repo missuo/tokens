@@ -11,6 +11,7 @@ import errorsEn from "./errors/en";
 import shameEn from "./shame/en";
 import docsEn from "./docs/en";
 import legalEn from "./legal/en";
+import ogEn from "./og/en";
 
 import commonZh from "./common/zh-CN";
 import navZh from "./nav/zh-CN";
@@ -23,6 +24,7 @@ import errorsZh from "./errors/zh-CN";
 import shameZh from "./shame/zh-CN";
 import docsZh from "./docs/zh-CN";
 import legalZh from "./legal/zh-CN";
+import ogZh from "./og/zh-CN";
 
 import commonJa from "./common/ja";
 import navJa from "./nav/ja";
@@ -35,6 +37,7 @@ import errorsJa from "./errors/ja";
 import shameJa from "./shame/ja";
 import docsJa from "./docs/ja";
 import legalJa from "./legal/ja";
+import ogJa from "./og/ja";
 
 /**
  * English is the source catalogue. Every other locale is typed as a deep
@@ -58,6 +61,7 @@ export type Messages = {
   shame: typeof shameEn;
   docs: typeof docsEn;
   legal: typeof legalEn;
+  og: typeof ogEn;
 };
 
 export type DeepPartial<T> = {
@@ -76,6 +80,7 @@ const EN: Messages = {
   shame: shameEn,
   docs: docsEn,
   legal: legalEn,
+  og: ogEn,
 };
 
 /**
@@ -97,6 +102,7 @@ const PARTIALS: Record<Locale, DeepPartial<Messages>> = {
     shame: shameZh,
     docs: docsZh,
     legal: legalZh,
+    og: ogZh,
   },
   ja: {
     common: commonJa,
@@ -110,6 +116,7 @@ const PARTIALS: Record<Locale, DeepPartial<Messages>> = {
     shame: shameJa,
     docs: docsJa,
     legal: legalJa,
+    og: ogJa,
   },
 };
 

@@ -112,6 +112,7 @@ export async function generateMetadata({ params }: { params: Promise<{ username:
     // More than the card shows: the renderer drops clients it has no logo for.
     clients: profile ? topOgClients(profile.contributions, 8).join(",") : null,
     activity: profile ? encodeOgActivity(profile.contributions) : null,
+    locale,
   });
 
   const shareTitle = displayName && displayName !== handle
