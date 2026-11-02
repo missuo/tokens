@@ -32,6 +32,35 @@ tokens, your running total and your rank.
 There is no sign-in. You enter a GitHub username and the app reads that public
 profile, so enter your own or the widgets will show someone else's usage.
 
+## Languages
+
+The site is available in English, Simplified Chinese and Japanese. English is
+the default and carries no prefix, so every existing link keeps working; the
+other languages live under `/zh-CN/…` and `/ja/…`, and the switcher in the
+header moves you to the same page in the other language rather than to the
+home page.
+
+The prefix is not cosmetic. HTML is cached at Cloudflare's edge by URL, so a
+scheme where one URL renders different bytes based on a cookie would let
+whichever request arrived first decide the language for everyone behind it.
+With a prefix in the URL, `/zh-CN/leaderboard` and `/leaderboard` are simply two
+documents.
+
+To add a language:
+
+1. Add the locale to `LOCALES` and `LOCALE_LABELS` in
+   `web/src/lib/i18n/config.ts`.
+2. Copy `web/src/lib/i18n/messages/*/en.ts` to the new locale directory under
+   `web/src/lib/i18n/messages/<namespace>/` and translate the values. Keys you
+   leave out fall back to English at runtime, so a partial catalogue is usable.
+3. Add the two prefixed entries (`/<locale>` and `/<locale>/:path*`) to the
+   matcher in `web/src/middleware.ts`.
+
+Messages are ICU: `{name}` for values, `{count, plural, one {…} other {…}}` for
+counts, and `richText()` from `web/src/lib/i18n/rich.tsx` when a sentence has to
+contain a link. Numbers and relative times go through `Intl` — see
+`web/src/lib/format.ts`.
+
 ## Why this repository is public
 
 So you can check what we send.

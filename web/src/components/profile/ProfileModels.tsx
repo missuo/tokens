@@ -1,6 +1,7 @@
 "use client";
 
 import { formatCurrency, formatNumber } from "@/lib/utils";
+import { useLocale, useT } from "@/components/layout/LocaleProvider";
 import {
   ListBody,
   ListCaption,
@@ -53,10 +54,13 @@ const SpeedTierLine = tw(
  * no message total to measure the Unknown remainder against.
  */
 function ModelSpeedTiers({ usage }: { usage: ModelUsage }) {
+  const t = useT();
+  const locale = useLocale();
   const tiers = getSpeedTierRows(usage.speedUsage, usage.tokens, 0);
   if (tiers.length === 0) return null;
   const percents = formatWholePercents(
     tiers.map((tier) => (usage.tokens > 0 ? (tier.tokens / usage.tokens) * 100 : 0)),
+    locale,
   );
 
   return (
@@ -68,7 +72,10 @@ function ModelSpeedTiers({ usage }: { usage: ModelUsage }) {
             className={cn("flex-none", tier.speed !== "unknown" && "text-foreground")}
           />
           <span className="min-w-0">
-            {formatNumber(tier.tokens)} tokens · {percents[index]}
+            {t("profile.models.tierLine", {
+              tokens: t("profile.units.token", { count: tier.tokens }),
+              share: percents[index],
+            })}
           </span>
         </SpeedTierLine>
       ))}
@@ -100,6 +107,8 @@ export function ProfileModels({
   modelUsage,
   className,
 }: ProfileModelsProps) {
+  const t = useT();
+  const locale = useLocale();
   const filteredUsage = (modelUsage ?? [])
     .filter((usage) => usage.model !== "<synthetic>")
     .sort((a, b) => b.cost - a.cost);
@@ -111,18 +120,18 @@ export function ProfileModels({
     return (
       <ListCard className={className}>
         <ListTable>
-          <ListCaption>Model usage</ListCaption>
+          <ListCaption>{t("profile.models.caption")}</ListCaption>
           <ListHead>
             <tr>
-              <ListHeaderCell $width="52%">Model</ListHeaderCell>
+              <ListHeaderCell $width="52%">{t("profile.models.columnModel")}</ListHeaderCell>
               <ListHeaderCell $width="18%" $align="right">
-                Tokens
+                {t("profile.models.columnTokens")}
               </ListHeaderCell>
               <ListHeaderCell $width="17%" $align="right">
-                Cost
+                {t("profile.models.columnCost")}
               </ListHeaderCell>
               <ListHeaderCell $width="13%" $align="right">
-                Share
+                {t("profile.models.columnShare")}
               </ListHeaderCell>
             </tr>
           </ListHead>
@@ -141,17 +150,17 @@ export function ProfileModels({
                   </ModelIdentity>
                   <ModelSpeedTiers usage={usage} />
                 </ListPrimaryCell>
-                <ListCell data-label="Tokens" $align="right">
-                  <NumericValue title={usage.tokens.toLocaleString("en-US")}>
+                <ListCell data-label={t("profile.models.columnTokens")} $align="right">
+                  <NumericValue title={usage.tokens.toLocaleString(locale)}>
                     {formatNumber(usage.tokens)}
                   </NumericValue>
                 </ListCell>
-                <ListCell data-label="Cost" $align="right">
+                <ListCell data-label={t("profile.models.columnCost")} $align="right">
                   <NumericValue $accent>
                     {formatCurrency(usage.cost)}
                   </NumericValue>
                 </ListCell>
-                <ListCell data-label="Share" $align="right">
+                <ListCell data-label={t("profile.models.columnShare")} $align="right">
                   <NumericValue>{usage.percentage.toFixed(1)}%</NumericValue>
                 </ListCell>
               </ListRow>
@@ -167,7 +176,7 @@ export function ProfileModels({
 
   return (
     <ModelsFallback className={className}>
-      <ModelsFallbackList aria-label="Models used">
+      <ModelsFallbackList aria-label={t("profile.models.fallbackAria")}>
         {filteredModels.map((model) => (
           <ModelTag key={model}>
             <ModelIcon model={model} size={13} />

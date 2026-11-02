@@ -18,6 +18,9 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { CONTAINER } from "@/components/layout/Container";
+import { useLocale, useT } from "@/components/layout/LocaleProvider";
+import { LanguageSwitcher } from "@/components/layout/LanguageSwitcher";
+import { localizeHref, stripLocale } from "@/lib/i18n/config";
 
 interface User {
   id: string;
@@ -26,11 +29,16 @@ interface User {
   avatarUrl: string | null;
 }
 
+/**
+ * `label` is a catalogue key rather than the text. The list is module scope
+ * because its order and matching do not change per render, and only the label
+ * does — so the translation happens where each entry is rendered, not here.
+ */
 const NAV_LINKS = [
-  { href: "/leaderboard", label: "Leaderboard", authOnly: false, match: (p: string) => p === "/leaderboard" },
-  { href: "/shame", label: "Hall of Shame", authOnly: false, match: (p: string) => p === "/shame" },
-  { href: "/docs", label: "Docs", authOnly: false, match: (p: string) => p.startsWith("/docs") },
-  { href: "/profile", label: "Profile", authOnly: true, match: (p: string) => p === "/profile" || p.startsWith("/u/") },
+  { href: "/leaderboard", label: "nav.leaderboard", authOnly: false, match: (p: string) => p === "/leaderboard" },
+  { href: "/shame", label: "nav.hallOfShame", authOnly: false, match: (p: string) => p === "/shame" },
+  { href: "/docs", label: "nav.docs", authOnly: false, match: (p: string) => p.startsWith("/docs") },
+  { href: "/profile", label: "nav.profile", authOnly: true, match: (p: string) => p === "/profile" || p.startsWith("/u/") },
 ] as const;
 
 /**
@@ -68,6 +76,7 @@ function GitHubIcon({ className }: { className?: string }) {
  * flash the wrong one.
  */
 function ThemeToggle() {
+  const t = useT();
   const { resolvedTheme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
 
@@ -87,7 +96,7 @@ function ThemeToggle() {
       variant="ghost"
       size="icon"
       className="size-8"
-      aria-label={isDark ? "Switch to light theme" : "Switch to dark theme"}
+      aria-label={isDark ? t("nav.switchToLight") : t("nav.switchToDark")}
       onClick={() => setTheme(isDark ? "light" : "dark")}
     >
       {isDark ? <MoonIcon /> : <SunIcon />}
@@ -100,12 +109,15 @@ function avatarFor(user: User) {
 }
 
 function UserMenu({ user, onSignOut }: { user: User; onSignOut: () => void }) {
+  const t = useT();
+  const locale = useLocale();
+
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
         render={
           <button
-            aria-label={`Account menu for ${user.username}`}
+            aria-label={t("nav.accountMenu", { username: user.username })}
             className="rounded-full ring-offset-background transition-opacity hover:opacity-85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
           />
         }
@@ -126,20 +138,20 @@ function UserMenu({ user, onSignOut }: { user: User; onSignOut: () => void }) {
         </div>
         <DropdownMenuSeparator />
         <DropdownMenuGroup>
-          <DropdownMenuItem render={<Link href={`/u/${user.username}`} />}>
+          <DropdownMenuItem render={<Link href={localizeHref(`/u/${user.username}`, locale)} />}>
             <UserIcon />
-            Your profile
+            {t("nav.yourProfile")}
           </DropdownMenuItem>
-          <DropdownMenuItem render={<Link href="/settings" />}>
+          <DropdownMenuItem render={<Link href={localizeHref("/settings", locale)} />}>
             <SettingsIcon />
-            Settings
+            {t("nav.settings")}
           </DropdownMenuItem>
         </DropdownMenuGroup>
         <DropdownMenuSeparator />
         <DropdownMenuGroup>
           <DropdownMenuItem variant="destructive" onClick={onSignOut}>
             <LogOutIcon />
-            Sign out
+            {t("nav.signOut")}
           </DropdownMenuItem>
         </DropdownMenuGroup>
       </DropdownMenuContent>
@@ -149,6 +161,11 @@ function UserMenu({ user, onSignOut }: { user: User; onSignOut: () => void }) {
 
 export function Navigation() {
   const pathname = usePathname();
+  const t = useT();
+  const locale = useLocale();
+  // The prefix is not part of what a nav entry matches on: `/zh/leaderboard`
+  // has to light up "Leaderboard" exactly like `/leaderboard` does.
+  const currentPath = stripLocale(pathname || "/").path;
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   // A failed session request is not a sign-out. Holding the skeleton keeps the
@@ -202,26 +219,36 @@ export function Navigation() {
   const signOut = async () => {
     await fetch("/api/auth/logout", { method: "POST" });
     setUser(null);
-    window.location.href = "/leaderboard";
+    // Back to the board in the language being read, not back to English.
+    window.location.href = localizeHref("/leaderboard", locale);
   };
 
   // Sign-in comes back to where it was clicked rather than dropping everyone on
   // /leaderboard, which is what the route falls back to when returnTo is absent.
   // Pathname only: the query string would need useSearchParams, which forces a
   // Suspense boundary around the whole header.
-  const returnTo = pathname.startsWith("/") ? pathname : "/leaderboard";
+  const returnTo = pathname.startsWith("/")
+    ? pathname
+    : localizeHref("/leaderboard", locale);
 
   const links = NAV_LINKS.filter((l) => !l.authOnly || user);
   const hrefFor = (link: (typeof NAV_LINKS)[number]) =>
-    link.href === "/profile" && user ? `/u/${user.username}` : link.href;
+    localizeHref(
+      link.href === "/profile" && user ? `/u/${user.username}` : link.href,
+      locale,
+    );
 
   return (
     <header className="sticky top-0 z-50 border-b bg-background/85 backdrop-blur-xl">
       <nav
-        aria-label="Main navigation"
+        aria-label={t("nav.main")}
         className={cn(CONTAINER, "flex h-14 items-center gap-2")}
       >
-        <Link href="/leaderboard" className="flex shrink-0 items-center gap-2" aria-label="Tokens home">
+        <Link
+          href={localizeHref("/leaderboard", locale)}
+          className="flex shrink-0 items-center gap-2"
+          aria-label={t("nav.home")}
+        >
           {/* The mark paints with currentColor, so one file covers both themes. */}
           <TokensMark />
           <span className="text-[15px] font-semibold tracking-tight">Tokens</span>
@@ -229,7 +256,7 @@ export function Navigation() {
 
         <div className="ml-3 hidden items-center gap-0.5 sm:flex">
           {links.map((link) => {
-            const active = link.match(pathname);
+            const active = link.match(currentPath);
             return (
               <Link
                 key={link.href}
@@ -242,7 +269,7 @@ export function Navigation() {
                     : "text-muted-foreground hover:text-foreground"
                 )}
               >
-                {link.label}
+                {t(link.label)}
               </Link>
             );
           })}
@@ -253,7 +280,7 @@ export function Navigation() {
             variant="ghost"
             size="icon"
             className="hidden size-8 sm:inline-flex"
-            aria-label="Tokens on GitHub"
+            aria-label={t("nav.github")}
             render={
               <a
                 href="https://github.com/missuo/tokens"
@@ -264,6 +291,8 @@ export function Navigation() {
           >
             <GitHubIcon className="size-4" />
           </Button>
+
+          <LanguageSwitcher />
 
           <ThemeToggle />
 
@@ -282,7 +311,7 @@ export function Navigation() {
               }
             >
               <GitHubIcon className="size-3.5" data-icon="inline-start" />
-              Sign in
+              {t("nav.signIn")}
             </Button>
           )}
 
@@ -290,7 +319,12 @@ export function Navigation() {
           <DropdownMenu>
             <DropdownMenuTrigger
               render={
-                <Button variant="ghost" size="icon" className="size-8 sm:hidden" aria-label="Open menu" />
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-8 sm:hidden"
+                  aria-label={t("nav.openMenu")}
+                />
               }
             >
               <MenuIcon />
@@ -299,7 +333,7 @@ export function Navigation() {
               <DropdownMenuGroup>
                 {links.map((link) => (
                   <DropdownMenuItem key={link.href} render={<Link href={hrefFor(link)} />}>
-                    {link.label}
+                    {t(link.label)}
                   </DropdownMenuItem>
                 ))}
               </DropdownMenuGroup>

@@ -19,10 +19,12 @@ import {
 } from "@/components/ui/table";
 import { VerifiedBadge } from "@/components/ui/VerifiedBadge";
 import { CONTAINER } from "@/components/layout/Container";
+import { useLocale, useT } from "@/components/layout/LocaleProvider";
 import { SourceLogo } from "@/components/SourceLogo";
 import { ProfileSocialLinks } from "./ProfileSocialLinks";
 import { cn } from "@/lib/utils";
 import { formatCurrency, formatNumber, formatPercent } from "@/lib/format";
+import { formatDate } from "@/lib/i18n/format";
 import type { ProfileSocialLink } from "./types";
 
 export interface ProfileViewStats {
@@ -79,10 +81,11 @@ export interface ProfileViewProps {
   devices?: React.ReactNode;
 }
 
+/** `labelKey` is a catalogue key: the words are resolved where they render. */
 const PERIODS = [
-  { value: "all", label: "All time" },
-  { value: "month", label: "Month" },
-  { value: "week", label: "Week" },
+  { value: "all", labelKey: "profile.period.allTime" },
+  { value: "month", labelKey: "profile.period.month" },
+  { value: "week", labelKey: "profile.period.week" },
 ] as const;
 
 function Stat({
@@ -115,13 +118,15 @@ function Stat({
  * shares stay underneath for anyone who wants them.
  */
 function TokenComposition({ stats }: { stats: ProfileViewStats }) {
+  const t = useT();
+  const locale = useLocale();
   const parts = useMemo(() => {
     const nonZero = [
-      { key: "Input", value: stats.inputTokens, className: "bg-chart-1" },
-      { key: "Output", value: stats.outputTokens, className: "bg-chart-2" },
-      { key: "Cache read", value: stats.cacheReadTokens, className: "bg-chart-3" },
-      { key: "Cache write", value: stats.cacheWriteTokens, className: "bg-chart-4" },
-      { key: "Reasoning", value: stats.reasoningTokens ?? 0, className: "bg-chart-5" },
+      { key: "input", value: stats.inputTokens, className: "bg-chart-1" },
+      { key: "output", value: stats.outputTokens, className: "bg-chart-2" },
+      { key: "cacheRead", value: stats.cacheReadTokens, className: "bg-chart-3" },
+      { key: "cacheWrite", value: stats.cacheWriteTokens, className: "bg-chart-4" },
+      { key: "reasoning", value: stats.reasoningTokens ?? 0, className: "bg-chart-5" },
     ].filter((p) => p.value > 0);
     const total = nonZero.reduce((sum, p) => sum + p.value, 0);
     return nonZero.map((p) => ({ ...p, share: (p.value / total) * 100 }));
@@ -137,7 +142,10 @@ function TokenComposition({ stats }: { stats: ProfileViewStats }) {
             key={p.key}
             className={p.className}
             style={{ width: `${p.share}%` }}
-            title={`${p.key}: ${formatNumber(p.value, true)}`}
+            title={t("profile.composition.segmentTitle", {
+              label: t(`profile.tokens.${p.key}`),
+              value: formatNumber(p.value, true, locale),
+            })}
           />
         ))}
       </div>
@@ -145,10 +153,12 @@ function TokenComposition({ stats }: { stats: ProfileViewStats }) {
         {parts.map((p) => (
           <div key={p.key} className="flex items-center gap-2">
             <span className={cn("size-2 rounded-full", p.className)} aria-hidden="true" />
-            <dt className="text-xs text-muted-foreground">{p.key}</dt>
+            <dt className="text-xs text-muted-foreground">{t(`profile.tokens.${p.key}`)}</dt>
             <dd className="whitespace-nowrap font-mono text-xs tabular-nums">
-              {formatNumber(p.value, true)}{" "}
-              <span className="text-muted-foreground">{formatPercent(p.share)}</span>
+              {formatNumber(p.value, true, locale)}{" "}
+              <span className="text-muted-foreground">
+                {formatPercent(p.share, locale)}
+              </span>
             </dd>
           </div>
         ))}
@@ -225,22 +235,27 @@ export function ProfileView({
   modelsSection,
   devices,
 }: ProfileViewProps) {
+  const t = useT();
+  const locale = useLocale();
   const [copied, setCopied] = useState(false);
   const avatar = user.avatarUrl || `https://github.com/${user.username}.png`;
-  const joined = new Date(user.createdAt).toLocaleDateString("en-US", {
-    month: "short",
-    year: "numeric",
-  });
+  // Month and year only, so the two locales that do not order it that way still
+  // get their own order from `Intl` rather than an English template.
+  const joined = formatDate(
+    new Date(user.createdAt),
+    locale,
+    { month: "short", year: "numeric" },
+  );
 
   const share = async () => {
     const url = `${window.location.origin}/u/${user.username}`;
     try {
       await navigator.clipboard.writeText(url);
       setCopied(true);
-      toast.success("Profile link copied");
+      toast.success(t("profile.actions.shareCopied"));
       window.setTimeout(() => setCopied(false), 1600);
     } catch {
-      toast.error("Could not copy the link");
+      toast.error(t("profile.actions.shareFailed"));
     }
   };
 
@@ -266,10 +281,12 @@ export function ProfileView({
               {verified && <VerifiedBadge size={15} />}
               {user.rank != null && (
                 <Badge variant="secondary" className="font-mono tabular-nums">
-                  Rank #{user.rank.toLocaleString("en-US")}
+                  {t("profile.stats.rank", { rank: user.rank.toLocaleString(locale) })}
                 </Badge>
               )}
-              {hasBackfill && <Badge variant="outline">Includes imported history</Badge>}
+              {hasBackfill && (
+                <Badge variant="outline">{t("profile.stats.importedHistory")}</Badge>
+              )}
             </div>
 
             <span className="truncate font-mono text-sm text-muted-foreground">
@@ -277,15 +294,23 @@ export function ProfileView({
             </span>
 
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-              {/* toLocaleDateString reads the runtime's locale and zone, so the
-                  server and the browser can disagree — same reason as Updated
-                  below. */}
-              <span suppressHydrationWarning>Joined {joined}</span>
+              {/* The date formatters read the runtime's time zone, so the
+                  server and the browser can disagree about the day — hence the
+                  hydration suppression rather than a fixed zone. */}
+              <span suppressHydrationWarning>
+                {t("profile.stats.joined", { date: joined })}
+              </span>
               {updatedAt && (
                 <>
                   <span aria-hidden="true">·</span>
                   <span suppressHydrationWarning>
-                    Updated {new Date(updatedAt).toLocaleDateString("en-US")}
+                    {t("profile.stats.updated", {
+                      date: formatDate(new Date(updatedAt), locale, {
+                        year: "numeric",
+                        month: "numeric",
+                        day: "numeric",
+                      }),
+                    })}
                   </span>
                 </>
               )}
@@ -300,11 +325,11 @@ export function ProfileView({
         <div className="flex flex-wrap items-center gap-2">
           <Button size="sm" onClick={onEmbedClick}>
             <Code2Icon data-icon="inline-start" />
-            Embed
+            {t("profile.actions.embed")}
           </Button>
           <Button variant="outline" size="sm" onClick={share}>
             <Share2Icon data-icon="inline-start" />
-            {copied ? "Copied" : "Share"}
+            {copied ? t("profile.actions.copied") : t("profile.actions.share")}
           </Button>
           {/* Outline, like Share: three actions sitting together read as one
               control group, and a borderless third one looks like a mistake. */}
@@ -320,7 +345,7 @@ export function ProfileView({
             }
           >
             <GitHubMark data-icon="inline-start" />
-            GitHub
+            {t("profile.actions.github")}
           </Button>
         </div>
       </header>
@@ -328,17 +353,26 @@ export function ProfileView({
       <Separator className="my-7" />
 
       {/* ---- Headline figures ------------------------------------------ */}
-      <section className="grid grid-cols-2 gap-6 sm:grid-cols-4" aria-label="Totals">
-        <Stat label="Tokens" value={formatNumber(stats.totalTokens, true)} />
-        <Stat label="Cost" value={formatCurrency(stats.totalCost, true)} />
+      <section
+        className="grid grid-cols-2 gap-6 sm:grid-cols-4"
+        aria-label={t("profile.stats.totals")}
+      >
         <Stat
-          label="Active days"
-          value={formatNumber(stats.activeDays, false)}
-          hint={`${formatNumber(stats.sessionCount, false)} sessions`}
+          label={t("profile.stats.tokens")}
+          value={formatNumber(stats.totalTokens, true, locale)}
         />
         <Stat
-          label="Submissions"
-          value={formatNumber(stats.submissionCount, false)}
+          label={t("profile.stats.cost")}
+          value={formatCurrency(stats.totalCost, true, locale)}
+        />
+        <Stat
+          label={t("profile.stats.activeDays")}
+          value={formatNumber(stats.activeDays, false, locale)}
+          hint={t("profile.units.session", { count: stats.sessionCount })}
+        />
+        <Stat
+          label={t("profile.stats.submissions")}
+          value={formatNumber(stats.submissionCount, false, locale)}
         />
       </section>
 
@@ -356,7 +390,7 @@ export function ProfileView({
           rather than inside any one section. */}
       <div className="mt-9 flex items-center justify-between gap-3 border-b pb-3">
         <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-          Usage detail
+          {t("profile.usageDetail")}
         </span>
         {/* Same primitive and the same shape as the leaderboard's period
             control, so the two pages do not offer the identical choice through
@@ -368,40 +402,48 @@ export function ProfileView({
             if (next) onPeriodChange(next);
           }}
           variant="outline"
-          aria-label="Period"
+          aria-label={t("profile.period.label")}
           className="[&>*]:h-8 [&>*]:px-2.5 [&>*]:text-xs"
         >
           {PERIODS.map((p) => (
             <ToggleGroupItem key={p.value} value={p.value}>
-              {p.label}
+              {t(p.labelKey)}
             </ToggleGroupItem>
           ))}
         </ToggleGroup>
       </div>
 
       <div className="mt-8 flex flex-col gap-12">
-        <Section title="Contributions">{activity}</Section>
+        <Section title={t("profile.sections.contributions")}>{activity}</Section>
 
-        {usageChart && <Section title="Usage">{usageChart}</Section>}
+        {usageChart && <Section title={t("profile.sections.usage")}>{usageChart}</Section>}
 
-        {breakdown && <Section title="Token breakdown">{breakdown}</Section>}
+        {breakdown && (
+          <Section title={t("profile.sections.tokenBreakdown")}>{breakdown}</Section>
+        )}
 
-        {habits && <Section title="Habits">{habits}</Section>}
+        {habits && <Section title={t("profile.sections.habits")}>{habits}</Section>}
 
-        <CollapsibleSection title="Models">
+        <CollapsibleSection title={t("profile.sections.models")}>
           {modelsSection ?? (
             topModels.length === 0 ? (
               <p className="py-8 text-center text-sm text-muted-foreground">
-                No model usage recorded for this period.
+                {t("profile.models.empty")}
               </p>
             ) : (
               <div className="overflow-hidden rounded-lg border">
                 <Table>
                   <TableHeader>
                     <TableRow className="hover:bg-transparent">
-                      <TableHead className="pl-4 sm:pl-6">Model</TableHead>
-                      <TableHead className="text-right">Tokens</TableHead>
-                      <TableHead className="pr-4 text-right sm:pr-6">Cost</TableHead>
+                      <TableHead className="pl-4 sm:pl-6">
+                        {t("profile.models.columnModel")}
+                      </TableHead>
+                      <TableHead className="text-right">
+                        {t("profile.models.columnTokens")}
+                      </TableHead>
+                      <TableHead className="pr-4 text-right sm:pr-6">
+                        {t("profile.models.columnCost")}
+                      </TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -411,10 +453,10 @@ export function ProfileView({
                           {model.name}
                         </TableCell>
                         <TableCell className="text-right font-mono text-sm tabular-nums">
-                          {formatNumber(model.tokens, true)}
+                          {formatNumber(model.tokens, true, locale)}
                         </TableCell>
                         <TableCell className="pr-4 text-right font-mono text-sm tabular-nums sm:pr-6">
-                          {formatCurrency(model.cost, true)}
+                          {formatCurrency(model.cost, true, locale)}
                         </TableCell>
                       </TableRow>
                     ))}
@@ -425,11 +467,13 @@ export function ProfileView({
           )}
         </CollapsibleSection>
 
-        <Section title="Clients">
+        <Section title={t("profile.sections.clients")}>
           <div className="flex flex-col gap-6">
             <div className="flex flex-wrap gap-2">
               {clients.length === 0 ? (
-                <span className="text-sm text-muted-foreground">None recorded.</span>
+                <span className="text-sm text-muted-foreground">
+                  {t("profile.clients.none")}
+                </span>
               ) : (
                 clients.map((client) => (
                   <span
@@ -446,7 +490,7 @@ export function ProfileView({
             {mcpServers && mcpServers.length > 0 && (
               <div>
                 <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                  MCP servers
+                  {t("profile.sections.mcpServers")}
                 </span>
                 <div className="mt-3 flex flex-wrap gap-1.5">
                   {mcpServers.map((server) => (

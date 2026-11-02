@@ -5,7 +5,9 @@ import { useTheme } from "next-themes";
 import type { DailyContribution, GraphColorPalette, TooltipPosition } from "@/lib/types";
 import { getThemeGradeColor } from "@/lib/themes";
 import { groupByWeek } from "@/lib/utils";
-import { BOX_WIDTH, CELL_SIZE, CANVAS_MARGIN, HEADER_HEIGHT, TEXT_HEIGHT, FONT_SIZE, FONT_FAMILY, DAY_LABELS_SHORT, MONTH_LABELS_SHORT } from "@/lib/constants";
+import { BOX_WIDTH, CELL_SIZE, CANVAS_MARGIN, HEADER_HEIGHT, TEXT_HEIGHT, FONT_SIZE, FONT_FAMILY } from "@/lib/constants";
+import { formatCurrency, formatNumber } from "@/lib/format";
+import { useLocale, useT } from "@/components/layout/LocaleProvider";
 import { parseISO, getMonth } from "date-fns";
 
 interface TokenGraph2DProps {
@@ -17,10 +19,32 @@ interface TokenGraph2DProps {
 }
 
 export function TokenGraph2D({ contributions, palette, year, onDayHover, onDayClick }: TokenGraph2DProps) {
+  const t = useT();
+  const locale = useLocale();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const weeksData = useMemo(() => groupByWeek(contributions, year), [contributions, year]);
   const { resolvedTheme } = useTheme();
   const isDark = resolvedTheme === "dark";
+
+  // Canvas text comes from `Intl` rather than the dictionary: these are dates,
+  // and a locale already knows its own month and weekday abbreviations. The
+  // gutter is wide enough for two characters ("周一"), which is what Japanese
+  // and Chinese need, so the layout constants hold.
+  const monthLabels = useMemo(
+    () =>
+      Array.from({ length: 12 }, (_, month) =>
+        new Intl.DateTimeFormat(locale, { month: "short" }).format(new Date(2021, month, 1)),
+      ),
+    [locale],
+  );
+  const dayLabels = useMemo(
+    () =>
+      // 2021-02-07 is a Sunday, so index 0..6 walks Sunday..Saturday.
+      Array.from({ length: 7 }, (_, day) =>
+        new Intl.DateTimeFormat(locale, { weekday: "short" }).format(new Date(2021, 1, 7 + day)),
+      ),
+    [locale],
+  );
 
   // Theme colors are derived from `isDark` (next-themes' resolvedTheme — the
   // React source of truth) rather than read via getComputedStyle. Child effects
@@ -65,7 +89,7 @@ export function TokenGraph2D({ contributions, palette, year, onDayHover, onDayCl
         const month = getMonth(parseISO(firstDay.date));
         if (month !== lastMonth) {
           const x = CANVAS_MARGIN + TEXT_HEIGHT + weekIndex * CELL_SIZE;
-          ctx.fillText(MONTH_LABELS_SHORT[month], x, CANVAS_MARGIN + FONT_SIZE);
+          ctx.fillText(monthLabels[month], x, CANVAS_MARGIN + FONT_SIZE);
           lastMonth = month;
         }
       }
@@ -74,7 +98,7 @@ export function TokenGraph2D({ contributions, palette, year, onDayHover, onDayCl
     ctx.textAlign = "right";
     for (const dayIndex of [1, 3, 5]) {
       const y = HEADER_HEIGHT + dayIndex * CELL_SIZE + BOX_WIDTH / 2 + FONT_SIZE / 3;
-      ctx.fillText(DAY_LABELS_SHORT[dayIndex], CANVAS_MARGIN + TEXT_HEIGHT - 4, y);
+      ctx.fillText(dayLabels[dayIndex], CANVAS_MARGIN + TEXT_HEIGHT - 4, y);
     }
 
     for (let weekIndex = 0; weekIndex < weeksData.length; weekIndex++) {
@@ -93,7 +117,7 @@ export function TokenGraph2D({ contributions, palette, year, onDayHover, onDayCl
         ctx.fill();
       }
     }
-  }, [contributions, palette, year, weeksData, canvasWidth, canvasHeight, graphBg, graphEmptyCell, graphMuted, isDark]);
+  }, [contributions, palette, year, weeksData, canvasWidth, canvasHeight, graphBg, graphEmptyCell, graphMuted, isDark, monthLabels, dayLabels]);
 
   const getDayAtPosition = useCallback(
     (clientX: number, clientY: number): { day: DailyContribution | null; position: TooltipPosition } | null => {
@@ -145,7 +169,7 @@ export function TokenGraph2D({ contributions, palette, year, onDayHover, onDayCl
       <canvas
         ref={canvasRef}
         role="img"
-        aria-label={`Token usage contribution graph for ${year}. A list of the same days follows.`}
+        aria-label={t("common.tokenGraph2d.graphAria", { year })}
         className="cursor-pointer"
         onMouseMove={handleMouseMove}
         onMouseLeave={() => onDayHover(null, null)}
@@ -161,20 +185,17 @@ export function TokenGraph2D({ contributions, palette, year, onDayHover, onDayCl
         {contributions.map((day) => (
           <li key={day.date}>
             <button type="button" onClick={() => onDayClick(day)}>
-              {dayButtonLabel(day)}
+              {t("common.tokenGraph2d.dayLabel", {
+                date: day.date,
+                tokens: formatNumber(day.totals.tokens, false, locale),
+                cost: formatCurrency(day.totals.cost, day.totals.cost >= 1000, locale),
+              })}
             </button>
           </li>
         ))}
       </ul>
     </div>
   );
-}
-
-function dayButtonLabel(day: DailyContribution): string {
-  return `${day.date}: ${day.totals.tokens.toLocaleString("en-US")} tokens, ${day.totals.cost.toLocaleString(
-    "en-US",
-    { style: "currency", currency: "USD" }
-  )}`;
 }
 
 function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, width: number, height: number, radius: number) {

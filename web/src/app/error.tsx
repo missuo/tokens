@@ -5,6 +5,8 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { CONTAINER } from "@/components/layout/Container";
 import { cn } from "@/lib/utils";
+import { useLocale, useT } from "@/components/layout/LocaleProvider";
+import { localizeHref } from "@/lib/i18n/config";
 
 /**
  * Root error boundary.
@@ -23,6 +25,9 @@ export default function RootError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  const t = useT();
+  const locale = useLocale();
+
   useEffect(() => {
     console.error(error);
   }, [error]);
@@ -31,20 +36,23 @@ export default function RootError({
     <main id="main-content" className={cn(CONTAINER, "pb-24 pt-10 sm:pt-14")}>
       <header className="flex flex-col gap-1.5">
         <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
-          Something went wrong
+          {t("errors.rootTitle")}
         </h1>
         <p className="max-w-[90ch] text-sm leading-relaxed text-muted-foreground">
-          This page could not be loaded. It is usually temporary — trying again
-          is worth a shot before anything else.
+          {t("errors.rootDescription")}
         </p>
       </header>
 
       <div className="mt-7 flex flex-wrap items-center gap-2">
         <Button size="sm" onClick={reset}>
-          Try again
+          {t("common.retry")}
         </Button>
-        <Button variant="outline" size="sm" render={<Link href="/leaderboard" />}>
-          Go to the leaderboard
+        <Button
+          variant="outline"
+          size="sm"
+          render={<Link href={localizeHref("/leaderboard", locale)} />}
+        >
+          {t("common.backToLeaderboard")}
         </Button>
       </div>
 
@@ -52,7 +60,7 @@ export default function RootError({
           it carries nothing sensitive. */}
       {error.digest && (
         <p className="mt-6 font-mono text-xs text-muted-foreground">
-          Reference: {error.digest}
+          {t("errors.reference")} {error.digest}
         </p>
       )}
     </main>

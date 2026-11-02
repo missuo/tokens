@@ -17,6 +17,12 @@ export const ISO_CANVAS_WIDTH = 1000;
 export const ISO_CANVAS_HEIGHT = 600;
 
 // Labels
+/**
+ * Kept only as the English reference. The 2D graph axis labels come from
+ * `Intl.DateTimeFormat` now, so these are no longer rendered — they document
+ * what the English output looks like and stay available for canvas code that
+ * needs a fixed-width table.
+ */
 export const DAY_LABELS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 export const MONTH_LABELS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 

@@ -2,10 +2,16 @@
 
 import { useMemo } from "react";
 import { SourceLogo } from "@/components/SourceLogo";
+import { useLocale, useT } from "@/components/layout/LocaleProvider";
 import { ModelIcon } from "./ModelIcon";
 import { SpeedTierLabel } from "./SpeedTier";
 import { cn } from "@/lib/utils";
-import { formatCurrency, formatNumber, formatPercent, formatWholePercents } from "@/lib/format";
+import {
+  formatCurrency,
+  formatNumber,
+  formatPercent,
+  formatWholePercents,
+} from "@/lib/format";
 import { getSpeedTierRows } from "@/lib/speedUsage";
 import {
   createContributionClientDetails,
@@ -19,16 +25,17 @@ export interface ProfileTodayProps {
   className?: string;
 }
 
+/** `labelKey` is a catalogue path segment: `tokens.input` and so on. */
 const COMPOSITION: ReadonlyArray<{
   key: keyof TokenBreakdown;
-  label: string;
+  labelKey: string;
   className: string;
 }> = [
-  { key: "input", label: "Input", className: "bg-chart-1" },
-  { key: "output", label: "Output", className: "bg-chart-2" },
-  { key: "cacheRead", label: "Cache read", className: "bg-chart-3" },
-  { key: "cacheWrite", label: "Cache write", className: "bg-chart-4" },
-  { key: "reasoning", label: "Reasoning", className: "bg-chart-5" },
+  { key: "input", labelKey: "profile.tokens.input", className: "bg-chart-1" },
+  { key: "output", labelKey: "profile.tokens.output", className: "bg-chart-2" },
+  { key: "cacheRead", labelKey: "profile.tokens.cacheRead", className: "bg-chart-3" },
+  { key: "cacheWrite", labelKey: "profile.tokens.cacheWrite", className: "bg-chart-4" },
+  { key: "reasoning", labelKey: "profile.tokens.reasoning", className: "bg-chart-5" },
 ];
 
 function Figure({ label, value }: { label: string; value: string }) {
@@ -52,6 +59,8 @@ function Figure({ label, value }: { label: string; value: string }) {
  * scrolls — a summary you have to scroll is not a summary.
  */
 export function ProfileToday({ day, className }: ProfileTodayProps) {
+  const t = useT();
+  const locale = useLocale();
   const clients = useMemo(
     () => (day ? createContributionClientDetails(day) : []),
     [day]
@@ -66,7 +75,7 @@ export function ProfileToday({ day, className }: ProfileTodayProps) {
   // the page twice — once here and once in the graph's own breakdown, for the
   // same day. The graph keeps the day you picked; this keeps the one you came
   // to check.
-  const heading = "Today";
+  const heading = t("profile.today.heading");
   const tokens = day?.totals.tokens ?? 0;
   const cost = day?.totals.cost ?? 0;
 
@@ -103,7 +112,7 @@ export function ProfileToday({ day, className }: ProfileTodayProps) {
   return (
     <section
       className={cn("overflow-hidden rounded-lg border bg-card", className)}
-      aria-label={`${heading} usage`}
+      aria-label={t("profile.today.usageAria", { heading })}
     >
       <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-2 border-b px-4 py-3 sm:px-5">
         <div className="flex items-baseline gap-3">
@@ -113,15 +122,24 @@ export function ProfileToday({ day, className }: ProfileTodayProps) {
           )}
         </div>
         <div className="flex flex-wrap items-baseline gap-x-6 gap-y-1">
-          <Figure label="Tokens" value={formatNumber(tokens, true)} />
-          <Figure label="Cost" value={formatCurrency(cost, true)} />
-          <Figure label="Messages" value={formatNumber(messages, true)} />
+          <Figure
+            label={t("profile.stats.tokens")}
+            value={formatNumber(tokens, true, locale)}
+          />
+          <Figure
+            label={t("profile.stats.cost")}
+            value={formatCurrency(cost, true, locale)}
+          />
+          <Figure
+            label={t("profile.today.messages")}
+            value={formatNumber(messages, true, locale)}
+          />
         </div>
       </div>
 
       {ranked.length === 0 ? (
         <p className="px-4 py-5 text-sm text-muted-foreground sm:px-5">
-          Nothing recorded for this day yet.
+          {t("profile.today.empty")}
         </p>
       ) : (
         <>
@@ -133,7 +151,10 @@ export function ProfileToday({ day, className }: ProfileTodayProps) {
                     key={part.key}
                     className={part.className}
                     style={{ width: `${part.share}%` }}
-                    title={`${part.label}: ${formatNumber(composition.totals[part.key], true)}`}
+                    title={t("profile.composition.segmentTitle", {
+                      label: t(part.labelKey),
+                      value: formatNumber(composition.totals[part.key], true, locale),
+                    })}
                   />
                 ))}
               </div>
@@ -144,10 +165,14 @@ export function ProfileToday({ day, className }: ProfileTodayProps) {
                       className={cn("size-2 rounded-full", part.className)}
                       aria-hidden="true"
                     />
-                    <dt className="text-xs text-muted-foreground">{part.label}</dt>
+                    <dt className="text-xs text-muted-foreground">
+                      {t(part.labelKey)}
+                    </dt>
                     <dd className="whitespace-nowrap font-mono text-xs tabular-nums">
-                      {formatNumber(composition.totals[part.key], true)}{" "}
-                      <span className="text-muted-foreground">{formatPercent(part.share)}</span>
+                      {formatNumber(composition.totals[part.key], true, locale)}{" "}
+                      <span className="text-muted-foreground">
+                        {formatPercent(part.share, locale)}
+                      </span>
                     </dd>
                   </div>
                 ))}
@@ -169,13 +194,13 @@ export function ProfileToday({ day, className }: ProfileTodayProps) {
                     </span>
                     <span className="flex shrink-0 items-baseline gap-3">
                       <span className="font-mono text-xs tabular-nums text-muted-foreground">
-                        {formatNumber(client.messages, true)} msg
+                        {t("profile.today.clientMessages", { count: client.messages })}
                       </span>
                       <span className="font-mono text-xs tabular-nums text-muted-foreground">
-                        {formatCurrency(client.cost, true)}
+                        {formatCurrency(client.cost, true, locale)}
                       </span>
                       <span className="font-mono text-sm tabular-nums">
-                        {formatNumber(client.totalTokens, true)}
+                        {formatNumber(client.totalTokens, true, locale)}
                       </span>
                     </span>
                   </div>
@@ -199,7 +224,7 @@ export function ProfileToday({ day, className }: ProfileTodayProps) {
                             ? (tier.tokens / client.totalTokens) * 100
                             : 0
                         );
-                        const tierPercents = formatWholePercents(tierShares);
+                        const tierPercents = formatWholePercents(tierShares, locale);
                         return (
                           <li key={`${client.client}:${model.modelId}`}>
                             <div className="flex items-center gap-3">
@@ -217,7 +242,7 @@ export function ProfileToday({ day, className }: ProfileTodayProps) {
                                 {Math.round(share * 100)}%
                               </span>
                               <span className="w-16 shrink-0 text-right font-mono text-xs tabular-nums">
-                                {formatNumber(model.totalTokens, true)}
+                                {formatNumber(model.totalTokens, true, locale)}
                               </span>
                             </div>
 
@@ -255,7 +280,7 @@ export function ProfileToday({ day, className }: ProfileTodayProps) {
                                       {tierPercents[index]}
                                     </span>
                                     <span className="w-16 shrink-0 text-right font-mono text-[0.6875rem] tabular-nums text-muted-foreground">
-                                      {formatNumber(tier.tokens, true)}
+                                      {formatNumber(tier.tokens, true, locale)}
                                     </span>
                                   </li>
                                 ))}

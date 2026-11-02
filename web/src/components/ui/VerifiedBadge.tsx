@@ -2,9 +2,7 @@
 
 import * as Tooltip from "@radix-ui/react-tooltip";
 import { cn } from "@/lib/utils";
-
-const VERIFIED_TOOLTIP =
-  "Verified — earned by adding two or more social links (website included) to your GitHub profile. Status refreshes every 24 hours.";
+import { useT } from "@/components/layout/LocaleProvider";
 
 export interface VerifiedBadgeProps {
   size?: number;
@@ -17,6 +15,7 @@ export interface VerifiedBadgeProps {
  * portal so it never gets clipped by overflow-hidden cards or tables.
  */
 export function VerifiedBadge({ size = 14, className }: VerifiedBadgeProps) {
+  const t = useT();
   const glyph = Math.max(8, Math.round(size * 0.62));
   return (
     <Tooltip.Root>
@@ -32,7 +31,7 @@ export function VerifiedBadge({ size = 14, className }: VerifiedBadgeProps) {
           )}
           style={{ width: size, height: size }}
           role="img"
-          aria-label={VERIFIED_TOOLTIP}
+          aria-label={t("common.verifiedTooltip")}
         >
           <svg
             aria-hidden="true"
@@ -63,7 +62,7 @@ export function VerifiedBadge({ size = 14, className }: VerifiedBadgeProps) {
           collisionPadding={10}
           className="z-[1000] max-w-[260px] select-none rounded-lg bg-[#17181B] px-3 py-2 text-center text-xs font-medium leading-relaxed text-[#e5e5e5] shadow-[0_8px_30px_rgba(0,0,0,0.4),0_0_0_1px_rgba(255,255,255,0.06)]"
         >
-          {VERIFIED_TOOLTIP}
+          {t("common.verifiedTooltip")}
         </Tooltip.Content>
       </Tooltip.Portal>
     </Tooltip.Root>

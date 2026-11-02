@@ -11,6 +11,10 @@ import { deviceDisplayLabel } from "@/lib/devices/shared";
 import { tw } from "@/lib/tw";
 import { cn, formatNumber, formatCurrency } from "@/lib/utils";
 import { formatRelativeTime } from "@/lib/format";
+import { useLocale, useT } from "@/components/layout/LocaleProvider";
+import { localizeHref } from "@/lib/i18n/config";
+import { richText } from "@/lib/i18n/rich";
+import type { Translator } from "@/lib/i18n/translate";
 
 interface User {
   id: string;
@@ -54,12 +58,12 @@ interface SettingsDevice {
 const DEVICE_NAME_MAX_LENGTH = 120;
 const DEVICE_NAME_CONTROL_CHARS = /\p{C}/u;
 
-function validateDeviceName(name: string): string | null {
+function validateDeviceName(name: string, t: Translator): string | null {
   if (name.length > DEVICE_NAME_MAX_LENGTH) {
-    return `Device name must be ${DEVICE_NAME_MAX_LENGTH} characters or fewer`;
+    return t("settings.validation.nameTooLong", { max: DEVICE_NAME_MAX_LENGTH });
   }
   if (DEVICE_NAME_CONTROL_CHARS.test(name)) {
-    return "Device name must not contain control characters";
+    return t("settings.validation.controlChars");
   }
   return null;
 }
@@ -437,84 +441,97 @@ interface ConfirmationConfig {
     confirmLabel: string;
   }>;
   typedConfirmation: string;
+  /** Toast shown when the request itself fails. */
+  failure: string;
   onConfirm: () => Promise<void>;
 }
 
-const CONFIRMATION_CONFIGS: Record<DangerAction, ConfirmationConfig> = {
-  "delete-data": {
-    title: "Delete submitted data",
+/**
+ * Copy for the two danger flows.
+ *
+ * Built per render rather than once at module scope because every sentence in
+ * it is translated, and the module-scope version could only hold English.
+ */
+function confirmationConfig(t: Translator, action: DangerAction): ConfirmationConfig {
+  if (action === "delete-data") {
+    return {
+      title: t("settings.deleteData.modalTitle"),
+      steps: [
+        {
+          body: (
+            <>
+              <ModalBody>{t("settings.deleteData.step1Intro")}</ModalBody>
+              <ModalBulletList>
+                <li>{t("settings.deleteData.step1Bullet1")}</li>
+                <li>{t("settings.deleteData.step1Bullet2")}</li>
+                <li>{t("settings.deleteData.step1Bullet3")}</li>
+              </ModalBulletList>
+              <ModalBody style={{ marginBottom: 0 }}>
+                {t("settings.deleteData.step1Outro")}
+              </ModalBody>
+            </>
+          ),
+          confirmLabel: t("settings.deleteData.step1Confirm"),
+        },
+        {
+          body: (
+            <ModalBody>
+              {richText(t("settings.deleteData.step2Body"), {
+                strong: <strong>{t("settings.deleteData.step2Strong")}</strong>,
+              })}
+            </ModalBody>
+          ),
+          confirmLabel: t("settings.deleteData.step2Confirm"),
+        },
+      ],
+      typedConfirmation: t("settings.deleteData.typed"),
+      failure: t("settings.deleteData.failure"),
+      onConfirm: async () => {
+        const res = await fetch("/api/settings/submitted-data", { method: "DELETE" });
+        if (!res.ok) throw new Error("Failed to delete submitted data");
+      },
+    };
+  }
+
+  return {
+    title: t("settings.deleteAccount.modalTitle"),
     steps: [
       {
         body: (
           <>
-            <ModalBody>This will permanently remove all submitted usage data from your account:</ModalBody>
+            <ModalBody>{t("settings.deleteAccount.step1Intro")}</ModalBody>
             <ModalBulletList>
-              <li>Leaderboard entries</li>
-              <li>Public profile stats</li>
-              <li>Daily usage history</li>
+              <li>{t("settings.deleteAccount.step1Bullet1")}</li>
+              <li>{t("settings.deleteAccount.step1Bullet2")}</li>
+              <li>{t("settings.deleteAccount.step1Bullet3")}</li>
+              <li>{t("settings.deleteAccount.step1Bullet4")}</li>
             </ModalBulletList>
             <ModalBody style={{ marginBottom: 0 }}>
-              Your account and API tokens will remain active. You can submit new data at any time.
+              {t("settings.deleteAccount.step1Outro")}
             </ModalBody>
           </>
         ),
-        confirmLabel: "I want to delete my data",
+        confirmLabel: t("settings.deleteAccount.step1Confirm"),
       },
       {
         body: (
           <ModalBody>
-            This action <strong>cannot be undone</strong>. All your historical
-            token usage and cost data will be permanently erased from the
-            leaderboard and your public profile.
+            {richText(t("settings.deleteAccount.step2Body"), {
+              strong: <strong>{t("settings.deleteAccount.step2Strong")}</strong>,
+            })}
           </ModalBody>
         ),
-        confirmLabel: "I understand, continue",
+        confirmLabel: t("settings.deleteAccount.step2Confirm"),
       },
     ],
-    typedConfirmation: "delete my data",
-    onConfirm: async () => {
-      const res = await fetch("/api/settings/submitted-data", { method: "DELETE" });
-      if (!res.ok) throw new Error("Failed to delete submitted data");
-    },
-  },
-  "delete-account": {
-    title: "Delete account",
-    steps: [
-      {
-        body: (
-          <>
-            <ModalBody>This will permanently delete your entire account and all associated data:</ModalBody>
-            <ModalBulletList>
-              <li>User profile</li>
-              <li>All submitted usage data</li>
-              <li>Leaderboard entries</li>
-              <li>API tokens and active sessions</li>
-            </ModalBulletList>
-            <ModalBody style={{ marginBottom: 0 }}>
-              You will be signed out immediately. This cannot be reversed.
-            </ModalBody>
-          </>
-        ),
-        confirmLabel: "I want to delete my account",
-      },
-      {
-        body: (
-          <ModalBody>
-            This action is <strong>permanent and irreversible</strong>. Your
-            username will become available for others to register. All your data
-            — submissions, tokens, sessions — will be wiped.
-          </ModalBody>
-        ),
-        confirmLabel: "I understand, continue",
-      },
-    ],
-    typedConfirmation: "delete my account",
+    typedConfirmation: t("settings.deleteAccount.typed"),
+    failure: t("settings.deleteAccount.failure"),
     onConfirm: async () => {
       const res = await fetch("/api/settings/account", { method: "DELETE" });
       if (!res.ok) throw new Error("Failed to delete account");
     },
-  },
-};
+  };
+}
 
 function DangerConfirmationModal({
   action,
@@ -525,7 +542,8 @@ function DangerConfirmationModal({
   onClose: () => void;
   onSuccess: () => void;
 }) {
-  const config = CONFIRMATION_CONFIGS[action];
+  const t = useT();
+  const config = confirmationConfig(t, action);
   const totalSteps = config.steps.length + 1; // +1 for typed confirmation step
   const titleId = useId();
   const [step, setStep] = useState(0);
@@ -543,15 +561,13 @@ function DangerConfirmationModal({
         await config.onConfirm();
         onSuccess();
       } catch {
-        toast.error(
-          `Failed to ${action === "delete-data" ? "delete submitted data" : "delete account"}. Please try again.`
-        );
+        toast.error(config.failure);
         setIsSubmitting(false);
       }
     } else {
       setStep((s) => s + 1);
     }
-  }, [isTypedStep, typedMatch, isSubmitting, config, onSuccess, action]);
+  }, [isTypedStep, typedMatch, isSubmitting, config, onSuccess]);
 
   return (
     <ModalShell
@@ -570,7 +586,9 @@ function DangerConfirmationModal({
       {isTypedStep ? (
         <>
           <ModalBody>
-            Type <strong>{config.typedConfirmation}</strong> to confirm:
+            {richText(t("settings.modal.typeToConfirm"), {
+              word: <strong>{config.typedConfirmation}</strong>,
+            })}
           </ModalBody>
           <ModalInput
             autoFocus
@@ -590,7 +608,7 @@ function DangerConfirmationModal({
 
       <ModalActions>
         <CancelButton onClick={onClose} disabled={isSubmitting}>
-          Cancel
+          {t("settings.actions.cancel")}
         </CancelButton>
         <ConfirmDangerButton
           $disabled={isTypedStep ? !typedMatch : false}
@@ -598,9 +616,9 @@ function DangerConfirmationModal({
           onClick={handleConfirm}
         >
           {isSubmitting
-            ? "Deleting..."
+            ? t("settings.actions.deleting")
             : isTypedStep
-              ? config.steps[config.steps.length - 1].confirmLabel.replace("I understand, continue", "Delete permanently")
+              ? t("settings.modal.deletePermanently")
               : config.steps[step].confirmLabel}
         </ConfirmDangerButton>
       </ModalActions>
@@ -626,6 +644,7 @@ function RevokeTokenModal({
   onConfirm: () => Promise<void>;
 }) {
   const titleId = useId();
+  const t = useT();
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleConfirm = async () => {
@@ -644,17 +663,19 @@ function RevokeTokenModal({
       dismissable={!isSubmitting}
       onClose={onClose}
     >
-      <ModalTitle id={titleId}>⚠ Revoke token</ModalTitle>
+      <ModalTitle id={titleId}>⚠ {t("settings.revoke.title")}</ModalTitle>
       <ModalBody>
-        <strong>{token.name}</strong> will stop working immediately.{" "}
-        {consequence}
+        {richText(t("settings.revoke.body"), {
+          name: <strong>{token.name}</strong>,
+          consequence,
+        })}
       </ModalBody>
       <ModalActions>
         <CancelButton onClick={onClose} disabled={isSubmitting}>
-          Cancel
+          {t("settings.actions.cancel")}
         </CancelButton>
         <ConfirmDangerButton disabled={isSubmitting} onClick={handleConfirm}>
-          {isSubmitting ? "Revoking..." : "Revoke token"}
+          {isSubmitting ? t("settings.actions.revoking") : t("settings.actions.revoke")}
         </ConfirmDangerButton>
       </ModalActions>
     </ModalShell>
@@ -724,6 +745,8 @@ async function fetchDevices(username: string): Promise<SettingsDevice[]> {
 
 export default function SettingsClient() {
   const router = useRouter();
+  const t = useT();
+  const locale = useLocale();
   const createTokenErrorId = useId();
   const deviceErrorId = useId();
   const [user, setUser] = useState<User | null>(null);
@@ -808,7 +831,9 @@ export default function SettingsClient() {
         if (cancelled) return;
 
         if (!sessionData.user) {
-          router.push("/api/auth/github?returnTo=/settings");
+          router.push(
+            `/api/auth/github?returnTo=${encodeURIComponent(localizeHref("/settings", locale))}`
+          );
           return;
         }
 
@@ -823,7 +848,7 @@ export default function SettingsClient() {
         ]);
       } catch {
         if (!cancelled) {
-          router.push("/leaderboard");
+          router.push(localizeHref("/leaderboard", locale));
         }
       }
     }
@@ -832,7 +857,7 @@ export default function SettingsClient() {
     return () => {
       cancelled = true;
     };
-  }, [router, loadTokens, loadPrivacy, loadReadTokens, loadDevices]);
+  }, [router, loadTokens, loadPrivacy, loadReadTokens, loadDevices, locale]);
 
   const handleRevokeToken = async (token: ApiToken) => {
     setRevokingTokenId(token.id);
@@ -840,13 +865,13 @@ export default function SettingsClient() {
       const response = await fetch(`/api/settings/tokens/${token.id}`, {
         method: "DELETE",
       });
-      if (!response.ok) throw new Error("Failed to revoke token");
+      if (!response.ok) throw new Error(t("settings.errors.revokeToken"));
 
       setTokens((current) => current.filter((t) => t.id !== token.id));
       setRevokingToken(null);
-      toast.success(`Revoked "${token.name}"`);
+      toast.success(t("settings.toasts.revoked", { name: token.name }));
     } catch {
-      toast.error("Failed to revoke token. Please try again.");
+      toast.error(t("settings.toasts.revokeFailed"));
     } finally {
       setRevokingTokenId(null);
     }
@@ -864,16 +889,14 @@ export default function SettingsClient() {
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok || typeof data.private !== "boolean") {
-        throw new Error(data.error || "Failed to update privacy");
+        throw new Error(data.error || t("settings.errors.updatePrivacy"));
       }
       setIsPrivate(data.private);
       toast.success(
-        data.private
-          ? "Your profile is now private."
-          : "Your profile is now public."
+        data.private ? t("settings.toasts.privacyPrivate") : t("settings.toasts.privacyPublic")
       );
     } catch {
-      toast.error("Failed to update privacy. Please try again.");
+      toast.error(t("settings.toasts.privacyFailed"));
     } finally {
       setIsSavingPrivacy(false);
     }
@@ -890,7 +913,7 @@ export default function SettingsClient() {
       });
       const data = await response.json();
       if (!response.ok || !data.token) {
-        throw new Error(data.error || "Failed to create read token");
+        throw new Error(data.error || t("settings.errors.createReadToken"));
       }
       setCreatedReadToken(data.token);
       setReadTokens((current) =>
@@ -898,7 +921,7 @@ export default function SettingsClient() {
       );
     } catch (error) {
       setCreateReadTokenError(
-        error instanceof Error ? error.message : "Failed to create read token"
+        error instanceof Error ? error.message : t("settings.errors.createReadToken")
       );
     } finally {
       setIsCreatingReadToken(false);
@@ -911,12 +934,12 @@ export default function SettingsClient() {
       const response = await fetch(`/api/settings/read-tokens/${token.id}`, {
         method: "DELETE",
       });
-      if (!response.ok) throw new Error("Failed to revoke read token");
+      if (!response.ok) throw new Error(t("settings.errors.revokeReadToken"));
       setReadTokens((current) => current.filter((t) => t.id !== token.id));
       setRevokingReadToken(null);
-      toast.success(`Revoked "${token.name}"`);
+      toast.success(t("settings.toasts.revoked", { name: token.name }));
     } catch {
-      toast.error("Failed to revoke read token. Please try again.");
+      toast.error(t("settings.toasts.readTokenRevokeFailed"));
     } finally {
       setRevokingReadTokenId(null);
     }
@@ -931,14 +954,14 @@ export default function SettingsClient() {
 
   const handleDangerSuccess = useCallback(() => {
     if (dangerAction === "delete-account") {
-      // Account is gone — redirect to home.
-      window.location.href = "/";
+      // Account is gone — redirect to home, in the language being read.
+      window.location.href = localizeHref("/", locale);
     } else {
       // Data deleted — close modal and stay.
       setDangerAction(null);
-      toast.success("Submitted data has been deleted.");
+      toast.success(t("settings.toasts.dataDeleted"));
     }
-  }, [dangerAction]);
+  }, [dangerAction, locale, t]);
 
   const handleCreateToken = async () => {
     setIsCreatingToken(true);
@@ -953,7 +976,7 @@ export default function SettingsClient() {
 
       const data = await response.json();
       if (!response.ok || !data.token) {
-        throw new Error(data.error || "Failed to create token");
+        throw new Error(data.error || t("settings.errors.createToken"));
       }
 
       setCreatedToken(data.token);
@@ -961,7 +984,7 @@ export default function SettingsClient() {
         prependApiToken(current, apiTokenListItem(data.token))
       );
     } catch (error) {
-      setCreateTokenError(error instanceof Error ? error.message : "Failed to create token");
+      setCreateTokenError(error instanceof Error ? error.message : t("settings.errors.createToken"));
     } finally {
       setIsCreatingToken(false);
     }
@@ -984,7 +1007,7 @@ export default function SettingsClient() {
 
   const handleSaveDeviceName = async (device: SettingsDevice) => {
     const trimmed = editingDeviceName.trim();
-    const validationError = validateDeviceName(trimmed);
+    const validationError = validateDeviceName(trimmed, t);
     if (validationError) {
       setDeviceError(validationError);
       return;
@@ -1004,7 +1027,7 @@ export default function SettingsClient() {
 
       const data = await response.json();
       if (!response.ok || !data.device) {
-        throw new Error(data.error || "Failed to rename device");
+        throw new Error(data.error || t("settings.errors.renameDevice"));
       }
 
       setDevices((current) =>
@@ -1025,7 +1048,7 @@ export default function SettingsClient() {
       setEditingDeviceName("");
     } catch (error) {
       setDeviceError(
-        error instanceof Error ? error.message : "Failed to rename device"
+        error instanceof Error ? error.message : t("settings.errors.renameDevice")
       );
     } finally {
       setIsSavingDeviceName(false);
@@ -1049,7 +1072,7 @@ export default function SettingsClient() {
     // full-height wrapper, so arriving content jumped a whole viewport.
     return (
       <PageWrapper style={{ backgroundColor: "var(--background)" }}>
-        <MainContent aria-busy="true" aria-label="Loading settings">
+        <MainContent aria-busy="true" aria-label={t("settings.loading")}>
           <Skeleton className="h-8 w-40 sm:h-9" />
           <Skeleton className="mb-7 mt-1.5 h-5 w-full max-w-[28rem]" />
           {[0, 1, 2].map((section) => (
@@ -1072,13 +1095,13 @@ export default function SettingsClient() {
     <PageWrapper style={{ backgroundColor: "var(--background)" }}>
       <MainContent>
         <Title style={{ color: "var(--foreground)" }}>
-          Settings
+          {t("settings.title")}
         </Title>
-        <Subtitle>Manage your profile, privacy, API tokens, devices, and submitted data.</Subtitle>
+        <Subtitle>{t("settings.subtitle")}</Subtitle>
 
         <Section>
           <SectionTitle style={{ color: "var(--foreground)" }}>
-            Profile
+            {t("settings.profile.title")}
           </SectionTitle>
           <ProfileWrapper>
             <AvatarImg
@@ -1102,27 +1125,26 @@ export default function SettingsClient() {
             </div>
           </ProfileWrapper>
           <InfoBanner style={{ marginTop: 16 }}>
-            Profile information is synced from GitHub and cannot be edited here.
+            {t("settings.profile.synced")}
           </InfoBanner>
         </Section>
 
         <Section>
           <SectionTitle style={{ color: "var(--foreground)" }}>
-            Privacy
+            {t("settings.privacy.title")}
           </SectionTitle>
 
           {privacyLoadFailed ? (
             <Alert variant="destructive" className="mb-4">
-              <AlertTitle>Could not load your privacy settings</AlertTitle>
+              <AlertTitle>{t("settings.privacy.loadFailedTitle")}</AlertTitle>
               <AlertDescription>
-                Nothing has changed — this page just could not reach the
-                server.{" "}
+                {t("settings.privacy.loadFailedBody")}{" "}
                 <SecondaryButton
                   type="button"
                   className="ml-1 h-7 px-2 text-xs"
                   onClick={loadPrivacy}
                 >
-                  Try again
+                  {t("settings.actions.tryAgain")}
                 </SecondaryButton>
               </AlertDescription>
             </Alert>
@@ -1130,26 +1152,25 @@ export default function SettingsClient() {
             <PrivacyRow>
               <div className="min-w-0 flex-1">
                 <p className="mb-1 text-sm font-medium text-foreground">
-                  Private mode
+                  {t("settings.privacy.privateMode")}
                 </p>
                 <p
                   id={privacyDescriptionId}
                   className="text-[13px] text-muted-foreground"
                 >
-                  Hide your profile, devices, badges and embeds from everyone
-                  and leave the leaderboard. Only you, and anything holding one
-                  of the read tokens below, can see your data. You can also turn
-                  this on with{" "}
-                  <CodeText style={{ backgroundColor: "var(--muted)" }}>
-                    tokens login --private
-                  </CodeText>
-                  .
+                  {richText(t("settings.privacy.description"), {
+                    command: (
+                      <CodeText style={{ backgroundColor: "var(--muted)" }}>
+                        tokens login --private
+                      </CodeText>
+                    ),
+                  })}
                 </p>
               </div>
               <PrivacySwitch
                 checked={isPrivate === true}
                 disabled={isPrivate === null || isSavingPrivacy}
-                aria-label="Private mode"
+                aria-label={t("settings.privacy.switchAria")}
                 aria-describedby={privacyDescriptionId}
                 onClick={handleTogglePrivacy}
               />
@@ -1160,20 +1181,21 @@ export default function SettingsClient() {
             htmlFor="read-token-name"
             style={{ color: "var(--foreground)", marginTop: 8 }}
           >
-            Read tokens
+            {t("settings.readTokens.label")}
           </FieldLabel>
           <Description style={{ color: "var(--muted-foreground)" }}>
-            A read token unlocks your private profile — for the iOS app, or a
-            badge or embed you still want to show. Send it as{" "}
-            <CodeText style={{ backgroundColor: "var(--muted)" }}>
-              Authorization: Bearer tkr_…
-            </CodeText>{" "}
-            or append{" "}
-            <CodeText style={{ backgroundColor: "var(--muted)" }}>
-              ?token=tkr_…
-            </CodeText>{" "}
-            to a badge or embed URL. Read tokens can only read; they cannot
-            submit or change anything.
+            {richText(t("settings.readTokens.description"), {
+              header: (
+                <CodeText style={{ backgroundColor: "var(--muted)" }}>
+                  Authorization: Bearer tkr_…
+                </CodeText>
+              ),
+              query: (
+                <CodeText style={{ backgroundColor: "var(--muted)" }}>
+                  ?token=tkr_…
+                </CodeText>
+              ),
+            })}
           </Description>
 
           <ActionRow>
@@ -1192,7 +1214,7 @@ export default function SettingsClient() {
               disabled={isCreatingReadToken}
               onClick={handleCreateReadToken}
             >
-              {isCreatingReadToken ? "Creating..." : "Create read token"}
+              {isCreatingReadToken ? t("settings.actions.creating") : t("settings.readTokens.create")}
             </PrimaryButton>
           </ActionRow>
 
@@ -1202,7 +1224,7 @@ export default function SettingsClient() {
               variant="destructive"
               className="mb-4"
             >
-              <AlertTitle>Could not create the read token</AlertTitle>
+              <AlertTitle>{t("settings.readTokens.createFailedTitle")}</AlertTitle>
               <AlertDescription>{createReadTokenError}</AlertDescription>
             </Alert>
           )}
@@ -1210,14 +1232,14 @@ export default function SettingsClient() {
           {createdReadToken && (
             <TokenReveal>
               <SmallText style={{ color: "var(--foreground)", fontWeight: 600 }}>
-                Copy this token now. It will not be shown again.
+                {t("settings.actions.copyNow")}
               </SmallText>
               <TokenCodeRow>
                 <TokenCode style={{ color: "var(--foreground)" }}>
                   {createdReadToken.token}
                 </TokenCode>
                 <SecondaryButton type="button" onClick={handleCopyCreatedReadToken}>
-                  Copy
+                  {t("settings.actions.copy")}
                 </SecondaryButton>
               </TokenCodeRow>
             </TokenReveal>
@@ -1225,16 +1247,15 @@ export default function SettingsClient() {
 
           {readTokensLoadFailed ? (
             <Alert variant="destructive">
-              <AlertTitle>Could not load your read tokens</AlertTitle>
+              <AlertTitle>{t("settings.readTokens.loadFailedTitle")}</AlertTitle>
               <AlertDescription>
-                Your tokens are still there — this page just could not reach the
-                server.{" "}
+                {t("settings.readTokens.loadFailedBody")}{" "}
                 <SecondaryButton
                   type="button"
                   className="ml-1 h-7 px-2 text-xs"
                   onClick={loadReadTokens}
                 >
-                  Try again
+                  {t("settings.actions.tryAgain")}
                 </SecondaryButton>
               </AlertDescription>
             </Alert>
@@ -1243,7 +1264,7 @@ export default function SettingsClient() {
               <EmptyIcon>
                 <EyeIcon size={32} />
               </EmptyIcon>
-              <p>No read tokens yet.</p>
+              <p>{t("settings.readTokens.empty")}</p>
             </EmptyState>
           ) : (
             <TokenList>
@@ -1258,10 +1279,14 @@ export default function SettingsClient() {
                         {token.name}
                       </TokenName>
                       <SmallText style={{ color: "var(--muted-foreground)" }}>
-                        Created {new Date(token.createdAt).toLocaleDateString()}
-                        {token.lastUsedAt && (
-                          <> - Last used {new Date(token.lastUsedAt).toLocaleDateString()}</>
-                        )}
+                        {token.lastUsedAt
+                          ? t("settings.readTokens.createdLastUsed", {
+                              created: new Date(token.createdAt).toLocaleDateString(locale),
+                              lastUsed: new Date(token.lastUsedAt).toLocaleDateString(locale),
+                            })
+                          : t("settings.readTokens.created", {
+                              date: new Date(token.createdAt).toLocaleDateString(locale),
+                            })}
                       </SmallText>
                     </div>
                   </TokenInfo>
@@ -1271,7 +1296,7 @@ export default function SettingsClient() {
                     className="disabled:cursor-not-allowed disabled:opacity-60"
                     onClick={() => setRevokingReadToken(token)}
                   >
-                    {revokingReadTokenId === token.id ? "Revoking..." : "Revoke"}
+                    {revokingReadTokenId === token.id ? t("settings.actions.revoking") : t("settings.actions.revoke")}
                   </DangerButton>
                 </TokenItem>
               ))}
@@ -1281,23 +1306,25 @@ export default function SettingsClient() {
 
         <Section>
           <SectionTitle style={{ color: "var(--foreground)" }}>
-            API Tokens
+            {t("settings.tokens.title")}
           </SectionTitle>
           <Description style={{ color: "var(--muted-foreground)" }}>
-            Create a token for CI or use one generated by{" "}
-            <CodeText
-              style={{ backgroundColor: "var(--muted)" }}
-            >
-              tokens login
-            </CodeText>{" "}
-            from the CLI.
+            {richText(t("settings.tokens.description"), {
+              command: (
+                <CodeText
+                  style={{ backgroundColor: "var(--muted)" }}
+                >
+                  tokens login
+                </CodeText>
+              ),
+            })}
           </Description>
 
           <FieldLabel
             htmlFor="token-name"
             style={{ color: "var(--foreground)" }}
           >
-            Token name
+            {t("settings.tokens.nameLabel")}
           </FieldLabel>
           <ActionRow>
             <TextInput
@@ -1313,7 +1340,7 @@ export default function SettingsClient() {
               disabled={isCreatingToken}
               onClick={handleCreateToken}
             >
-              {isCreatingToken ? "Creating..." : "Create token"}
+              {isCreatingToken ? t("settings.actions.creating") : t("settings.tokens.create")}
             </PrimaryButton>
           </ActionRow>
 
@@ -1323,7 +1350,7 @@ export default function SettingsClient() {
               variant="destructive"
               className="mb-4"
             >
-              <AlertTitle>Could not create the token</AlertTitle>
+              <AlertTitle>{t("settings.tokens.createFailedTitle")}</AlertTitle>
               <AlertDescription>{createTokenError}</AlertDescription>
             </Alert>
           )}
@@ -1331,14 +1358,14 @@ export default function SettingsClient() {
           {createdToken && (
             <TokenReveal>
               <SmallText style={{ color: "var(--foreground)", fontWeight: 600 }}>
-                Copy this token now. It will not be shown again.
+                {t("settings.actions.copyNow")}
               </SmallText>
               <TokenCodeRow>
                 <TokenCode style={{ color: "var(--foreground)" }}>
                   {createdToken.token}
                 </TokenCode>
                 <SecondaryButton type="button" onClick={handleCopyCreatedToken}>
-                  Copy
+                  {t("settings.actions.copy")}
                 </SecondaryButton>
               </TokenCodeRow>
             </TokenReveal>
@@ -1346,16 +1373,15 @@ export default function SettingsClient() {
 
           {tokensLoadFailed ? (
             <Alert variant="destructive">
-              <AlertTitle>Could not load your API tokens</AlertTitle>
+              <AlertTitle>{t("settings.tokens.loadFailedTitle")}</AlertTitle>
               <AlertDescription>
-                Your tokens are still there — this page just could not reach the
-                server.{" "}
+                {t("settings.tokens.loadFailedBody")}{" "}
                 <SecondaryButton
                   type="button"
                   className="ml-1 h-7 px-2 text-xs"
                   onClick={loadTokens}
                 >
-                  Try again
+                  {t("settings.actions.tryAgain")}
                 </SecondaryButton>
               </AlertDescription>
             </Alert>
@@ -1364,15 +1390,17 @@ export default function SettingsClient() {
               <EmptyIcon>
                 <KeyIcon size={32} />
               </EmptyIcon>
-              <p>No API tokens yet.</p>
+              <p>{t("settings.tokens.empty")}</p>
               <EmptyText>
-                Create one here or run{" "}
-                <CodeText
-                  style={{ backgroundColor: "var(--muted)" }}
-                >
-                  tokens login
-                </CodeText>{" "}
-                from the CLI.
+                {richText(t("settings.tokens.emptyHint"), {
+                  command: (
+                    <CodeText
+                      style={{ backgroundColor: "var(--muted)" }}
+                    >
+                      tokens login
+                    </CodeText>
+                  ),
+                })}
               </EmptyText>
             </EmptyState>
           ) : (
@@ -1388,10 +1416,14 @@ export default function SettingsClient() {
                         {token.name}
                       </TokenName>
                       <SmallText style={{ color: "var(--muted-foreground)" }}>
-                        Created {new Date(token.createdAt).toLocaleDateString()}
-                        {token.lastUsedAt && (
-                          <> - Last used {new Date(token.lastUsedAt).toLocaleDateString()}</>
-                        )}
+                        {token.lastUsedAt
+                          ? t("settings.tokens.createdLastUsed", {
+                              created: new Date(token.createdAt).toLocaleDateString(locale),
+                              lastUsed: new Date(token.lastUsedAt).toLocaleDateString(locale),
+                            })
+                          : t("settings.tokens.created", {
+                              date: new Date(token.createdAt).toLocaleDateString(locale),
+                            })}
                       </SmallText>
                     </div>
                   </TokenInfo>
@@ -1401,7 +1433,7 @@ export default function SettingsClient() {
                     className="disabled:cursor-not-allowed disabled:opacity-60"
                     onClick={() => setRevokingToken(token)}
                   >
-                    {revokingTokenId === token.id ? "Revoking..." : "Revoke"}
+                    {revokingTokenId === token.id ? t("settings.actions.revoking") : t("settings.actions.revoke")}
                   </DangerButton>
                 </TokenItem>
               ))}
@@ -1411,48 +1443,46 @@ export default function SettingsClient() {
 
         <Section>
           <SectionTitle style={{ color: "var(--foreground)" }}>
-            Devices
+            {t("settings.devices.title")}
           </SectionTitle>
           <Description style={{ color: "var(--muted-foreground)" }}>
-            Machines that have submitted usage data. Rename a device to tell
-            your machines apart. Only you see the full name: your public
-            profile shows it masked (first and last two characters). Cloud
-            agent sessions are grouped into one row per provider.
+            {t("settings.devices.description")}
           </Description>
 
           {deviceError && (
             <Alert id={deviceErrorId} variant="destructive" className="mb-4">
-              <AlertTitle>Could not rename the device</AlertTitle>
+              <AlertTitle>{t("settings.devices.renameFailedTitle")}</AlertTitle>
               <AlertDescription>{deviceError}</AlertDescription>
             </Alert>
           )}
 
           {devicesLoadFailed ? (
             <Alert variant="destructive">
-              <AlertTitle>Could not load your devices</AlertTitle>
+              <AlertTitle>{t("settings.devices.loadFailedTitle")}</AlertTitle>
               <AlertDescription>
-                Your devices are still registered — this page just could not
-                reach the server.{" "}
+                {t("settings.devices.loadFailedBody")}{" "}
                 <SecondaryButton
                   type="button"
                   className="ml-1 h-7 px-2 text-xs"
                   onClick={() => user && loadDevices(user.username)}
                 >
-                  Try again
+                  {t("settings.actions.tryAgain")}
                 </SecondaryButton>
               </AlertDescription>
             </Alert>
           ) : devices.length === 0 ? (
             <EmptyState style={{ color: "var(--muted-foreground)" }}>
-              <p>No devices yet.</p>
+              <p>{t("settings.devices.empty")}</p>
               <EmptyText>
-                Run{" "}
-                <CodeText
-                  style={{ backgroundColor: "var(--muted)" }}
-                >
-                  bunx tokens-cli submit
-                </CodeText>{" "}
-                to register this machine.
+                {richText(t("settings.devices.emptyHint"), {
+                  command: (
+                    <CodeText
+                      style={{ backgroundColor: "var(--muted)" }}
+                    >
+                      bunx tokens-cli submit
+                    </CodeText>
+                  ),
+                })}
               </EmptyText>
             </EmptyState>
           ) : (
@@ -1464,10 +1494,10 @@ export default function SettingsClient() {
                   {editingDeviceId === device.id ? (
                     <DeviceEditRow>
                       <TextInput
-                        aria-label="Device name"
+                        aria-label={t("settings.devices.nameAria")}
                         value={editingDeviceName}
                         maxLength={DEVICE_NAME_MAX_LENGTH}
-                        placeholder="Device name (empty to reset)"
+                        placeholder={t("settings.devices.namePlaceholder")}
                         autoFocus
                         disabled={isSavingDeviceName}
                         aria-invalid={deviceError ? true : undefined}
@@ -1489,14 +1519,14 @@ export default function SettingsClient() {
                         disabled={isSavingDeviceName}
                         onClick={() => handleSaveDeviceName(device)}
                       >
-                        {isSavingDeviceName ? "Saving..." : "Save"}
+                        {isSavingDeviceName ? t("settings.actions.saving") : t("settings.actions.save")}
                       </PrimaryButton>
                       <SecondaryButton
                         type="button"
                         disabled={isSavingDeviceName}
                         onClick={cancelEditingDevice}
                       >
-                        Cancel
+                        {t("settings.actions.cancel")}
                       </SecondaryButton>
                     </DeviceEditRow>
                   ) : (
@@ -1507,18 +1537,20 @@ export default function SettingsClient() {
                             {device.displayName}
                           </TokenName>
                           <SmallText style={{ color: "var(--muted-foreground)" }}>
-                            {device.cloudSessions != null &&
-                              `${device.cloudSessions.toLocaleString("en-US")} ${
-                                device.cloudSessions === 1 ? "session" : "sessions"
-                              } · `}
-                            {formatNumber(device.totalTokens)} tokens
-                            {" · "}
-                            {formatCurrency(device.totalCost)}
-                            {" · "}
-                            {device.activeDays} active{" "}
-                            {device.activeDays === 1 ? "day" : "days"}
-                            {" · "}
-                            Last submit {formatRelativeTime(device.lastSubmittedAt)}
+                            {t(
+                              device.cloudSessions != null
+                                ? "settings.devices.statsWithSessions"
+                                : "settings.devices.stats",
+                              {
+                                sessions: device.cloudSessions ?? 0,
+                                tokens: formatNumber(device.totalTokens),
+                                cost: formatCurrency(device.totalCost),
+                                count: device.activeDays,
+                                lastSubmit:
+                                  formatRelativeTime(device.lastSubmittedAt, locale) ||
+                                  t("common.never"),
+                              }
+                            )}
                           </SmallText>
                         </div>
                       </TokenInfo>
@@ -1528,7 +1560,7 @@ export default function SettingsClient() {
                           type="button"
                           onClick={() => startEditingDevice(device)}
                         >
-                          Rename
+                          {t("settings.devices.rename")}
                         </SecondaryButton>
                       )}
                     </>
@@ -1541,32 +1573,30 @@ export default function SettingsClient() {
 
         <DangerSection>
           <DangerSectionTitle>
-            Danger Zone
+            {t("settings.danger.title")}
           </DangerSectionTitle>
 
           <DangerActionRow>
             <DangerActionInfo>
-              <DangerActionTitle>Delete submitted data</DangerActionTitle>
+              <DangerActionTitle>{t("settings.danger.deleteData")}</DangerActionTitle>
               <DangerActionDescription>
-                Remove all leaderboard entries, profile stats, and usage
-                history. Your account and API tokens stay active.
+                {t("settings.danger.deleteDataDescription")}
               </DangerActionDescription>
             </DangerActionInfo>
             <DangerActionButton onClick={() => setDangerAction("delete-data")}>
-              Delete data
+              {t("settings.danger.deleteDataButton")}
             </DangerActionButton>
           </DangerActionRow>
 
           <DangerActionRow>
             <DangerActionInfo>
-              <DangerActionTitle>Delete account</DangerActionTitle>
+              <DangerActionTitle>{t("settings.danger.deleteAccount")}</DangerActionTitle>
               <DangerActionDescription>
-                Permanently delete your account and all associated data. This
-                action is irreversible.
+                {t("settings.danger.deleteAccountDescription")}
               </DangerActionDescription>
             </DangerActionInfo>
             <DangerActionButton onClick={() => setDangerAction("delete-account")}>
-              Delete account
+              {t("settings.danger.deleteAccountButton")}
             </DangerActionButton>
           </DangerActionRow>
         </DangerSection>
@@ -1577,11 +1607,9 @@ export default function SettingsClient() {
         <RevokeTokenModal
           token={revokingToken}
           consequence={
-            <>
-              Anything submitting with it — CI, a machine running{" "}
-              <code>tokens serve</code> — will start failing until it is given a
-              new token.
-            </>
+            richText(t("settings.revoke.apiConsequence"), {
+              command: <code>tokens serve</code>,
+            })
           }
           onClose={() => setRevokingToken(null)}
           onConfirm={() => handleRevokeToken(revokingToken)}
@@ -1591,13 +1619,7 @@ export default function SettingsClient() {
       {revokingReadToken && (
         <RevokeTokenModal
           token={revokingReadToken}
-          consequence={
-            <>
-              Anything reading your private profile with it — the iOS app, a
-              badge or embed — will see &ldquo;not found&rdquo; until it is
-              given a new token.
-            </>
-          }
+          consequence={richText(t("settings.revoke.readConsequence"), {})}
           onClose={() => setRevokingReadToken(null)}
           onConfirm={() => handleRevokeReadToken(revokingReadToken)}
         />

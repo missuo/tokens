@@ -1,6 +1,7 @@
 import { CONTAINER } from "@/components/layout/Container";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { cn } from "@/lib/utils";
+import { getTranslator } from "@/lib/i18n/server";
 
 export const CONTACT_EMAIL = "hi@tokens.ci";
 
@@ -11,7 +12,7 @@ export const CONTACT_EMAIL = "hi@tokens.ci";
  * but with a plain prose column: legal text is read top to bottom, not
  * scanned, so it gets no cards, no grid and no accent colour.
  */
-export function LegalPage({
+export async function LegalPage({
   title,
   description,
   updated,
@@ -22,12 +23,14 @@ export function LegalPage({
   updated: string;
   children: React.ReactNode;
 }) {
+  const { t } = await getTranslator();
+
   return (
     <main className={cn(CONTAINER, "pb-24 pt-10 sm:pt-14")} id="main-content">
       <div className="mx-auto w-full max-w-[720px]">
         <PageHeader title={title} description={description} />
         <p className="-mt-2 text-xs text-muted-foreground">
-          Last updated {updated}
+          {t("legal.lastUpdated", { date: updated })}
         </p>
         <div className="mt-8 flex flex-col gap-8">{children}</div>
       </div>

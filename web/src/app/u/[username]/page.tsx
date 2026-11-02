@@ -8,6 +8,8 @@ import { loadPublicProfileDevicesForPage } from '@/lib/publicProfileDevices';
 import { loadPublicProfileForPage } from '@/lib/publicProfileData';
 import ProfilePageClient, { type ProfileData } from './ProfilePageClient';
 import BannedProfileView, { type BannedProfileData } from './BannedProfileView';
+import { localizeHref } from '@/lib/i18n/config';
+import { getTranslator } from '@/lib/i18n/server';
 
 export const revalidate = 60;
 
@@ -82,6 +84,7 @@ async function getProfileDevices(username: string) {
 
 export async function generateMetadata({ params }: { params: Promise<{ username: string }> }): Promise<Metadata> {
   const { username } = await params;
+  const { locale, t } = await getTranslator();
 
   // Built from the profile's own figures so a shared link previews that
   // person's standing rather than a generic banner. Falls back to the plain
@@ -112,26 +115,27 @@ export async function generateMetadata({ params }: { params: Promise<{ username:
   });
 
   const shareTitle = displayName && displayName !== handle
-    ? `${displayName} (@${handle}) on Tokens`
-    : `@${handle} on Tokens`;
+    ? t("profile.meta.shareTitleNamed", { displayName, handle })
+    : t("profile.meta.shareTitlePlain", { handle });
+  // The figures are formatted for the reader's locale here rather than inside
+  // the catalogue: `formatNumber` needs the number, not a slot it would have to
+  // re-parse.
   const shareDescription = stats
-    ? [
-        `${formatNumber(stats.totalTokens, true)} tokens`,
-        `${formatCurrency(stats.totalCost, true)} spent`,
-        rank != null ? `#${rank} on the leaderboard` : null,
-      ]
-        .filter(Boolean)
-        .join(" · ") + " — AI coding usage on Tokens."
-    : `AI coding token usage for @${handle} on Tokens.`;
+    ? t(rank != null ? "meta.statsWithRank" : "meta.statsNoRank", {
+        tokens: formatNumber(stats.totalTokens, true, locale),
+        cost: formatCurrency(stats.totalCost, true, locale),
+        rank: rank ?? 0,
+      })
+    : t("meta.description", { handle });
 
   return {
-    title: `@${handle} - Token Usage | Tokens`,
+    title: t("meta.title", { handle }),
     description: shareDescription,
     openGraph: {
       title: shareTitle,
       description: shareDescription,
       type: "profile",
-      url: `https://tokens.ci/u/${handle}`,
+      url: `https://tokens.ci${localizeHref(`/u/${handle}`, locale)}`,
       siteName: "Tokens",
       images: [{ url: image, width: 1200, height: 630, alt: shareTitle }],
     },
@@ -154,8 +158,14 @@ export default async function ProfilePage({
   const { username } = await params;
   const resolvedSearchParams = await searchParams;
   const period = parseProfilePeriod(resolvedSearchParams.period);
+  const { locale } = await getTranslator();
   const [data, devices, socialLinks] = await Promise.all([
-    getProfileData(username, period),
+    // `getProfileData` throws on an upstream 5xx so the failure is not cached
+    // (see the note there). The page turns that back into "no such page", which
+    // still lands the reader on a translated page they can act on instead of a
+    // bare error screen — at the cost of blurring "could not load" and "does
+    // not exist" for one revalidate window.
+    getProfileData(username, period).catch(() => null),
     getProfileDevices(username),
     getGitHubSocialLinks(username),
   ]);
@@ -164,8 +174,15 @@ export default async function ProfilePage({
     notFound();
   }
 
+  // Canonical casing, in the language being read: `/zh/u/old` must land on
+  // `/zh/u/new` rather than dropping the reader back into English.
   if (data.user?.username && data.user.username !== username) {
-    permanentRedirect(`/u/${data.user.username}${period === "all" ? "" : `?period=${period}`}`);
+    permanentRedirect(
+      localizeHref(
+        `/u/${data.user.username}${period === "all" ? "" : `?period=${period}`}`,
+        locale,
+      ),
+    );
   }
 
   if (isBannedProfile(data)) {
