@@ -440,8 +440,8 @@ define_clients!(
     Cursor = 3 => {
         id: "cursor",
         display: "Cursor IDE",
-        logo: Some("https://tokens.ci/clients/client-cursor.jpg"),root: PathRoot::Home,
-        relative: ".config/tokens/cursor-cache",
+        logo: Some("https://tokens.ci/clients/client-cursor.jpg"),root: PathRoot::Config,
+        relative: "cursor-cache",
         pattern: "usage*.json|usage*.csv",
         headless: false,
         parse_local: false,

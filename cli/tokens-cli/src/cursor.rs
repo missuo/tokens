@@ -1,3 +1,7 @@
+mod billing;
+#[cfg(target_os = "macos")]
+mod desktop;
+
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -226,9 +230,7 @@ fn merge_cursor_usage_events(
     cached: Vec<serde_json::Value>,
     incoming: Vec<serde_json::Value>,
 ) -> Vec<serde_json::Value> {
-    if cached.is_empty() {
-        return incoming;
-    }
+    let (cached, incoming) = billing::reconcile_legacy(cached, incoming);
 
     let mut replacement: HashMap<String, serde_json::Value> = HashMap::new();
     let mut order: Vec<String> = Vec::with_capacity(incoming.len());
@@ -563,6 +565,8 @@ pub fn read_access_token_from_state_vscdb(db_path: &Path) -> Result<String> {
     if token.trim().is_empty() {
         anyhow::bail!("cursorAuth/accessToken is empty");
     }
+    #[cfg(target_os = "macos")]
+    let token = desktop::decode(token)?;
     Ok(token)
 }
 
@@ -1138,6 +1142,11 @@ pub fn has_cursor_usage_cache_in_home(home_dir: &Path) -> bool {
     }
 }
 
+pub fn can_sync_cursor() -> bool {
+    is_cursor_logged_in()
+        || home_dir().ok().and_then(|home| find_cursor_state_vscdb(&home)).is_some()
+}
+
 pub fn is_cursor_logged_in() -> bool {
     load_active_credentials().is_some()
 }
@@ -1561,11 +1570,7 @@ where
 
                 // Incoming is authoritative for what it covers; everything older
                 // than the window survives from the cache.
-                let merged = if sync_start.is_some() {
-                    merge_cursor_usage_events(cached_events, fetched_events)
-                } else {
-                    fetched_events
-                };
+                let merged = merge_cursor_usage_events(cached_events, fetched_events);
                 let event_count = merged.len();
                 let json_text = match serde_json::to_string(&serde_json::json!({
                     "totalUsageEventsCount": event_count,
@@ -1679,12 +1684,26 @@ pub async fn sync_cursor_cache(explicit: bool) -> SyncCursorResult {
     let _ = ensure_credentials_from_local_cursor();
 
     sync_cursor_cache_with_fetcher(move |session_token, sync_start| async move {
-        fetch_cursor_usage_events_json(
-            &session_token,
-            sync_timeout_override(explicit),
-            sync_start,
-        )
+        let budget = sync_timeout_override(explicit).unwrap_or(CURSOR_HTTP_TIMEOUT);
+        tokio::time::timeout(budget, async {
+            match billing::fetch(&session_token, Some(budget), sync_start).await {
+                Ok(json) if !cached_usage_events(Some(&json)).is_empty() => Ok(json),
+                billing => match fetch_cursor_usage_events_json(
+                    &session_token, Some(budget), sync_start,
+                )
+                .await
+                {
+                    Ok(json) => Ok(json),
+                    Err(legacy_error) => billing.map_err(|billing_error| {
+                        anyhow::anyhow!(
+                            "Cursor billing request failed: {billing_error:#}; legacy request failed: {legacy_error:#}"
+                        )
+                    }),
+                },
+            }
+        })
         .await
+        .context("Cursor usage sync timed out")?
     })
     .await
 }

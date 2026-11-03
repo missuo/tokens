@@ -149,6 +149,10 @@ Clients that expose usage only through an account API need a sync step first —
 `tokens cursor sync`, `tokens antigravity sync`, `tokens trae sync`,
 `tokens warp sync` — after which they submit like everything else.
 
+On macOS, Tokens can use the current Cursor desktop sign-in during `tokens submit`.
+For accounts on unified billing, the first sync fetches the latest 31 days and
+later syncs fetch incrementally. Older events already in the JSON cache are kept.
+
 Pricing comes from a combination of
 [LiteLLM](https://github.com/BerriAI/litellm),
 [OpenRouter](https://openrouter.ai) and
