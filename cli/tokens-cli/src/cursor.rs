@@ -1,4 +1,5 @@
 mod billing;
+mod cli_auth;
 #[cfg(target_os = "macos")]
 mod desktop;
 
@@ -309,6 +310,17 @@ pub struct CursorCredentialsStore {
     #[serde(rename = "activeAccountId")]
     pub active_account_id: String,
     pub accounts: HashMap<String, CursorCredentials>,
+    #[serde(rename = "localAuthSource", default)]
+    pub local_auth_source: LocalAuthSource,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
+#[serde(rename_all = "lowercase")]
+pub enum LocalAuthSource {
+    #[default]
+    Auto,
+    Cli,
+    Desktop,
 }
 
 #[derive(Debug, Serialize)]
@@ -619,14 +631,35 @@ pub fn session_token_from_access_token(access_token: &str) -> Result<String> {
     Ok(format!("{user_id}%3A%3A{access_token}"))
 }
 
-/// Read the local Cursor desktop login and build a session token cookie value.
-pub fn read_local_cursor_session_token() -> Result<String> {
+fn read_desktop_session_token() -> Result<String> {
     let home = home_dir()?;
     let db_path = find_cursor_state_vscdb(&home).ok_or_else(|| {
         anyhow::anyhow!("Cursor desktop state.vscdb not found (install Cursor and sign in first)")
     })?;
     let access_token = read_access_token_from_state_vscdb(&db_path)?;
     session_token_from_access_token(&access_token)
+}
+
+/// Explicit CLI selection never reads the desktop IDE's login.
+fn read_local_cursor_session_token(source: LocalAuthSource) -> Result<String> {
+    read_local_session_with(
+        source,
+        || cli_auth::read(&home_dir()?),
+        read_desktop_session_token,
+    )
+}
+
+fn read_local_session_with(
+    source: LocalAuthSource,
+    cli: impl FnOnce() -> Result<String>,
+    desktop: impl FnOnce() -> Result<String>,
+) -> Result<String> {
+    match source {
+        LocalAuthSource::Cli => cli(),
+        LocalAuthSource::Desktop => desktop(),
+        // Preserve the existing desktop selection, then support CLI-only installs.
+        LocalAuthSource::Auto => desktop().or_else(|_| cli()),
+    }
 }
 
 /// Save credentials while preserving an existing account label / created_at when
@@ -639,6 +672,7 @@ fn upsert_credentials(token: &str, label: Option<&str>) -> Result<String> {
         version: 1,
         active_account_id: account_id.clone(),
         accounts: HashMap::new(),
+        local_auth_source: LocalAuthSource::Auto,
     });
 
     if let Some(lbl) = label {
@@ -701,12 +735,15 @@ fn upsert_credentials(token: &str, label: Option<&str>) -> Result<String> {
     Ok(account_id)
 }
 
-/// Best-effort: refresh saved Cursor credentials from the desktop `state.vscdb`.
+/// Best-effort: refresh credentials from the selected local CLI or desktop login.
 ///
 /// Used before sync so tokens picks up tokens refreshed by the Cursor app
 /// without requiring a manual cookie paste.
 fn ensure_credentials_from_local_cursor() -> Result<Option<String>> {
-    match read_local_cursor_session_token() {
+    let source = load_credentials_store()
+        .map(|store| store.local_auth_source)
+        .unwrap_or_default();
+    match read_local_cursor_session_token(source) {
         Ok(token) => Ok(Some(upsert_credentials(&token, None)?)),
         Err(_) => Ok(None),
     }
@@ -805,6 +842,7 @@ fn load_credentials_store_from_home(home_dir: &Path) -> Option<CursorCredentials
             version: 1,
             active_account_id: account_id,
             accounts,
+            local_auth_source: LocalAuthSource::Auto,
         };
 
         if save_credentials_store(&migrated).is_ok() && read_path != path {
@@ -1144,7 +1182,9 @@ pub fn has_cursor_usage_cache_in_home(home_dir: &Path) -> bool {
 
 pub fn can_sync_cursor() -> bool {
     is_cursor_logged_in()
-        || home_dir().ok().and_then(|home| find_cursor_state_vscdb(&home)).is_some()
+        || home_dir().ok().is_some_and(|home| {
+            cli_auth::available(&home) || find_cursor_state_vscdb(&home).is_some()
+        })
 }
 
 pub fn is_cursor_logged_in() -> bool {
@@ -1679,7 +1719,7 @@ fn sync_timeout_override(explicit: bool) -> Option<Duration> {
 }
 
 pub async fn sync_cursor_cache(explicit: bool) -> SyncCursorResult {
-    // Prefer a fresh token from the local Cursor desktop login when available.
+    // Refresh from the selected local login, including CLI-only installations.
     // This avoids stale manually-pasted cookies after Cursor refreshes its JWT.
     let _ = ensure_credentials_from_local_cursor();
 
@@ -1745,13 +1785,13 @@ fn archive_cache_file_in_dir(
     Ok(())
 }
 
-pub fn run_cursor_login(name: Option<String>) -> Result<()> {
+pub fn run_cursor_login(name: Option<String>, source: LocalAuthSource) -> Result<()> {
     use colored::Colorize;
     use tokio::runtime::Runtime;
 
     let rt = Runtime::new()?;
 
-    println!("\n  {}\n", "Cursor IDE - Login".cyan());
+    println!("\n  {}\n", "Cursor - Login".cyan());
 
     if let Some(ref label) = name {
         if find_account(label).is_some() {
@@ -1768,12 +1808,11 @@ pub fn run_cursor_login(name: Option<String>) -> Result<()> {
         }
     }
 
-    // Prefer the local Cursor desktop accessToken (state.vscdb) when present.
     println!(
         "{}",
-        "  Checking local Cursor desktop login...".bright_black()
+        format!("  Checking local Cursor login (source: {source:?})...").bright_black()
     );
-    let token = match read_local_cursor_session_token() {
+    let token = match read_local_cursor_session_token(source) {
         Ok(token) => {
             if let Some(user_id) = extract_user_id_from_session_token(&token) {
                 println!(
@@ -1786,9 +1825,12 @@ pub fn run_cursor_login(name: Option<String>) -> Result<()> {
             token
         }
         Err(local_err) => {
+            if source != LocalAuthSource::Auto {
+                return Err(local_err);
+            }
             println!(
                 "{}",
-                format!("  Local desktop login unavailable: {local_err}").bright_black()
+                format!("  Local login unavailable: {local_err}").bright_black()
             );
             print!("  Enter Cursor WorkosCursorSessionToken value: ");
             std::io::stdout().flush()?;
@@ -1819,6 +1861,9 @@ pub fn run_cursor_login(name: Option<String>) -> Result<()> {
     }
 
     let account_id = save_credentials(&token, name.as_deref())?;
+    let mut store = load_credentials_store().context("Cursor credentials were not saved")?;
+    store.local_auth_source = source;
+    save_credentials_store(&store)?;
 
     let display_name = name.as_deref().unwrap_or(&account_id);
     println!(
@@ -1910,7 +1955,7 @@ pub fn run_cursor_status(name: Option<String>) -> Result<()> {
         }
     };
 
-    println!("\n  {}\n", "Cursor IDE - Status".cyan());
+    println!("\n  {}\n", "Cursor - Status".cyan());
 
     let display_name = credentials.label.as_deref().unwrap_or("(no label)");
     println!("{}", format!("  Account: {}", display_name).white());
@@ -1958,7 +2003,7 @@ pub fn run_cursor_accounts(json: bool) -> Result<()> {
         return Ok(());
     }
 
-    println!("{}", "\n  Cursor IDE - Accounts\n".cyan());
+    println!("{}", "\n  Cursor - Accounts\n".cyan());
     for acct in &accounts {
         let name = if let Some(ref label) = acct.label {
             format!("{} ({})", label, acct.id)
@@ -1999,7 +2044,7 @@ pub fn run_cursor_sync(json: bool) -> Result<()> {
         return Ok(());
     }
 
-    println!("\n  {}\n", "Cursor IDE - Sync".cyan());
+    println!("\n  {}\n", "Cursor - Sync".cyan());
     if result.synced {
         println!(
             "{}",
@@ -2030,6 +2075,70 @@ pub fn run_cursor_switch(name: &str) -> Result<()> {
     );
 
     Ok(())
+}
+
+#[cfg(test)]
+mod local_auth_tests {
+    use super::*;
+
+    #[test]
+    fn cli_selection_never_reads_desktop_credentials() {
+        assert_eq!(
+            read_local_session_with(
+                LocalAuthSource::Cli,
+                || Ok("cli".into()),
+                || panic!("must not read IDE")
+            )
+            .unwrap(),
+            "cli"
+        );
+        assert!(read_local_session_with(
+            LocalAuthSource::Cli,
+            || anyhow::bail!("not logged in"),
+            || panic!("must not fall back to IDE")
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn auto_supports_cli_only_installs_and_preserves_desktop_precedence() {
+        assert_eq!(
+            read_local_session_with(
+                LocalAuthSource::Auto,
+                || Ok("cli".into()),
+                || anyhow::bail!("no IDE")
+            )
+            .unwrap(),
+            "cli"
+        );
+        assert_eq!(
+            read_local_session_with(
+                LocalAuthSource::Auto,
+                || panic!("desktop already found"),
+                || Ok("desktop".into())
+            )
+            .unwrap(),
+            "desktop"
+        );
+    }
+
+    #[test]
+    fn old_credentials_default_to_auto_and_cli_preference_survives_serialization() {
+        let mut store: CursorCredentialsStore = serde_json::from_value(
+            serde_json::json!({"version":1,"activeAccountId":"fixture","accounts":{}}),
+        )
+        .unwrap();
+        assert_eq!(store.local_auth_source, LocalAuthSource::Auto);
+        store.local_auth_source = LocalAuthSource::Cli;
+        let saved = serde_json::to_value(store).unwrap();
+        assert_eq!(saved["localAuthSource"], "cli");
+        assert_eq!(
+            serde_json::from_value::<CursorCredentialsStore>(saved)
+                .unwrap()
+                .local_auth_source,
+            LocalAuthSource::Cli
+        );
+    }
 }
 
 #[cfg(test)]
@@ -2078,7 +2187,10 @@ mod incremental_sync_tests {
             event(Some("old-2"), "2000", 20),
             event(Some("recent"), "9000", 30),
         ];
-        let incoming = vec![event(Some("recent"), "9000", 55), event(Some("new"), "9500", 7)];
+        let incoming = vec![
+            event(Some("recent"), "9000", 55),
+            event(Some("new"), "9500", 7),
+        ];
 
         let merged = merge_cursor_usage_events(cached, incoming);
         assert_eq!(ids(&merged), vec!["old-1", "old-2", "recent", "new"]);

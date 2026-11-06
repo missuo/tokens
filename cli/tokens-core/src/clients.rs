@@ -439,7 +439,7 @@ define_clients!(
     },
     Cursor = 3 => {
         id: "cursor",
-        display: "Cursor IDE",
+        display: "Cursor",
         logo: Some("https://tokens.ci/clients/client-cursor.jpg"),root: PathRoot::Config,
         relative: "cursor-cache",
         pattern: "usage*.json|usage*.csv",
@@ -1174,7 +1174,7 @@ mod tests {
     fn canonical_client_brand_labels_and_logos_are_registered() {
         assert_eq!(ClientId::Claude.display_name(), "Claude Code");
         assert_eq!(ClientId::Codex.display_name(), "Codex CLI");
-        assert_eq!(ClientId::Cursor.display_name(), "Cursor IDE");
+        assert_eq!(ClientId::Cursor.display_name(), "Cursor");
         assert_eq!(ClientId::KiloCode.display_name(), "Kilo Code");
         assert_eq!(ClientId::Kilo.display_name(), "Kilo CLI");
         assert_eq!(ClientId::Senpi.display_name(), "Senpi (OmO Native)");

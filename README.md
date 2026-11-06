@@ -97,7 +97,7 @@ written sessions, it is counted.
 | [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | `~/.claude/projects/`, `~/.claude/transcripts/` |
 | [Codex CLI](https://github.com/openai/codex) | `~/.codex/sessions/` |
 | [OpenCode](https://github.com/sst/opencode) | `~/.local/share/opencode/opencode.db` (1.2+) or `~/.local/share/opencode/storage/message/` |
-| [Cursor](https://cursor.com/) | API export cached at `~/.config/tokens/cursor-cache/usage*.csv` |
+| [Cursor CLI and IDE](https://cursor.com/) | Account usage cached at `~/.config/tokens/cursor-cache/usage*.json` (legacy CSV also supported) |
 | [Copilot CLI](https://docs.github.com/en/copilot) | `~/.copilot/otel/*.jsonl` |
 | [Gemini CLI](https://github.com/google-gemini/gemini-cli) | `~/.gemini/tmp/*/chats/*.json` |
 | [Kimi CLI](https://github.com/MoonshotAI/kimi-cli) | `~/.kimi/sessions/` |
@@ -149,7 +149,31 @@ Clients that expose usage only through an account API need a sync step first —
 `tokens cursor sync`, `tokens antigravity sync`, `tokens trae sync`,
 `tokens warp sync` — after which they submit like everything else.
 
-On macOS, Tokens can use the current Cursor desktop sign-in during `tokens submit`.
+Tokens detects Cursor Agent CLI sign-ins without requiring the desktop IDE.
+It reads the CLI's `cursor-access-token` / `cursor-user` Keychain item on macOS,
+or its `auth.json` file (`~/.cursor/auth.json` on macOS,
+`${XDG_CONFIG_HOME:-~/.config}/cursor/auth.json` on Linux,
+`%APPDATA%/Cursor/auth.json` on Windows). `CURSOR_CONFIG_DIR/auth.json` is also
+checked; `CURSOR_AUTH_FILE` selects an explicit auth file.
+Automatic detection preserves the existing desktop login preference and falls
+back to the CLI. To select the CLI explicitly, including when the two clients
+use different accounts, run:
+
+```sh
+tokens cursor login --source cli
+tokens cursor sync
+tokens submit -c cursor --dry-run
+```
+
+The source selection is saved for later automatic submissions. `--source cli`
+never reads the desktop IDE login or falls back to a pasted browser cookie.
+Use `--source desktop` or `--source auto` to change the preference.
+API-key-only CLI sessions cannot authenticate the usage dashboard; use
+`agent login` / `cursor-agent login` with an account session.
+
+Usage remains an account-level total under `cursor`, including CLI and IDE usage
+for that account; this integration does not claim to split the two. It uses the
+same account cache so enabling CLI authentication does not double-count usage.
 For accounts on unified billing, the first sync fetches the latest 31 days and
 later syncs fetch incrementally. Older events already in the JSON cache are kept.
 

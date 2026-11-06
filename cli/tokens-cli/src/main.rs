@@ -204,10 +204,17 @@ enum CloudSubcommand {
 
 #[derive(Subcommand)]
 enum CursorSubcommand {
-    #[command(about = "Login to Cursor with a browser session token")]
+    #[command(about = "Login from Cursor CLI, desktop, or a browser session token")]
     Login {
         #[arg(long, help = "Label for this Cursor account (e.g., work, personal)")]
         name: Option<String>,
+        #[arg(
+            long,
+            value_enum,
+            default_value = "auto",
+            help = "Local login to use; cli never reads the desktop IDE login"
+        )]
+        source: cursor::LocalAuthSource,
     },
     #[command(about = "Logout from a Cursor account")]
     Logout {
@@ -228,7 +235,7 @@ enum CursorSubcommand {
         #[arg(long, help = "Output as JSON")]
         json: bool,
     },
-    #[command(about = "Sync Cursor API usage into cursor-cache/usage*.csv")]
+    #[command(about = "Sync Cursor account usage (CLI and IDE) into cursor-cache/usage*.json")]
     Sync {
         #[arg(long, help = "Output as JSON")]
         json: bool,
@@ -2925,7 +2932,7 @@ fn run_submit_command(
 
 fn run_cursor_command(subcommand: CursorSubcommand) -> Result<()> {
     match subcommand {
-        CursorSubcommand::Login { name } => cursor::run_cursor_login(name),
+        CursorSubcommand::Login { name, source } => cursor::run_cursor_login(name, source),
         CursorSubcommand::Logout {
             name,
             all,
