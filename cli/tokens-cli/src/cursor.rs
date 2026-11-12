@@ -1,3 +1,8 @@
+mod billing;
+mod cli_auth;
+#[cfg(target_os = "macos")]
+mod desktop;
+
 use crate::{t, tr};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -227,9 +232,7 @@ fn merge_cursor_usage_events(
     cached: Vec<serde_json::Value>,
     incoming: Vec<serde_json::Value>,
 ) -> Vec<serde_json::Value> {
-    if cached.is_empty() {
-        return incoming;
-    }
+    let (cached, incoming) = billing::reconcile_legacy(cached, incoming);
 
     let mut replacement: HashMap<String, serde_json::Value> = HashMap::new();
     let mut order: Vec<String> = Vec::with_capacity(incoming.len());
@@ -308,6 +311,17 @@ pub struct CursorCredentialsStore {
     #[serde(rename = "activeAccountId")]
     pub active_account_id: String,
     pub accounts: HashMap<String, CursorCredentials>,
+    #[serde(rename = "localAuthSource", default)]
+    pub local_auth_source: LocalAuthSource,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
+#[serde(rename_all = "lowercase")]
+pub enum LocalAuthSource {
+    #[default]
+    Auto,
+    Cli,
+    Desktop,
 }
 
 #[derive(Debug, Serialize)]
@@ -564,6 +578,8 @@ pub fn read_access_token_from_state_vscdb(db_path: &Path) -> Result<String> {
     if token.trim().is_empty() {
         anyhow::bail!(t!("top.cursor.accessTokenEmpty"));
     }
+    #[cfg(target_os = "macos")]
+    let token = desktop::decode(token)?;
     Ok(token)
 }
 
@@ -616,13 +632,34 @@ pub fn session_token_from_access_token(access_token: &str) -> Result<String> {
     Ok(format!("{user_id}%3A%3A{access_token}"))
 }
 
-/// Read the local Cursor desktop login and build a session token cookie value.
-pub fn read_local_cursor_session_token() -> Result<String> {
+fn read_desktop_session_token() -> Result<String> {
     let home = home_dir()?;
     let db_path = find_cursor_state_vscdb(&home)
         .ok_or_else(|| anyhow::anyhow!(t!("top.cursor.stateDbMissing")))?;
     let access_token = read_access_token_from_state_vscdb(&db_path)?;
     session_token_from_access_token(&access_token)
+}
+
+/// Explicit CLI selection never reads the desktop IDE's login.
+fn read_local_cursor_session_token(source: LocalAuthSource) -> Result<String> {
+    read_local_session_with(
+        source,
+        || cli_auth::read(&home_dir()?),
+        read_desktop_session_token,
+    )
+}
+
+fn read_local_session_with(
+    source: LocalAuthSource,
+    cli: impl FnOnce() -> Result<String>,
+    desktop: impl FnOnce() -> Result<String>,
+) -> Result<String> {
+    match source {
+        LocalAuthSource::Cli => cli(),
+        LocalAuthSource::Desktop => desktop(),
+        // Preserve the existing desktop selection, then support CLI-only installs.
+        LocalAuthSource::Auto => desktop().or_else(|_| cli()),
+    }
 }
 
 /// Save credentials while preserving an existing account label / created_at when
@@ -635,6 +672,7 @@ fn upsert_credentials(token: &str, label: Option<&str>) -> Result<String> {
         version: 1,
         active_account_id: account_id.clone(),
         accounts: HashMap::new(),
+        local_auth_source: LocalAuthSource::Auto,
     });
 
     if let Some(lbl) = label {
@@ -697,12 +735,17 @@ fn upsert_credentials(token: &str, label: Option<&str>) -> Result<String> {
     Ok(account_id)
 }
 
-/// Best-effort: refresh saved Cursor credentials from the desktop `state.vscdb`.
+/// Best-effort: refresh credentials from the selected local CLI or desktop login.
 ///
-/// Used before sync so tokens picks up tokens refreshed by the Cursor app
-/// without requiring a manual cookie paste.
+/// Used before an explicit `tokens cursor sync` so tokens picks up tokens
+/// refreshed by the Cursor app without requiring a manual cookie paste. Never
+/// called from `tokens submit`: reading the local login can raise a macOS
+/// Keychain prompt and stores a credential the user did not hand to tokens.
 fn ensure_credentials_from_local_cursor() -> Result<Option<String>> {
-    match read_local_cursor_session_token() {
+    let source = load_credentials_store()
+        .map(|store| store.local_auth_source)
+        .unwrap_or_default();
+    match read_local_cursor_session_token(source) {
         Ok(token) => Ok(Some(upsert_credentials(&token, None)?)),
         Err(_) => Ok(None),
     }
@@ -801,6 +844,7 @@ fn load_credentials_store_from_home(home_dir: &Path) -> Option<CursorCredentials
             version: 1,
             active_account_id: account_id,
             accounts,
+            local_auth_source: LocalAuthSource::Auto,
         };
 
         if save_credentials_store(&migrated).is_ok() && read_path != path {
@@ -1454,7 +1498,7 @@ async fn read_cursor_body_with_cap(
 
 async fn sync_cursor_cache_with_fetcher<F, Fut>(fetch_usage_json: F) -> SyncCursorResult
 where
-    F: Fn(String, Option<i64>) -> Fut,
+    F: Fn(String, Option<i64>, bool) -> Fut,
     Fut: std::future::Future<Output = Result<String>>,
 {
     let home_dir = match home_dir() {
@@ -1476,7 +1520,7 @@ async fn sync_cursor_cache_with_fetcher_in_home<F, Fut>(
     fetch_usage_json: F,
 ) -> SyncCursorResult
 where
-    F: Fn(String, Option<i64>) -> Fut,
+    F: Fn(String, Option<i64>, bool) -> Fut,
     Fut: std::future::Future<Output = Result<String>>,
 {
     migrate_cache_dir_from_old_path_in_home(home_dir);
@@ -1536,8 +1580,17 @@ where
         let cached_json = fs::read_to_string(&file_path).ok();
         let cached_events = cached_usage_events(cached_json.as_deref());
         let sync_start = incremental_sync_start_ms(&cached_events);
+        // Once an account's cache holds billing rows it is pinned to the
+        // billing endpoint; the cache itself is the persisted pin.
+        let pinned_to_billing = cached_events.iter().any(billing::is_billing_event);
 
-        match fetch_usage_json(credentials.session_token.clone(), sync_start).await {
+        match fetch_usage_json(
+            credentials.session_token.clone(),
+            sync_start,
+            pinned_to_billing,
+        )
+        .await
+        {
             Ok(json_text) => {
                 let fetched_events = cached_usage_events(Some(&json_text));
                 let legacy_csv = file_path.with_extension("csv");
@@ -1566,11 +1619,7 @@ where
 
                 // Incoming is authoritative for what it covers; everything older
                 // than the window survives from the cache.
-                let merged = if sync_start.is_some() {
-                    merge_cursor_usage_events(cached_events, fetched_events)
-                } else {
-                    fetched_events
-                };
+                let merged = merge_cursor_usage_events(cached_events, fetched_events);
                 let event_count = merged.len();
                 let json_text = match serde_json::to_string(&serde_json::json!({
                     "totalUsageEventsCount": event_count,
@@ -1679,15 +1728,90 @@ fn sync_timeout_override(explicit: bool) -> Option<Duration> {
 }
 
 pub async fn sync_cursor_cache(explicit: bool) -> SyncCursorResult {
-    // Prefer a fresh token from the local Cursor desktop login when available.
-    // This avoids stale manually-pasted cookies after Cursor refreshes its JWT.
-    let _ = ensure_credentials_from_local_cursor();
+    // Only an explicit `tokens cursor sync` refreshes from the selected local
+    // login (CLI or desktop). The implicit sync in `tokens submit` uses the
+    // credentials stored by `tokens cursor login` and nothing else.
+    if explicit {
+        let _ = ensure_credentials_from_local_cursor();
+    }
 
-    sync_cursor_cache_with_fetcher(move |session_token, sync_start| async move {
-        fetch_cursor_usage_events_json(&session_token, sync_timeout_override(explicit), sync_start)
+    sync_cursor_cache_with_fetcher(
+        move |session_token, sync_start, pinned_to_billing| async move {
+            let budget = sync_timeout_override(explicit).unwrap_or(CURSOR_HTTP_TIMEOUT);
+            fetch_account_usage(
+                pinned_to_billing,
+                sync_start,
+                async {
+                    tokio::time::timeout(
+                        budget,
+                        billing::fetch(&session_token, Some(budget), sync_start),
+                    )
+                    .await
+                    .context("Cursor billing sync timed out")?
+                },
+                || async {
+                    tokio::time::timeout(
+                        budget,
+                        fetch_cursor_usage_events_json(&session_token, Some(budget), sync_start),
+                    )
+                    .await
+                    .context("Cursor usage sync timed out")?
+                },
+            )
             .await
-    })
+        },
+    )
     .await
+}
+
+/// Choose between the billing and legacy usage endpoints for one account.
+///
+/// The two endpoints report the same usage under different event IDs, so an
+/// account must never alternate between them. Once its cache holds billing rows
+/// (`pinned_to_billing`) only billing is used, and a billing failure fails this
+/// sync, keeping the cache as it is, rather than falling back to legacy. An
+/// account that has never returned billing rows keeps using legacy.
+///
+/// A new cache that billing bootstraps also takes the legacy history, for usage
+/// older than anything billing returned. The merge keeps only the legacy rows
+/// that precede the billing rows (see `billing::reconcile_legacy`), and a legacy
+/// failure there leaves the billing history alone.
+async fn fetch_account_usage<B, L, LFut>(
+    pinned_to_billing: bool,
+    sync_start: Option<i64>,
+    billing: B,
+    legacy: L,
+) -> Result<String>
+where
+    B: std::future::Future<Output = Result<String>>,
+    L: FnOnce() -> LFut,
+    LFut: std::future::Future<Output = Result<String>>,
+{
+    let billing = billing.await;
+    if pinned_to_billing {
+        return billing.context("Cursor billing request failed; legacy usage is not used for an account already synced from billing");
+    }
+    match billing {
+        Ok(json) => {
+            let billing_events = cached_usage_events(Some(&json));
+            if billing_events.is_empty() {
+                return legacy().await;
+            }
+            if sync_start.is_some() {
+                return Ok(json);
+            }
+            let mut events = billing_events;
+            if let Ok(legacy_json) = legacy().await {
+                events.extend(cached_usage_events(Some(&legacy_json)));
+            }
+            Ok(serde_json::json!({ "usageEventsDisplay": events }).to_string())
+        }
+        Err(billing_error) => legacy().await.map_err(|legacy_error| {
+            anyhow::anyhow!(
+                "Cursor billing request failed: {billing_error:#}; legacy request failed: {legacy_error:#}"
+            )
+        }),
+    }
 }
 
 fn archive_cache_file(file_path: &std::path::Path, label: &str) -> Result<()> {
@@ -1727,7 +1851,7 @@ fn archive_cache_file_in_dir(
     Ok(())
 }
 
-pub fn run_cursor_login(name: Option<String>) -> Result<()> {
+pub fn run_cursor_login(name: Option<String>, source: LocalAuthSource) -> Result<()> {
     use colored::Colorize;
     use tokio::runtime::Runtime;
 
@@ -1746,9 +1870,8 @@ pub fn run_cursor_login(name: Option<String>) -> Result<()> {
         }
     }
 
-    // Prefer the local Cursor desktop accessToken (state.vscdb) when present.
     println!("{}", t!("top.cursor.checkingLocalLogin").bright_black());
-    let token = match read_local_cursor_session_token() {
+    let token = match read_local_cursor_session_token(source) {
         Ok(token) => {
             if let Some(user_id) = extract_user_id_from_session_token(&token) {
                 println!(
@@ -1761,6 +1884,9 @@ pub fn run_cursor_login(name: Option<String>) -> Result<()> {
             token
         }
         Err(local_err) => {
+            if source != LocalAuthSource::Auto {
+                return Err(local_err);
+            }
             println!(
                 "{}",
                 tr!("top.cursor.localLoginUnavailable", error = local_err).bright_black()
@@ -1794,6 +1920,9 @@ pub fn run_cursor_login(name: Option<String>) -> Result<()> {
     }
 
     let account_id = save_credentials(&token, name.as_deref())?;
+    let mut store = load_credentials_store().context("Cursor credentials were not saved")?;
+    store.local_auth_source = source;
+    save_credentials_store(&store)?;
 
     let display_name = name.as_deref().unwrap_or(&account_id);
     println!(
@@ -2010,6 +2139,195 @@ pub fn run_cursor_switch(name: &str) -> Result<()> {
     );
 
     Ok(())
+}
+
+#[cfg(test)]
+mod local_auth_tests {
+    use super::*;
+
+    #[test]
+    fn cli_selection_never_reads_desktop_credentials() {
+        assert_eq!(
+            read_local_session_with(
+                LocalAuthSource::Cli,
+                || Ok("cli".into()),
+                || panic!("must not read IDE")
+            )
+            .unwrap(),
+            "cli"
+        );
+        assert!(read_local_session_with(
+            LocalAuthSource::Cli,
+            || anyhow::bail!("not logged in"),
+            || panic!("must not fall back to IDE")
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn auto_supports_cli_only_installs_and_preserves_desktop_precedence() {
+        assert_eq!(
+            read_local_session_with(
+                LocalAuthSource::Auto,
+                || Ok("cli".into()),
+                || anyhow::bail!("no IDE")
+            )
+            .unwrap(),
+            "cli"
+        );
+        assert_eq!(
+            read_local_session_with(
+                LocalAuthSource::Auto,
+                || panic!("desktop already found"),
+                || Ok("desktop".into())
+            )
+            .unwrap(),
+            "desktop"
+        );
+    }
+
+    #[test]
+    fn old_credentials_default_to_auto_and_cli_preference_survives_serialization() {
+        let mut store: CursorCredentialsStore = serde_json::from_value(
+            serde_json::json!({"version":1,"activeAccountId":"fixture","accounts":{}}),
+        )
+        .unwrap();
+        assert_eq!(store.local_auth_source, LocalAuthSource::Auto);
+        store.local_auth_source = LocalAuthSource::Cli;
+        let saved = serde_json::to_value(store).unwrap();
+        assert_eq!(saved["localAuthSource"], "cli");
+        assert_eq!(
+            serde_json::from_value::<CursorCredentialsStore>(saved)
+                .unwrap()
+                .local_auth_source,
+            LocalAuthSource::Cli
+        );
+    }
+}
+
+#[cfg(test)]
+mod usage_source_tests {
+    use super::*;
+
+    fn run<T>(future: impl std::future::Future<Output = T>) -> T {
+        tokio::runtime::Runtime::new().unwrap().block_on(future)
+    }
+
+    fn usage(events: &[serde_json::Value]) -> Result<String> {
+        Ok(serde_json::json!({ "usageEventsDisplay": events }).to_string())
+    }
+
+    fn row(id: &str, ts: i64, model: &str, input: i64) -> serde_json::Value {
+        serde_json::json!({
+            "usageEventId": id,
+            "timestamp": ts.to_string(),
+            "model": model,
+            "tokenUsage": {"inputTokens": input, "outputTokens": 10},
+        })
+    }
+
+    fn total_input(events: &[serde_json::Value]) -> i64 {
+        events
+            .iter()
+            .map(|event| event["tokenUsage"]["inputTokens"].as_i64().unwrap())
+            .sum()
+    }
+
+    async fn no_legacy() -> Result<String> {
+        panic!("a billing account must not read the legacy endpoint")
+    }
+
+    #[test]
+    fn a_billing_account_never_falls_back_to_legacy() {
+        let failed = run(fetch_account_usage(
+            true,
+            Some(1),
+            async { anyhow::bail!("billing unavailable") },
+            no_legacy,
+        ));
+        assert!(failed.is_err(), "the sync is skipped, the cache kept");
+
+        let idle = run(fetch_account_usage(
+            true,
+            Some(1),
+            async { usage(&[]) },
+            no_legacy,
+        ))
+        .unwrap();
+        assert!(cached_usage_events(Some(&idle)).is_empty());
+    }
+
+    #[test]
+    fn an_account_never_on_billing_keeps_using_legacy() {
+        let legacy = row("legacy", 1_000, "gpt-5", 5);
+        let from_empty = run(fetch_account_usage(
+            false,
+            Some(1),
+            async { usage(&[]) },
+            || async { usage(std::slice::from_ref(&legacy)) },
+        ))
+        .unwrap();
+        assert_eq!(cached_usage_events(Some(&from_empty)), vec![legacy.clone()]);
+
+        let from_error = run(fetch_account_usage(
+            false,
+            Some(1),
+            async { anyhow::bail!("billing unavailable") },
+            || async { usage(std::slice::from_ref(&legacy)) },
+        ))
+        .unwrap();
+        assert_eq!(cached_usage_events(Some(&from_error)), vec![legacy]);
+    }
+
+    /// Sync 1 bootstraps from billing (plus the legacy history that precedes
+    /// it); sync 2 hits a build or a code path that still asks legacy and gets
+    /// the same usage under other ids and another model name. The cache must
+    /// still count each event once.
+    #[test]
+    fn an_endpoint_flip_across_syncs_does_not_double_count() {
+        let day = 86_400_000;
+        let t = 1_800_000_000_000;
+        let old = row("legacy-old", t - 30 * day, "claude-4.5-sonnet", 100);
+        let billing = vec![
+            row("billing:a", t, "claude-4.5-sonnet", 1_000),
+            row("billing:b", t + day, "composer-2", 2_000),
+        ];
+        let legacy_twins = vec![
+            row("legacy-a", t - 1_500, "claude-4.5-sonnet-thinking", 1_000),
+            row("legacy-b", t + day, "default", 2_000),
+        ];
+
+        let bootstrap = run(fetch_account_usage(
+            false,
+            None,
+            async { usage(&billing) },
+            || async {
+                let mut history = vec![old.clone()];
+                history.extend(legacy_twins.clone());
+                usage(&history)
+            },
+        ))
+        .unwrap();
+        let cache = merge_cursor_usage_events(Vec::new(), cached_usage_events(Some(&bootstrap)));
+        assert_eq!(total_input(&cache), 3_100);
+        assert!(cache.iter().any(billing::is_billing_event));
+
+        let cache = merge_cursor_usage_events(cache, legacy_twins.clone());
+        assert_eq!(
+            total_input(&cache),
+            3_100,
+            "legacy twins were counted again"
+        );
+
+        // And the other direction: a legacy cache that later moves to billing.
+        let legacy_cache = merge_cursor_usage_events(Vec::new(), {
+            let mut history = vec![old];
+            history.extend(legacy_twins);
+            history
+        });
+        let cache = merge_cursor_usage_events(legacy_cache, billing);
+        assert_eq!(total_input(&cache), 3_100);
+    }
 }
 
 #[cfg(test)]

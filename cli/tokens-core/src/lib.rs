@@ -8703,7 +8703,11 @@ mod tests {
         let cache_home = tempfile::TempDir::new().unwrap();
         let _cache_env = redirect_cache_home(cache_home.path());
         let temp_dir = tempfile::TempDir::new().unwrap();
-        let cursor_cache_dir = temp_dir.path().join(".config/tokens/cursor-cache");
+        let cursor_cache_dir = std::path::PathBuf::from(
+            ClientId::Cursor
+                .data()
+                .resolve_path_with_env_strategy(&temp_dir.path().to_string_lossy(), false),
+        );
         std::fs::create_dir_all(&cursor_cache_dir).unwrap();
 
         let csv = r#"Date,Kind,Model,Max Mode,Input (w/ Cache Write),Input (w/o Cache Write),Cache Read,Output Tokens,Total Tokens,Cost
@@ -8730,7 +8734,11 @@ mod tests {
         let cache_home = tempfile::TempDir::new().unwrap();
         let source_home = tempfile::TempDir::new().unwrap();
         let _cache_env = redirect_cache_home(cache_home.path());
-        let cursor_cache_dir = source_home.path().join(".config/tokens/cursor-cache");
+        let cursor_cache_dir = std::path::PathBuf::from(
+            ClientId::Cursor
+                .data()
+                .resolve_path_with_env_strategy(&source_home.path().to_string_lossy(), false),
+        );
         std::fs::create_dir_all(&cursor_cache_dir).unwrap();
         let usage_path = cursor_cache_dir.join("usage.csv");
 
@@ -14597,7 +14605,11 @@ mod tests {
         let source_home = tempfile::TempDir::new().unwrap();
         let _cache_env = redirect_cache_home(temp_home.path());
         {
-            let cursor_cache_dir = source_home.path().join(".config/tokens/cursor-cache");
+            let cursor_cache_dir = std::path::PathBuf::from(
+            ClientId::Cursor
+                .data()
+                .resolve_path_with_env_strategy(&source_home.path().to_string_lossy(), false),
+        );
             std::fs::create_dir_all(&cursor_cache_dir).unwrap();
 
             let csv = r#"Date,Kind,Model,Max Mode,Input (w/ Cache Write),Input (w/o Cache Write),Cache Read,Output Tokens,Total Tokens,Cost
