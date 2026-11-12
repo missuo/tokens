@@ -737,8 +737,10 @@ fn upsert_credentials(token: &str, label: Option<&str>) -> Result<String> {
 
 /// Best-effort: refresh credentials from the selected local CLI or desktop login.
 ///
-/// Used before sync so tokens picks up tokens refreshed by the Cursor app
-/// without requiring a manual cookie paste.
+/// Used before an explicit `tokens cursor sync` so tokens picks up tokens
+/// refreshed by the Cursor app without requiring a manual cookie paste. Never
+/// called from `tokens submit`: reading the local login can raise a macOS
+/// Keychain prompt and stores a credential the user did not hand to tokens.
 fn ensure_credentials_from_local_cursor() -> Result<Option<String>> {
     let source = load_credentials_store()
         .map(|store| store.local_auth_source)
@@ -1144,7 +1146,6 @@ pub fn load_active_credentials() -> Option<CursorCredentials> {
     store.accounts.get(&store.active_account_id).cloned()
 }
 
-
 fn is_cursor_usage_cache_filename(name: &str) -> bool {
     if name == "usage.csv" || name == "usage.json" {
         return true;
@@ -1178,13 +1179,6 @@ pub fn has_cursor_usage_cache_in_home(home_dir: &Path) -> bool {
             .any(|name| is_cursor_usage_cache_filename(&name)),
         Err(_) => false,
     }
-}
-
-pub fn can_sync_cursor() -> bool {
-    is_cursor_logged_in()
-        || home_dir().ok().is_some_and(|home| {
-            cli_auth::available(&home) || find_cursor_state_vscdb(&home).is_some()
-        })
 }
 
 pub fn is_cursor_logged_in() -> bool {
@@ -1498,7 +1492,7 @@ async fn read_cursor_body_with_cap(
 
 async fn sync_cursor_cache_with_fetcher<F, Fut>(fetch_usage_json: F) -> SyncCursorResult
 where
-    F: Fn(String, Option<i64>) -> Fut,
+    F: Fn(String, Option<i64>, bool) -> Fut,
     Fut: std::future::Future<Output = Result<String>>,
 {
     let home_dir = match home_dir() {
@@ -1520,7 +1514,7 @@ async fn sync_cursor_cache_with_fetcher_in_home<F, Fut>(
     fetch_usage_json: F,
 ) -> SyncCursorResult
 where
-    F: Fn(String, Option<i64>) -> Fut,
+    F: Fn(String, Option<i64>, bool) -> Fut,
     Fut: std::future::Future<Output = Result<String>>,
 {
     migrate_cache_dir_from_old_path_in_home(home_dir);
@@ -1580,8 +1574,17 @@ where
         let cached_json = fs::read_to_string(&file_path).ok();
         let cached_events = cached_usage_events(cached_json.as_deref());
         let sync_start = incremental_sync_start_ms(&cached_events);
+        // Once an account's cache holds billing rows it is pinned to the
+        // billing endpoint; the cache itself is the persisted pin.
+        let pinned_to_billing = cached_events.iter().any(billing::is_billing_event);
 
-        match fetch_usage_json(credentials.session_token.clone(), sync_start).await {
+        match fetch_usage_json(
+            credentials.session_token.clone(),
+            sync_start,
+            pinned_to_billing,
+        )
+        .await
+        {
             Ok(json_text) => {
                 let fetched_events = cached_usage_events(Some(&json_text));
                 let legacy_csv = file_path.with_extension("csv");
@@ -1719,33 +1722,90 @@ fn sync_timeout_override(explicit: bool) -> Option<Duration> {
 }
 
 pub async fn sync_cursor_cache(explicit: bool) -> SyncCursorResult {
-    // Refresh from the selected local login, including CLI-only installations.
-    // This avoids stale manually-pasted cookies after Cursor refreshes its JWT.
-    let _ = ensure_credentials_from_local_cursor();
+    // Only an explicit `tokens cursor sync` refreshes from the selected local
+    // login (CLI or desktop). The implicit sync in `tokens submit` uses the
+    // credentials stored by `tokens cursor login` and nothing else.
+    if explicit {
+        let _ = ensure_credentials_from_local_cursor();
+    }
 
-    sync_cursor_cache_with_fetcher(move |session_token, sync_start| async move {
-        let budget = sync_timeout_override(explicit).unwrap_or(CURSOR_HTTP_TIMEOUT);
-        tokio::time::timeout(budget, async {
-            match billing::fetch(&session_token, Some(budget), sync_start).await {
-                Ok(json) if !cached_usage_events(Some(&json)).is_empty() => Ok(json),
-                billing => match fetch_cursor_usage_events_json(
-                    &session_token, Some(budget), sync_start,
-                )
-                .await
-                {
-                    Ok(json) => Ok(json),
-                    Err(legacy_error) => billing.map_err(|billing_error| {
-                        anyhow::anyhow!(
-                            "Cursor billing request failed: {billing_error:#}; legacy request failed: {legacy_error:#}"
-                        )
-                    }),
+    sync_cursor_cache_with_fetcher(
+        move |session_token, sync_start, pinned_to_billing| async move {
+            let budget = sync_timeout_override(explicit).unwrap_or(CURSOR_HTTP_TIMEOUT);
+            fetch_account_usage(
+                pinned_to_billing,
+                sync_start,
+                async {
+                    tokio::time::timeout(
+                        budget,
+                        billing::fetch(&session_token, Some(budget), sync_start),
+                    )
+                    .await
+                    .context("Cursor billing sync timed out")?
                 },
-            }
-        })
-        .await
-        .context("Cursor usage sync timed out")?
-    })
+                || async {
+                    tokio::time::timeout(
+                        budget,
+                        fetch_cursor_usage_events_json(&session_token, Some(budget), sync_start),
+                    )
+                    .await
+                    .context("Cursor usage sync timed out")?
+                },
+            )
+            .await
+        },
+    )
     .await
+}
+
+/// Choose between the billing and legacy usage endpoints for one account.
+///
+/// The two endpoints report the same usage under different event IDs, so an
+/// account must never alternate between them. Once its cache holds billing rows
+/// (`pinned_to_billing`) only billing is used, and a billing failure fails this
+/// sync, keeping the cache as it is, rather than falling back to legacy. An
+/// account that has never returned billing rows keeps using legacy.
+///
+/// A new cache that billing bootstraps also takes the legacy history, for usage
+/// older than anything billing returned. The merge keeps only the legacy rows
+/// that precede the billing rows (see `billing::reconcile_legacy`), and a legacy
+/// failure there leaves the billing history alone.
+async fn fetch_account_usage<B, L, LFut>(
+    pinned_to_billing: bool,
+    sync_start: Option<i64>,
+    billing: B,
+    legacy: L,
+) -> Result<String>
+where
+    B: std::future::Future<Output = Result<String>>,
+    L: FnOnce() -> LFut,
+    LFut: std::future::Future<Output = Result<String>>,
+{
+    let billing = billing.await;
+    if pinned_to_billing {
+        return billing.context("Cursor billing request failed; legacy usage is not used for an account already synced from billing");
+    }
+    match billing {
+        Ok(json) => {
+            let billing_events = cached_usage_events(Some(&json));
+            if billing_events.is_empty() {
+                return legacy().await;
+            }
+            if sync_start.is_some() {
+                return Ok(json);
+            }
+            let mut events = billing_events;
+            if let Ok(legacy_json) = legacy().await {
+                events.extend(cached_usage_events(Some(&legacy_json)));
+            }
+            Ok(serde_json::json!({ "usageEventsDisplay": events }).to_string())
+        }
+        Err(billing_error) => legacy().await.map_err(|legacy_error| {
+            anyhow::anyhow!(
+                "Cursor billing request failed: {billing_error:#}; legacy request failed: {legacy_error:#}"
+            )
+        }),
+    }
 }
 
 fn archive_cache_file(file_path: &std::path::Path, label: &str) -> Result<()> {
@@ -2138,6 +2198,131 @@ mod local_auth_tests {
                 .local_auth_source,
             LocalAuthSource::Cli
         );
+    }
+}
+
+#[cfg(test)]
+mod usage_source_tests {
+    use super::*;
+
+    fn run<T>(future: impl std::future::Future<Output = T>) -> T {
+        tokio::runtime::Runtime::new().unwrap().block_on(future)
+    }
+
+    fn usage(events: &[serde_json::Value]) -> Result<String> {
+        Ok(serde_json::json!({ "usageEventsDisplay": events }).to_string())
+    }
+
+    fn row(id: &str, ts: i64, model: &str, input: i64) -> serde_json::Value {
+        serde_json::json!({
+            "usageEventId": id,
+            "timestamp": ts.to_string(),
+            "model": model,
+            "tokenUsage": {"inputTokens": input, "outputTokens": 10},
+        })
+    }
+
+    fn total_input(events: &[serde_json::Value]) -> i64 {
+        events
+            .iter()
+            .map(|event| event["tokenUsage"]["inputTokens"].as_i64().unwrap())
+            .sum()
+    }
+
+    async fn no_legacy() -> Result<String> {
+        panic!("a billing account must not read the legacy endpoint")
+    }
+
+    #[test]
+    fn a_billing_account_never_falls_back_to_legacy() {
+        let failed = run(fetch_account_usage(
+            true,
+            Some(1),
+            async { anyhow::bail!("billing unavailable") },
+            no_legacy,
+        ));
+        assert!(failed.is_err(), "the sync is skipped, the cache kept");
+
+        let idle = run(fetch_account_usage(
+            true,
+            Some(1),
+            async { usage(&[]) },
+            no_legacy,
+        ))
+        .unwrap();
+        assert!(cached_usage_events(Some(&idle)).is_empty());
+    }
+
+    #[test]
+    fn an_account_never_on_billing_keeps_using_legacy() {
+        let legacy = row("legacy", 1_000, "gpt-5", 5);
+        let from_empty = run(fetch_account_usage(
+            false,
+            Some(1),
+            async { usage(&[]) },
+            || async { usage(std::slice::from_ref(&legacy)) },
+        ))
+        .unwrap();
+        assert_eq!(cached_usage_events(Some(&from_empty)), vec![legacy.clone()]);
+
+        let from_error = run(fetch_account_usage(
+            false,
+            Some(1),
+            async { anyhow::bail!("billing unavailable") },
+            || async { usage(std::slice::from_ref(&legacy)) },
+        ))
+        .unwrap();
+        assert_eq!(cached_usage_events(Some(&from_error)), vec![legacy]);
+    }
+
+    /// Sync 1 bootstraps from billing (plus the legacy history that precedes
+    /// it); sync 2 hits a build or a code path that still asks legacy and gets
+    /// the same usage under other ids and another model name. The cache must
+    /// still count each event once.
+    #[test]
+    fn an_endpoint_flip_across_syncs_does_not_double_count() {
+        let day = 86_400_000;
+        let t = 1_800_000_000_000;
+        let old = row("legacy-old", t - 30 * day, "claude-4.5-sonnet", 100);
+        let billing = vec![
+            row("billing:a", t, "claude-4.5-sonnet", 1_000),
+            row("billing:b", t + day, "composer-2", 2_000),
+        ];
+        let legacy_twins = vec![
+            row("legacy-a", t - 1_500, "claude-4.5-sonnet-thinking", 1_000),
+            row("legacy-b", t + day, "default", 2_000),
+        ];
+
+        let bootstrap = run(fetch_account_usage(
+            false,
+            None,
+            async { usage(&billing) },
+            || async {
+                let mut history = vec![old.clone()];
+                history.extend(legacy_twins.clone());
+                usage(&history)
+            },
+        ))
+        .unwrap();
+        let cache = merge_cursor_usage_events(Vec::new(), cached_usage_events(Some(&bootstrap)));
+        assert_eq!(total_input(&cache), 3_100);
+        assert!(cache.iter().any(billing::is_billing_event));
+
+        let cache = merge_cursor_usage_events(cache, legacy_twins.clone());
+        assert_eq!(
+            total_input(&cache),
+            3_100,
+            "legacy twins were counted again"
+        );
+
+        // And the other direction: a legacy cache that later moves to billing.
+        let legacy_cache = merge_cursor_usage_events(Vec::new(), {
+            let mut history = vec![old];
+            history.extend(legacy_twins);
+            history
+        });
+        let cache = merge_cursor_usage_events(legacy_cache, billing);
+        assert_eq!(total_input(&cache), 3_100);
     }
 }
 

@@ -165,7 +165,10 @@ tokens cursor sync
 tokens submit -c cursor --dry-run
 ```
 
-The source selection is saved for later automatic submissions. `--source cli`
+The local login is read only by `tokens cursor login` and `tokens cursor sync`;
+`tokens submit` syncs Cursor only for accounts stored by `tokens cursor login`
+and never reads the CLI or desktop login itself. The source selection is saved
+for later `tokens cursor sync` runs. `--source cli`
 never reads the desktop IDE login or falls back to a pasted browser cookie.
 Use `--source desktop` or `--source auto` to change the preference.
 API-key-only CLI sessions cannot authenticate the usage dashboard; use
@@ -174,8 +177,12 @@ API-key-only CLI sessions cannot authenticate the usage dashboard; use
 Usage remains an account-level total under `cursor`, including CLI and IDE usage
 for that account; this integration does not claim to split the two. It uses the
 same account cache so enabling CLI authentication does not double-count usage.
-For accounts on unified billing, the first sync fetches the latest 31 days and
-later syncs fetch incrementally. Older events already in the JSON cache are kept.
+For accounts on unified billing, the first sync walks back through the billing
+history and later syncs fetch incrementally. Older events already in the JSON
+cache are kept. Once an account has synced from billing it stays on billing:
+a failed billing request skips that sync instead of falling back to the legacy
+usage endpoint, and legacy events from the period billing covers are dropped so
+no usage is counted twice.
 
 Pricing comes from a combination of
 [LiteLLM](https://github.com/BerriAI/litellm),

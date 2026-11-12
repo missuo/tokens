@@ -2584,7 +2584,9 @@ fn run_submit_command(
         .as_ref()
         .is_none_or(|s| s.iter().any(|src| src == "cursor"));
     let has_cursor_cache = has_cursor_usage_cache();
-    if include_cursor && cursor::can_sync_cursor() {
+    // Only accounts stored by an explicit `tokens cursor login` are synced here;
+    // submit never reads the local Cursor CLI or desktop login on its own.
+    if include_cursor && cursor::is_cursor_logged_in() {
         println!("{}", "  Syncing Cursor usage data...".bright_black());
         let rt_sync = Runtime::new()?;
         let sync_result = rt_sync.block_on(async { cursor::sync_cursor_cache(false).await });

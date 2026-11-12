@@ -119,32 +119,6 @@ pub(super) fn read(home: &Path) -> Result<String> {
     })
 }
 
-pub(super) fn available(home: &Path) -> bool {
-    if auth_paths(home)
-        .iter()
-        .any(|path| token_from_file(path).is_ok())
-    {
-        return true;
-    }
-    #[cfg(target_os = "macos")]
-    if std::env::var_os("CURSOR_AUTH_FILE").is_none()
-        && std::env::var("AGENT_CLI_CREDENTIAL_STORE").as_deref() != Ok("file")
-    {
-        // Probe attributes only; reading the password happens during sync/login.
-        return std::process::Command::new("/usr/bin/security")
-            .args([
-                "find-generic-password",
-                "-s",
-                "cursor-access-token",
-                "-a",
-                "cursor-user",
-            ])
-            .output()
-            .is_ok_and(|output| output.status.success());
-    }
-    false
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
