@@ -19,40 +19,83 @@ pub enum McpSource {
     OpenCodeSkill,
 }
 
-pub fn discover_mcp_server_names(home_dir: Option<&Path>) -> Vec<String> {
+/// How a config location lists MCP servers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum McpConfigKind {
+    /// A JSON file whose top-level `mcpServers` object is keyed by server name.
+    McpServersJson,
+    /// A directory of skill markdown files whose frontmatter has an `mcp:` map.
+    SkillsDir,
+}
+
+/// One place a supported client keeps its MCP configuration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct McpConfigLocation {
+    /// Canonical client id (as `ClientId::as_str`) the config belongs to.
+    pub client: &'static str,
+    pub kind: McpConfigKind,
+    pub path: PathBuf,
+}
+
+/// Every MCP config location the CLI knows, tagged with the client it belongs
+/// to. Discovery only ever reads the subset whose client was selected for a
+/// submission, so `--client codex` never opens Cursor's or Kiro's config.
+pub fn mcp_config_locations(home: &Path) -> Vec<McpConfigLocation> {
+    vec![
+        McpConfigLocation {
+            client: "claude",
+            kind: McpConfigKind::McpServersJson,
+            path: home.join(".claude").join(".mcp.json"),
+        },
+        McpConfigLocation {
+            client: "cursor",
+            kind: McpConfigKind::McpServersJson,
+            path: home.join(".cursor").join("mcp.json"),
+        },
+        McpConfigLocation {
+            client: "kiro",
+            kind: McpConfigKind::McpServersJson,
+            path: home.join(".kiro").join("settings").join("mcp.json"),
+        },
+        McpConfigLocation {
+            client: "opencode",
+            kind: McpConfigKind::SkillsDir,
+            path: home.join(".config").join("opencode").join("skills"),
+        },
+        McpConfigLocation {
+            client: "opencode",
+            kind: McpConfigKind::SkillsDir,
+            path: home.join(".opencode").join("skills"),
+        },
+    ]
+}
+
+/// The config locations belonging to `clients` (canonical ids).
+pub fn mcp_config_locations_for_clients(home: &Path, clients: &[String]) -> Vec<McpConfigLocation> {
+    mcp_config_locations(home)
+        .into_iter()
+        .filter(|location| clients.iter().any(|client| client == location.client))
+        .collect()
+}
+
+/// Configured MCP server *names* for the selected `clients` only — sorted and
+/// deduplicated. Configs of clients that were not selected are never read.
+pub fn discover_mcp_server_names_for_clients(
+    home_dir: Option<&Path>,
+    clients: &[String],
+) -> Vec<String> {
     let home = match home_dir.map(PathBuf::from).or_else(crate::paths::home_dir) {
         Some(h) => h,
         None => return Vec::new(),
     };
 
     let mut names: BTreeSet<String> = BTreeSet::new();
-
-    collect_mcp_server_keys(&home.join(".claude").join(".mcp.json"), &mut names);
-
-    #[cfg(target_os = "macos")]
-    {
-        collect_mcp_server_keys(
-            &home
-                .join("Library")
-                .join("Application Support")
-                .join("Claude")
-                .join("claude_desktop_config.json"),
-            &mut names,
-        );
+    for location in mcp_config_locations_for_clients(&home, clients) {
+        match location.kind {
+            McpConfigKind::McpServersJson => collect_mcp_server_keys(&location.path, &mut names),
+            McpConfigKind::SkillsDir => collect_skill_mcp_names(&location.path, &mut names),
+        }
     }
-
-    collect_mcp_server_keys(&home.join(".cursor").join("mcp.json"), &mut names);
-
-    collect_mcp_server_keys(
-        &home.join(".kiro").join("settings").join("mcp.json"),
-        &mut names,
-    );
-
-    collect_skill_mcp_names(
-        &home.join(".config").join("opencode").join("skills"),
-        &mut names,
-    );
-    collect_skill_mcp_names(&home.join(".opencode").join("skills"), &mut names);
 
     names.into_iter().collect()
 }
@@ -306,9 +349,24 @@ mcp:
         )
         .unwrap();
 
-        let result = discover_mcp_server_names(Some(home));
+        let all: Vec<String> = ["claude", "cursor", "kiro", "opencode"]
+            .iter()
+            .map(|c| c.to_string())
+            .collect();
+        let result = discover_mcp_server_names_for_clients(Some(home), &all);
         // Deduplicated and sorted
         assert_eq!(result, vec!["apple-mcp", "github", "slack", "tmap"]);
+
+        // Only the selected clients' configs are read.
+        let cursor_only = discover_mcp_server_names_for_clients(Some(home), &["cursor".into()]);
+        assert_eq!(cursor_only, vec!["github", "slack"]);
+
+        // A client with no known MCP config (e.g. codex) reads nothing at all.
+        let codex_only = discover_mcp_server_names_for_clients(Some(home), &["codex".into()]);
+        assert!(codex_only.is_empty());
+
+        // No clients selected: nothing scanned.
+        assert!(discover_mcp_server_names_for_clients(Some(home), &[]).is_empty());
     }
 
     #[test]

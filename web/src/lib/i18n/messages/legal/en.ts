@@ -104,13 +104,13 @@ const messages = {
   privacy: {
     title: "Privacy Policy",
     description: "What we collect, why we collect it, who it goes to, and how to get it removed.",
-    updated: "3 August 2026",
+    updated: "11 November 2026",
     metaDescription: "What Tokens collects, why, who it goes to, and how to get it deleted.",
     sections: {
       shortVersion: {
         heading: "The short version",
         p1: "Tokens counts how many tokens you spend on AI coding tools and ranks that publicly. To do it we need your GitHub identity and the usage totals our CLI computes on your machine.",
-        p2: "The CLI reads the session files your AI coding tools already write to disk and adds them up locally. Only the totals are uploaded — token counts, cost figures, model names, client names and timestamps. The contents of those sessions never leave your machine: not your prompts, not the model's replies, not your code, not your file paths, not your repository or directory names.",
+        p2: "The CLI reads the session files your AI coding tools already write to disk and adds them up locally. Only the totals are uploaded — token counts, cost figures, model names, client names and timestamps. The contents of those sessions never leave your machine: not your prompts, not the model's replies, not your code, not your file paths, not your repository or directory names. The one optional extra is the names of your configured MCP servers, which are sent only if you opt in.",
         p3: "You can verify this rather than trust it. The CLI is open source, one parser per client, and {dryRun} prints the exact payload without uploading anything.",
       },
       whoWeAre: {
@@ -127,6 +127,8 @@ const messages = {
         p3: "A session record holding a hashed session token, its expiry, and the browser user-agent string of the session. Personal API tokens you create for the CLI, with the name you gave them and when they were last used.",
         p4Strong: "If an account is banned.",
         p4: "The time of the ban and the reason for it.",
+        p5Strong: "Your MCP server names, only if you opt in.",
+        p5: "This is off by default. If you run {enable}, or pass {flag} to a single submit, each submission includes the names of the MCP servers configured for the clients that submission covers: Claude Code ({claudePath}), Cursor ({cursorPath}), Kiro ({kiroPath}) and OpenCode skills ({opencodePath}). Only the names are read, never the commands, arguments, URLs, credentials or environment values beside them, and no other client's configuration is opened. We use the names only to show the tools you use on your profile; counting usage does not need them.",
       },
       neverCollect: {
         heading: "What we never collect",
@@ -134,6 +136,7 @@ const messages = {
         item2: "Source code, file contents, file paths, repository names or directory names.",
         item3: "Your GitHub repositories, issues, or any private GitHub data.",
         item4: "Payment details. Tokens is free and takes no payments.",
+        item5: "MCP server names, unless you opt in, and never the commands, URLs, credentials or settings configured for them.",
       },
       whyWeUse: {
         heading: "Why we use it",
@@ -149,6 +152,7 @@ const messages = {
         p2: "Unless you turn on private mode, in Settings or with {command}. A private account is left off the leaderboard, and its profile, usage data, devices and embeddable cards are shown only to you while signed in, and to anyone you give one of your read tokens to.",
         p3: "Your email address is never shown publicly and is not part of any API response.",
         p4: "Because profiles are public, the iOS app needs no sign-in: it simply reads the public profile of whichever GitHub username you enter.",
+        p5: "MCP server names you opt in to sharing are shown in full on your profile and in its API response. Private mode hides them from other people along with the rest of the profile, but they are still sent to and stored by Tokens. To stop sending them at all, leave the option off.",
       },
       cookies: {
         heading: "Cookies",
@@ -189,6 +193,8 @@ const messages = {
         item3: "at any time — Settings.",
         item4Strong: "Stop submitting",
         item4: "— stop the background service; nothing is sent unless the CLI sends it.",
+        item5Strong: "Stop sharing MCP server names",
+        item5: "— run {command}. Your next submission sends no names and clears the list stored on your profile.",
       },
       california: {
         heading: "California privacy rights",

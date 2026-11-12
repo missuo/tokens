@@ -160,6 +160,14 @@ pub struct Settings {
     /// machine's current local timezone.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timezone: Option<String>,
+    /// Opt-in: include the configured MCP server *names* of the clients a
+    /// submission selects. Off by default — names can identify internal
+    /// services, and they are shown publicly on the profile. A submit with
+    /// this off sends no names, which clears any list stored earlier. Set
+    /// with `tokens mcp-names enable|disable`; `tokens submit --include-mcp`
+    /// opts in for a single run.
+    #[serde(default)]
+    pub share_mcp_server_names: bool,
 }
 
 /// Lossy deserializer for `defaultClients`: accepts an array of arbitrary
@@ -214,6 +222,7 @@ impl Default for Settings {
             model_aliases: tokens_core::ModelAliasMap::default(),
             model_id_prefixes_to_strip: Vec::new(),
             timezone: None,
+            share_mcp_server_names: false,
         }
     }
 }

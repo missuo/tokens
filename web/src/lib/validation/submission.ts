@@ -412,6 +412,9 @@ const SubmissionDataSchema = z.preprocess(
     timeMetrics: TimeMetricsSchema.optional(),
     clientManifest: ClientManifestSchema.optional(),
     provenance: SubmissionProvenanceSchema.optional(),
+    // Set only by CLIs that ask before sharing MCP server names (#121). The
+    // names themselves are read leniently by `optedInMcpServers`.
+    mcpServersOptIn: z.boolean().optional(),
   }).superRefine((submission, ctx) => {
     validateCloudDeviceSubmission(submission, ctx);
 
@@ -588,6 +591,28 @@ function describeTokenlessOffenders(clients: ClientLike[]): string {
       return `${c.client}/${c.modelId}${provider} cost=${formatCost(c.cost)}`;
     })
     .join("; ");
+}
+
+/**
+ * The MCP server names a submission may store, or `null` to store none.
+ *
+ * Names count only when the payload carries `mcpServersOptIn: true`, which the
+ * CLI sends only after the user opted in (`tokens mcp-names enable` or
+ * `--include-mcp`). CLIs from before that opt-in existed uploaded every
+ * configured name by default and never send the signal, so their names are
+ * dropped here — and since a local submit replaces the stored list, the next
+ * submit from one of them clears whatever was stored. See #121.
+ */
+export function optedInMcpServers(rawData: unknown): string[] | null {
+  if (rawData == null || typeof rawData !== "object") return null;
+  const raw = rawData as Record<string, unknown>;
+  if (raw.mcpServersOptIn !== true || !Array.isArray(raw.mcpServers)) {
+    return null;
+  }
+  const names = raw.mcpServers.filter(
+    (s): s is string => typeof s === "string" && s.length > 0,
+  );
+  return names.length > 0 ? names : null;
 }
 
 /**

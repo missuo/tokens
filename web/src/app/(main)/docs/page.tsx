@@ -418,6 +418,20 @@ export default async function DocsPage() {
                 })}
               </CardContent>
             </Card>
+
+            <Card size="sm">
+              <CardHeader>
+                <CardTitle className="text-sm">{t("docs.privateMode.mcpNames.title")}</CardTitle>
+              </CardHeader>
+              <CardContent className="text-sm leading-relaxed text-muted-foreground">
+                {richText(t("docs.privateMode.mcpNames.body"), {
+                  enable: <code className={CODE}>tokens mcp-names enable</code>,
+                  flag: <code className={CODE}>tokens submit --include-mcp</code>,
+                  disable: <code className={CODE}>tokens mcp-names disable</code>,
+                  status: <code className={CODE}>tokens mcp-names status</code>,
+                })}
+              </CardContent>
+            </Card>
           </div>
         </Section>
 
@@ -559,7 +573,7 @@ export default async function DocsPage() {
               </CardHeader>
               <CardContent className="text-sm leading-relaxed text-muted-foreground">
                 {richText(t("docs.architecture.cli.body"), {
-                  dryRun: <code className={CODE}>tokens submit --dry-run</code>,
+                  dryRun: <code className={CODE}>tokens submit --dry-run --json</code>,
                 })}
               </CardContent>
             </Card>

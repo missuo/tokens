@@ -85,9 +85,20 @@ You do not have to take that on faith. The whole pipeline is here:
 - `cli/tokens-core/src/sessions/` — one parser per client, showing exactly which
   fields are read out of each session file
 - `cli/tokens-core/src/aggregator.rs` — how those reads become daily totals
-- `cli/tokens-cli/src/commands/` — the submit path, including the exact payload
+- `cli/tokens-cli/src/main.rs` — the submit path; `build_submit_payload` is the
+  one function that assembles the payload, for both a real submit and a dry run
 
-`tokens submit --dry-run` prints what would be uploaded without uploading it.
+`tokens submit --dry-run` summarizes what would be uploaded without uploading
+it; `tokens submit --dry-run --json` prints the exact JSON payload.
+
+**MCP server names are opt-in.** By default no MCP information is sent. Run
+`tokens mcp-names enable` (or pass `--include-mcp` to one submit) to include the
+*names* — never commands, URLs, credentials or env values — of the MCP servers
+configured for the clients that submission covers (Claude Code
+`~/.claude/.mcp.json`, Cursor `~/.cursor/mcp.json`, Kiro
+`~/.kiro/settings/mcp.json`, OpenCode skills). They are shown publicly on your
+profile. `tokens mcp-names disable` turns it off, and the next submit clears the
+stored list; `tokens mcp-names status` shows the setting and the files read.
 
 If your gateway adds routing prefixes to model IDs, list those prefixes in
 `~/.config/tokens/settings.json` (or `$TOKENS_CONFIG_DIR/settings.json`):
