@@ -201,6 +201,8 @@ interface ThirdPartyPerson {
 const THIRD_PARTY_APPS: ReadonlyArray<{
   id: string;
   name: string;
+  /** The app's own icon, copied to /public/apps from its website. */
+  icon: string;
   url: string;
   urlLabel: string;
   author: ThirdPartyPerson;
@@ -211,6 +213,7 @@ const THIRD_PARTY_APPS: ReadonlyArray<{
   {
     id: "nowdex",
     name: "Nowdex",
+    icon: "/apps/nowdex.svg",
     url: "https://nowdex.app",
     urlLabel: "nowdex.app",
     author: { label: "Randy Lu (@randyloop)", href: "https://x.com/randyloop" },
@@ -220,6 +223,7 @@ const THIRD_PARTY_APPS: ReadonlyArray<{
   {
     id: "metrix",
     name: "Metrix.Bar",
+    icon: "/apps/metrix-bar.png",
     url: "https://metrix.bar",
     urlLabel: "metrix.bar",
     author: { label: "@miantiao_me", href: "https://x.com/miantiao_me" },
@@ -365,27 +369,40 @@ export default async function DocsPage() {
             {THIRD_PARTY_APPS.map((app) => (
               <Card key={app.id}>
                 <CardHeader className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
-                  <div className="flex flex-col gap-1">
-                    <CardTitle className="text-base">{app.name}</CardTitle>
-                    <p className="text-xs text-muted-foreground">
-                      {richText(t(app.bylineKey), {
-                        author: <ExternalLink href={app.author.href}>{app.author.label}</ExternalLink>,
-                        ...(app.plugin
-                          ? {
-                              plugin: (
-                                <ExternalLink href={app.plugin.href}>
-                                  {t("docs.thirdPartyApps.tokensPlugin")}
-                                </ExternalLink>
-                              ),
-                              pluginAuthor: (
-                                <ExternalLink href={app.plugin.author.href}>
-                                  {app.plugin.author.label}
-                                </ExternalLink>
-                              ),
-                            }
-                          : {}),
-                      })}
-                    </p>
+                  <div className="flex items-center gap-3">
+                    {/* Plain <img>, same reasoning as the client grid below:
+                        a small third-party mark served from our own origin. */}
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={app.icon}
+                      alt=""
+                      width={40}
+                      height={40}
+                      loading="lazy"
+                      className="size-10 shrink-0 rounded-[10px] border object-cover"
+                    />
+                    <div className="flex flex-col gap-1">
+                      <CardTitle className="text-base">{app.name}</CardTitle>
+                      <p className="text-xs text-muted-foreground">
+                        {richText(t(app.bylineKey), {
+                          author: <ExternalLink href={app.author.href}>{app.author.label}</ExternalLink>,
+                          ...(app.plugin
+                            ? {
+                                plugin: (
+                                  <ExternalLink href={app.plugin.href}>
+                                    {t("docs.thirdPartyApps.tokensPlugin")}
+                                  </ExternalLink>
+                                ),
+                                pluginAuthor: (
+                                  <ExternalLink href={app.plugin.author.href}>
+                                    {app.plugin.author.label}
+                                  </ExternalLink>
+                                ),
+                              }
+                            : {}),
+                        })}
+                      </p>
+                    </div>
                   </div>
                   <Button
                     variant="outline"
