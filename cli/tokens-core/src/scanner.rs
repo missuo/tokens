@@ -486,6 +486,13 @@ pub fn scan_directory(root: &str, pattern: &str) -> Vec<PathBuf> {
                 "*.json" => file_name.ends_with(".json"),
                 "*.json|*.jsonl" => file_name.ends_with(".json") || file_name.ends_with(".jsonl"),
                 "*.jsonl" => file_name.ends_with(".jsonl"),
+                // Codex: live rollouts plus the zstd form Codex rewrites older
+                // ones into. Only the exact `.jsonl.zst` suffix is a
+                // transcript; other `.zst` files and in-flight temporaries
+                // are not. The parser dedups a session present in both forms.
+                "*.jsonl|*.jsonl.zst" => {
+                    file_name.ends_with(".jsonl") || file_name.ends_with(".jsonl.zst")
+                }
                 "prime-agent-session" => {
                     file_name.ends_with(".jsonl") && file_name != "rlm-subagents.jsonl"
                 }
@@ -2262,7 +2269,7 @@ fn scan_all_clients_with_env_strategy_inner(
     }
 
     if enabled_with_lookups.contains(&ClientId::Codex) {
-        // Codex: ~/.codex/sessions/**/*.jsonl
+        // Codex: ~/.codex/sessions/**/*.jsonl{,.zst}
         let codex_home = if use_env_roots {
             std::env::var("CODEX_HOME").unwrap_or_else(|_| join_native(home_dir, ".codex"))
         } else {
@@ -2278,7 +2285,7 @@ fn scan_all_clients_with_env_strategy_inner(
             codex_path,
         );
 
-        // Codex archived sessions: ~/.codex/archived_sessions/**/*.jsonl
+        // Codex archived sessions: ~/.codex/archived_sessions/**/*.jsonl{,.zst}
         let codex_archived_path = join_native(&codex_home, "archived_sessions");
         push_unique_scan_task(
             &mut tasks,
@@ -6832,6 +6839,48 @@ mod tests {
 
         let result = scan_without_extra_dirs(home.to_str().unwrap(), &["codex".to_string()]);
         assert_eq!(result.get(ClientId::Codex).len(), 2);
+
+        restore_env("CODEX_HOME", previous_codex);
+    }
+
+    #[test]
+    #[serial]
+    fn test_scan_all_clients_codex_compressed_rollouts() {
+        // missuo/tokens#109: Codex compresses older rollouts in place to
+        // `.jsonl.zst`; both live and archived sessions must be discovered,
+        // while other `.zst` files and in-flight temporaries are not.
+        let previous_codex = std::env::var("CODEX_HOME").ok();
+
+        let dir = TempDir::new().unwrap();
+        let home = dir.path();
+        let sessions = home.join(".codex/sessions/2026/09/12");
+        let archived = home.join(".codex/archived_sessions");
+        fs::create_dir_all(&sessions).unwrap();
+        fs::create_dir_all(&archived).unwrap();
+        File::create(sessions.join("rollout-live.jsonl")).unwrap();
+        File::create(sessions.join("rollout-old.jsonl.zst")).unwrap();
+        File::create(archived.join("rollout-archived.jsonl.zst")).unwrap();
+        File::create(sessions.join("unrelated.zst")).unwrap();
+        File::create(sessions.join("rollout-tmp.jsonl.zst.tmp")).unwrap();
+        File::create(sessions.join("rollout-bak.jsonl.bak")).unwrap();
+
+        unsafe { std::env::set_var("CODEX_HOME", home.join(".codex")) };
+
+        let result = scan_without_extra_dirs(home.to_str().unwrap(), &["codex".to_string()]);
+        let mut names: Vec<String> = result
+            .get(ClientId::Codex)
+            .iter()
+            .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        assert_eq!(
+            names,
+            vec![
+                "rollout-archived.jsonl.zst",
+                "rollout-live.jsonl",
+                "rollout-old.jsonl.zst",
+            ]
+        );
 
         restore_env("CODEX_HOME", previous_codex);
     }

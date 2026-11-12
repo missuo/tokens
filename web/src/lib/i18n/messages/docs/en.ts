@@ -82,7 +82,7 @@ const messages = {
       // Two sentences that only make sense together: what to type, and why the
       // username has to be your own.
       enterUsername:
-        "Open the app, then enter a GitHub username. There is no sign-in: every profile on Tokens is public, so the app just reads the one you name. Enter your own username or the widgets will show someone else's usage.",
+        "Open the app, then enter a GitHub username. There is no sign-in. If your profile is private, the app also asks for a read token, which you create in Settings. Enter your own username or the widgets will show someone else's usage.",
       addWidgets: "Long-press your Home or Lock screen to add the widgets.",
     },
   },

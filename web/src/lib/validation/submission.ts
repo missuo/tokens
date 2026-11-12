@@ -39,7 +39,28 @@ const TOKEN_ABSOLUTE_TOLERANCE = 100;
 // Codex revision 4: a `codex exec --json` capture no longer counts on top of
 // the run's own rollout, nor once per copy of the capture.
 const MAX_SUPPORTED_CODEX_PROVENANCE_SCHEMA_VERSION = 4;
-const MAX_SUPPORTED_NON_CODEX_PROVENANCE_SCHEMA_VERSION = 1;
+// Devin CLI revision 2: one API response that Devin stored in several
+// `message_nodes` rows of sessions.db is counted once (deduped by
+// request_id instead of row id). The higher revision lets that lower,
+// corrected total replace days stored at revision 1, which the same-revision
+// regression guard would otherwise keep (missuo/tokens#109).
+const MAX_SUPPORTED_DEVIN_CLI_PROVENANCE_SCHEMA_VERSION = 2;
+const MAX_SUPPORTED_DEFAULT_PROVENANCE_SCHEMA_VERSION = 1;
+const MAX_SUPPORTED_PROVENANCE_SCHEMA_VERSION_BY_CLIENT: Readonly<Record<string, number>> = {
+  codex: MAX_SUPPORTED_CODEX_PROVENANCE_SCHEMA_VERSION,
+  "devin-cli": MAX_SUPPORTED_DEVIN_CLI_PROVENANCE_SCHEMA_VERSION,
+};
+const MAX_SUPPORTED_ANY_PROVENANCE_SCHEMA_VERSION = Math.max(
+  MAX_SUPPORTED_DEFAULT_PROVENANCE_SCHEMA_VERSION,
+  ...Object.values(MAX_SUPPORTED_PROVENANCE_SCHEMA_VERSION_BY_CLIENT)
+);
+
+/** Highest parser revision the server accepts for `client`. */
+export function maxSupportedParserRevision(client: string): number {
+  return Object.hasOwn(MAX_SUPPORTED_PROVENANCE_SCHEMA_VERSION_BY_CLIENT, client)
+    ? MAX_SUPPORTED_PROVENANCE_SCHEMA_VERSION_BY_CLIENT[client]
+    : MAX_SUPPORTED_DEFAULT_PROVENANCE_SCHEMA_VERSION;
+}
 
 const NonNegativeIntegerSchema = z.number().finite().int().min(0).max(Number.MAX_SAFE_INTEGER);
 const NonNegativeNumberSchema = z.number().finite().min(0);
@@ -54,7 +75,7 @@ const TokenBreakdownSchema = z.object({
 
 const ClientContributionProvenanceSchema = z.object({
   schemaVersion: NonNegativeIntegerSchema.min(1).max(
-    MAX_SUPPORTED_CODEX_PROVENANCE_SCHEMA_VERSION
+    MAX_SUPPORTED_ANY_PROVENANCE_SCHEMA_VERSION
   ),
   messageCount: NonNegativeIntegerSchema,
   modelCount: NonNegativeIntegerSchema,
@@ -89,9 +110,7 @@ const ClientContributionSchema = z.object({
   provenance: ClientContributionProvenanceSchema.optional(),
   speedUsage: z.array(SpeedUsageSchema).max(MAX_SPEED_USAGE_ENTRIES).optional(),
 }).superRefine((contribution, ctx) => {
-  const maxRevision = contribution.client === "codex"
-    ? MAX_SUPPORTED_CODEX_PROVENANCE_SCHEMA_VERSION
-    : MAX_SUPPORTED_NON_CODEX_PROVENANCE_SCHEMA_VERSION;
+  const maxRevision = maxSupportedParserRevision(contribution.client);
 
   if ((contribution.provenance?.schemaVersion ?? 1) > maxRevision) {
     ctx.addIssue({
@@ -204,13 +223,11 @@ const ClientManifestCoverageSchema = z.object({
 const ClientManifestEntrySchema = z.object({
   client: SourceSchema,
   parserRevision: NonNegativeIntegerSchema.min(1).max(
-    MAX_SUPPORTED_CODEX_PROVENANCE_SCHEMA_VERSION
+    MAX_SUPPORTED_ANY_PROVENANCE_SCHEMA_VERSION
   ),
   coverage: ClientManifestCoverageSchema.optional(),
 }).superRefine((entry, ctx) => {
-  const maxRevision = entry.client === "codex"
-    ? MAX_SUPPORTED_CODEX_PROVENANCE_SCHEMA_VERSION
-    : MAX_SUPPORTED_NON_CODEX_PROVENANCE_SCHEMA_VERSION;
+  const maxRevision = maxSupportedParserRevision(entry.client);
 
   if (entry.parserRevision > maxRevision) {
     ctx.addIssue({

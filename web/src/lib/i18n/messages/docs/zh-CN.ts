@@ -62,7 +62,7 @@ const messages = {
     steps: {
       install: "在你的 iPhone 上打开上面的 App Store 链接并安装 Tokens。",
       enterUsername:
-        "打开 App，然后输入一个 GitHub 用户名。这里没有登录：Tokens 上的每个主页都是公开的，App 只是读取你填的那一个。请填自己的用户名，否则小组件会显示别人的用量。",
+        "打开 App，然后输入一个 GitHub 用户名。这里没有登录。如果你的主页是私密的，App 还会要求填写一个读取令牌，可在设置中创建。请填自己的用户名，否则小组件会显示别人的用量。",
       addWidgets: "长按主屏幕或锁屏，添加小组件。",
     },
   },

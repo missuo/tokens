@@ -527,6 +527,12 @@ pub(crate) fn estimate_tokens(chars: usize) -> i64 {
     chars.div_ceil(4) as i64
 }
 
+/// True when a path has a `.zst` (zstd) file extension.
+pub(crate) fn is_zst_path(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("zst"))
+}
+
 /// Session id taken from a transcript file's stem, e.g.
 /// `.../ses_abc123.jsonl` -> `ses_abc123`.
 ///

@@ -1129,16 +1129,22 @@ const SHARED_PARSER_FAMILIES: &[SharedParserFamily] = &[
             // +1: Pi subagent sessions now derive agent attribution from
             // session_info names; version-1 caches carry those messages
             // without agent metadata.
-            (ClientId::Pi, 2),
+            // +1 (#122): the standard cross-session lane keys records on
+            // entry id + timestamp before `responseId`, which some providers
+            // reuse across distinct requests. Cached rows carry the old
+            // response-level keys and would keep collapsing those requests.
+            (ClientId::Pi, 3),
             // +1: Kimchi's Pi-compatible messages now carry stable
             // namespaced deduplication keys.
             (ClientId::Kimchi, 1),
             // +1: Standard Pi/OMP/Senpi parser now emits cross-session
             // namespaced dedup keys (same behavior as Kimchi/Prime).
-            (ClientId::Omp, 1),
-            (ClientId::Senpi, 1),
+            // +1 (#122): entry-identity-first keys, as for Pi above.
+            (ClientId::Omp, 2),
+            (ClientId::Senpi, 2),
             // Fork (missuo/tokens#48): Craft Agent rides the standard lane.
-            (ClientId::CraftAgent, 1),
+            // +1 (#122): entry-identity-first keys, as for Pi above.
+            (ClientId::CraftAgent, 2),
             // +3 for Prime Agent's independent history. v1->v2 strips a
             // leading BOM and recovers records containing undecodable
             // bytes; its accounting scan also continues past those records
@@ -1313,7 +1319,11 @@ fn parser_version(client: ClientId) -> u32 {
         // reparse the source to recover speed selections and turn boundaries.
         // v11->v12: recover compaction usage omitted from cumulative snapshots;
         // incremental state now retains a pending per-response record.
-        ClientId::Codex => 12,
+        // v12->v13: compressed rollouts (`.jsonl.zst`) are scanned and
+        // decoded, and their name-derived session ids drop the `.zst` so a
+        // session present in both forms dedups (missuo/tokens#109, upstream
+        // junhoyeo/tokscale#1423).
+        ClientId::Codex => 13,
         // v4->v5: jcode's assistant-message timestamp is now back-calculated
         // to the turn start (timestamp - tool_duration_ms) instead of using
         // the recorded (end-anchored) timestamp directly. Follow-up to #890.
@@ -1338,8 +1348,10 @@ fn parser_version(client: ClientId) -> u32 {
         // Devin CLI v1 could stop at a malformed chat_message. v2->v3:
         // message timestamp is now back-calculated to the turn start
         // (created_at - total_time_ms) instead of the recorded (end-anchored)
-        // created_at. Follow-up to #890.
-        ClientId::DevinCli => 3,
+        // created_at. Follow-up to #890. v3->v4 deduplicates CLI copies of one
+        // API response by metadata.request_id instead of database row id
+        // (missuo/tokens#109, upstream junhoyeo/tokscale#1359).
+        ClientId::DevinCli => 4,
         // Desktop v1 parsed a non-ACP shape and did not track its CLI title
         // lookup; its timestamp handling is unaffected by the #890 follow-up.
         ClientId::DevinDesktop => 2,
@@ -1497,7 +1509,11 @@ fn parser_version(client: ClientId) -> u32 {
         // v5->v6: normalize negative usage and bound reasoning by output before
         // aggregation. Reparse unchanged transcripts so cached negative buckets
         // cannot keep producing inconsistent submission totals.
-        ClientId::Dsh => 6,
+        // v6->v7 (#119): transcripts are streamed line by line instead of being
+        // refused whole past 64 MiB decoded; an oversized line is skipped on
+        // its own. v6 cached such transcripts as empty under an unchanged
+        // fingerprint, so only this bump recovers their usage.
+        ClientId::Dsh => 7,
         // First version of the fx (vercel-labs) usage-v2.json parser. Entries
         // are versioned from the start so later parser changes have an
         // obvious local counter to bump, like every other client here.
@@ -3935,8 +3951,8 @@ mod tests {
     }
 
     #[test]
-    fn test_devin_parser_versions_invalidate_v1_entries() {
-        assert_eq!(parser_version(ClientId::DevinCli), 3);
+    fn test_devin_parser_versions_invalidate_v3_entries() {
+        assert_eq!(parser_version(ClientId::DevinCli), 4);
         assert_eq!(parser_version(ClientId::DevinDesktop), 2);
     }
 
@@ -3948,10 +3964,11 @@ mod tests {
         // "Codex Guardian" / "Codex Headless" instead of the per-thread random
         // nickname, and v9->v10 (fork) keys and dates `codex exec --json`
         // captures by their thread. v10->v11 records selected inference speed
-        // and changes the incremental state layout.
+        // and changes the incremental state layout. v11->v12 recovers
+        // compaction usage, and v12->v13 decodes `.jsonl.zst` rollouts.
         // Each bump is what stops an existing cache from replaying the old
         // rows, so it has to be asserted rather than assumed.
-        assert_eq!(parser_version(ClientId::Codex), 12);
+        assert_eq!(parser_version(ClientId::Codex), 13);
         assert_eq!(parser_version(ClientId::Claude), 2);
     }
 
@@ -3976,7 +3993,7 @@ mod tests {
         // cache entries are also invalidated.
         assert_eq!(parser_version(ClientId::Junie), 3);
         assert_eq!(parser_version(ClientId::Jcode), 7);
-        assert_eq!(parser_version(ClientId::DevinCli), 3);
+        assert_eq!(parser_version(ClientId::DevinCli), 4);
         assert_eq!(parser_version(ClientId::Zcode), 3);
         assert_eq!(parser_version(ClientId::OpenCodeReview), 3);
         assert_eq!(parser_version(ClientId::Kiro), 2);
@@ -4090,13 +4107,22 @@ mod tests {
     /// keep replaying alias attributions — only the version retires them.
     #[test]
     fn test_pi_format_parser_version_invalidates_v1_entries() {
-        // pi-format base 1 -> 2, applied to every family member's offset.
-        assert_eq!(parser_version(ClientId::Pi), 4);
+        // pi-format base 1 -> 2, applied to every family member's offset
+        // (the standard-lane members took a further +1 for #122, below).
         assert_eq!(parser_version(ClientId::Kimchi), 3);
-        assert_eq!(parser_version(ClientId::Omp), 3);
-        assert_eq!(parser_version(ClientId::Senpi), 3);
-        assert_eq!(parser_version(ClientId::CraftAgent), 3);
         assert_eq!(parser_version(ClientId::PrimeAgent), 5);
+    }
+
+    /// #122: the standard cross-session lane (Pi, OMP, Senpi, Craft Agent)
+    /// now keys records on entry id + timestamp before `responseId`. Source
+    /// files are byte-identical, so a warm cache would keep replaying the
+    /// response-level keys that collapse distinct requests sharing one id.
+    #[test]
+    fn test_pi_entry_identity_dedup_parser_version_invalidates_prior_entries() {
+        assert_eq!(parser_version(ClientId::Pi), 5);
+        assert_eq!(parser_version(ClientId::Omp), 4);
+        assert_eq!(parser_version(ClientId::Senpi), 4);
+        assert_eq!(parser_version(ClientId::CraftAgent), 4);
     }
 
     #[test]
@@ -4494,7 +4520,8 @@ mod tests {
         // A finished transcript is never rewritten when attribution starts
         // preferring compactionId, so its fingerprint remains valid and only
         // the parser version can retire the seq-keyed row released in v4.14.0.
-        assert_eq!(parser_version(ClientId::Dsh), 6);
+        // v6->v7 (#119): v6 cached transcripts past 64 MiB decoded as empty.
+        assert_eq!(parser_version(ClientId::Dsh), 7);
     }
 
     /// Names the row that only a served cache can put in a report. No DSH
@@ -4700,7 +4727,7 @@ mod tests {
 "#,
         );
         let current_identity = CacheIdentity::for_client(ClientId::Dsh);
-        assert_eq!(current_identity.parser_version, 6);
+        assert_eq!(current_identity.parser_version, 7);
         // Pinned at 3, the identity 4.14.0 cached under, rather than derived
         // from the running version: this is the row that release left on disk.
         let stale_identity = CacheIdentity {
@@ -4760,7 +4787,7 @@ mod tests {
         let cached = persisted
             .get(current_identity, &source)
             .expect("the scan must persist the entry it reparsed");
-        assert_eq!(cached.parser_version, 6);
+        assert_eq!(cached.parser_version, 7);
         assert_eq!(cached.messages.len(), 1);
         assert_eq!(cached.messages[0].model_id, "glm-5.3");
 
@@ -4811,7 +4838,7 @@ mod tests {
 "#,
         );
         let current_identity = CacheIdentity::for_client(ClientId::Dsh);
-        assert_eq!(current_identity.parser_version, 6);
+        assert_eq!(current_identity.parser_version, 7);
         // Pinned at 4, the identity 4.15.0 cached under; see the v3 test.
         let stale_identity = CacheIdentity {
             namespace: current_identity.namespace,
@@ -4870,7 +4897,7 @@ mod tests {
         let cached = persisted
             .get(current_identity, &source)
             .expect("the scan must persist the entry it reparsed");
-        assert_eq!(cached.parser_version, 6);
+        assert_eq!(cached.parser_version, 7);
         assert_eq!(cached.messages, scanned);
 
         let warm = scan_dsh(source_home.path());
@@ -5070,11 +5097,11 @@ mod tests {
             (
                 "pi-format",
                 &[
-                    (ClientId::Pi, 2),
+                    (ClientId::Pi, 3),
                     (ClientId::Kimchi, 1),
-                    (ClientId::Omp, 1),
-                    (ClientId::Senpi, 1),
-                    (ClientId::CraftAgent, 1),
+                    (ClientId::Omp, 2),
+                    (ClientId::Senpi, 2),
+                    (ClientId::CraftAgent, 2),
                     (ClientId::PrimeAgent, 3),
                 ],
             ),

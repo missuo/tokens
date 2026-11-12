@@ -1551,15 +1551,22 @@ struct TsTokenContributionData {
 /// Codex 3: reasoning tokens are no longer counted on top of output tokens,
 /// which already include them. Codex 4: a `codex exec --json` capture no
 /// longer counts beside the run's rollout or once per copy. Codex rollouts are not cleaned up locally, so
-/// the recount covers the whole history. Claude's and Grok's smaller
+/// the recount covers the whole history. Reading compressed `.jsonl.zst`
+/// rollouts only adds usage, so it needs no bump. Devin CLI 2: one API
+/// response stored in several `sessions.db` rows counts once (deduped by
+/// request_id, missuo/tokens#109); the database keeps the whole history, so
+/// the recount covers it. Claude's and Grok's smaller
 /// corrections are deliberately not bumped: both clients delete old session
 /// files, and a bump would let a total that shrank because history vanished
 /// overwrite the stored one.
+///
+/// The server caps each client's revision (`maxSupportedParserRevision` in
+/// web/src/lib/validation/submission.ts); raise it there first.
 fn submit_parser_revision(client: &str) -> u32 {
-    if client == "codex" {
-        4
-    } else {
-        1
+    match client {
+        "codex" => 4,
+        "devin-cli" => 2,
+        _ => 1,
     }
 }
 
@@ -4313,5 +4320,23 @@ mod help_catalogues {
         );
 
         i18n::set_lang(i18n::Lang::En);
+    }
+}
+
+#[cfg(test)]
+mod submit_parser_revisions {
+    use super::submit_parser_revision;
+
+    /// A bump lets a lower, corrected total replace what the server stored at
+    /// the previous revision, so each one is asserted rather than assumed. The
+    /// server must accept it too (`maxSupportedParserRevision` in
+    /// web/src/lib/validation/submission.ts).
+    #[test]
+    fn revisions_are_pinned() {
+        assert_eq!(submit_parser_revision("codex"), 4);
+        // missuo/tokens#109: rows sharing a request_id count once.
+        assert_eq!(submit_parser_revision("devin-cli"), 2);
+        assert_eq!(submit_parser_revision("devin-desktop"), 1);
+        assert_eq!(submit_parser_revision("claude"), 1);
     }
 }
