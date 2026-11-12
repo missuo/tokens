@@ -232,6 +232,10 @@ tokens login
 tokens autosubmit enable --interval 30m
 ```
 
+The task runs `tokensw.exe`, a windowless launcher installed next to
+`tokens.exe`. A task registered by an older version that still runs
+`tokens.exe` is switched over automatically on its next run.
+
 ### Private mode
 
 ```sh

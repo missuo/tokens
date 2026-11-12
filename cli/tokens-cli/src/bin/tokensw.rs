@@ -9,11 +9,12 @@
 //! hidden too. Same pattern as `pythonw.exe` / `javaw.exe`.
 //!
 //! It is built on every target so the workspace compiles the same everywhere,
-//! but only the Windows packages ship it.
+//! but only the Windows packages ship it. Elsewhere there is no console window
+//! to hide, so it is a plain pass-through to the sibling `tokens` binary.
 
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
-use std::process::{Command, Stdio};
+use std::process::Command;
 
 #[cfg(windows)]
 const TOKENS_EXE: &str = "tokens.exe";
@@ -24,28 +25,36 @@ fn main() {
     let Ok(launcher) = std::env::current_exe() else {
         std::process::exit(1);
     };
+    let target = launcher.with_file_name(TOKENS_EXE);
 
-    let mut command = Command::new(launcher.with_file_name(TOKENS_EXE));
-    // A GUI-subsystem process has no standard handles to pass on. Hand the
-    // child NUL explicitly instead of letting it inherit nothing.
-    command
-        .args(std::env::args_os().skip(1))
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
+    let mut command = Command::new(&target);
+    command.args(std::env::args_os().skip(1));
 
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
+        use std::process::Stdio;
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        command.creation_flags(CREATE_NO_WINDOW);
+        // A GUI-subsystem process has no standard handles to pass on. Hand the
+        // child NUL explicitly instead of letting it inherit nothing.
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .creation_flags(CREATE_NO_WINDOW);
     }
 
     // Task Scheduler records this as the task's last result, so pass the
     // child's exit code through rather than flattening it to success/failure.
     let code = match command.status() {
         Ok(status) => status.code().unwrap_or(1),
-        Err(_) => 1,
+        Err(_err) => {
+            // Nowhere to report it on Windows (no console); elsewhere stderr
+            // is inherited, so say what went wrong.
+            #[cfg(not(windows))]
+            eprintln!("tokensw: could not run {}: {_err}", target.display());
+            1
+        }
     };
     std::process::exit(code);
 }

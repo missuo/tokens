@@ -2336,6 +2336,8 @@ fn run_autosubmit_command(subcommand: commands::autosubmit::AutosubmitSubcommand
         AutosubmitSubcommand::Run { force } => {
             let now_ms = chrono::Utc::now().timestamp_millis();
             let (settings, decision) = commands::autosubmit::load_run_config(force, now_ms)?;
+            // No-op unless Windows, enabled, and the task predates tokensw.exe.
+            commands::autosubmit::self_heal_windows_task(&settings);
             match decision {
                 AutosubmitRunDecision::Disabled => {
                     println!("Autosubmit is disabled.");
