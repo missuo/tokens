@@ -230,11 +230,14 @@ macro_rules! tr {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use std::sync::Mutex;
 
     /// These tests move the process-wide language, and the rest of the suite
-    /// asserts on English text. Serialise them and put English back — a panic
-    /// still restores through `Drop`.
+    /// asserts on English text. They run under `#[serial]` — the same lock the
+    /// CLI's output-asserting tests and its localized-help test take, so no two
+    /// tests can switch the language under each other — and put English back;
+    /// a panic still restores through `Drop`.
     static LOCK: Mutex<()> = Mutex::new(());
 
     struct EnGuard {
@@ -265,6 +268,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn english_is_the_default() {
         let _guard = EnGuard::take();
         assert_eq!(Lang::default(), Lang::En);
@@ -290,6 +294,7 @@ mod tests {
     /// In a debug build a miss trips the assertion, so it is loud in
     /// development and the suite pins that.
     #[test]
+    #[serial]
     #[should_panic(expected = "missing translation")]
     fn a_missing_key_is_loud_in_development() {
         let _guard = EnGuard::take();
@@ -300,6 +305,7 @@ mod tests {
     /// A release build (`debug_assert!` compiled out) has to keep going:
     /// a missing key prints the key rather than an empty line.
     #[test]
+    #[serial]
     #[cfg(not(debug_assertions))]
     fn a_missing_key_falls_back_to_the_key() {
         let _guard = EnGuard::take();
