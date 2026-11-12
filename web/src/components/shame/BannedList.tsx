@@ -2,6 +2,9 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
 import { formatCurrency, formatNumber } from "@/lib/format";
+import { richText } from "@/lib/i18n/rich";
+import type { Translator } from "@/lib/i18n/translate";
+import type { Locale } from "@/lib/i18n/config";
 
 export interface BannedUser {
   id: string;
@@ -34,9 +37,11 @@ export function maskUsername(username: string): string {
  * the reason is the substance, so it stays visible, but the surrounding
  * chrome is kept to a rule and a row of facts so fifty entries still scan.
  */
-function BannedEntry({ user }: { user: BannedUser }) {
+function BannedEntry({ user, locale, t }: { user: BannedUser; locale: Locale; t: Translator }) {
   const masked = maskUsername(user.username);
-  const bannedOn = user.bannedAt ? user.bannedAt.toISOString().slice(0, 10) : null;
+  const bannedOn = user.bannedAt
+    ? user.bannedAt.toISOString().slice(0, 10)
+    : null;
 
   return (
     <li className="border-b py-6 last:border-b-0">
@@ -51,18 +56,21 @@ function BannedEntry({ user }: { user: BannedUser }) {
         <div className="flex min-w-0 flex-1 flex-col gap-2">
           <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
             <span className="font-mono text-sm font-medium">@{masked}</span>
-            <Badge variant="destructive">Banned</Badge>
+            <Badge variant="destructive">{t("shame.list.banned")}</Badge>
             {bannedOn && (
               <span className="font-mono text-xs text-muted-foreground">{bannedOn}</span>
             )}
             {user.claimedTokens != null && (
               <span className="font-mono text-xs text-muted-foreground">
-                claimed{" "}
-                <span className="line-through">
-                  {formatNumber(user.claimedTokens, true)}
-                  {user.claimedCost != null &&
-                    ` · ${formatCurrency(Number(user.claimedCost), true)}`}
-                </span>
+                {richText(t("shame.list.claimed"), {
+                  amount: (
+                    <span className="line-through">
+                      {formatNumber(user.claimedTokens, true, locale)}
+                      {user.claimedCost != null &&
+                        ` · ${formatCurrency(Number(user.claimedCost), true, locale)}`}
+                    </span>
+                  ),
+                })}
               </span>
             )}
           </div>
@@ -78,13 +86,21 @@ function BannedEntry({ user }: { user: BannedUser }) {
   );
 }
 
-export function BannedList({ users }: { users: BannedUser[] }) {
+export function BannedList({
+  users,
+  locale,
+  t,
+}: {
+  users: BannedUser[];
+  locale: Locale;
+  t: Translator;
+}) {
   if (users.length === 0) {
     return (
       <Empty>
         <EmptyHeader>
-          <EmptyTitle>No banned accounts</EmptyTitle>
-          <EmptyDescription>Keep it that way.</EmptyDescription>
+          <EmptyTitle>{t("shame.list.emptyTitle")}</EmptyTitle>
+          <EmptyDescription>{t("shame.list.emptyDescription")}</EmptyDescription>
         </EmptyHeader>
       </Empty>
     );
@@ -94,13 +110,13 @@ export function BannedList({ users }: { users: BannedUser[] }) {
     <section>
       <div className="flex items-baseline justify-between border-b pb-2">
         <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-          {users.length} account{users.length === 1 ? "" : "s"}
+          {t("shame.list.count", { count: users.length })}
         </span>
-        <span className="text-xs text-muted-foreground">Most recent first</span>
+        <span className="text-xs text-muted-foreground">{t("shame.list.mostRecent")}</span>
       </div>
       <ul className="mt-1 flex flex-col">
         {users.map((user) => (
-          <BannedEntry key={user.id} user={user} />
+          <BannedEntry key={user.id} user={user} locale={locale} t={t} />
         ))}
       </ul>
     </section>

@@ -1,3 +1,4 @@
+use crate::{t, tr};
 use anyhow::Result;
 
 pub fn capitalize(s: &str) -> String {
@@ -10,13 +11,19 @@ pub fn capitalize(s: &str) -> String {
 
 pub fn read_keychain(service: &str) -> Result<String> {
     if cfg!(not(target_os = "macos")) {
-        anyhow::bail!("Keychain lookup is only available on macOS");
+        anyhow::bail!("{}", t!("commands.usage.helpers.keychainMacOnly"));
     }
     let out = std::process::Command::new("security")
         .args(["find-generic-password", "-s", service, "-w"])
         .output()?;
     if !out.status.success() {
-        anyhow::bail!("Keychain lookup failed for service '{service}'");
+        anyhow::bail!(
+            "{}",
+            tr!(
+                "commands.usage.helpers.keychainLookupFailed",
+                service = service
+            )
+        );
     }
     Ok(String::from_utf8(out.stdout)?.trim_end().to_string())
 }
@@ -25,7 +32,7 @@ pub fn atomic_write_secret(path: &std::path::Path, data: &[u8]) -> std::io::Resu
     let dir = path.parent().ok_or_else(|| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
-            "path has no parent directory",
+            t!("commands.usage.helpers.noParentDirectory"),
         )
     })?;
     std::fs::create_dir_all(dir)?;
@@ -66,4 +73,3 @@ pub fn atomic_write_secret(path: &std::path::Path, data: &[u8]) -> std::io::Resu
     }
     Ok(())
 }
-

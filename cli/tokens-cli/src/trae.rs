@@ -51,6 +51,7 @@ pub mod auth {
     //! `~/.config/tokens` on Linux/macOS).
 
     use crate::trae::safestorage;
+    use crate::{t, tr};
     use anyhow::{Context, Result};
     use base64::Engine;
     use chrono::{DateTime, Utc};
@@ -262,9 +263,13 @@ pub mod auth {
                     }
                     Err(e) => {
                         eprintln!(
-                        "  Trae {} refresh token failed: {e}; falling back to storage.json decryption",
-                        variant.client_str()
-                    );
+                            "{}",
+                            tr!(
+                                "top.trae.refreshFailed",
+                                variant = variant.client_str(),
+                                error = e
+                            )
+                        );
                     }
                 }
             }
@@ -282,8 +287,11 @@ pub mod auth {
                 if creds.is_token_expired() {
                     if creds.is_refresh_expired() {
                         eprintln!(
-                            "  Trae {} decrypted credentials are fully expired; falling through to manual login",
-                            variant.client_str()
+                            "{}",
+                            tr!(
+                                "top.trae.credentialsExpired",
+                                variant = variant.client_str()
+                            )
                         );
                     } else {
                         match exchange_token(
@@ -304,8 +312,12 @@ pub mod auth {
                             }
                             Err(e) => {
                                 eprintln!(
-                                    "  Trae {} decrypted token is stale and refresh failed: {e}",
-                                    variant.client_str()
+                                    "{}",
+                                    tr!(
+                                        "top.trae.staleTokenRefreshFailed",
+                                        variant = variant.client_str(),
+                                        error = e
+                                    )
                                 );
                             }
                         }
@@ -316,33 +328,40 @@ pub mod auth {
                 }
             }
             Err(e) => {
-                eprintln!("  Trae {} auto-decrypt failed: {e}", variant.client_str());
+                eprintln!(
+                    "{}",
+                    tr!(
+                        "top.trae.autoDecryptFailed",
+                        variant = variant.client_str(),
+                        error = e
+                    )
+                );
             }
         }
 
         // 4. Everything failed.
-        Err(anyhow::anyhow!(
-        "Could not obtain a Trae {} access token. Run `tokens trae login --manual --variant {}` to paste a JWT manually.",
-        variant.client_str(),
-        variant.cli_arg()
-    ))
+        Err(anyhow::anyhow!(tr!(
+            "top.trae.noAccessToken",
+            variant = variant.client_str(),
+            arg = variant.cli_arg()
+        )))
     }
 
     // ── storage.json decryption ────────────────────────────────────────────
 
     fn decrypt_from_storage(variant: TraeVariant) -> Result<CachedCredentials> {
-        let home = crate::paths::home_dir().context("could not determine home directory")?;
+        let home = crate::paths::home_dir().context(t!("top.trae.noHomeDir"))?;
         let app_dir = home
             .join("Library/Application Support")
             .join(variant.app_dir_name());
         let storage = app_dir.join("User/globalStorage/storage.json");
 
         if !storage.exists() {
-            return Err(anyhow::anyhow!(
-                "storage.json for {} not found (expected at: {})",
-                variant.app_dir_name(),
-                storage.display()
-            ));
+            return Err(anyhow::anyhow!(tr!(
+                "top.trae.storageMissing",
+                app = variant.app_dir_name(),
+                path = storage.display()
+            )));
         }
 
         let obj: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&storage)?)?;
@@ -360,19 +379,19 @@ pub mod auth {
                         .max_by_key(|s| s.len())
                 })
             })
-            .context("no iCubeAuthInfo entry found in storage.json")?;
+            .context(t!("top.trae.noAuthInfoEntry"))?;
 
         let json = safestorage::decrypt_base64_blob(b64)?;
         let raw: serde_json::Value =
-            serde_json::from_str(&json).context("decrypted iCubeAuthInfo is not valid JSON")?;
+            serde_json::from_str(&json).context(t!("top.trae.authInfoNotJson"))?;
 
         let token = raw["token"]
             .as_str()
-            .context("missing `token` field")?
+            .context(t!("top.trae.missingTokenField"))?
             .to_string();
         let refresh_token = raw["refreshToken"]
             .as_str()
-            .context("missing `refreshToken` field")?
+            .context(t!("top.trae.missingRefreshTokenField"))?
             .to_string();
         let expired_at = raw["expiredAt"]
             .as_str()
@@ -471,11 +490,11 @@ pub mod auth {
         let status = resp.status();
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
-            return Err(anyhow::anyhow!(
-                "ExchangeToken returned {}: {}. Run `tokens trae login --manual` to paste a fresh token.",
-                status,
-                truncate_error_body(&body)
-            ));
+            return Err(anyhow::anyhow!(tr!(
+                "top.trae.exchangeTokenFailed",
+                status = status,
+                body = truncate_error_body(&body)
+            )));
         }
         let data: ExchangeResponse = resp.json().await?;
         let r = data.result;
@@ -709,6 +728,7 @@ pub mod safestorage {
     //! Requires SHA-512(data) == hash; otherwise treated as corrupt.
     //! ```
 
+    use crate::{t, tr};
     use aes::Aes128;
     use anyhow::{anyhow, Context, Result};
     use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
@@ -750,11 +770,11 @@ pub mod safestorage {
 
     fn derive_key_iv(salt: &[u8]) -> Result<([u8; AES_KEY_LEN], [u8; IV_LEN])> {
         if salt.len() != SALT_LEN {
-            return Err(anyhow!(
-                "wrong salt length: expected {}, got {}",
-                SALT_LEN,
-                salt.len()
-            ));
+            return Err(anyhow!(tr!(
+                "top.trae.wrongSaltLength",
+                expected = SALT_LEN,
+                got = salt.len()
+            )));
         }
         let sha_salt = Sha512::digest(salt);
         let mut kdf_buf = [0u8; 128];
@@ -773,9 +793,9 @@ pub mod safestorage {
     pub fn decrypt_base64_blob(b64: &str) -> Result<String> {
         let raw = B64
             .decode(b64.trim())
-            .context("failed to base64-decode iCubeAuthInfo")?;
+            .context(t!("top.trae.base64DecodeFailed"))?;
         let pt = decrypt_blob(&raw)?;
-        String::from_utf8(pt).context("decrypted plaintext is not valid UTF-8")
+        String::from_utf8(pt).context(t!("top.trae.plaintextNotUtf8"))
     }
 
     /// Decrypt a raw-bytes blob and return the plaintext (with the SHA-512
@@ -783,45 +803,45 @@ pub mod safestorage {
     pub fn decrypt_blob(blob: &[u8]) -> Result<Vec<u8>> {
         let min_len = MAGIC.len() + SALT_LEN + 16;
         if blob.len() < min_len {
-            return Err(anyhow!(
-                "blob too short: {} bytes (need at least {} bytes)",
-                blob.len(),
-                min_len
-            ));
+            return Err(anyhow!(tr!(
+                "top.trae.blobTooShort",
+                len = blob.len(),
+                min = min_len
+            )));
         }
         if blob[..MAGIC.len()] != MAGIC {
-            return Err(anyhow!(
-                "magic header mismatch: got {:02x?}, expected {:02x?}",
-                &blob[..MAGIC.len()],
-                MAGIC
-            ));
+            return Err(anyhow!(tr!(
+                "top.trae.magicMismatch",
+                got = format!("{:02x?}", &blob[..MAGIC.len()]),
+                expected = format!("{:02x?}", MAGIC)
+            )));
         }
         let salt = &blob[MAGIC.len()..MAGIC.len() + SALT_LEN];
         let ciphertext = &blob[MAGIC.len() + SALT_LEN..];
         if !ciphertext.len().is_multiple_of(16) {
-            return Err(anyhow!(
-                "ciphertext length {} is not a multiple of the AES block size (16)",
-                ciphertext.len()
-            ));
+            return Err(anyhow!(tr!(
+                "top.trae.ciphertextNotBlockAligned",
+                len = ciphertext.len()
+            )));
         }
         let (key, iv) = derive_key_iv(salt)?;
         let mut buf = ciphertext.to_vec();
         let plaintext_len = Aes128CbcDec::new(&key.into(), &iv.into())
             .decrypt_padded_mut::<Pkcs7>(&mut buf)
-            .map_err(|e| anyhow!("AES-CBC decryption failed: {e}"))?
+            .map_err(|e| anyhow!(tr!("top.trae.decryptFailed", error = e)))?
             .len();
         buf.truncate(plaintext_len);
         if buf.len() < HASH_LEN {
-            return Err(anyhow!(
-                "plaintext too short: {} bytes (need at least {} bytes for the hash prefix)",
-                buf.len(),
-                HASH_LEN
-            ));
+            return Err(anyhow!(tr!(
+                "top.trae.plaintextTooShort",
+                len = buf.len(),
+                min = HASH_LEN
+            )));
         }
         let (expected_hash, data) = buf.split_at(HASH_LEN);
         let actual_hash = Sha512::digest(data);
         if expected_hash != actual_hash.as_slice() {
-            return Err(anyhow!("SHA-512 integrity check failed"));
+            return Err(anyhow!(t!("top.trae.integrityCheckFailed")));
         }
         Ok(data.to_vec())
     }
@@ -897,19 +917,30 @@ pub mod safestorage {
             assert_eq!(s, r#"{"hello":"world"}"#);
         }
 
+        /// The catalogue text up to its first placeholder: a substring that
+        /// survives translation and wording changes alike.
+        fn text_before_placeholder(key: &str) -> String {
+            let text = crate::i18n::t(key);
+            text.split('{').next().unwrap_or(text).to_string()
+        }
+
         #[test]
         fn test_wrong_magic_rejected() {
             let mut blob = encrypt_for_test(b"test");
             blob[0] = b'x';
             let err = decrypt_blob(&blob).unwrap_err();
-            assert!(err.to_string().contains("magic"));
+            assert!(err
+                .to_string()
+                .contains(&text_before_placeholder("top.trae.magicMismatch")));
         }
 
         #[test]
         fn test_too_short_rejected() {
             let blob = vec![0u8; 16];
             let err = decrypt_blob(&blob).unwrap_err();
-            assert!(err.to_string().contains("blob too short"));
+            assert!(err
+                .to_string()
+                .contains(&text_before_placeholder("top.trae.blobTooShort")));
         }
 
         #[test]
@@ -932,7 +963,10 @@ pub mod safestorage {
             blob.extend_from_slice(&[0u8; SALT_LEN]);
             blob.extend_from_slice(&[0u8; 17]); // 17 bytes — not a multiple of 16
             let err = decrypt_blob(&blob).unwrap_err();
-            assert!(err.to_string().contains("AES block size"));
+            assert_eq!(
+                err.to_string(),
+                tr!("top.trae.ciphertextNotBlockAligned", len = 17)
+            );
         }
     }
 }
@@ -949,6 +983,7 @@ pub mod sync {
 
     use super::auth::{self, get_trae_cache_dir, TraeVariant};
     use crate::process_liveness::pid_is_alive;
+    use crate::{t, tr};
     use anyhow::{Context, Result};
     use chrono::Utc;
     use serde::{Deserialize, Serialize};
@@ -1043,7 +1078,7 @@ pub mod sync {
             });
         }
         let content = std::fs::read_to_string(&path)?;
-        serde_json::from_str(&content).context("failed to parse manifest JSON")
+        serde_json::from_str(&content).context(t!("top.trae.manifestParseFailed"))
     }
 
     fn save_manifest(manifest: &TraeManifest) -> Result<()> {
@@ -1110,11 +1145,11 @@ pub mod sync {
             let status = resp.status();
             if !status.is_success() {
                 let body = resp.text().await.unwrap_or_default();
-                return Err(anyhow::anyhow!(
-                    "usage API returned {}: {}. Run `tokens trae login` to re-authenticate.",
-                    status,
-                    auth::truncate_error_body(&body)
-                ));
+                return Err(anyhow::anyhow!(tr!(
+                    "top.trae.usageApiFailed",
+                    status = status,
+                    body = auth::truncate_error_body(&body)
+                )));
             }
 
             let data: UsageResponse = resp.json().await?;
@@ -1177,7 +1212,7 @@ pub mod sync {
                 .create(true)
                 .truncate(false)
                 .open(&os_path)
-                .with_context(|| format!("failed to open OS sync lock at {}", os_path.display()))?;
+                .with_context(|| tr!("top.trae.openSyncLock", path = os_path.display()))?;
 
             match fs2::FileExt::try_lock_exclusive(&os_file) {
                 Ok(()) => {}
@@ -1189,12 +1224,13 @@ pub mod sync {
                         .filter(|(pid, _)| pid_is_alive(*pid))
                         .map(|(pid, _)| format!(" (pid {pid})"))
                         .unwrap_or_default();
-                    return Err(anyhow::anyhow!(
-                        "another trae sync is in progress{owner}; aborting"
-                    ));
+                    return Err(anyhow::anyhow!(tr!(
+                        "top.trae.syncInProgress",
+                        owner = owner
+                    )));
                 }
                 Err(e) => {
-                    return Err(anyhow::Error::new(e).context("failed to acquire sync lock"));
+                    return Err(anyhow::Error::new(e).context(t!("top.trae.acquireSyncLock")));
                 }
             }
 
@@ -1241,7 +1277,7 @@ pub mod sync {
             .create_new(true)
             .write(true)
             .open(&temp_path)
-            .with_context(|| format!("failed to prepare sync lock at {}", temp_path.display()))?;
+            .with_context(|| tr!("top.trae.prepareSyncLock", path = temp_path.display()))?;
         writeln!(temp, "{} {}", std::process::id(), Utc::now().timestamp())?;
         drop(temp);
         let record = std::fs::read_to_string(&temp_path)?;
@@ -1255,27 +1291,24 @@ pub mod sync {
                     .filter(|(pid, _)| pid_is_alive(*pid))
                     .map(|(pid, _)| format!(" (pid {pid})"))
                     .unwrap_or_default();
-                anyhow::bail!("another trae sync is in progress{owner}; aborting")
+                anyhow::bail!(tr!("top.trae.syncInProgress", owner = owner))
             }
-            Err(err) => {
-                Err(anyhow::Error::new(err).context("failed to publish sync lock atomically"))
-            }
+            Err(err) => Err(anyhow::Error::new(err).context(t!("top.trae.publishSyncLock"))),
         }
     }
 
     fn existing_sync_lock_error(lock_path: &std::path::Path) -> anyhow::Error {
         if let Some((pid, _)) = read_sync_lock(lock_path).filter(|(pid, _)| pid_is_alive(*pid)) {
-            anyhow::anyhow!(
-                "Another tokens Trae sync may be in progress (pid {pid}); do not remove '{}' until that process has stopped. If it has stopped, remove '{}' and retry.",
-                lock_path.display(),
-                lock_path.display()
-            )
+            anyhow::anyhow!(tr!(
+                "top.trae.lockHeldByPid",
+                pid = pid,
+                path = lock_path.display()
+            ))
         } else {
-            anyhow::anyhow!(
-                "Trae sync lock at '{}' already exists. To avoid overlapping a possible active sync during a rolling upgrade, tokens will not replace it automatically. Confirm no tokens Trae sync is running, then remove '{}' and retry.",
-                lock_path.display(),
-                lock_path.display()
-            )
+            anyhow::anyhow!(tr!(
+                "top.trae.lockAlreadyExists",
+                path = lock_path.display()
+            ))
         }
     }
 
@@ -1291,7 +1324,7 @@ pub mod sync {
 
         let (token, host) = auth::get_token_and_host(variant)
             .await
-            .context("failed to obtain Trae access token")?;
+            .context(t!("top.trae.obtainTokenFailed"))?;
 
         let now = Utc::now().timestamp();
         let manifest = load_manifest()?;
@@ -1420,13 +1453,16 @@ pub mod sync {
 
         if credentialed.is_empty() {
             if variants.is_empty() {
-                println!("  No Trae credentials found. Run `tokens trae login` first.");
+                println!("{}", t!("top.trae.noCredentials"));
             } else {
                 for variant in variants {
                     println!(
-                        "  Trae {}: no credentials — run `tokens trae login --variant {}` first",
-                        variant.client_str(),
-                        variant.cli_arg()
+                        "{}",
+                        tr!(
+                            "top.trae.noCredentialsForVariant",
+                            variant = variant.client_str(),
+                            arg = variant.cli_arg()
+                        )
                     );
                 }
             }
@@ -1438,15 +1474,23 @@ pub mod sync {
             match sync_variant(*variant, since_days, &usage_types).await {
                 Ok(n) => {
                     println!(
-                        "  Trae: synced {n} sessions (using {} credentials)",
-                        variant.client_str()
+                        "{}",
+                        tr!(
+                            "top.trae.synced",
+                            sessions = n,
+                            variant = variant.client_str()
+                        )
                     );
                     return Ok(());
                 }
                 Err(e) => {
                     eprintln!(
-                        "  Trae sync failed using {} credentials: {e}",
-                        variant.client_str()
+                        "{}",
+                        tr!(
+                            "top.trae.syncFailedWithVariant",
+                            variant = variant.client_str(),
+                            error = e
+                        )
                     );
                     last_err = Some(e);
                 }
@@ -1457,7 +1501,7 @@ pub mod sync {
         // last error so the user sees a non-zero exit instead of a silent
         // success after the per-variant `eprintln!` lines scroll off.
         match last_err {
-            Some(e) => Err(e.context("all Trae credential sources failed")),
+            Some(e) => Err(e.context(t!("top.trae.allSourcesFailed"))),
             None => Ok(()),
         }
     }
@@ -1487,6 +1531,13 @@ pub mod sync {
         // Liveness probe coverage moved to `crate::process_liveness`, which
         // now owns the single implementation both sync locks share.
 
+        /// The catalogue text up to its first placeholder: a substring that
+        /// survives translation and wording changes alike.
+        fn text_before_placeholder(key: &str) -> String {
+            let text = crate::i18n::t(key);
+            text.split('{').next().unwrap_or(text).to_string()
+        }
+
         /// A visible lock record left behind by a crashed run fails closed.
         /// The next sync preserves it until the user confirms no sync is
         /// active and removes the exact reported path.
@@ -1497,7 +1548,9 @@ pub mod sync {
             std::fs::write(cache_dir.join("sync.lock"), "0 1\n").unwrap();
 
             let err = SyncLockGuard::acquire(cache_dir).unwrap_err();
-            assert!(err.to_string().contains("already exists"));
+            assert!(err
+                .to_string()
+                .contains(&text_before_placeholder("top.trae.lockAlreadyExists")));
             assert!(cache_dir.join("sync.lock").exists());
         }
 
@@ -1509,9 +1562,11 @@ pub mod sync {
 
             let err = existing_sync_lock_error(&lock_path).to_string();
             let quoted_path = format!("'{}'", lock_path.display());
+            assert_eq!(
+                err,
+                tr!("top.trae.lockAlreadyExists", path = lock_path.display())
+            );
             assert!(err.contains(&quoted_path));
-            assert!(err.contains("Confirm no tokens Trae sync is running"));
-            assert!(err.contains("remove"));
         }
 
         /// A live PID-only lock belongs to a pre-OS-lock binary. A new
@@ -1525,10 +1580,14 @@ pub mod sync {
             std::fs::write(&lock_path, format!("{} 1\n", std::process::id())).unwrap();
 
             let err = SyncLockGuard::acquire(cache_dir).unwrap_err();
-            assert!(
-                err.to_string()
-                    .contains("Another tokens Trae sync may be in progress"),
-                "a live legacy owner must be preserved, got: {err:#}"
+            assert_eq!(
+                err.to_string(),
+                tr!(
+                    "top.trae.lockHeldByPid",
+                    pid = std::process::id(),
+                    path = lock_path.display()
+                ),
+                "a live legacy owner must be preserved"
             );
             assert_eq!(
                 read_sync_lock(&lock_path).map(|(pid, _)| pid),
@@ -1589,7 +1648,9 @@ pub mod sync {
                 .unwrap();
 
             let err = SyncLockGuard::acquire(cache_dir).unwrap_err();
-            assert!(err.to_string().contains("already exists"));
+            assert!(err
+                .to_string()
+                .contains(&text_before_placeholder("top.trae.lockAlreadyExists")));
             assert!(lock_path.exists(), "the pending legacy inode must survive");
         }
 
@@ -1613,7 +1674,8 @@ pub mod sync {
 
             let err = SyncLockGuard::acquire(cache_dir).unwrap_err();
             assert!(
-                err.to_string().contains("already exists"),
+                err.to_string()
+                    .contains(&text_before_placeholder("top.trae.lockAlreadyExists")),
                 "a held lock must never be evicted, got: {err:#}"
             );
 
@@ -1629,7 +1691,9 @@ pub mod sync {
 
             let guard = SyncLockGuard::acquire(cache_dir).expect("first acquire");
             let err = SyncLockGuard::acquire(cache_dir).unwrap_err();
-            assert!(err.to_string().contains("in progress"));
+            assert!(err
+                .to_string()
+                .contains(&text_before_placeholder("top.trae.syncInProgress")));
 
             drop(guard);
             SyncLockGuard::acquire(cache_dir).expect("the lock is free once the guard is dropped");
@@ -1643,7 +1707,9 @@ pub mod sync {
 
             let owner = SyncLockGuard::acquire(cache_dir).unwrap();
             let err = SyncLockGuard::acquire(cache_dir).unwrap_err();
-            assert!(err.to_string().contains("in progress"));
+            assert!(err
+                .to_string()
+                .contains(&text_before_placeholder("top.trae.syncInProgress")));
             assert!(lock_path.exists(), "only the owner's record is visible");
 
             drop(owner);

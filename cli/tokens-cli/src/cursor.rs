@@ -1,3 +1,4 @@
+use crate::{t, tr};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -50,11 +51,11 @@ fn cursor_http_client_builder() -> reqwest::ClientBuilder {
 fn build_cursor_http_client() -> Result<reqwest::Client> {
     cursor_http_client_builder()
         .build()
-        .context("Failed to build Cursor HTTP client")
+        .context(t!("top.cursor.buildHttpClient"))
 }
 
 fn home_dir() -> Result<PathBuf> {
-    crate::paths::home_dir().context("Could not determine home directory")
+    crate::paths::home_dir().context(t!("top.cursor.noHomeDir"))
 }
 
 fn cursor_credentials_path() -> PathBuf {
@@ -408,7 +409,7 @@ fn build_cursor_json_headers(session_token: &str) -> reqwest::header::HeaderMap 
 fn atomic_write_file(path: &std::path::Path, contents: &str) -> Result<()> {
     let parent = path
         .parent()
-        .ok_or_else(|| anyhow::anyhow!("Invalid cache path"))?;
+        .ok_or_else(|| anyhow::anyhow!(t!("top.cursor.invalidCachePath")))?;
     if !parent.exists() {
         fs::create_dir_all(parent)?;
     }
@@ -449,11 +450,11 @@ fn atomic_write_file(path: &std::path::Path, contents: &str) -> Result<()> {
                 }
                 Err(copy_err) => {
                     let _ = fs::remove_file(&temp_path);
-                    return Err(anyhow::anyhow!(
-                        "Failed to persist file with rename ({}) and copy fallback ({})",
-                        err,
-                        copy_err
-                    ));
+                    return Err(anyhow::anyhow!(tr!(
+                        "top.cursor.persistFailedBothWays",
+                        rename = err,
+                        copy = copy_err
+                    )));
                 }
             }
         } else {
@@ -550,7 +551,7 @@ pub fn read_access_token_from_state_vscdb(db_path: &Path) -> Result<String> {
         &uri,
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI,
     )
-    .with_context(|| format!("Failed to open Cursor state DB at {}", db_path.display()))?;
+    .with_context(|| tr!("top.cursor.openStateDb", path = db_path.display()))?;
 
     let token: String = conn
         .query_row(
@@ -558,10 +559,10 @@ pub fn read_access_token_from_state_vscdb(db_path: &Path) -> Result<String> {
             [],
             |row| row.get(0),
         )
-        .context("cursorAuth/accessToken not found in Cursor state DB (is Cursor logged in?)")?;
+        .context(t!("top.cursor.accessTokenMissing"))?;
 
     if token.trim().is_empty() {
-        anyhow::bail!("cursorAuth/accessToken is empty");
+        anyhow::bail!(t!("top.cursor.accessTokenEmpty"));
     }
     Ok(token)
 }
@@ -573,7 +574,7 @@ fn user_id_from_access_token_jwt(access_token: &str) -> Result<String> {
     let payload_b64 = access_token
         .split('.')
         .nth(1)
-        .ok_or_else(|| anyhow::anyhow!("Invalid Cursor access token JWT"))?;
+        .ok_or_else(|| anyhow::anyhow!(t!("top.cursor.invalidJwt")))?;
     let padded = match payload_b64.len() % 4 {
         2 => format!("{}==", payload_b64),
         3 => format!("{}=", payload_b64),
@@ -584,13 +585,13 @@ fn user_id_from_access_token_jwt(access_token: &str) -> Result<String> {
         .or_else(|_| {
             base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(payload_b64.as_bytes())
         })
-        .context("Failed to decode Cursor access token JWT payload")?;
+        .context(t!("top.cursor.jwtPayloadDecodeFailed"))?;
     let payload: serde_json::Value =
-        serde_json::from_slice(&bytes).context("Failed to parse Cursor access token JWT")?;
+        serde_json::from_slice(&bytes).context(t!("top.cursor.jwtParseFailed"))?;
     let sub = payload
         .get("sub")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| anyhow::anyhow!("Cursor access token JWT missing sub claim"))?;
+        .ok_or_else(|| anyhow::anyhow!(t!("top.cursor.jwtMissingSub")))?;
 
     if let Some(idx) = sub.find("user_") {
         let rest = &sub[idx..];
@@ -603,7 +604,7 @@ fn user_id_from_access_token_jwt(access_token: &str) -> Result<String> {
         }
     }
 
-    anyhow::bail!("Cannot parse Cursor user id from JWT sub: {sub}");
+    anyhow::bail!(tr!("top.cursor.userIdUnparseable", sub = sub));
 }
 
 /// Build the `WorkosCursorSessionToken` cookie value from a desktop access token.
@@ -618,9 +619,8 @@ pub fn session_token_from_access_token(access_token: &str) -> Result<String> {
 /// Read the local Cursor desktop login and build a session token cookie value.
 pub fn read_local_cursor_session_token() -> Result<String> {
     let home = home_dir()?;
-    let db_path = find_cursor_state_vscdb(&home).ok_or_else(|| {
-        anyhow::anyhow!("Cursor desktop state.vscdb not found (install Cursor and sign in first)")
-    })?;
+    let db_path = find_cursor_state_vscdb(&home)
+        .ok_or_else(|| anyhow::anyhow!(t!("top.cursor.stateDbMissing")))?;
     let access_token = read_access_token_from_state_vscdb(&db_path)?;
     session_token_from_access_token(&access_token)
 }
@@ -646,7 +646,7 @@ fn upsert_credentials(token: &str, label: Option<&str>) -> Result<String> {
                 }
                 if let Some(existing_label) = &acct.label {
                     if existing_label.trim().to_lowercase() == needle {
-                        anyhow::bail!("Cursor account label already exists: {}", lbl);
+                        anyhow::bail!(tr!("top.cursor.accountLabelExists", label = lbl));
                     }
                 }
             }
@@ -903,10 +903,10 @@ pub fn save_credentials(token: &str, label: Option<&str>) -> Result<String> {
 
 pub fn remove_account(name_or_id: &str, purge_cache: bool) -> Result<()> {
     let mut store =
-        load_credentials_store().ok_or_else(|| anyhow::anyhow!("No saved Cursor accounts"))?;
+        load_credentials_store().ok_or_else(|| anyhow::anyhow!(t!("top.cursor.noAccounts")))?;
 
     let resolved = resolve_account_id(&store, name_or_id)
-        .ok_or_else(|| anyhow::anyhow!("Account not found: {}", name_or_id))?;
+        .ok_or_else(|| anyhow::anyhow!(tr!("top.cursor.accountNotFound", name = name_or_id)))?;
 
     let was_active = resolved == store.active_account_id;
 
@@ -995,10 +995,10 @@ pub fn remove_all_accounts(purge_cache: bool) -> Result<()> {
 
 pub fn set_active_account(name_or_id: &str) -> Result<()> {
     let mut store =
-        load_credentials_store().ok_or_else(|| anyhow::anyhow!("No saved Cursor accounts"))?;
+        load_credentials_store().ok_or_else(|| anyhow::anyhow!(t!("top.cursor.noAccounts")))?;
 
     let resolved = resolve_account_id(&store, name_or_id)
-        .ok_or_else(|| anyhow::anyhow!("Account not found: {}", name_or_id))?;
+        .ok_or_else(|| anyhow::anyhow!(tr!("top.cursor.accountNotFound", name = name_or_id)))?;
 
     let old_active_id = store.active_account_id.clone();
 
@@ -1077,9 +1077,11 @@ fn reconcile_cache_files_in_dir(
                 let _ = archive_cache_file_in_dir(cache_dir, &active_file, "usage.active");
             }
             if let Err(err) = fs::rename(&new_account_file, &active_file) {
-                failures.push(format!(
-                    "could not promote {} to usage.{ext}: {err}",
-                    new_account_file.display()
+                failures.push(tr!(
+                    "top.cursor.cachePromoteFailed",
+                    file = new_account_file.display(),
+                    ext = ext,
+                    error = err
                 ));
             }
         }
@@ -1089,19 +1091,18 @@ fn reconcile_cache_files_in_dir(
         return Ok(());
     }
 
-    Err(anyhow::anyhow!(
-        "failed to move Cursor cache files while switching from {} to {}: {}",
-        old_account_id,
-        new_account_id,
-        failures.join("; ")
-    ))
+    Err(anyhow::anyhow!(tr!(
+        "top.cursor.cacheSwitchFailed",
+        from = old_account_id,
+        to = new_account_id,
+        failures = failures.join("; ")
+    )))
 }
 
 pub fn load_active_credentials() -> Option<CursorCredentials> {
     let store = load_credentials_store()?;
     store.accounts.get(&store.active_account_id).cloned()
 }
-
 
 fn is_cursor_usage_cache_filename(name: &str) -> bool {
     if name == "usage.csv" || name == "usage.json" {
@@ -1162,7 +1163,7 @@ pub async fn validate_cursor_session(token: &str) -> ValidateSessionResult {
             return ValidateSessionResult {
                 valid: false,
                 membership_type: None,
-                error: Some(format!("Failed to build HTTP client: {}", e)),
+                error: Some(tr!("top.cursor.buildHttpClientWith", error = e)),
             };
         }
     };
@@ -1177,7 +1178,7 @@ pub async fn validate_cursor_session(token: &str) -> ValidateSessionResult {
             return ValidateSessionResult {
                 valid: false,
                 membership_type: None,
-                error: Some(format!("Failed to connect: {}", e)),
+                error: Some(tr!("top.cursor.connectFailed", error = e)),
             };
         }
     };
@@ -1188,7 +1189,7 @@ pub async fn validate_cursor_session(token: &str) -> ValidateSessionResult {
         return ValidateSessionResult {
             valid: false,
             membership_type: None,
-            error: Some("Session token expired or invalid".to_string()),
+            error: Some(t!("top.cursor.sessionTokenExpiredInvalid").to_string()),
         };
     }
 
@@ -1196,7 +1197,10 @@ pub async fn validate_cursor_session(token: &str) -> ValidateSessionResult {
         return ValidateSessionResult {
             valid: false,
             membership_type: None,
-            error: Some(format!("API returned status {}", response.status())),
+            error: Some(tr!(
+                "top.cursor.apiReturnedStatus",
+                status = response.status()
+            )),
         };
     }
 
@@ -1208,10 +1212,7 @@ pub async fn validate_cursor_session(token: &str) -> ValidateSessionResult {
                 membership_type: None,
                 // Lead with the action the user can take; keep the parse error
                 // trailing so it is still available for a bug report.
-                error: Some(format!(
-                    "Could not read the Cursor API response - run `tokens cursor login` to re-authenticate ({})",
-                    e
-                )),
+                error: Some(tr!("top.cursor.readResponseFailed", error = e)),
             };
         }
     };
@@ -1239,7 +1240,7 @@ pub async fn validate_cursor_session(token: &str) -> ValidateSessionResult {
         ValidateSessionResult {
             valid: false,
             membership_type: None,
-            error: Some("Invalid response format".to_string()),
+            error: Some(t!("top.cursor.invalidResponseFormat").to_string()),
         }
     }
 }
@@ -1295,9 +1296,7 @@ async fn fetch_cursor_usage_events_json_from(
     for page in 1..=CURSOR_MAX_JSON_PAGES {
         let remaining_budget = fetch_deadline.saturating_duration_since(Instant::now());
         if remaining_budget.is_zero() {
-            anyhow::bail!(
-                "Cursor usage events fetch exceeded its overall time budget before the full history was collected"
-            );
+            anyhow::bail!(t!("top.cursor.fetchBudgetExceeded"));
         }
 
         let body = usage_events_request_body(page, page_size, sync_start);
@@ -1313,13 +1312,11 @@ async fn fetch_cursor_usage_events_json_from(
         if response.status() == reqwest::StatusCode::UNAUTHORIZED
             || response.status() == reqwest::StatusCode::FORBIDDEN
         {
-            anyhow::bail!(
-                "Cursor session expired. Please run 'bunx tokens@latest cursor login' to re-authenticate."
-            );
+            anyhow::bail!(t!("top.cursor.sessionExpired"));
         }
 
         if !response.status().is_success() {
-            anyhow::bail!("Cursor API returned status {}", response.status());
+            anyhow::bail!(tr!("top.cursor.apiStatus", status = response.status()));
         }
 
         // The byte ceiling is cumulative across pages: each page may read only
@@ -1327,15 +1324,18 @@ async fn fetch_cursor_usage_events_json_from(
         // sidestep the cap by spreading a huge payload over many pages.
         let remaining = match max_body_bytes.checked_sub(bytes_read).filter(|r| *r > 0) {
             Some(remaining) => remaining,
-            None => anyhow::bail!(
-                "Cursor usage events JSON exceeded the {max_body_bytes} byte limit across pages"
-            ),
+            None => anyhow::bail!(tr!(
+                "top.cursor.jsonExceedsLimitAcrossPages",
+                max = max_body_bytes
+            )),
         };
-        let text = read_cursor_body_with_cap(response, remaining, "usage events JSON").await?;
+        let text =
+            read_cursor_body_with_cap(response, remaining, t!("top.cursor.labelUsageEventsJson"))
+                .await?;
         bytes_read += text.len();
 
-        let page_value: serde_json::Value = serde_json::from_str(&text)
-            .context("Invalid response from Cursor API - expected usage events JSON")?;
+        let page_value: serde_json::Value =
+            serde_json::from_str(&text).context(t!("top.cursor.invalidUsageEventsJson"))?;
 
         if total_count.is_none() {
             total_count = page_value
@@ -1353,7 +1353,7 @@ async fn fetch_cursor_usage_events_json_from(
         {
             Some(Some(events)) => events.clone(),
             _ => {
-                anyhow::bail!("Invalid response from Cursor API - missing usageEventsDisplay array")
+                anyhow::bail!(t!("top.cursor.missingUsageEventsArray"))
             }
         };
         let received = page_events.len();
@@ -1370,9 +1370,7 @@ async fn fetch_cursor_usage_events_json_from(
                 if all_events.len() as u64 >= total {
                     true
                 } else if received == 0 {
-                    anyhow::bail!(
-                        "Cursor API returned an empty page before its advertised total of {total} events; refusing to cache a partial history"
-                    );
+                    anyhow::bail!(tr!("top.cursor.emptyPageBeforeTotal", total = total));
                 } else {
                     false
                 }
@@ -1388,16 +1386,17 @@ async fn fetch_cursor_usage_events_json_from(
     // Exhausting the page cap without a clean stop means only part of the history
     // was collected; caching it would masquerade as a full sync, so fail instead.
     if !completed {
-        anyhow::bail!(
-            "Cursor usage events exceeded the {CURSOR_MAX_JSON_PAGES}-page fetch limit before the full history was collected; refusing to cache a partial history"
-        );
+        anyhow::bail!(tr!(
+            "top.cursor.pageLimitExceeded",
+            max = CURSOR_MAX_JSON_PAGES
+        ));
     }
 
     let aggregated = serde_json::json!({
         "totalUsageEventsCount": all_events.len(),
         "usageEventsDisplay": all_events,
     });
-    serde_json::to_string(&aggregated).context("Failed to serialize Cursor usage events cache")
+    serde_json::to_string(&aggregated).context(t!("top.cursor.serializeCacheFailed"))
 }
 
 /// Reads a Cursor response body (`label` names it for errors, e.g. "usage CSV"
@@ -1423,9 +1422,12 @@ async fn read_cursor_body_with_cap(
 ) -> Result<String> {
     if let Some(advertised) = response.content_length() {
         if advertised > max_body_bytes as u64 {
-            anyhow::bail!(
-                "Cursor {label} is {advertised} bytes, over the {max_body_bytes} byte limit"
-            );
+            anyhow::bail!(tr!(
+                "top.cursor.bodyAdvertisedTooLarge",
+                label = label,
+                size = advertised,
+                max = max_body_bytes
+            ));
         }
     }
 
@@ -1433,13 +1435,16 @@ async fn read_cursor_body_with_cap(
     while let Some(chunk) = response
         .chunk()
         .await
-        .with_context(|| format!("Failed to read the Cursor {label} response"))?
+        .with_context(|| tr!("top.cursor.readBodyFailed", label = label))?
     {
         let read_so_far = body.len().saturating_add(chunk.len());
         if read_so_far > max_body_bytes {
-            anyhow::bail!(
-                "Cursor {label} exceeds the {max_body_bytes} byte limit (aborted at {read_so_far} bytes)"
-            );
+            anyhow::bail!(tr!(
+                "top.cursor.bodyTooLarge",
+                label = label,
+                max = max_body_bytes,
+                read = read_so_far
+            ));
         }
         body.extend_from_slice(&chunk);
     }
@@ -1458,7 +1463,7 @@ where
             return SyncCursorResult {
                 synced: false,
                 rows: 0,
-                error: Some(format!("Failed to get home dir: {}", e)),
+                error: Some(tr!("top.cursor.homeDirFailed", error = e)),
             };
         }
     };
@@ -1482,7 +1487,7 @@ where
             return SyncCursorResult {
                 synced: false,
                 rows: 0,
-                error: Some("Not authenticated".to_string()),
+                error: Some(t!("top.cursor.notAuthenticated").to_string()),
             };
         }
     };
@@ -1491,7 +1496,7 @@ where
         return SyncCursorResult {
             synced: false,
             rows: 0,
-            error: Some("Not authenticated".to_string()),
+            error: Some(t!("top.cursor.notAuthenticated").to_string()),
         };
     }
 
@@ -1500,7 +1505,7 @@ where
         return SyncCursorResult {
             synced: false,
             rows: 0,
-            error: Some(format!("Failed to create cache dir: {}", e)),
+            error: Some(tr!("top.cursor.createCacheDirFailed", error = e)),
         };
     }
     #[cfg(unix)]
@@ -1647,7 +1652,7 @@ where
                 errors
                     .first()
                     .cloned()
-                    .unwrap_or_else(|| "Cursor sync failed".to_string()),
+                    .unwrap_or_else(|| t!("top.cursor.syncFailedBail").to_string()),
             ),
         };
     }
@@ -1658,10 +1663,10 @@ where
         error: if errors.is_empty() {
             None
         } else {
-            Some(format!(
-                "Some accounts failed to sync ({}/{})",
-                errors.len(),
-                store.accounts.len()
+            Some(tr!(
+                "top.cursor.someAccountsFailed",
+                done = errors.len(),
+                total = store.accounts.len()
             ))
         },
     }
@@ -1679,12 +1684,8 @@ pub async fn sync_cursor_cache(explicit: bool) -> SyncCursorResult {
     let _ = ensure_credentials_from_local_cursor();
 
     sync_cursor_cache_with_fetcher(move |session_token, sync_start| async move {
-        fetch_cursor_usage_events_json(
-            &session_token,
-            sync_timeout_override(explicit),
-            sync_start,
-        )
-        .await
+        fetch_cursor_usage_events_json(&session_token, sync_timeout_override(explicit), sync_start)
+            .await
     })
     .await
 }
@@ -1732,17 +1733,13 @@ pub fn run_cursor_login(name: Option<String>) -> Result<()> {
 
     let rt = Runtime::new()?;
 
-    println!("\n  {}\n", "Cursor IDE - Login".cyan());
+    println!("\n  {}\n", t!("top.cursor.loginTitle").cyan());
 
     if let Some(ref label) = name {
         if find_account(label).is_some() {
             println!(
                 "  {}",
-                format!(
-                    "Account '{}' already exists. Use 'tokens cursor logout --name {}' first.",
-                    label, label
-                )
-                .yellow()
+                tr!("top.cursor.accountExists", label = label).yellow()
             );
             println!();
             return Ok(());
@@ -1750,33 +1747,30 @@ pub fn run_cursor_login(name: Option<String>) -> Result<()> {
     }
 
     // Prefer the local Cursor desktop accessToken (state.vscdb) when present.
-    println!(
-        "{}",
-        "  Checking local Cursor desktop login...".bright_black()
-    );
+    println!("{}", t!("top.cursor.checkingLocalLogin").bright_black());
     let token = match read_local_cursor_session_token() {
         Ok(token) => {
             if let Some(user_id) = extract_user_id_from_session_token(&token) {
                 println!(
                     "{}",
-                    format!("  Found local Cursor session ({user_id}).").bright_black()
+                    tr!("top.cursor.foundLocalSessionWithId", user_id = user_id).bright_black()
                 );
             } else {
-                println!("{}", "  Found local Cursor session.".bright_black());
+                println!("{}", t!("top.cursor.foundLocalSession").bright_black());
             }
             token
         }
         Err(local_err) => {
             println!(
                 "{}",
-                format!("  Local desktop login unavailable: {local_err}").bright_black()
+                tr!("top.cursor.localLoginUnavailable", error = local_err).bright_black()
             );
-            print!("  Enter Cursor WorkosCursorSessionToken value: ");
+            print!("{}", t!("top.cursor.enterSessionToken"));
             std::io::stdout().flush()?;
-            let pasted = rpassword::read_password().context("Failed to read session token")?;
+            let pasted = rpassword::read_password().context(t!("top.cursor.readSessionToken"))?;
             let pasted = pasted.trim().to_string();
             if pasted.is_empty() {
-                println!("\n  {}\n", "No token provided.".yellow());
+                println!("\n  {}\n", t!("top.cursor.noTokenProvided").yellow());
                 return Ok(());
             }
             pasted
@@ -1784,17 +1778,17 @@ pub fn run_cursor_login(name: Option<String>) -> Result<()> {
     };
 
     println!();
-    println!("{}", "  Validating session token...".bright_black());
+    println!("{}", t!("top.cursor.validatingToken").bright_black());
 
     let result = rt.block_on(async { validate_cursor_session(&token).await });
 
     if !result.valid {
         let msg = result
             .error
-            .unwrap_or_else(|| "Invalid session token".to_string());
+            .unwrap_or_else(|| t!("top.cursor.invalidSessionToken").to_string());
         println!(
             "\n  {}\n",
-            format!("{}. Please check and try again.", msg).red()
+            tr!("top.cursor.checkAndRetry", error = msg).red()
         );
         std::process::exit(1);
     }
@@ -1804,13 +1798,12 @@ pub fn run_cursor_login(name: Option<String>) -> Result<()> {
     let display_name = name.as_deref().unwrap_or(&account_id);
     println!(
         "\n  {}",
-        format!(
-            "Successfully logged in to Cursor as {}",
-            display_name.bold()
-        )
-        .green()
+        tr!("top.cursor.loggedInAs", account = display_name.bold()).green()
     );
-    println!("{}", format!("  Account ID: {}", account_id).bright_black());
+    println!(
+        "{}",
+        tr!("top.cursor.accountId", id = account_id).bright_black()
+    );
     println!();
 
     Ok(())
@@ -1822,12 +1815,12 @@ pub fn run_cursor_logout(name: Option<String>, all: bool, purge_cache: bool) -> 
     if all {
         let accounts = list_accounts();
         if accounts.is_empty() {
-            println!("\n  {}\n", "No saved Cursor accounts.".yellow());
+            println!("\n  {}\n", t!("top.cursor.noAccounts").yellow());
             return Ok(());
         }
 
         remove_all_accounts(purge_cache)?;
-        println!("\n  {}\n", "Logged out from all Cursor accounts.".green());
+        println!("\n  {}\n", t!("top.cursor.loggedOutAll").green());
         return Ok(());
     }
 
@@ -1835,13 +1828,13 @@ pub fn run_cursor_logout(name: Option<String>, all: bool, purge_cache: bool) -> 
         remove_account(account_name, purge_cache)?;
         println!(
             "\n  {}\n",
-            format!("Logged out from Cursor account '{}'.", account_name).green()
+            tr!("top.cursor.loggedOutAccount", account = account_name).green()
         );
         return Ok(());
     }
 
     let Some(store) = load_credentials_store() else {
-        println!("\n  {}\n", "No saved Cursor accounts.".yellow());
+        println!("\n  {}\n", t!("top.cursor.noAccounts").yellow());
         return Ok(());
     };
     let active_id = store.active_account_id.clone();
@@ -1854,7 +1847,7 @@ pub fn run_cursor_logout(name: Option<String>, all: bool, purge_cache: bool) -> 
     remove_account(&active_id, purge_cache)?;
     println!(
         "\n  {}\n",
-        format!("Logged out from Cursor account '{}'.", display).green()
+        tr!("top.cursor.loggedOutAccount", account = display).green()
     );
 
     Ok(())
@@ -1878,41 +1871,47 @@ pub fn run_cursor_status(name: Option<String>) -> Result<()> {
             if let Some(ref account_name) = name {
                 println!(
                     "\n  {}\n",
-                    format!("Account not found: {}", account_name).red()
+                    tr!("top.cursor.accountNotFound", name = account_name).red()
                 );
             } else {
-                println!("\n  {}", "No saved Cursor accounts.".yellow());
-                println!(
-                    "{}",
-                    "  Run 'tokens cursor login' to authenticate.\n".bright_black()
-                );
+                println!("\n  {}", t!("top.cursor.noAccounts").yellow());
+                println!("{}", t!("top.cursor.loginHint").bright_black());
             }
             return Ok(());
         }
     };
 
-    println!("\n  {}\n", "Cursor IDE - Status".cyan());
+    println!("\n  {}\n", t!("top.cursor.statusTitle").cyan());
 
-    let display_name = credentials.label.as_deref().unwrap_or("(no label)");
-    println!("{}", format!("  Account: {}", display_name).white());
+    let display_name = credentials
+        .label
+        .as_deref()
+        .unwrap_or(t!("top.cursor.noLabel"));
+    println!(
+        "{}",
+        tr!("top.cursor.account", account = display_name).white()
+    );
     if let Some(ref uid) = credentials.user_id {
-        println!("{}", format!("  User ID: {}", uid).bright_black());
+        println!("{}", tr!("top.cursor.userId", id = uid).bright_black());
     }
 
-    println!("{}", "  Validating session...".bright_black());
+    println!("{}", t!("top.cursor.validatingSession").bright_black());
 
     let result = rt.block_on(async { validate_cursor_session(&credentials.session_token).await });
 
     if result.valid {
-        println!("  {}", "Session: Valid".green());
+        println!("  {}", t!("top.cursor.sessionValid").green());
         if let Some(membership) = result.membership_type {
-            println!("{}", format!("  Membership: {}", membership).bright_black());
+            println!(
+                "{}",
+                tr!("top.cursor.membership", kind = membership).bright_black()
+            );
         }
     } else {
         let msg = result
             .error
-            .unwrap_or_else(|| "Invalid / Expired".to_string());
-        println!("  {}", format!("Session: {}", msg).red());
+            .unwrap_or_else(|| t!("top.cursor.invalidOrExpired").to_string());
+        println!("  {}", tr!("top.cursor.sessionStatus", status = msg).red());
     }
     println!();
 
@@ -1935,11 +1934,11 @@ pub fn run_cursor_accounts(json: bool) -> Result<()> {
     }
 
     if accounts.is_empty() {
-        println!("\n  {}\n", "No saved Cursor accounts.".yellow());
+        println!("\n  {}\n", t!("top.cursor.noAccounts").yellow());
         return Ok(());
     }
 
-    println!("{}", "\n  Cursor IDE - Accounts\n".cyan());
+    println!("{}", t!("top.cursor.accountsTitle").cyan());
     for acct in &accounts {
         let name = if let Some(ref label) = acct.label {
             format!("{} ({})", label, acct.id)
@@ -1975,30 +1974,30 @@ pub fn run_cursor_sync(json: bool) -> Result<()> {
     if json {
         println!("{}", serde_json::to_string_pretty(&result)?);
         if !result.synced {
-            anyhow::bail!("Cursor sync failed");
+            anyhow::bail!(t!("top.cursor.syncFailedBail"));
         }
         return Ok(());
     }
 
-    println!("\n  {}\n", "Cursor IDE - Sync".cyan());
+    println!("\n  {}\n", t!("top.cursor.syncTitle").cyan());
     if result.synced {
-        println!(
-            "{}",
-            format!("  Synced {} Cursor usage event(s).", result.rows).green()
-        );
+        println!("{}", tr!("top.cursor.synced", count = result.rows).green());
         if let Some(error) = result.error {
-            eprintln!("{}", format!("  Warning: {}", error).yellow());
+            eprintln!("{}", tr!("top.cursor.warning", error = error).yellow());
         }
         println!();
         return Ok(());
     }
 
     match result.error {
-        Some(error) => eprintln!("{}\n", format!("  Sync failed: {}", error).red()),
-        None => eprintln!("{}\n", "  Sync failed.".red()),
+        Some(error) => eprintln!(
+            "{}\n",
+            tr!("top.cursor.syncFailedWith", error = error).red()
+        ),
+        None => eprintln!("{}\n", t!("top.cursor.syncFailed").red()),
     }
 
-    anyhow::bail!("Cursor sync failed");
+    anyhow::bail!(t!("top.cursor.syncFailedBail"));
 }
 
 pub fn run_cursor_switch(name: &str) -> Result<()> {
@@ -2007,7 +2006,7 @@ pub fn run_cursor_switch(name: &str) -> Result<()> {
     set_active_account(name)?;
     println!(
         "\n  {}\n",
-        format!("Active Cursor account set to {}", name.bold()).green()
+        tr!("top.cursor.switched", account = name.bold()).green()
     );
 
     Ok(())
@@ -2059,7 +2058,10 @@ mod incremental_sync_tests {
             event(Some("old-2"), "2000", 20),
             event(Some("recent"), "9000", 30),
         ];
-        let incoming = vec![event(Some("recent"), "9000", 55), event(Some("new"), "9500", 7)];
+        let incoming = vec![
+            event(Some("recent"), "9000", 55),
+            event(Some("new"), "9500", 7),
+        ];
 
         let merged = merge_cursor_usage_events(cached, incoming);
         assert_eq!(ids(&merged), vec!["old-1", "old-2", "recent", "new"]);
