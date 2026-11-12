@@ -746,10 +746,9 @@ fn decode_schtasks_output(bytes: &[u8]) -> String {
     let utf16 = bytes.starts_with(&[0xFF, 0xFE]) || (bytes.len() >= 2 && bytes[1] == 0);
     if utf16 {
         let body = bytes.strip_prefix(&[0xFF, 0xFE]).unwrap_or(bytes);
-        let units: Vec<u16> = body
-            .chunks_exact(2)
-            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
-            .collect();
+        // A trailing odd byte is dropped, as `chunks_exact(2)` would.
+        let (pairs, _) = body.as_chunks::<2>();
+        let units: Vec<u16> = pairs.iter().map(|pair| u16::from_le_bytes(*pair)).collect();
         String::from_utf16_lossy(&units)
     } else {
         String::from_utf8_lossy(bytes).into_owned()
