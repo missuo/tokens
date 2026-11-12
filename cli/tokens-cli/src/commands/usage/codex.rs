@@ -1,3 +1,4 @@
+use crate::{t, tr};
 use anyhow::{Context, Result};
 use chrono::{TimeZone, Utc};
 use fs2::FileExt;
@@ -10,8 +11,8 @@ use std::path::{Path, PathBuf};
 
 use super::helpers::capitalize;
 use super::{
-    UsageAccount, UsageCreditStatus, UsageMetric, UsageOutput, UsageResetCredit,
-    UsageResetCredits, UsageSpendControl,
+    UsageAccount, UsageCreditStatus, UsageMetric, UsageOutput, UsageResetCredit, UsageResetCredits,
+    UsageSpendControl,
 };
 
 const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
@@ -175,13 +176,17 @@ impl fmt::Display for CodexUsageError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::MissingCredentials => {
-                write!(f, "No Codex credentials found. Run 'codex' to log in.")
+                write!(f, "{}", t!("commands.usage.codex.missingCredentials"))
             }
-            Self::NeedsAuth => write!(f, "Codex credentials need authentication"),
+            Self::NeedsAuth => f.write_str(t!("commands.usage.codex.needsAuth")),
             Self::UnsupportedStoreVersion { version, path } => write!(
                 f,
-                "Unsupported Codex account store version {version} at {} (this Tokens supports version 1); refusing to modify it",
-                path.display()
+                "{}",
+                tr!(
+                    "commands.usage.codex.unsupportedStoreVersion",
+                    version = version,
+                    path = path.display()
+                )
             ),
         }
     }
@@ -239,7 +244,10 @@ impl CodexAccountStore {
         let lock_path = self.lock_path();
         if let Some(dir) = lock_path.parent() {
             std::fs::create_dir_all(dir).with_context(|| {
-                format!("Failed to create Codex account lock dir {}", dir.display())
+                tr!(
+                    "commands.usage.codex.createLockDirFailed",
+                    path = dir.display()
+                )
             })?;
         }
         let lock_file = std::fs::OpenOptions::new()
@@ -249,17 +257,23 @@ impl CodexAccountStore {
             .truncate(false)
             .open(&lock_path)
             .with_context(|| {
-                format!("Failed to open Codex account lock {}", lock_path.display())
+                tr!(
+                    "commands.usage.codex.openLockFailed",
+                    path = lock_path.display()
+                )
             })?;
         lock_file.lock_exclusive().with_context(|| {
-            format!("Failed to lock Codex account store {}", self.path.display())
+            tr!(
+                "commands.usage.codex.lockStoreFailed",
+                path = self.path.display()
+            )
         })?;
 
         let result = action(self);
-        let unlock_result = lock_file.unlock().with_context(|| {
-            format!(
-                "Failed to unlock Codex account store {}",
-                self.path.display()
+        let unlock_result = fs2::FileExt::unlock(&lock_file).with_context(|| {
+            tr!(
+                "commands.usage.codex.unlockStoreFailed",
+                path = self.path.display()
             )
         });
 
@@ -292,9 +306,9 @@ impl CodexAccountStore {
     fn save_unlocked(&self, store: &CodexCredentialsStore) -> Result<()> {
         let json = serde_json::to_string_pretty(store)?;
         super::helpers::atomic_write_secret(self.path(), json.as_bytes()).with_context(|| {
-            format!(
-                "Failed to write Codex account store to {}",
-                self.path.display()
+            tr!(
+                "commands.usage.codex.writeStoreFailed",
+                path = self.path.display()
             )
         })
     }
@@ -349,7 +363,7 @@ fn auth_write_path() -> Result<PathBuf> {
     paths
         .into_iter()
         .next()
-        .context("Could not determine Codex auth path")
+        .context(t!("commands.usage.codex.authPathUnknown"))
 }
 
 fn read_current_credentials() -> Result<(Auth, CredentialSource)> {
@@ -394,20 +408,30 @@ fn auth_document(tokens: &Tokens) -> serde_json::Value {
 
 fn save_auth_tokens(path: &Path, tokens: &Tokens) -> Result<()> {
     let content = serde_json::to_string_pretty(&auth_document(tokens))?;
-    super::helpers::atomic_write_secret(path, content.as_bytes())
-        .with_context(|| format!("Failed to write Codex auth to {}", path.display()))
+    super::helpers::atomic_write_secret(path, content.as_bytes()).with_context(|| {
+        tr!(
+            "commands.usage.codex.writeAuthFailed",
+            path = path.display()
+        )
+    })
 }
 
 fn persist_tokens(source: &CredentialSource, tokens: &Tokens) {
     match source {
         CredentialSource::File(path) => {
             if let Err(e) = save_auth_tokens(path, tokens) {
-                eprintln!("warning: failed to save Codex credentials: {e}");
+                eprintln!(
+                    "{}",
+                    tr!("commands.usage.codex.saveCredentialsWarning", error = e)
+                );
             }
         }
         CredentialSource::Store(account_id) => {
             if let Err(e) = update_account_tokens(account_id, tokens.clone()) {
-                eprintln!("warning: failed to save Codex account credentials: {e}");
+                eprintln!(
+                    "{}",
+                    tr!("commands.usage.codex.saveAccountWarning", error = e)
+                );
             }
         }
         CredentialSource::Keychain => {}
@@ -533,7 +557,7 @@ fn validate_label_available(
             .as_deref()
             == Some(needle.as_str())
         {
-            anyhow::bail!("Codex account label already exists: {label}");
+            anyhow::bail!("{}", tr!("commands.usage.codex.labelExists", label = label));
         }
     }
 
@@ -661,13 +685,16 @@ fn remove_account_from_store(
     store: &mut CodexCredentialsStore,
     name_or_id: &str,
 ) -> Result<CodexAccountInfo> {
-    let resolved = resolve_account_id(store, name_or_id)
-        .ok_or_else(|| anyhow::anyhow!("Codex account not found: {name_or_id}"))?;
+    let resolved = resolve_account_id(store, name_or_id).ok_or_else(|| {
+        anyhow::anyhow!(tr!(
+            "commands.usage.codex.accountNotFound",
+            name = name_or_id
+        ))
+    })?;
     let removed_was_active = store.active_account_id == resolved;
-    let account = store
-        .accounts
-        .remove(&resolved)
-        .ok_or_else(|| anyhow::anyhow!("Codex account not found: {resolved}"))?;
+    let account = store.accounts.remove(&resolved).ok_or_else(|| {
+        anyhow::anyhow!(tr!("commands.usage.codex.accountNotFound", name = resolved))
+    })?;
     let removed = CodexAccountInfo {
         id: resolved,
         label: account.label,
@@ -717,7 +744,7 @@ fn save_account_from_auth_at_path(
 ) -> Result<CodexAccountInfo> {
     let tokens = auth
         .tokens
-        .ok_or_else(|| anyhow::anyhow!("No Codex tokens."))?;
+        .ok_or_else(|| anyhow::anyhow!(t!("commands.usage.codex.noTokens")))?;
     if tokens
         .access_token
         .as_deref()
@@ -725,7 +752,7 @@ fn save_account_from_auth_at_path(
         .trim()
         .is_empty()
     {
-        anyhow::bail!("No Codex access token.");
+        anyhow::bail!("{}", t!("commands.usage.codex.noAccessToken"));
     }
 
     let base_account_id = derive_account_id(&tokens);
@@ -779,7 +806,7 @@ fn save_account_from_auth_at_path(
             let account = store
                 .accounts
                 .get(&existing_id)
-                .ok_or_else(|| anyhow::anyhow!("Failed to save Codex account"))?;
+                .ok_or_else(|| anyhow::anyhow!(t!("commands.usage.codex.saveAccountFailed")))?;
             return Ok(account_info(&store, &existing_id, account));
         }
 
@@ -809,38 +836,42 @@ fn save_account_from_auth_at_path(
         let account = store
             .accounts
             .get(&account_id)
-            .ok_or_else(|| anyhow::anyhow!("Failed to save Codex account"))?;
+            .ok_or_else(|| anyhow::anyhow!(t!("commands.usage.codex.saveAccountFailed")))?;
         Ok(account_info(&store, &account_id, account))
     })
 }
 
 fn update_account_tokens(account_id: &str, tokens: Tokens) -> Result<()> {
-    CodexAccountStore::default().update_existing("No saved Codex accounts", |store| {
-        let account = store
-            .accounts
-            .get_mut(account_id)
-            .ok_or_else(|| anyhow::anyhow!("Codex account not found: {account_id}"))?;
-        account.tokens = tokens;
-        Ok(())
-    })
+    CodexAccountStore::default().update_existing(
+        t!("commands.usage.codex.noSavedAccounts"),
+        |store| {
+            let account = store.accounts.get_mut(account_id).ok_or_else(|| {
+                anyhow::anyhow!(tr!(
+                    "commands.usage.codex.accountNotFound",
+                    name = account_id
+                ))
+            })?;
+            account.tokens = tokens;
+            Ok(())
+        },
+    )
 }
 
 fn load_account(name_or_id: Option<&str>) -> Result<(String, CodexAccount, CodexAccountInfo)> {
-    let store =
-        load_credentials_store().ok_or_else(|| anyhow::anyhow!("No saved Codex accounts"))?;
+    let store = load_credentials_store()
+        .ok_or_else(|| anyhow::anyhow!(t!("commands.usage.codex.noSavedAccounts")))?;
     let resolved = match name_or_id {
-        Some(name) => resolve_account_id(&store, name)
-            .ok_or_else(|| anyhow::anyhow!("Codex account not found: {name}"))?,
+        Some(name) => resolve_account_id(&store, name).ok_or_else(|| {
+            anyhow::anyhow!(tr!("commands.usage.codex.accountNotFound", name = name))
+        })?,
         None if store.active_account_id.trim().is_empty() => {
-            anyhow::bail!("No active Codex account; pass an account name or switch to one first")
+            anyhow::bail!("{}", t!("commands.usage.codex.noActiveAccount"))
         }
         None => store.active_account_id.clone(),
     };
-    let account = store
-        .accounts
-        .get(&resolved)
-        .cloned()
-        .ok_or_else(|| anyhow::anyhow!("Codex account not found: {resolved}"))?;
+    let account = store.accounts.get(&resolved).cloned().ok_or_else(|| {
+        anyhow::anyhow!(tr!("commands.usage.codex.accountNotFound", name = resolved))
+    })?;
     let info = account_info(&store, &resolved, &account);
     Ok((resolved, account, info))
 }
@@ -862,7 +893,13 @@ async fn refresh_token(client: &reqwest::Client, rt: &str) -> Result<Refresh> {
         .send()
         .await?;
     if !resp.status().is_success() {
-        anyhow::bail!("Codex token refresh failed (HTTP {})", resp.status());
+        anyhow::bail!(
+            "{}",
+            tr!(
+                "commands.usage.codex.tokenRefreshFailed",
+                status = resp.status()
+            )
+        );
     }
     Ok(resp.json().await?)
 }
@@ -886,7 +923,14 @@ where
         return Err(CodexUsageError::NeedsAuth.into());
     }
     if !status.is_success() {
-        anyhow::bail!("{request_label} failed (HTTP {status})");
+        anyhow::bail!(
+            "{}",
+            tr!(
+                "commands.usage.codex.requestFailed",
+                label = request_label,
+                status = status
+            )
+        );
     }
     let body = resp.text().await?;
     parse_chatgpt_json_body(&body)
@@ -909,7 +953,7 @@ async fn fetch_usage(
         req = req.header("ChatGPT-Account-Id", id);
     }
     let resp = req.send().await?;
-    parse_chatgpt_json_response(resp, "Codex usage request").await
+    parse_chatgpt_json_response(resp, t!("commands.usage.codex.usageRequestLabel")).await
 }
 
 async fn fetch_reset_credits(
@@ -929,7 +973,7 @@ async fn fetch_reset_credits(
         req = req.header("ChatGPT-Account-Id", id);
     }
     let resp = req.send().await?;
-    parse_chatgpt_json_response(resp, "Codex reset credits request").await
+    parse_chatgpt_json_response(resp, t!("commands.usage.codex.resetCreditsRequestLabel")).await
 }
 
 fn metric_from_window(label: &str, window: &Window) -> UsageMetric {
@@ -1074,11 +1118,11 @@ async fn fetch_with_auth_async(
 ) -> Result<UsageOutput> {
     let tokens = auth
         .tokens
-        .ok_or_else(|| anyhow::anyhow!("No Codex tokens."))?;
+        .ok_or_else(|| anyhow::anyhow!(t!("commands.usage.codex.noTokens")))?;
     let access_token = tokens
         .access_token
         .clone()
-        .ok_or_else(|| anyhow::anyhow!("No Codex access token."))?;
+        .ok_or_else(|| anyhow::anyhow!(t!("commands.usage.codex.noAccessToken")))?;
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
@@ -1092,12 +1136,12 @@ async fn fetch_with_auth_async(
             let rt_str = tokens
                 .refresh_token
                 .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("No refresh token."))?;
+                .ok_or_else(|| anyhow::anyhow!(t!("commands.usage.codex.noRefreshToken")))?;
             let refreshed = refresh_token(&client, rt_str).await?;
             let new = refreshed
                 .access_token
                 .clone()
-                .ok_or_else(|| anyhow::anyhow!("Refresh returned no token."))?;
+                .ok_or_else(|| anyhow::anyhow!(t!("commands.usage.codex.refreshNoToken")))?;
 
             let mut updated_tokens = tokens.clone();
             updated_tokens.access_token = Some(new.clone());
@@ -1233,41 +1277,52 @@ pub fn import_current_account(label: Option<&str>) -> Result<CodexAccountInfo> {
 }
 
 pub fn switch_active_account(name_or_id: &str) -> Result<CodexAccountInfo> {
-    CodexAccountStore::default().update_existing("No saved Codex accounts", |store| {
-        let resolved = resolve_account_id(store, name_or_id)
-            .ok_or_else(|| anyhow::anyhow!("Codex account not found: {name_or_id}"))?;
-        let account = store
-            .accounts
-            .get(&resolved)
-            .cloned()
-            .ok_or_else(|| anyhow::anyhow!("Codex account not found: {resolved}"))?;
+    CodexAccountStore::default().update_existing(
+        t!("commands.usage.codex.noSavedAccounts"),
+        |store| {
+            let resolved = resolve_account_id(store, name_or_id).ok_or_else(|| {
+                anyhow::anyhow!(tr!(
+                    "commands.usage.codex.accountNotFound",
+                    name = name_or_id
+                ))
+            })?;
+            let account = store.accounts.get(&resolved).cloned().ok_or_else(|| {
+                anyhow::anyhow!(tr!("commands.usage.codex.accountNotFound", name = resolved))
+            })?;
 
-        let path = auth_write_path()?;
-        save_auth_tokens(&path, &account.tokens)?;
+            let path = auth_write_path()?;
+            save_auth_tokens(&path, &account.tokens)?;
 
-        store.active_account_id = resolved.clone();
+            store.active_account_id = resolved.clone();
 
-        Ok(account_info(store, &resolved, &account))
-    })
+            Ok(account_info(store, &resolved, &account))
+        },
+    )
 }
 
 /// Removes an account from Tokens' store only. The codex CLI's own
 /// `auth.json` is intentionally left untouched: rewriting it would silently
 /// re-log the codex CLI into a different account (or log it out entirely).
 pub fn remove_account(name_or_id: &str) -> Result<CodexAccountInfo> {
-    CodexAccountStore::default().update_existing("No saved Codex accounts", |store| {
-        let resolved = resolve_account_id(store, name_or_id)
-            .ok_or_else(|| anyhow::anyhow!("Codex account not found: {name_or_id}"))?;
-        let active_account_id = current_auth_account_id_in_store(store).or_else(|| {
-            (!store.active_account_id.trim().is_empty()).then(|| store.active_account_id.clone())
-        });
-        if active_account_id.as_deref() == Some(resolved.as_str()) {
-            anyhow::bail!(
-                "Cannot remove the active Codex account. Switch to another Codex account or log out of Codex first."
-            );
-        }
-        remove_account_from_store(store, &resolved)
-    })
+    CodexAccountStore::default().update_existing(
+        t!("commands.usage.codex.noSavedAccounts"),
+        |store| {
+            let resolved = resolve_account_id(store, name_or_id).ok_or_else(|| {
+                anyhow::anyhow!(tr!(
+                    "commands.usage.codex.accountNotFound",
+                    name = name_or_id
+                ))
+            })?;
+            let active_account_id = current_auth_account_id_in_store(store).or_else(|| {
+                (!store.active_account_id.trim().is_empty())
+                    .then(|| store.active_account_id.clone())
+            });
+            if active_account_id.as_deref() == Some(resolved.as_str()) {
+                anyhow::bail!(t!("commands.usage.codex.cannotRemoveActive"));
+            }
+            remove_account_from_store(store, &resolved)
+        },
+    )
 }
 
 pub fn run_codex_import(name: Option<String>) -> Result<()> {
@@ -1276,12 +1331,19 @@ pub fn run_codex_import(name: Option<String>) -> Result<()> {
     let info = import_current_account(name.as_deref())?;
     let display = info.label.as_deref().unwrap_or(&info.id);
 
-    println!("\n  {}\n", "Codex - Import".cyan());
+    println!("\n  {}\n", t!("commands.usage.codex.importTitle").cyan());
     println!(
         "  {}",
-        format!("Imported Codex account {}", display.bold()).green()
+        tr!(
+            "commands.usage.codex.importedAccount",
+            account = display.bold()
+        )
+        .green()
     );
-    println!("{}", format!("  Account ID: {}", info.id).bright_black());
+    println!(
+        "{}",
+        tr!("commands.usage.codex.accountId", id = info.id).bright_black()
+    );
     println!();
 
     Ok(())
@@ -1301,11 +1363,11 @@ pub fn run_codex_accounts(json: bool) -> Result<()> {
     }
 
     if accounts.is_empty() {
-        println!("\n  {}\n", "No saved Codex accounts.".yellow());
+        println!("\n  {}\n", t!("commands.usage.codex.noAccounts").yellow());
         return Ok(());
     }
 
-    println!("{}", "\n  Codex - Accounts\n".cyan());
+    println!("{}", t!("commands.usage.codex.accountsTitle").cyan());
     for account in &accounts {
         let name = if let Some(label) = &account.label {
             format!("{} ({})", label, account.id)
@@ -1322,7 +1384,7 @@ pub fn run_codex_accounts(json: bool) -> Result<()> {
         if let Some(account_id) = &account.account_id {
             println!(
                 "{}",
-                format!("    Account ID: {}", account_id).bright_black()
+                tr!("commands.usage.codex.accountIdIndented", id = account_id).bright_black()
             );
         }
     }
@@ -1339,7 +1401,7 @@ pub fn run_codex_switch(name: &str) -> Result<()> {
 
     println!(
         "\n  {}\n",
-        format!("Active Codex account set to {}", display.bold()).green()
+        tr!("commands.usage.codex.switchedTo", account = display.bold()).green()
     );
 
     Ok(())
@@ -1353,11 +1415,15 @@ pub fn run_codex_remove(name: &str) -> Result<()> {
 
     println!(
         "\n  {}",
-        format!("Stopped tracking Codex account {}", display.bold()).green()
+        tr!(
+            "commands.usage.codex.stoppedTracking",
+            account = display.bold()
+        )
+        .green()
     );
     println!(
         "{}\n",
-        "  The codex CLI login was not changed.".bright_black()
+        t!("commands.usage.codex.codexLoginUnchanged").bright_black()
     );
 
     Ok(())
@@ -1398,34 +1464,46 @@ pub fn run_codex_status(name: Option<String>, json: bool) -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&output)?);
         // Exit non-zero on failure while keeping stdout to the payload alone.
         if failed {
-            anyhow::bail!("Codex status failed");
+            anyhow::bail!("{}", t!("commands.usage.codex.statusFailedShort"));
         }
         return Ok(());
     }
 
-    println!("\n  {}\n", "Codex - Status".cyan());
+    println!("\n  {}\n", t!("commands.usage.codex.statusTitle").cyan());
     match result {
         Ok((account, usage)) => {
             if let Some(account) = account {
                 let display = account.label.as_deref().unwrap_or(&account.id);
-                println!("{}", format!("  Account: {}", display).white());
+                println!(
+                    "{}",
+                    tr!("commands.usage.codex.account", name = display).white()
+                );
                 if let Some(account_id) = account.account_id {
-                    println!("{}", format!("  Account ID: {}", account_id).bright_black());
+                    println!(
+                        "{}",
+                        tr!("commands.usage.codex.accountId", id = account_id).bright_black()
+                    );
                 }
             }
             if let Some(email) = usage.email {
-                println!("{}", format!("  Email: {}", email).white());
+                println!(
+                    "{}",
+                    tr!("commands.usage.codex.email", email = email).white()
+                );
             }
             if let Some(plan) = usage.plan {
-                println!("{}", format!("  Plan: {}", plan).white());
+                println!("{}", tr!("commands.usage.codex.plan", plan = plan).white());
             }
             if usage.metrics.is_empty() {
-                println!("{}", "  No quota metrics returned.".yellow());
+                println!("{}", t!("commands.usage.codex.noMetrics").yellow());
             } else {
                 for metric in usage.metrics {
-                    let remaining = metric
-                        .remaining_label
-                        .unwrap_or_else(|| format!("{:.0}% left", metric.remaining_percent));
+                    let remaining = metric.remaining_label.unwrap_or_else(|| {
+                        tr!(
+                            "commands.usage.codex.percentLeft",
+                            percent = format!("{:.0}", metric.remaining_percent)
+                        )
+                    });
                     println!(
                         "  {} {}",
                         format!("{:<10}", metric.label).bright_black(),
@@ -1436,12 +1514,14 @@ pub fn run_codex_status(name: Option<String>, json: bool) -> Result<()> {
         }
         Err(e) => {
             // Diagnostic on stderr, non-zero exit so `&&` chains stop here.
-            eprintln!("  {}\n", format!("Status failed: {e}").red());
-            anyhow::bail!("Codex status failed");
+            eprintln!(
+                "  {}\n",
+                tr!("commands.usage.codex.statusFailed", error = e).red()
+            );
+            anyhow::bail!("{}", t!("commands.usage.codex.statusFailedShort"));
         }
     }
     println!();
 
     Ok(())
 }
-

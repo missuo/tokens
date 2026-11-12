@@ -1,3 +1,4 @@
+use crate::{t, tr};
 use anyhow::{Context, Result};
 use colored::Colorize;
 use serde::{Deserialize, Serialize};
@@ -132,20 +133,19 @@ pub(crate) fn load_usage_cache() -> Option<WarpUsageCache> {
     serde_json::from_str(&content).ok()
 }
 
-
 pub fn run_warp_login(token: Option<String>, cookie: bool) -> Result<()> {
-    println!("\n  {}\n", "Warp/Oz - Login".cyan());
+    println!("\n  {}\n", t!("top.warp.loginTitle").cyan());
     let auth_value = match token {
         Some(token) => token,
         None => {
-            print!("  Enter Warp bearer token or Cookie header value: ");
+            print!("{}", t!("top.warp.enterCredential"));
             std::io::stdout().flush()?;
-            rpassword::read_password().context("Failed to read Warp credential")?
+            rpassword::read_password().context(t!("top.warp.readCredential"))?
         }
     };
     let auth_value = auth_value.trim().to_string();
     if auth_value.is_empty() {
-        anyhow::bail!("Warp credential must not be empty");
+        anyhow::bail!(t!("top.warp.credentialEmpty"));
     }
 
     save_credentials(&WarpCredentials {
@@ -158,11 +158,8 @@ pub fn run_warp_login(token: Option<String>, cookie: bool) -> Result<()> {
         created_at: chrono::Utc::now().to_rfc3339(),
     })?;
 
-    println!("{}", "  Warp credentials saved.".green());
-    println!(
-        "{}",
-        "  Run `tokens warp sync` to cache aggregate requests and spend.".bright_black()
-    );
+    println!("{}", t!("top.warp.credentialsSaved").green());
+    println!("{}", t!("top.warp.syncHint").bright_black());
     Ok(())
 }
 
@@ -177,7 +174,7 @@ pub fn run_warp_logout(purge_cache: bool) -> Result<()> {
             fs::remove_file(usage)?;
         }
     }
-    println!("{}", "  Warp credentials removed.".green());
+    println!("{}", t!("top.warp.credentialsRemoved").green());
     Ok(())
 }
 
@@ -188,19 +185,19 @@ pub fn run_warp_status(json: bool) -> Result<()> {
         return Ok(());
     }
 
-    println!("\n  {}", "Warp/Oz aggregate usage".cyan());
+    println!("\n  {}", t!("top.warp.statusTitle").cyan());
     println!(
         "  {} {}",
-        "Credentials:".bright_black(),
+        t!("top.warp.credentialsLabel").bright_black(),
         if status.has_credentials {
-            "found".green()
+            t!("top.warp.found").green()
         } else {
-            "missing".yellow()
+            t!("top.warp.missing").yellow()
         }
     );
     println!(
         "  {} {}",
-        "Cache:".bright_black(),
+        t!("top.warp.cacheLabel").bright_black(),
         if status.has_cache {
             status.usage_path.green()
         } else {
@@ -208,20 +205,31 @@ pub fn run_warp_status(json: bool) -> Result<()> {
         }
     );
     if let Some(requests) = status.requests_used {
-        println!("  {} {}", "Requests:".bright_black(), requests);
+        println!(
+            "  {} {}",
+            t!("top.warp.requestsLabel").bright_black(),
+            requests
+        );
     }
     if let Some(limit) = status.request_limit {
-        println!("  {} {}", "Request limit:".bright_black(), limit);
+        println!(
+            "  {} {}",
+            t!("top.warp.requestLimitLabel").bright_black(),
+            limit
+        );
     }
     if let Some(cents) = status.spend_cents {
         println!(
             "  {} ${:.2}",
-            "Current spend:".bright_black(),
+            t!("top.warp.currentSpendLabel").bright_black(),
             cents as f64 / 100.0
         );
     }
     for diagnostic in status.diagnostics {
-        println!("{}", format!("  Warning: {diagnostic}").yellow());
+        println!(
+            "{}",
+            tr!("top.warp.warning", diagnostic = diagnostic).yellow()
+        );
     }
     println!();
     Ok(())
@@ -238,16 +246,16 @@ pub fn run_warp_sync(json: bool) -> Result<()> {
     if result.synced {
         println!(
             "{}",
-            format!(
-                "  Warp: synced aggregate usage (requests={}, spend=${:.2}, workspaces={})",
-                result.requests_used.unwrap_or(0),
-                result.spend_cents.unwrap_or(0) as f64 / 100.0,
-                result.workspace_count
+            tr!(
+                "top.warp.synced",
+                requests = result.requests_used.unwrap_or(0),
+                spend = format!("{:.2}", result.spend_cents.unwrap_or(0) as f64 / 100.0),
+                workspaces = result.workspace_count
             )
             .green()
         );
     } else if let Some(error) = result.error {
-        eprintln!("{}", format!("  Warp sync failed: {error}").yellow());
+        eprintln!("{}", tr!("top.warp.syncFailed", error = error).yellow());
     }
     Ok(())
 }
@@ -277,7 +285,7 @@ async fn sync_warp_cache() -> SyncWarpResult {
                     requests_used: cache.usage.requests_used,
                     spend_cents: cache.usage.spend_cents,
                     workspace_count: cache.workspaces.len(),
-                    error: Some(format!("Failed to write Warp cache: {error}")),
+                    error: Some(tr!("top.warp.writeCacheFailed", error = error)),
                 };
             }
             SyncWarpResult {
@@ -302,7 +310,7 @@ async fn fetch_warp_usage(credentials: &WarpCredentials) -> Result<WarpUsageCach
     let client = tokens_core::http::client_builder()
         .timeout(WARP_HTTP_TIMEOUT)
         .build()
-        .context("Failed to build Warp HTTP client")?;
+        .context(t!("top.warp.buildHttpClient"))?;
     let responses = vec![
         send_graphql(
             &client,
@@ -346,12 +354,10 @@ async fn send_graphql(
     if response.status() == reqwest::StatusCode::UNAUTHORIZED
         || response.status() == reqwest::StatusCode::FORBIDDEN
     {
-        anyhow::bail!(
-            "Warp authentication failed. Run `tokens warp login` with a fresh credential."
-        );
+        anyhow::bail!(t!("top.warp.authFailed"));
     }
     if !response.status().is_success() {
-        anyhow::bail!("Warp GraphQL API returned status {}", response.status());
+        anyhow::bail!(tr!("top.warp.apiStatus", status = response.status()));
     }
     let value: Value = response.json().await?;
     ensure_graphql_response_ok(&value)?;
@@ -373,9 +379,9 @@ fn ensure_graphql_response_ok(response: &Value) -> Result<()> {
         .collect::<Vec<_>>()
         .join("; ");
     if message.is_empty() {
-        anyhow::bail!("Warp GraphQL API returned errors");
+        anyhow::bail!(t!("top.warp.apiErrors"));
     }
-    anyhow::bail!("Warp GraphQL API returned errors: {message}");
+    anyhow::bail!(tr!("top.warp.apiErrorsWith", message = message));
 }
 
 fn write_usage_cache(cache: &WarpUsageCache) -> Result<()> {
@@ -394,10 +400,10 @@ fn build_status() -> WarpStatus {
     let usage_path = usage_path();
     let mut diagnostics = Vec::new();
     if !has_credentials {
-        diagnostics.push("missing credentials; run `tokens warp login`".to_string());
+        diagnostics.push(t!("top.warp.missingCredentials").to_string());
     }
     if !has_cache {
-        diagnostics.push("missing aggregate usage cache; run `tokens warp sync`".to_string());
+        diagnostics.push(t!("top.warp.missingCache").to_string());
     }
 
     let usage = cache.as_ref().map(|cache| &cache.usage);
@@ -449,7 +455,7 @@ fn normalize_graphql_usage(responses: &[Value]) -> Result<WarpUsageCache> {
     }
 
     if usage.requests_used.is_none() && usage.spend_cents.is_none() && workspaces.is_empty() {
-        anyhow::bail!("Warp GraphQL response did not contain aggregate usage fields");
+        anyhow::bail!(t!("top.warp.missingAggregateFields"));
     }
 
     Ok(WarpUsageCache {
@@ -573,7 +579,7 @@ mod tests {
             .unwrap_err()
             .to_string();
 
-        assert!(err.contains("Warp GraphQL API returned errors"));
+        assert!(err.contains(t!("top.warp.apiErrors")));
         assert!(err.contains("token expired"));
         assert!(err.contains("workspace unavailable"));
     }

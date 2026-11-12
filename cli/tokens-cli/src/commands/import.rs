@@ -40,6 +40,7 @@
 //! distinctly from live CLI usage (so the two are not ranked identically).
 //! See <https://github.com/junhoyeo/tokscale/issues/888>.
 
+use crate::{t, tr};
 use anyhow::{bail, Context, Result};
 use chrono::NaiveDate;
 use std::collections::{BTreeMap, BTreeSet};
@@ -101,9 +102,12 @@ pub fn parse_export(format: &str, json: &str) -> Result<ImportOutcome> {
         "clawdboard" => parse_clawdboard_export(json),
         "ccusage" => parse_ccusage_export(json),
         other => bail!(
-            "unsupported import format '{}' (supported: {})",
-            other,
-            SUPPORTED_FORMATS.join(", ")
+            "{}",
+            tr!(
+                "commands.import.unsupportedFormat",
+                format = other,
+                supported = SUPPORTED_FORMATS.join(", ")
+            )
         ),
     }
 }
@@ -190,10 +194,10 @@ struct DayBuilder {
 /// row that shares that date (clawdboard splits rows by machine).
 pub fn parse_clawdboard_export(json: &str) -> Result<ImportOutcome> {
     let export: ClawdboardExport =
-        serde_json::from_str(json).context("failed to parse clawdboard export JSON")?;
+        serde_json::from_str(json).context(t!("commands.import.parseClawdboardFailed"))?;
 
     if export.daily_aggregates.is_empty() {
-        bail!("clawdboard export contains no dailyAggregates to import");
+        bail!("{}", t!("commands.import.emptyClawdboard"));
     }
 
     let mut days: BTreeMap<String, DayBuilder> = BTreeMap::new();
@@ -306,9 +310,12 @@ pub fn parse_clawdboard_export(json: &str) -> Result<ImportOutcome> {
                     .saturating_add(mb_cache_read)
                     .saturating_add(mb_cache_write);
                 if tokens_diverge(mb_total, agg_total) {
-                    breakdown_reconciliation_warnings.push(format!(
-                        "{} {}: modelBreakdowns sum to {} token(s) but aggregate totals report {}",
-                        agg.date, client, mb_total, agg_total
+                    breakdown_reconciliation_warnings.push(tr!(
+                        "commands.import.warnBreakdownTokensClient",
+                        date = agg.date,
+                        client = client,
+                        breakdown = mb_total,
+                        aggregate = agg_total
                     ));
                 }
             }
@@ -316,9 +323,12 @@ pub fn parse_clawdboard_export(json: &str) -> Result<ImportOutcome> {
                 let agg_cost = parse_cost_string(Some(raw), &mut unparseable_cost_rows);
                 let agg_cost = sanitize_cost(agg_cost, &mut non_finite_cost_rows);
                 if costs_diverge(mb_cost, agg_cost) {
-                    breakdown_reconciliation_warnings.push(format!(
-                        "{} {}: modelBreakdowns sum to cost {:.4} but aggregate totalCost reports {:.4}",
-                        agg.date, client, mb_cost, agg_cost
+                    breakdown_reconciliation_warnings.push(tr!(
+                        "commands.import.warnBreakdownCostClient",
+                        date = agg.date,
+                        client = client,
+                        breakdown = format!("{mb_cost:.4}"),
+                        aggregate = format!("{agg_cost:.4}")
                     ));
                 }
             }
@@ -651,10 +661,10 @@ fn model_family(model: &str) -> Option<&'static str> {
 /// date, one [`ClientContribution`] per (client, model) within it.
 pub fn parse_ccusage_export(json: &str) -> Result<ImportOutcome> {
     let export: CcusageExport =
-        serde_json::from_str(json).context("failed to parse ccusage export JSON")?;
+        serde_json::from_str(json).context(t!("commands.import.parseCcusageFailed"))?;
 
     if export.daily.is_empty() {
-        bail!("ccusage export contains no daily rows to import");
+        bail!("{}", t!("commands.import.emptyCcusage"));
     }
 
     let mut days: BTreeMap<String, DayBuilder> = BTreeMap::new();
@@ -674,9 +684,7 @@ pub fn parse_ccusage_export(json: &str) -> Result<ImportOutcome> {
             .period
             .as_deref()
             .or(row.date.as_deref())
-            .ok_or_else(|| {
-                anyhow::anyhow!("ccusage daily row is missing both `period` and `date`")
-            })?
+            .ok_or_else(|| anyhow::anyhow!(t!("commands.import.missingDate")))?
             .to_string();
         let parsed_date = parse_calendar_date(&date)?;
 
@@ -814,9 +822,12 @@ pub fn parse_ccusage_export(json: &str) -> Result<ImportOutcome> {
                 // day whose row total still happens to add up.
                 if let Some(declared) = agent.total_tokens.filter(|t| *t > 0) {
                     if tokens_diverge(agent_total, declared) {
-                        breakdown_reconciliation_warnings.push(format!(
-                            "{date}: agent '{}' imported {agent_total} token(s) but its own totalTokens reports {declared}",
-                            agent.agent
+                        breakdown_reconciliation_warnings.push(tr!(
+                            "commands.import.warnAgentTokens",
+                            date = date,
+                            agent = agent.agent,
+                            imported = agent_total,
+                            declared = declared
                         ));
                     }
                 }
@@ -835,8 +846,11 @@ pub fn parse_ccusage_export(json: &str) -> Result<ImportOutcome> {
             .saturating_add(row.cache_read_tokens.max(0))
             .saturating_add(row.cache_creation_tokens.max(0));
         if agg_total != 0 && tokens_diverge(mb_total, agg_total) {
-            breakdown_reconciliation_warnings.push(format!(
-                "{date}: modelBreakdowns sum to {mb_total} token(s) but aggregate totals report {agg_total}"
+            breakdown_reconciliation_warnings.push(tr!(
+                "commands.import.warnBreakdownTokens",
+                date = date,
+                breakdown = mb_total,
+                aggregate = agg_total
             ));
         }
         // The row's own `totalTokens` is the one number the file states about
@@ -844,8 +858,11 @@ pub fn parse_ccusage_export(json: &str) -> Result<ImportOutcome> {
         // mapped through twice. Compare it against what tokens will report.
         if let Some(declared) = row.total_tokens.filter(|t| *t > 0) {
             if tokens_diverge(mb_total, declared) {
-                breakdown_reconciliation_warnings.push(format!(
-                    "{date}: imported {mb_total} token(s) but the export's own totalTokens reports {declared}"
+                breakdown_reconciliation_warnings.push(tr!(
+                    "commands.import.warnDeclaredTokens",
+                    date = date,
+                    imported = mb_total,
+                    declared = declared
                 ));
             }
         }
@@ -855,8 +872,11 @@ pub fn parse_ccusage_export(json: &str) -> Result<ImportOutcome> {
                 &mut non_finite_cost_rows,
             );
             if costs_diverge(mb_cost, agg_cost) {
-                breakdown_reconciliation_warnings.push(format!(
-                    "{date}: modelBreakdowns sum to cost {mb_cost:.4} but aggregate totalCost reports {agg_cost:.4}"
+                breakdown_reconciliation_warnings.push(tr!(
+                    "commands.import.warnBreakdownCost",
+                    date = date,
+                    breakdown = format!("{mb_cost:.4}"),
+                    aggregate = format!("{agg_cost:.4}")
                 ));
             }
         }
@@ -953,10 +973,17 @@ fn attribute(model: &str, agents: &[String], unknown: &mut BTreeSet<String>) -> 
 /// shape check alone lets invalid dates like `2026-02-31` through.
 fn parse_calendar_date(s: &str) -> Result<NaiveDate> {
     if !is_iso_date(s) {
-        bail!("invalid date {:?} in export (expected YYYY-MM-DD)", s);
+        bail!(
+            "{}",
+            tr!("commands.import.invalidDateShape", date = format!("{s:?}"))
+        );
     }
-    NaiveDate::parse_from_str(s, "%Y-%m-%d")
-        .map_err(|_| anyhow::anyhow!("invalid calendar date {:?} in export (not a real date)", s))
+    NaiveDate::parse_from_str(s, "%Y-%m-%d").map_err(|_| {
+        anyhow::anyhow!(tr!(
+            "commands.import.invalidCalendarDate",
+            date = format!("{s:?}")
+        ))
+    })
 }
 
 /// Parse a clawdboard `totalCost` string, tracking how many values failed

@@ -2,6 +2,7 @@
 
 import { formatRelativeTime } from "@/lib/format";
 import { formatCurrency, formatNumber } from "@/lib/utils";
+import { useLocale, useT } from "@/components/layout/LocaleProvider";
 import {
   ListBody,
   ListCaption,
@@ -70,6 +71,8 @@ const LastSubmitted = tw(
 );
 /** Compact per-device usage for public profiles. */
 export function ProfileDevices({ devices, className }: ProfileDevicesProps) {
+  const t = useT();
+  const locale = useLocale();
   if (devices.length === 0) return null;
   // Each cloud agent session is its own device server-side; show one row per
   // cloud provider instead of one per session.
@@ -81,23 +84,23 @@ export function ProfileDevices({ devices, className }: ProfileDevicesProps) {
       aria-labelledby="profile-devices-heading"
     >
       <SectionHeading id="profile-devices-heading">
-        Devices · all-time
+        {t("profile.devices.heading")}
       </SectionHeading>
 
       <DevicesList>
         <ListTable>
-          <ListCaption>Usage by device</ListCaption>
+          <ListCaption>{t("profile.devices.caption")}</ListCaption>
           <ListHead>
             <tr>
-              <ListHeaderCell $width="52%">Device</ListHeaderCell>
+              <ListHeaderCell $width="52%">{t("profile.devices.columnDevice")}</ListHeaderCell>
               <ListHeaderCell $width="19%" $align="right">
-                Tokens
+                {t("profile.devices.columnTokens")}
               </ListHeaderCell>
               <ListHeaderCell $width="16%" $align="right">
-                Cost
+                {t("profile.devices.columnCost")}
               </ListHeaderCell>
               <ListHeaderCell $width="13%" $align="right">
-                Active days
+                {t("profile.devices.columnActiveDays")}
               </ListHeaderCell>
             </tr>
           </ListHead>
@@ -108,33 +111,33 @@ export function ProfileDevices({ devices, className }: ProfileDevicesProps) {
                   <DeviceName>{device.displayName}</DeviceName>
                   <LastSubmitted>
                     {device.cloudSessions != null &&
-                      `${device.cloudSessions.toLocaleString("en-US")} ${
-                        device.cloudSessions === 1 ? "session" : "sessions"
-                      } · `}
-                    Last submitted{" "}
-                    <time
-                      dateTime={device.lastSubmittedAt ?? undefined}
-                      suppressHydrationWarning
-                    >
-                      {formatRelativeTime(device.lastSubmittedAt)}
-                    </time>
+                      t("profile.devices.cloudSessions", {
+                        count: device.cloudSessions,
+                      })}
+                    {t("profile.devices.lastSubmitted", {
+                      // An absent timestamp formats as an empty string; the
+                      // word for it is catalogue copy, not a formatter default.
+                      time:
+                        formatRelativeTime(device.lastSubmittedAt, locale) ||
+                        t("common.never"),
+                    })}
                   </LastSubmitted>
                 </ListPrimaryCell>
-                <ListCell data-label="Tokens" $align="right">
+                <ListCell data-label={t("profile.devices.columnTokens")} $align="right">
                   <NumericValue
-                    title={device.totalTokens.toLocaleString("en-US")}
+                    title={device.totalTokens.toLocaleString(locale)}
                   >
                     {formatNumber(device.totalTokens)}
                   </NumericValue>
                 </ListCell>
-                <ListCell data-label="Cost" $align="right">
+                <ListCell data-label={t("profile.devices.columnCost")} $align="right">
                   <NumericValue $accent>
                     {formatCurrency(device.totalCost)}
                   </NumericValue>
                 </ListCell>
-                <ListCell data-label="Active days" $align="right">
+                <ListCell data-label={t("profile.devices.columnActiveDays")} $align="right">
                   <NumericValue>
-                    {device.activeDays.toLocaleString("en-US")}
+                    {device.activeDays.toLocaleString(locale)}
                   </NumericValue>
                 </ListCell>
               </ListRow>

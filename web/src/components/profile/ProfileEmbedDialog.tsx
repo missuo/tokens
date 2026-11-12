@@ -23,23 +23,27 @@ import {
 } from "./embedDialogOptions";
 import { tw } from "@/lib/tw";
 import { cn } from "@/lib/utils";
+import { useT } from "@/components/layout/LocaleProvider";
 
-function titleCase(value: string): string {
-  return value.charAt(0).toUpperCase() + value.slice(1);
-}
-
+/** Catalogue keys; resolved where the option renders. */
 const EMBED_TEMPLATE_LABELS: Record<EmbedTemplate, string> = {
-  classic: "Overview",
-  minimal: "Token focus",
-  terminal: "Readout",
-  graph: "Contributions",
-  orbit: "Rank focus",
-  vitals: "Activity summary",
-  blueprint: "Detailed stats",
-  receipt: "Compact list",
-  pulse: "Usage pulse",
-  detailed: "Today breakdown",
+  classic: "profile.embedTemplate.classic",
+  minimal: "profile.embedTemplate.minimal",
+  terminal: "profile.embedTemplate.terminal",
+  graph: "profile.embedTemplate.graph",
+  orbit: "profile.embedTemplate.orbit",
+  vitals: "profile.embedTemplate.vitals",
+  blueprint: "profile.embedTemplate.blueprint",
+  receipt: "profile.embedTemplate.receipt",
+  pulse: "profile.embedTemplate.pulse",
+  detailed: "profile.embedTemplate.detailed",
 };
+
+const RANK_FORMAT_LABELS = {
+  plain: "profile.embed.rankPlain",
+  percent: "profile.embed.rankPercent",
+  total: "profile.embed.rankTotal",
+} as const;
 
 interface ProfileEmbedDialogProps {
   open: boolean;
@@ -54,6 +58,7 @@ export function ProfileEmbedDialog({
   displayName,
   onClose,
 }: ProfileEmbedDialogProps) {
+  const t = useT();
   const dialogRef = useRef<HTMLDivElement>(null);
   const [theme, setTheme] = useState<EmbedTheme>("dark");
   const [sortBy, setSortBy] = useState<EmbedSortBy>("tokens");
@@ -182,9 +187,9 @@ export function ProfileEmbedDialog({
   const copyToClipboard = async (value: string, label: string) => {
     try {
       await navigator.clipboard.writeText(value);
-      toast.success(`${label} copied`);
+      toast.success(t("profile.embed.copied", { label }));
     } catch {
-      toast.error(`Failed to copy ${label.toLowerCase()}`);
+      toast.error(t("profile.embed.copyFailed", { label }));
     }
   };
 
@@ -209,18 +214,17 @@ export function ProfileEmbedDialog({
         <DialogHeader>
           <HeaderCopy>
             <DialogTitle id="profile-embed-dialog-title">
-              Embed @{username}
+              {t("profile.embed.title", { username })}
             </DialogTitle>
             <DialogDescription id="profile-embed-dialog-description">
-              Customize the live card, then copy it into GitHub or any HTML
-              page.
+              {t("profile.embed.description")}
             </DialogDescription>
           </HeaderCopy>
 
           <CloseButton
             type="button"
             onClick={onClose}
-            aria-label="Close embed dialog"
+            aria-label={t("profile.embed.close")}
           >
             <CloseIcon />
           </CloseButton>
@@ -229,24 +233,26 @@ export function ProfileEmbedDialog({
         <DialogBody>
           <PreviewPanel>
             <PreviewSurface>
-              <PreviewLabel>Live preview</PreviewLabel>
+              <PreviewLabel>{t("profile.embed.preview")}</PreviewLabel>
               <PreviewFrame $threeD={view === "3d"}>
                 <PreviewImage
                   src={previewUrl}
-                  alt={`Tokens README embed preview for ${displayName || username}`}
+                  alt={t("profile.embed.previewAlt", { name: displayName || username })}
                 />
               </PreviewFrame>
             </PreviewSurface>
           </PreviewPanel>
 
-          <ControlsPanel aria-label="Embed customization">
+          <ControlsPanel aria-label={t("profile.embed.controlsAria")}>
             <ControlsHeader>
-              <ControlsTitle>Card settings</ControlsTitle>
+              <ControlsTitle>{t("profile.embed.settings")}</ControlsTitle>
             </ControlsHeader>
 
             {capabilities.showTemplate && (
               <OptionGroup>
-                <OptionLabel id="embed-template-label">Template</OptionLabel>
+                <OptionLabel id="embed-template-label">
+                  {t("profile.embed.template")}
+                </OptionLabel>
                 <SelectWrap>
                   <SelectControl
                     name="profile-embed-template"
@@ -258,7 +264,7 @@ export function ProfileEmbedDialog({
                   >
                     {EMBED_TEMPLATES.map((tpl) => (
                       <option key={tpl} value={tpl}>
-                        {EMBED_TEMPLATE_LABELS[tpl]}
+                        {t(EMBED_TEMPLATE_LABELS[tpl])}
                       </option>
                     ))}
                   </SelectControl>
@@ -268,7 +274,7 @@ export function ProfileEmbedDialog({
             )}
 
             <OptionGroup>
-              <OptionLabel id="embed-view-label">View</OptionLabel>
+              <OptionLabel id="embed-view-label">{t("profile.embed.view")}</OptionLabel>
               <SegmentedControl role="group" aria-labelledby="embed-view-label">
                 <SegmentButton
                   type="button"
@@ -290,7 +296,7 @@ export function ProfileEmbedDialog({
             </OptionGroup>
 
             <OptionGroup>
-              <OptionLabel id="embed-theme-label">Theme</OptionLabel>
+              <OptionLabel id="embed-theme-label">{t("profile.embed.theme")}</OptionLabel>
               <SegmentedControl
                 role="group"
                 aria-labelledby="embed-theme-label"
@@ -301,7 +307,7 @@ export function ProfileEmbedDialog({
                   aria-pressed={theme === "dark"}
                   onClick={() => setTheme("dark")}
                 >
-                  Dark
+                  {t("profile.embed.dark")}
                 </SegmentButton>
                 <SegmentButton
                   type="button"
@@ -309,22 +315,24 @@ export function ProfileEmbedDialog({
                   aria-pressed={theme === "light"}
                   onClick={() => setTheme("light")}
                 >
-                  Light
+                  {t("profile.embed.light")}
                 </SegmentButton>
               </SegmentedControl>
             </OptionGroup>
 
             {capabilities.showAccent && (
               <OptionGroup $stacked>
-                <OptionLabel id="embed-accent-label">Accent color</OptionLabel>
+                <OptionLabel id="embed-accent-label">
+                  {t("profile.embed.accent")}
+                </OptionLabel>
                 <SwatchRow role="group" aria-labelledby="embed-accent-label">
                   <Swatch
                     type="button"
                     $active={color === null}
                     $color={resolvePalette(theme, null).brand}
                     aria-pressed={color === null}
-                    aria-label="Default accent color"
-                    title="Default"
+                    aria-label={t("profile.embed.defaultAccent")}
+                    title={t("profile.embed.defaultSwatch")}
                     onClick={() => setColor(null)}
                   />
                   {getPaletteNames().map((name) => (
@@ -334,8 +342,10 @@ export function ProfileEmbedDialog({
                       $active={color === name}
                       $color={resolvePalette(theme, name).brand}
                       aria-pressed={color === name}
-                      aria-label={`${name} accent color`}
-                      title={titleCase(name)}
+                      aria-label={t("profile.embed.accentFor", {
+                        name: t(`profile.palette.${name.toLowerCase()}`),
+                      })}
+                      title={t(`profile.palette.${name.toLowerCase()}`)}
                       onClick={() => setColor(name)}
                     />
                   ))}
@@ -344,7 +354,9 @@ export function ProfileEmbedDialog({
             )}
 
             <OptionGroup>
-              <OptionLabel id="embed-ranking-label">Ranking</OptionLabel>
+              <OptionLabel id="embed-ranking-label">
+                {t("profile.embed.ranking")}
+              </OptionLabel>
               <SegmentedControl
                 role="group"
                 aria-labelledby="embed-ranking-label"
@@ -355,7 +367,7 @@ export function ProfileEmbedDialog({
                   aria-pressed={sortBy === "tokens"}
                   onClick={() => setSortBy("tokens")}
                 >
-                  Tokens
+                  {t("profile.usage.tokens")}
                 </SegmentButton>
                 <SegmentButton
                   type="button"
@@ -363,7 +375,7 @@ export function ProfileEmbedDialog({
                   aria-pressed={sortBy === "cost"}
                   onClick={() => setSortBy("cost")}
                 >
-                  Cost
+                  {t("profile.usage.cost")}
                 </SegmentButton>
               </SegmentedControl>
             </OptionGroup>
@@ -371,7 +383,7 @@ export function ProfileEmbedDialog({
             {capabilities.showRankFormat && (
               <OptionGroup>
                 <OptionLabel id="embed-rank-format-label">
-                  Rank format
+                  {t("profile.embed.rankFormat")}
                 </OptionLabel>
                 <SegmentedControl
                   role="group"
@@ -385,7 +397,7 @@ export function ProfileEmbedDialog({
                       aria-pressed={rankFormat === mode}
                       onClick={() => setRankFormat(mode)}
                     >
-                      {titleCase(mode)}
+                      {t(RANK_FORMAT_LABELS[mode])}
                     </SegmentButton>
                   ))}
                 </SegmentedControl>
@@ -395,7 +407,7 @@ export function ProfileEmbedDialog({
             {capabilities.showLayout && (
               <OptionGroup>
                 <OptionLabel id="embed-layout-label">
-                  {view === "3d" ? "Number format" : "Layout"}
+                  {view === "3d" ? t("profile.embed.numberFormat") : t("profile.embed.layout")}
                 </OptionLabel>
                 <SegmentedControl
                   role="group"
@@ -407,7 +419,7 @@ export function ProfileEmbedDialog({
                     aria-pressed={!compact}
                     onClick={() => setCompactForView(false)}
                   >
-                    Full
+                    {t("profile.embed.full")}
                   </SegmentButton>
                   <SegmentButton
                     type="button"
@@ -415,7 +427,7 @@ export function ProfileEmbedDialog({
                     aria-pressed={compact}
                     onClick={() => setCompactForView(true)}
                   >
-                    Compact
+                    {t("profile.embed.compact")}
                   </SegmentButton>
                 </SegmentedControl>
               </OptionGroup>
@@ -424,7 +436,7 @@ export function ProfileEmbedDialog({
             {capabilities.showGraph && (
               <OptionGroup>
                 <OptionLabel id="embed-graph-label">
-                  Contribution graph
+                  {t("profile.embed.graph")}
                 </OptionLabel>
                 <SegmentedControl
                   role="group"
@@ -436,7 +448,7 @@ export function ProfileEmbedDialog({
                     aria-pressed={!graph}
                     onClick={() => setGraph(false)}
                   >
-                    Off
+                    {t("profile.embed.off")}
                   </SegmentButton>
                   <SegmentButton
                     type="button"
@@ -444,7 +456,7 @@ export function ProfileEmbedDialog({
                     aria-pressed={graph}
                     onClick={() => setGraph(true)}
                   >
-                    On
+                    {t("profile.embed.on")}
                   </SegmentButton>
                 </SegmentedControl>
               </OptionGroup>
@@ -452,7 +464,9 @@ export function ProfileEmbedDialog({
 
             {capabilities.showToday && (
               <OptionGroup>
-                <OptionLabel id="embed-today-label">Today&apos;s usage</OptionLabel>
+                <OptionLabel id="embed-today-label">
+                  {t("profile.embed.today")}
+                </OptionLabel>
                 <SegmentedControl
                   role="group"
                   aria-labelledby="embed-today-label"
@@ -463,7 +477,7 @@ export function ProfileEmbedDialog({
                     aria-pressed={!today}
                     onClick={() => setToday(false)}
                   >
-                    Off
+                    {t("profile.embed.off")}
                   </SegmentButton>
                   <SegmentButton
                     type="button"
@@ -471,7 +485,7 @@ export function ProfileEmbedDialog({
                     aria-pressed={today}
                     onClick={() => setToday(true)}
                   >
-                    On
+                    {t("profile.embed.on")}
                   </SegmentButton>
                 </SegmentedControl>
               </OptionGroup>
@@ -481,7 +495,7 @@ export function ProfileEmbedDialog({
               <>
                 <OptionGroup>
                   <OptionLabel id="embed-token-format-label">
-                    Token format
+                    {t("profile.embed.tokenFormat")}
                   </OptionLabel>
                   <SegmentedControl
                     role="group"
@@ -493,7 +507,7 @@ export function ProfileEmbedDialog({
                       aria-pressed={tokensFormat === "compact"}
                       onClick={() => setTokensFormat("compact")}
                     >
-                      Compact
+                      {t("profile.embed.compact")}
                     </SegmentButton>
                     <SegmentButton
                       type="button"
@@ -501,14 +515,14 @@ export function ProfileEmbedDialog({
                       aria-pressed={tokensFormat === "full"}
                       onClick={() => setTokensFormat("full")}
                     >
-                      Full
+                      {t("profile.embed.full")}
                     </SegmentButton>
                   </SegmentedControl>
                 </OptionGroup>
 
                 <OptionGroup>
                   <OptionLabel id="embed-cost-format-label">
-                    Cost format
+                    {t("profile.embed.costFormat")}
                   </OptionLabel>
                   <SegmentedControl
                     role="group"
@@ -520,7 +534,7 @@ export function ProfileEmbedDialog({
                       aria-pressed={costFormat === "compact"}
                       onClick={() => setCostFormat("compact")}
                     >
-                      Compact
+                      {t("profile.embed.compact")}
                     </SegmentButton>
                     <SegmentButton
                       type="button"
@@ -528,7 +542,7 @@ export function ProfileEmbedDialog({
                       aria-pressed={costFormat === "full"}
                       onClick={() => setCostFormat("full")}
                     >
-                      Full
+                      {t("profile.embed.full")}
                     </SegmentButton>
                   </SegmentedControl>
                 </OptionGroup>
@@ -537,27 +551,31 @@ export function ProfileEmbedDialog({
 
             <SnippetSection>
               <SnippetHeader>
-                <SnippetTitle>Markdown snippet</SnippetTitle>
+                <SnippetTitle>{t("profile.embed.markdownSnippet")}</SnippetTitle>
                 <InlineActions>
                   <Button
                     type="button"
                     variant="outline"
                     size="sm"
                     className="h-7 px-2 text-xs"
-                    onClick={() => copyToClipboard(embedUrl, "Image URL")}
+                    onClick={() =>
+                      copyToClipboard(embedUrl, t("profile.embed.labelImageUrl"))
+                    }
                   >
                     <CopyIcon data-icon="inline-start" />
-                    Image URL
+                    {t("profile.embed.imageUrl")}
                   </Button>
                   <Button
                     type="button"
                     variant="outline"
                     size="sm"
                     className="h-7 px-2 text-xs"
-                    onClick={() => copyToClipboard(htmlSnippet, "HTML snippet")}
+                    onClick={() =>
+                      copyToClipboard(htmlSnippet, t("profile.embed.labelHtml"))
+                    }
                   >
                     <CopyIcon data-icon="inline-start" />
-                    HTML
+                    {t("profile.embed.html")}
                   </Button>
                 </InlineActions>
               </SnippetHeader>
@@ -569,18 +587,18 @@ export function ProfileEmbedDialog({
                   type="button"
                   size="sm"
                   onClick={() =>
-                    copyToClipboard(markdownSnippet, "Markdown snippet")
+                    copyToClipboard(markdownSnippet, t("profile.embed.labelMarkdown"))
                   }
                 >
                   <CopyIcon data-icon="inline-start" />
-                  Copy markdown
+                  {t("profile.embed.copyMarkdown")}
                 </Button>
                 <SecondaryLink
                   href={profileUrl}
                   target="_blank"
                   rel="noopener noreferrer"
                 >
-                  View profile
+                  {t("profile.embed.viewProfile")}
                 </SecondaryLink>
               </PrimaryActions>
             </SnippetSection>

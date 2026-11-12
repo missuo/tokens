@@ -17,26 +17,33 @@ import {
 import { PageHeader } from "@/components/layout/PageHeader";
 import { ogImageUrl } from "@/lib/og/ogImage";
 import { cn } from "@/lib/utils";
+import { getTranslator } from "@/lib/i18n/server";
+import { localizeHref } from "@/lib/i18n/config";
+import { richText } from "@/lib/i18n/rich";
 
-export const metadata: Metadata = {
-  title: "Docs - Tokens",
-  description:
-    "Install the Tokens CLI on macOS, Linux or Windows, and get the iOS app on the App Store.",
-  openGraph: {
-    title: "Docs — Tokens",
-    description: "Install the Tokens CLI, or get the iOS app.",
-    url: "https://tokens.ci",
-    siteName: "Tokens",
-    images: [
-      {
-        url: ogImageUrl({ title: "Docs", subtitle: "Install the Tokens CLI, or get the iOS app." }),
-        width: 1200,
-        height: 630,
-      },
-    ],
-  },
-  twitter: { card: "summary_large_image" },
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const { locale, t } = await getTranslator();
+  const description = t("docs.meta.description");
+
+  return {
+    title: t("docs.meta.title"),
+    description,
+    openGraph: {
+      title: t("docs.meta.ogTitle"),
+      description,
+      url: "https://tokens.ci",
+      siteName: "Tokens",
+      images: [
+        {
+          url: ogImageUrl({ title: t("docs.title"), subtitle: t("docs.meta.ogImageSubtitle"), locale }),
+          width: 1200,
+          height: 630,
+        },
+      ],
+    },
+    twitter: { card: "summary_large_image" },
+  };
+}
 
 // Storefront-agnostic App Store link: Apple redirects it to the visitor's own
 // region, so it works everywhere without hardcoding /us/ or /cn/.
@@ -58,21 +65,23 @@ const CLIENT_GRID: ReadonlyArray<{ id: string; name: string; logo: string }> = [
   { id: "paseo", name: "Paseo", logo: "/clients/client-paseo.svg" },
 ].sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
 
+// The notes are catalogue keys rather than text: the lists sit at module scope,
+// where there is no translator, and `CommandBlock` resolves them at render.
 const MACOS: readonly DocCommand[] = [
-  { command: BREW_INSTALL_COMMAND, note: "install" },
-  { command: "tokens login", note: "link your GitHub account" },
-  { command: "brew services start tokens", note: "submit automatically" },
+  { command: BREW_INSTALL_COMMAND, noteKey: "docs.commands.notes.install" },
+  { command: "tokens login", noteKey: "docs.commands.notes.linkGitHub" },
+  { command: "brew services start tokens", noteKey: "docs.commands.notes.submitAutomatically" },
 ];
 
 const LINUX: readonly DocCommand[] = [
-  { command: "curl -fsSL https://tokens.ci/install.sh | sh", note: "install" },
-  { command: "tokens login", note: "link your GitHub account" },
-  { command: "tokens serve", note: "submit automatically" },
+  { command: "curl -fsSL https://tokens.ci/install.sh | sh", noteKey: "docs.commands.notes.install" },
+  { command: "tokens login", noteKey: "docs.commands.notes.linkGitHub" },
+  { command: "tokens serve", noteKey: "docs.commands.notes.submitAutomatically" },
 ];
 
 const WINDOWS: readonly DocCommand[] = [
-  { command: "bunx tokens-cli@latest login", note: "link your GitHub account" },
-  { command: "bunx tokens-cli@latest submit", note: "submit your usage" },
+  { command: "bunx tokens-cli@latest login", noteKey: "docs.commands.notes.linkGitHub" },
+  { command: "bunx tokens-cli@latest submit", noteKey: "docs.commands.notes.submitUsage" },
 ];
 
 /**
@@ -160,7 +169,20 @@ function AppleMark(props: React.SVGProps<SVGSVGElement>) {
   );
 }
 
-export default function DocsPage() {
+/**
+ * Code spans inside prose. Every sentence that carries one is a message with a
+ * `{...}` slot, so the span lands wherever the translation puts it — Chinese
+ * and Japanese do not keep the English word order around it.
+ */
+const CODE = "font-mono text-[13px]";
+
+const LINK = "underline underline-offset-4 hover:text-foreground";
+
+const BRAND_LINK = "font-medium text-foreground underline underline-offset-4";
+
+export default async function DocsPage() {
+  const { locale, t } = await getTranslator();
+
   return (
     <main
       className={cn(CONTAINER, "pb-24 pt-10 sm:pt-14")}
@@ -168,15 +190,15 @@ export default function DocsPage() {
     >
       <div className="mx-auto w-full max-w-[860px]">
       <PageHeader
-        title="Docs"
-        description="Get your AI coding usage onto the leaderboard, from the terminal or from your phone."
+        title={t("docs.title")}
+        description={t("docs.description")}
       />
 
         <div className="flex flex-col gap-12">
         <Section
           id="cli"
-          title="Install the CLI"
-          description="The CLI scans the AI coding clients already installed on your machine, totals the usage locally, and submits only the totals."
+          title={t("docs.install.title")}
+          description={t("docs.install.description")}
         >
           <Tabs defaultValue="macos">
             <TabsList>
@@ -199,26 +221,25 @@ export default function DocsPage() {
             <TabsContent value="macos" className="mt-4 flex flex-col gap-3">
               <CommandBlock commands={MACOS} />
               <p className="text-sm leading-relaxed text-muted-foreground">
-                <code className="font-mono text-[13px]">brew services</code>{" "}
-                keeps a background agent running, so your usage stays current
-                without you thinking about it.
+                {richText(t("docs.install.macosNote"), {
+                  brewServices: <code className={CODE}>brew services</code>,
+                })}
               </p>
             </TabsContent>
 
             <TabsContent value="linux" className="mt-4 flex flex-col gap-3">
               <CommandBlock commands={LINUX} />
               <p className="text-sm leading-relaxed text-muted-foreground">
-                <code className="font-mono text-[13px]">tokens serve</code> runs
-                the submitter in the foreground; pair it with a systemd unit to
-                keep it alive across reboots.
+                {richText(t("docs.install.linuxNote"), {
+                  tokensServe: <code className={CODE}>tokens serve</code>,
+                })}
               </p>
             </TabsContent>
 
             <TabsContent value="windows" className="mt-4 flex flex-col gap-3">
               <CommandBlock commands={WINDOWS} />
               <p className="text-sm leading-relaxed text-muted-foreground">
-                Runs straight from npm, so nothing is installed globally. Use a
-                Scheduled Task to submit on a timer.
+                {t("docs.install.windowsNote")}
               </p>
             </TabsContent>
           </Tabs>
@@ -226,8 +247,8 @@ export default function DocsPage() {
 
         <Section
           id="ios"
-          title="iOS app"
-          description="Your rank and usage on your phone, without opening a browser."
+          title={t("docs.iosApp.title")}
+          description={t("docs.iosApp.description")}
         >
           <Card>
             {/* Stacked on phones. Forced side by side, the title is the only
@@ -236,7 +257,7 @@ export default function DocsPage() {
                 their width. */}
             <CardHeader className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
               <div className="flex flex-wrap items-center gap-2">
-                <CardTitle className="text-base">Tokens for iOS</CardTitle>
+                <CardTitle className="text-base">{t("docs.iosApp.cardTitle")}</CardTitle>
                 <Badge variant="secondary">App Store</Badge>
               </div>
               {/* Base UI composes via `render`, not Radix's `asChild`.
@@ -250,124 +271,151 @@ export default function DocsPage() {
                 }
               >
                 <AppleMark data-icon="inline-start" />
-                Download on the App Store
+                {t("docs.iosApp.download")}
               </Button>
             </CardHeader>
             <CardContent className="flex flex-col gap-5">
               <p className="text-sm leading-relaxed text-muted-foreground">
-                The app is built around Liquid Glass, so it picks up the depth
-                and translucency of iOS itself rather than looking like a web
-                page in a shell.
+                {t("docs.iosApp.liquidGlass")}
               </p>
 
               <div className="flex flex-col gap-4">
-                <Feature icon={Share2Icon} title="Share cards">
-                  Turn a day, a month or an all-time total into a card worth
-                  posting, rendered on device.
+                <Feature icon={Share2Icon} title={t("docs.iosApp.features.shareCards.title")}>
+                  {t("docs.iosApp.features.shareCards.body")}
                 </Feature>
-                <Feature icon={LayoutGridIcon} title="Home screen widgets">
-                  Today&apos;s tokens and your standing, refreshed in the
-                  background.
+                <Feature icon={LayoutGridIcon} title={t("docs.iosApp.features.homeWidgets.title")}>
+                  {t("docs.iosApp.features.homeWidgets.body")}
                 </Feature>
-                <Feature icon={LockIcon} title="Lock screen widgets">
-                  Daily usage, running total and current rank, readable at a
-                  glance without unlocking.
+                <Feature icon={LockIcon} title={t("docs.iosApp.features.lockWidgets.title")}>
+                  {t("docs.iosApp.features.lockWidgets.body")}
                 </Feature>
               </div>
 
               <Separator />
 
               <ol className="flex list-decimal flex-col gap-2 pl-5 text-sm leading-relaxed text-muted-foreground">
-                <li>
-                  Open the App Store link above on your iPhone and install
-                  Tokens.
-                </li>
-                <li>
-                  Open the app, then enter a GitHub username.
-                  There is no sign-in: every profile on Tokens is public, so the
-                  app just reads the one you name. Enter your own username or
-                  the widgets will show someone else&apos;s usage.
-                </li>
-                <li>
-                  Long-press your Home or Lock screen to add the widgets.
-                </li>
+                <li>{t("docs.iosApp.steps.install")}</li>
+                <li>{t("docs.iosApp.steps.enterUsername")}</li>
+                <li>{t("docs.iosApp.steps.addWidgets")}</li>
               </ol>
+            </CardContent>
+          </Card>
+        </Section>
+
+        {/* Endorsed rather than merely tolerated: someone else builds and
+            runs these, on the public profile API, and this project vouches
+            for them as a good way to read your usage. */}
+        <Section
+          id="elsewhere"
+          title={t("docs.recognizedClients.title")}
+          description={t("docs.recognizedClients.description")}
+        >
+          <Card>
+            <CardHeader className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <CardTitle className="text-base">Nowdex</CardTitle>
+                <Badge variant="secondary">{t("docs.recognizedClients.badge")}</Badge>
+              </div>
+              <Button
+                variant="outline"
+                className="w-full shrink-0 sm:w-auto"
+                render={
+                  <a
+                    href="https://nowdex.app"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  />
+                }
+              >
+                nowdex.app
+              </Button>
+            </CardHeader>
+            <CardContent className="text-sm leading-relaxed text-muted-foreground">
+              {richText(t("docs.recognizedClients.nowdex.body"), {
+                author: (
+                  <a
+                    href="https://x.com/randyloop"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline underline-offset-4"
+                  >
+                    Randy Lu
+                  </a>
+                ),
+              })}
             </CardContent>
           </Card>
         </Section>
 
         <Section
           id="usage"
-          title="Everyday use"
-          description="Five commands cover the whole workflow."
+          title={t("docs.everyday.title")}
+          description={t("docs.everyday.description")}
         >
           <CommandBlock
             commands={[
-              { command: "tokens login", note: "authenticate" },
-              { command: "tokens submit", note: "send usage now" },
-              { command: "tokens serve", note: "keep submitting in the background" },
-              { command: "tokens status", note: "what has been submitted" },
-              { command: "tokens help", note: "everything else" },
+              { command: "tokens login", noteKey: "docs.commands.notes.authenticate" },
+              { command: "tokens submit", noteKey: "docs.commands.notes.submitNow" },
+              { command: "tokens serve", noteKey: "docs.commands.notes.submitInBackground" },
+              { command: "tokens status", noteKey: "docs.commands.notes.submittedSoFar" },
+              { command: "tokens help", noteKey: "docs.commands.notes.everythingElse" },
             ]}
           />
         </Section>
 
         <Section
           id="private"
-          title="Private mode"
-          description="Track your usage without publishing it. A private account is left off the leaderboard, and its profile, devices, badges and embeds answer as if it did not exist."
+          title={t("docs.privateMode.title")}
+          description={t("docs.privateMode.description")}
         >
           <div className="flex flex-col gap-4">
             <CommandBlock
               commands={[
                 {
                   command: "tokens login --private",
-                  note: "go private and print a read token",
+                  noteKey: "docs.commands.notes.goPrivate",
                 },
               ]}
             />
 
             <Card size="sm">
               <CardHeader>
-                <CardTitle className="text-sm">Turning it on and off</CardTitle>
+                <CardTitle className="text-sm">{t("docs.privateMode.toggle.title")}</CardTitle>
               </CardHeader>
               <CardContent className="text-sm leading-relaxed text-muted-foreground">
-                Log in with <code>--private</code>, or run it again on a machine
-                that is already logged in, to switch the account to private. The
-                Private mode switch in{" "}
-                <a href="/settings" className="underline underline-offset-4 hover:text-foreground">
-                  Settings
-                </a>{" "}
-                does the same and is the only way back to public: a submit token
-                in CI can hide your profile but never expose it. You still see
-                your own profile while signed in.
+                {richText(t("docs.privateMode.toggle.body"), {
+                  flag: <code className={CODE}>--private</code>,
+                  settings: (
+                    <a href={localizeHref("/settings", locale)} className={LINK}>
+                      {t("nav.settings")}
+                    </a>
+                  ),
+                })}
               </CardContent>
             </Card>
 
             <Card size="sm">
               <CardHeader>
-                <CardTitle className="text-sm">Read tokens</CardTitle>
+                <CardTitle className="text-sm">{t("docs.privateMode.readTokens.title")}</CardTitle>
               </CardHeader>
               <CardContent className="text-sm leading-relaxed text-muted-foreground">
-                A read token (<code>tkr_…</code>) unlocks a private profile for
-                whoever holds it — the iOS app, a script, a badge you still want
-                to show. Send it as <code>Authorization: Bearer tkr_…</code>, or
-                append <code>?token=tkr_…</code> to a badge or embed URL.{" "}
-                <code>tokens login --private</code> prints the first one; create
-                and revoke more in Settings. They can only read — never submit or
-                change anything — and are shown once, then stored only as a hash.
+                {richText(t("docs.privateMode.readTokens.body"), {
+                  token: <code className={CODE}>tkr_…</code>,
+                  header: <code className={CODE}>Authorization: Bearer tkr_…</code>,
+                  query: <code className={CODE}>?token=tkr_…</code>,
+                  loginCommand: <code className={CODE}>tokens login --private</code>,
+                })}
               </CardContent>
             </Card>
 
             <Card size="sm">
               <CardHeader>
-                <CardTitle className="text-sm">Device names</CardTitle>
+                <CardTitle className="text-sm">{t("docs.privateMode.deviceNames.title")}</CardTitle>
               </CardHeader>
               <CardContent className="text-sm leading-relaxed text-muted-foreground">
-                Public or private, other people only ever see your device names
-                masked — the first and last two characters, like{" "}
-                <code>jo****ro</code> — since a device name is often a hostname.
-                You see them in full on your own profile and in Settings.
+                {richText(t("docs.privateMode.deviceNames.body"), {
+                  example: <code className={CODE}>jo****ro</code>,
+                })}
               </CardContent>
             </Card>
           </div>
@@ -375,58 +423,56 @@ export default function DocsPage() {
 
         <Section
           id="verified"
-          title="The verified badge"
-          description="A small check next to a name on the leaderboard. It says the account is a real, findable person — nothing more."
+          title={t("docs.verifiedBadge.title")}
+          description={t("docs.verifiedBadge.description")}
         >
           <div className="flex flex-col gap-4">
             <Card size="sm">
               <CardHeader>
-                <CardTitle className="text-sm">How to get it</CardTitle>
+                <CardTitle className="text-sm">{t("docs.verifiedBadge.howToGet.title")}</CardTitle>
               </CardHeader>
               <CardContent className="text-sm leading-relaxed text-muted-foreground">
-                Add at least <strong className="font-medium text-foreground">two social
-                links</strong> to your GitHub profile — the &ldquo;Social accounts&rdquo;
-                fields in{" "}
-                <a
-                  href="https://github.com/settings/profile"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="underline underline-offset-4 hover:text-foreground"
-                >
-                  GitHub profile settings
-                </a>
-                . Any two count: a personal site, X, LinkedIn, Mastodon, YouTube.
-                That is the whole rule.
+                {richText(t("docs.verifiedBadge.howToGet.body"), {
+                  links: (
+                    <strong className="font-medium text-foreground">
+                      {t("docs.verifiedBadge.howToGet.links")}
+                    </strong>
+                  ),
+                  settings: (
+                    <a
+                      href="https://github.com/settings/profile"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={LINK}
+                    >
+                      {t("docs.verifiedBadge.howToGet.settings")}
+                    </a>
+                  ),
+                })}
               </CardContent>
             </Card>
 
             <Card size="sm">
               <CardHeader>
-                <CardTitle className="text-sm">When it appears</CardTitle>
+                <CardTitle className="text-sm">{t("docs.verifiedBadge.timing.title")}</CardTitle>
               </CardHeader>
               <CardContent className="text-sm leading-relaxed text-muted-foreground">
-                Links are re-read once a day, at 03:20 UTC. Adding them now means
-                the badge appears on the next run rather than immediately —
-                signing out and back in does not speed it up. Dropping below two
-                links removes it on the same schedule.
+                {t("docs.verifiedBadge.timing.body")}
               </CardContent>
             </Card>
 
             <Card size="sm">
               <CardHeader>
-                <CardTitle className="text-sm">Why two links</CardTitle>
+                <CardTitle className="text-sm">{t("docs.verifiedBadge.why.title")}</CardTitle>
               </CardHeader>
               <CardContent className="text-sm leading-relaxed text-muted-foreground">
-                A leaderboard attracts throwaway accounts. Filling in two social
-                fields is trivial for someone who already exists online and
-                tedious to fake at scale, which is all the badge claims. It is
-                not an identity check, and it has no effect on ranking —
-                inflated numbers are handled separately, by the submission
-                checks and the{" "}
-                <a href="/shame" className="underline underline-offset-4 hover:text-foreground">
-                  Hall of Shame
-                </a>
-                .
+                {richText(t("docs.verifiedBadge.why.body"), {
+                  shame: (
+                    <a href={localizeHref("/shame", locale)} className={LINK}>
+                      {t("nav.hallOfShame")}
+                    </a>
+                  ),
+                })}
               </CardContent>
             </Card>
           </div>
@@ -434,21 +480,16 @@ export default function DocsPage() {
 
         <Section
           id="clients"
-          title="Supported clients"
-          description="The CLI scans whatever is already on your machine — nothing to configure per client."
+          title={t("docs.clients.title")}
+          description={t("docs.clients.description")}
         >
           <div className="flex flex-col gap-4">
             <p className="text-sm leading-relaxed text-muted-foreground">
-              All {CLIENT_GRID.length} of these are detected automatically — if
-              it is installed and has written sessions, it is counted.
+              {t("docs.clients.count", { count: CLIENT_GRID.length })}
             </p>
 
             <p className="text-sm leading-relaxed text-muted-foreground">
-              Paseo usage is counted under the underlying supported provider,
-              such as Claude Code or Codex CLI. Tokens also discovers absolute
-              Claude and Codex data-directory overrides in Paseo&apos;s provider
-              configuration. Run Tokens on the Paseo daemon host to submit those
-              sessions.
+              {t("docs.clients.paseo")}
             </p>
 
             {/* A plain responsive grid rather than a table: these are names,
@@ -479,70 +520,56 @@ export default function DocsPage() {
 
         <Section
           id="architecture"
-          title="Architecture"
-          description="What runs where. The repository is public so this can be checked rather than taken on trust."
+          title={t("docs.architecture.title")}
+          description={t("docs.architecture.description")}
         >
           <div className="flex flex-col gap-4">
             <Card size="sm">
               <CardHeader>
-                <CardTitle className="text-sm">The site and the API</CardTitle>
+                <CardTitle className="text-sm">{t("docs.architecture.site.title")}</CardTitle>
               </CardHeader>
               <CardContent className="text-sm leading-relaxed text-muted-foreground">
-                Next.js, deployed to Cloudflare Workers through OpenNext — one
-                Worker serves both the pages and the API, with no origin server
-                behind it. Static assets, the share cards, and the pages a
-                signed-out reader sees are cached at the edge, so most requests
-                are answered without running any code at all.
+                {t("docs.architecture.site.body")}
               </CardContent>
             </Card>
 
             <Card size="sm">
               <CardHeader>
-                <CardTitle className="text-sm">The database</CardTitle>
+                <CardTitle className="text-sm">{t("docs.architecture.database.title")}</CardTitle>
               </CardHeader>
               <CardContent className="text-sm leading-relaxed text-muted-foreground">
-                <a
-                  href="https://neon.com"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="font-medium text-foreground underline underline-offset-4"
-                >
-                  Neon
-                </a>{" "}
-                (Postgres), reached through Cloudflare Hyperdrive, which keeps
-                warm pooled connections beside the database so a page issuing
-                several queries does not pay a fresh handshake for each. The
-                Worker is pinned to the same region: a request crosses the ocean
-                once, and every query after that is a local hop. Schema changes
-                go through Drizzle migrations applied at build time.
+                {richText(t("docs.architecture.database.body"), {
+                  neon: (
+                    <a
+                      href="https://neon.com"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={BRAND_LINK}
+                    >
+                      Neon
+                    </a>
+                  ),
+                })}
               </CardContent>
             </Card>
 
             <Card size="sm">
               <CardHeader>
-                <CardTitle className="text-sm">The CLI</CardTitle>
+                <CardTitle className="text-sm">{t("docs.architecture.cli.title")}</CardTitle>
               </CardHeader>
               <CardContent className="text-sm leading-relaxed text-muted-foreground">
-                Rust, distributed as a prebuilt binary per platform through npm.
-                It reads the session files your clients already write, totals
-                them on your machine, and sends only the totals — token counts,
-                model names, timestamps. Prompts, completions and file contents
-                never leave the machine.{" "}
-                <code className="font-mono text-[13px]">tokens submit --dry-run</code>{" "}
-                prints exactly what would be uploaded.
+                {richText(t("docs.architecture.cli.body"), {
+                  dryRun: <code className={CODE}>tokens submit --dry-run</code>,
+                })}
               </CardContent>
             </Card>
 
             <Card size="sm">
               <CardHeader>
-                <CardTitle className="text-sm">Caching and scheduled work</CardTitle>
+                <CardTitle className="text-sm">{t("docs.architecture.caching.title")}</CardTitle>
               </CardHeader>
               <CardContent className="text-sm leading-relaxed text-muted-foreground">
-                Rendered pages live in R2, with Durable Objects tracking which
-                tags a submission invalidates — so your own numbers update the
-                moment you submit rather than on a timer. The daily badge
-                refresh runs as a Worker cron trigger, in-process, with no
-                external scheduler holding a key.
+                {t("docs.architecture.caching.body")}
               </CardContent>
             </Card>
           </div>
@@ -554,8 +581,8 @@ export default function DocsPage() {
             it read as one. */}
         <Section
           id="sponsors"
-          title="Sponsors"
-          description="Two companies pay for infrastructure this project does not. Neither asked for anything in return, and neither has any say in what the leaderboard reports."
+          title={t("docs.sponsors.title")}
+          description={t("docs.sponsors.description")}
         >
           <div className="flex flex-col gap-4">
             <Card size="sm">
@@ -573,49 +600,50 @@ export default function DocsPage() {
                     height={18}
                     className="size-[18px] shrink-0"
                   />
-                  <a
-                    href="https://v.ps"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="underline underline-offset-4"
-                  >
-                    V.PS
-                  </a>{" "}
-                  — the server
+                  {richText(t("docs.sponsors.vps.title"), {
+                    vps: (
+                      <a
+                        href="https://v.ps"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="underline underline-offset-4"
+                      >
+                        V.PS
+                      </a>
+                    ),
+                  })}
                 </CardTitle>
               </CardHeader>
               <CardContent className="text-sm leading-relaxed text-muted-foreground">
-                V.PS, run by{" "}
-                <a
-                  href="https://xtom.com"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="font-medium text-foreground underline underline-offset-4"
-                >
-                  xTom
-                </a>
-                , provide the Tokyo server this site runs on.
+                {richText(t("docs.sponsors.vps.p1"), {
+                  xtom: (
+                    <a
+                      href="https://xtom.com"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={BRAND_LINK}
+                    >
+                      xTom
+                    </a>
+                  ),
+                })}
                 <br />
                 <br />
-                The routing is the point of it rather than the hardware. A large
-                share of the people reading this leaderboard are in mainland
-                China, where the path out matters more than anything waiting at
-                the far end — and no amount of caching fixes a slow path to the
-                cache. In their own words: every plan takes the best route each
-                carrier offers, so connections from mainland China stay fast
-                around the clock.
+                {t("docs.sponsors.vps.p2")}
                 <br />
                 <br />
-                If you want the same thing, they sell it at{" "}
-                <a
-                  href="https://vps.hosting/?affid=2147"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="font-medium text-foreground underline underline-offset-4"
-                >
-                  vps.hosting
-                </a>
-                .
+                {richText(t("docs.sponsors.vps.p3"), {
+                  vpsHosting: (
+                    <a
+                      href="https://vps.hosting/?affid=2147"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={BRAND_LINK}
+                    >
+                      vps.hosting
+                    </a>
+                  ),
+                })}
               </CardContent>
             </Card>
 
@@ -630,30 +658,25 @@ export default function DocsPage() {
                     height={18}
                     className="size-[18px] shrink-0"
                   />
-                  <a
-                    href="https://neon.com"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="underline underline-offset-4"
-                  >
-                    Neon
-                  </a>{" "}
-                  — the database
+                  {richText(t("docs.sponsors.neon.title"), {
+                    neon: (
+                      <a
+                        href="https://neon.com"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="underline underline-offset-4"
+                      >
+                        Neon
+                      </a>
+                    ),
+                  })}
                 </CardTitle>
               </CardHeader>
               <CardContent className="text-sm leading-relaxed text-muted-foreground">
-                Neon provide the serverless Postgres that holds every submission
-                on this site.
+                {t("docs.sponsors.neon.p1")}
                 <br />
                 <br />
-                What that pays for is the decision not to approximate. The
-                leaderboard is computed from the actual daily rows on every
-                read, not from a nightly rollup that would be cheaper and
-                slightly wrong; a submission changes your position within the
-                minute; and every figure on a profile can be traced back to a
-                row rather than to a counter someone remembered to increment.
-                Tokens is free to use and free to self-host, so none of that is
-                funded by the people using it.
+                {t("docs.sponsors.neon.p2")}
               </CardContent>
             </Card>
           </div>

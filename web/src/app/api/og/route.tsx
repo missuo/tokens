@@ -1,6 +1,9 @@
 import { ImageResponse } from "next/og";
 import { getEmbedClientLogo } from "@/lib/embed/clientLogoSvg";
 import { formatCurrency, formatNumber } from "@/lib/format";
+import { DEFAULT_LOCALE, isLocale, type Locale } from "@/lib/i18n/config";
+import { resolveMessages } from "@/lib/i18n/messages";
+import { createTranslator, type Translator } from "@/lib/i18n/translate";
 import { OG_FONT_SOURCES } from "@/lib/og/fonts.generated";
 import { decodeOgActivity, OG_ACTIVITY_WEEKS } from "@/lib/og/ogImage";
 
@@ -29,6 +32,13 @@ const HEAT = ["#EEF0F3", "#D3E2FB", "#9FC0F5", "#5E95EA", "#2F6FDB"];
 
 const SANS = "Geist";
 const MONO = "JetBrains Mono";
+/**
+ * Latin first, CJK second: Satori walks the family list per glyph, so Latin
+ * copy keeps Geist's letterforms and only the characters Geist has no glyph
+ * for reach the CJK face. Both faces are in `OG_FONT_SOURCES`, and both are
+ * inlined — the route never fetches a font at request time.
+ */
+const CJK = "Noto Sans JP";
 
 const SITE_CLIENTS = [
   "claude",
@@ -211,10 +221,21 @@ function LogoTile({ client, size }: { client: string; size: number }) {
   );
 }
 
-function SiteCard({ title, subtitle }: { title: string | null; subtitle: string | null }) {
-  const headline = title ?? "The leaderboard for";
-  const accent = title ? null : "AI coding usage.";
-  const sub = subtitle ?? "Track tokens and spend across Claude Code, Codex, Cursor, Gemini and 20+ more.";
+function SiteCard({
+  title,
+  subtitle,
+  t,
+}: {
+  title: string | null;
+  subtitle: string | null;
+  t: Translator;
+}) {
+  const headline = title ?? t("og.site.headline");
+  // The accent line is the second half of a sentence the dictionary writes as
+  // two pieces — "The leaderboard for" / "AI coding usage." in English, one
+  // whole headline in zh and ja, where the split would read wrong.
+  const accent = title ? null : t("og.site.accent") || null;
+  const sub = subtitle ?? t("og.site.subtitle");
   const headlineSize = headline.length > 22 ? 60 : 68;
 
   return (
@@ -252,13 +273,13 @@ function SiteCard({ title, subtitle }: { title: string | null; subtitle: string 
           }}
         >
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <span style={{ fontSize: 20, fontWeight: 600, color: INK }}>Activity</span>
+            <span style={{ fontSize: 20, fontWeight: 600, color: INK }}>{t("og.card.activity")}</span>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <span style={{ fontSize: 16, color: SUBTLE, marginRight: 4 }}>Less</span>
+              <span style={{ fontSize: 16, color: SUBTLE, marginRight: 4 }}>{t("og.card.less")}</span>
               {HEAT.map((c) => (
                 <div key={c} style={{ width: 14, height: 14, borderRadius: 4, background: c, display: "flex" }} />
               ))}
-              <span style={{ fontSize: 16, color: SUBTLE, marginLeft: 4 }}>More</span>
+              <span style={{ fontSize: 16, color: SUBTLE, marginLeft: 4 }}>{t("og.card.more")}</span>
             </div>
           </div>
           <Heatmap levels={decorativeLevels(12)} weeks={12} cell={22} gap={6} />
@@ -302,14 +323,16 @@ function ProfileCard({
   activity,
   activeDays,
   clients,
+  t,
 }: {
   name: string;
   handle: string;
   avatar: string | null;
   stats: Array<{ label: string; value: string }>;
   activity: number[] | null;
-  activeDays: string | null;
+  activeDays: number | null;
   clients: string[];
+  t: Translator;
 }) {
   const nameSize = name.length > 22 ? 48 : name.length > 15 ? 56 : 64;
   const showHandle = name.toLowerCase() !== handle.toLowerCase();
@@ -375,7 +398,7 @@ function ProfileCard({
       {activity ? (
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <div style={{ display: "flex", justifyContent: "space-between" }}>
-            <span style={{ fontSize: 20, fontWeight: 500, color: MUTED }}>Past year</span>
+            <span style={{ fontSize: 20, fontWeight: 500, color: MUTED }}>{t("og.card.pastYear")}</span>
             <span style={{ fontFamily: MONO, fontSize: 20, color: SUBTLE }}>tokens.ci/u/{handle}</span>
           </div>
           <Heatmap levels={activity} weeks={OG_ACTIVITY_WEEKS} cell={14.7} gap={6} />
@@ -383,7 +406,9 @@ function ProfileCard({
       ) : (
         <div style={{ display: "flex", justifyContent: "space-between" }}>
           <span style={{ fontSize: 22, fontWeight: 500, color: MUTED }}>
-            {activeDays ? `${activeDays} active days` : "AI coding usage on Tokens"}
+            {activeDays
+              ? t("og.card.activeDays", { count: activeDays })
+              : t("og.card.fallback")}
           </span>
           <span style={{ fontFamily: MONO, fontSize: 22, color: SUBTLE }}>tokens.ci/u/{handle}</span>
         </div>
@@ -395,6 +420,20 @@ function ProfileCard({
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
 
+  /**
+   * The locale rides in the query string because there is no request context
+   * to inherit one from: the card is fetched by X, Slack and Discord, none of
+   * which forward the reader's cookie or `Accept-Language`. Being part of the
+   * URL also makes each language its own entry in the year-long immutable
+   * cache, so switching the site language cannot poison an existing card.
+   *
+   * An unknown or absent value falls back to English, which keeps every URL
+   * minted before this change serving exactly the bytes it did before.
+   */
+  const requestedLocale = searchParams.get("locale");
+  const locale: Locale = isLocale(requestedLocale) ? requestedLocale : DEFAULT_LOCALE;
+  const t = createTranslator(locale, resolveMessages(locale));
+
   const title = searchParams.get("title")?.slice(0, 60) || null;
   const subtitle = searchParams.get("subtitle")?.slice(0, 120) || null;
   const handle = (searchParams.get("handle") || "").slice(0, 40);
@@ -405,13 +444,14 @@ export async function GET(request: Request) {
     const tokens = searchParams.get("tokens");
     const cost = searchParams.get("cost");
     const days = searchParams.get("days");
-    const activeDays = days && /^\d+$/.test(days) ? formatNumber(Number(days)) : null;
+    const activeDays = days && /^\d+$/.test(days) ? Number(days) : null;
 
     const stats: Array<{ label: string; value: string }> = [];
-    if (tokens) stats.push({ label: "TOKENS", value: formatNumber(Number(tokens), true) });
-    if (cost) stats.push({ label: "SPENT", value: formatCurrency(Number(cost), true) });
-    if (rank && /^\d+$/.test(rank)) stats.push({ label: "RANK", value: `#${formatNumber(Number(rank))}` });
-    if (activeDays) stats.push({ label: "ACTIVE DAYS", value: activeDays });
+    if (tokens) stats.push({ label: t("og.labels.tokens"), value: formatNumber(Number(tokens), true, locale) });
+    if (cost) stats.push({ label: t("og.labels.spent"), value: formatCurrency(Number(cost), true, locale) });
+    if (rank && /^\d+$/.test(rank))
+      stats.push({ label: t("og.labels.rank"), value: t("og.card.rank", { rank: formatNumber(Number(rank), false, locale) }) });
+    if (activeDays) stats.push({ label: t("og.labels.activeDays"), value: formatNumber(activeDays, false, locale) });
 
     const clients = (searchParams.get("clients") || "")
       .split(",")
@@ -424,6 +464,7 @@ export async function GET(request: Request) {
         handle={handle}
         avatar={safeAvatarUrl(searchParams.get("avatar"))}
         stats={stats}
+        t={t}
         activity={decodeOgActivity(searchParams.get("activity"))}
         activeDays={activeDays}
         clients={clients}
@@ -433,7 +474,9 @@ export async function GET(request: Request) {
     // The site card used to be requested as `?title=Tokens`; that title is the
     // wordmark, not a headline.
     const pageTitle = title && title !== "Tokens" ? title : null;
-    card = <SiteCard title={pageTitle} subtitle={pageTitle ? subtitle : null} />;
+    card = (
+      <SiteCard title={pageTitle} subtitle={pageTitle ? subtitle : null} t={t} />
+    );
   }
 
   return new ImageResponse(
@@ -446,7 +489,7 @@ export async function GET(request: Request) {
           position: "relative",
           background: BG,
           color: INK,
-          fontFamily: SANS,
+          fontFamily: locale === DEFAULT_LOCALE ? SANS : `${SANS}, ${CJK}`,
         }}
       >
         <Background />

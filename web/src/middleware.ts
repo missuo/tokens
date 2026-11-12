@@ -1,8 +1,19 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import {
+  DEFAULT_LOCALE,
+  LOCALE_COOKIE,
+  isLocale,
+  negotiateLocale,
+  stripLocale,
+} from "@/lib/i18n/config";
+import { LOCALE_HEADER } from "@/lib/i18n/config";
 
 // Routes that require authentication
 const PROTECTED_ROUTES = ["/settings"];
+
+/** The default locale as a prefix, which redirects to the unprefixed path. */
+const PREFIXED_DEFAULT = "/en";
 
 /**
  * Pages that render the same bytes for every reader, and the query parameters
@@ -21,12 +32,17 @@ const PROTECTED_ROUTES = ["/settings"];
  * client finds the viewer's own row in it, which removes the personalisation
  * instead of hiding it, and has the better property besides: the card and the
  * table are read from one array, so they cannot disagree.
+ *
+ * Patterns are tested against the path with its locale prefix stripped, so
+ * `/zh-CN/leaderboard` and `/ja/u/x` get exactly the English page's cache
+ * header and query allowlist. Each locale is its own URL, so its own entry.
+ *
+ * `/` is deliberately absent: see `ROOT_CACHE_CONTROL`.
  */
 const SHARED_CACHE_ROUTES: ReadonlyArray<{
   pattern: RegExp;
   query: ReadonlySet<string>;
 }> = [
-  { pattern: /^\/$/, query: new Set() },
   { pattern: /^\/docs$/, query: new Set() },
   { pattern: /^\/terms$/, query: new Set() },
   { pattern: /^\/privacy$/, query: new Set() },
@@ -68,6 +84,16 @@ const SHARED_CACHE_CONTROL =
   "public, max-age=0, s-maxage=30, stale-while-revalidate=60";
 
 /**
+ * What the unprefixed root sends, whichever way it answers.
+ *
+ * `/` is the one URL whose response depends on the reader: a remembered or
+ * negotiated language turns it into a redirect to that language's board. The
+ * edge keys on the URL alone, so a cached copy would hand the first visitor's
+ * language to everyone behind the same colo. It is never stored anywhere.
+ */
+const ROOT_CACHE_CONTROL = "private, no-store";
+
+/**
  * Next fetches the RSC payload for a client-side navigation from the same path,
  * distinguished only by an `_rsc` query parameter and an `RSC` header.
  *
@@ -87,11 +113,79 @@ function isRscRequest(request: NextRequest): boolean {
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  if (PROTECTED_ROUTES.some((route) => pathname.startsWith(route))) {
+  // The URL is the only source of the locale: a prefix means that language,
+  // and its absence means English. Nothing here reads a cookie to decide what
+  // an unprefixed page renders, because Cloudflare caches on the URL alone and
+  // a cookie-dependent body would let the first visitor to reach a colo decide
+  // what everyone behind it gets for the next 30 seconds.
+  const { locale, path } = stripLocale(pathname);
+  const prefixed = locale !== DEFAULT_LOCALE;
+
+  // English is a real prefix too, just not the canonical one, so `/en/docs`
+  // redirects to `/docs` rather than 404ing. That keeps `/en` a valid thing to
+  // type or link to — and the switcher can generate it like any other language
+  // without a special case — while leaving exactly one address per page in the
+  // cache.
+  if (pathname === PREFIXED_DEFAULT || pathname.startsWith(`${PREFIXED_DEFAULT}/`)) {
+    // `/en` alone has no page of its own for the same reason `/` does not, and
+    // the board is where both end up — going via `/` would cost a second hop.
+    const withoutPrefix =
+      pathname.slice(PREFIXED_DEFAULT.length) || "/leaderboard";
+    const target = new URL(request.nextUrl);
+    target.pathname = withoutPrefix;
+    return NextResponse.redirect(target, 307);
+  }
+
+  // `/zh-CN` on its own is a second name for a page that lives at `/zh/...`.
+  if (prefixed && path === "/") {
+    return NextResponse.redirect(new URL(`/${locale}/leaderboard`, request.url));
+  }
+
+  // The root is the one route with no content of its own — it redirects to the
+  // board. That makes it the only place a remembered or negotiated language can
+  // be applied by redirect rather than by rendering two documents on one URL.
+  if (!prefixed && path === "/") {
+    const remembered = request.cookies.get(LOCALE_COOKIE)?.value;
+    const preferred = isLocale(remembered)
+      ? remembered
+      : negotiateLocale(request.headers.get("accept-language"));
+
+    if (preferred && preferred !== DEFAULT_LOCALE) {
+      const redirect = NextResponse.redirect(
+        new URL(`/${preferred}/leaderboard`, request.url),
+      );
+      redirect.headers.set("Cache-Control", ROOT_CACHE_CONTROL);
+      return redirect;
+    }
+  }
+
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set(LOCALE_HEADER, locale);
+
+  /**
+   * The two ways this can let a request through.
+   *
+   * A prefixed URL has to be *rewritten* to the unprefixed path the app routes
+   * on — the address bar keeps `/zh/leaderboard`, the renderer sees
+   * `/leaderboard`. An unprefixed one is already where it needs to be and only
+   * carries the header. Both stamp the locale, so pages never have to guess.
+   */
+  const pass = () => {
+    if (!prefixed) {
+      return NextResponse.next({ request: { headers: requestHeaders } });
+    }
+    const target = request.nextUrl.clone();
+    target.pathname = path;
+    return NextResponse.rewrite(target, { request: { headers: requestHeaders } });
+  };
+
+  if (PROTECTED_ROUTES.some((route) => path.startsWith(route))) {
     const sessionToken = request.cookies.get("tt_session")?.value;
 
     if (!sessionToken) {
       const loginUrl = new URL("/api/auth/github", request.url);
+      // The prefix is kept so signing in lands back on the language the reader
+      // was already using.
       loginUrl.searchParams.set("returnTo", pathname);
       return NextResponse.redirect(loginUrl);
     }
@@ -99,14 +193,18 @@ export function middleware(request: NextRequest) {
     // Session exists, allow access.
     // Note: We don't validate the session here to avoid database calls in
     // middleware. The actual validation happens in the page/API route.
-    return NextResponse.next();
+    return pass();
   }
 
-  const route = SHARED_CACHE_ROUTES.find((entry) =>
-    entry.pattern.test(pathname),
-  );
+  if (!prefixed && path === "/") {
+    const response = pass();
+    response.headers.set("Cache-Control", ROOT_CACHE_CONTROL);
+    return response;
+  }
+
+  const route = SHARED_CACHE_ROUTES.find((entry) => entry.pattern.test(path));
   if (!route) {
-    return NextResponse.next();
+    return pass();
   }
 
   if (!isRscRequest(request)) {
@@ -127,7 +225,7 @@ export function middleware(request: NextRequest) {
     }
   }
 
-  const response = NextResponse.next();
+  const response = pass();
   response.headers.set("Cache-Control", SHARED_CACHE_CONTROL);
   return response;
 }
@@ -155,8 +253,26 @@ function canonicalUrl(
 export const config = {
   // Every path whose auth or caching is decided above. One absent from this
   // list never reaches the function, however its conditions are written.
+  //
+  // Localised routes are listed rather than matched with a catch-all: the
+  // matcher also has to keep the middleware off `/api` (the CLI, badges and
+  // embeds have no locale prefix and no HTML to cache) and off every static
+  // asset. A `/((?!api|_next).*)` pattern would sweep both in, and a plain
+  // `.*\..*` exclusion would also catch a GitHub username with a dot in it
+  // (`/u/foo.bar`) — which has to reach the function like any other profile.
+  //
+  // Adding a locale means adding its two lines here; there is no way to spot
+  // that from the prefix list alone, hence this note. `/en` is listed as well
+  // even though it only ever redirects: without an entry here it never reaches
+  // the function and `/en/leaderboard` 404s instead.
   matcher: [
     "/",
+    "/en",
+    "/en/:path*",
+    "/zh-CN",
+    "/zh-CN/:path*",
+    "/ja",
+    "/ja/:path*",
     "/settings/:path*",
     "/docs",
     "/terms",

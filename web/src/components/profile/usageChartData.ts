@@ -1,4 +1,5 @@
 import { SOURCE_COLORS, SOURCE_DISPLAY_NAMES } from "@/lib/constants";
+import type { Translator } from "@/lib/i18n/translate";
 import type {
   ClientType,
   DailyContribution,
@@ -511,8 +512,8 @@ export function toTrailingAverage(
   });
 }
 
-function providerLabel(provider: UsageProviderId): string {
-  if (provider === UNATTRIBUTED_USAGE_PROVIDER) return "Unattributed";
+function providerLabel(provider: UsageProviderId, t: Translator): string {
+  if (provider === UNATTRIBUTED_USAGE_PROVIDER) return t("profile.usage.unattributed");
   return SOURCE_DISPLAY_NAMES[provider] ?? provider;
 }
 
@@ -520,13 +521,14 @@ function modelLabel(
   provider: UsageProviderId,
   model: string,
   kind: UsageSeriesKind,
+  t: Translator,
 ): string {
-  if (kind === "blank-model") return "Unknown model";
-  if (kind === "synthetic") return "Synthetic";
+  if (kind === "blank-model") return t("profile.usage.unknownModel");
+  if (kind === "synthetic") return t("profile.usage.synthetic");
   if (kind === "provider-remainder") {
-    return `${providerLabel(provider)} remainder`;
+    return t("profile.usage.providerRemainder", { provider: providerLabel(provider, t) });
   }
-  if (kind === "daily-remainder") return "Unattributed usage";
+  if (kind === "daily-remainder") return t("profile.usage.unattributedUsage");
   return model;
 }
 
@@ -793,6 +795,9 @@ export function buildUsageChartData(
   provider: UsageProviderFilter = ALL_USAGE_PROVIDERS,
   view: UsageView = "average",
   averageWindowDays = DEFAULT_USAGE_AVERAGE_WINDOW,
+  // Last but one: a caller that wants `t` must not have to name `maxSeries`
+  // to get past it.
+  t: Translator = (key) => key,
   maxSeries = MAX_USAGE_CHART_SERIES,
 ): UsageChartData {
   const sortedDays = [...days].sort((left, right) =>
@@ -817,8 +822,8 @@ export function buildUsageChartData(
 
   const series: UsageChartSeries[] = visibleCandidates.map((candidate) => ({
     id: candidate.id,
-    label: modelLabel(candidate.provider, candidate.model, candidate.kind),
-    providerLabel: providerLabel(candidate.provider),
+    label: modelLabel(candidate.provider, candidate.model, candidate.kind, t),
+    providerLabel: providerLabel(candidate.provider, t),
     provider: candidate.provider,
     model: candidate.model,
     kind: candidate.kind,
@@ -840,8 +845,8 @@ export function buildUsageChartData(
     });
     series.push({
       id: OTHER_USAGE_PROVIDERS,
-      label: `Other (${remainder.length})`,
-      providerLabel: "Other",
+      label: t("profile.usage.otherCount", { count: remainder.length }),
+      providerLabel: t("profile.usage.other"),
       provider: null,
       model: SERIES_REMAINDER_USAGE_MODEL,
       kind: "series-remainder",

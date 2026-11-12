@@ -1,10 +1,15 @@
 import type { Metadata } from 'next';
 import DeviceClient from './DeviceClient';
+import { getTranslator } from '@/lib/i18n/server';
 
-export const metadata: Metadata = {
-  title: 'Device Authorization - Token Usage',
-  description: 'Authorize your device to sync token usage data',
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const { t } = await getTranslator();
+
+  return {
+    title: t('settings.pairing.meta.title'),
+    description: t('settings.pairing.meta.description'),
+  };
+}
 
 /**
  * Never let a shared cache hold this page.

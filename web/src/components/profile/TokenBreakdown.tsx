@@ -1,8 +1,8 @@
 "use client";
 
 import { useId, type CSSProperties } from "react";
-import { formatNumber } from "@/lib/utils";
-import { formatPercent } from "@/lib/format";
+import { useLocale, useT } from "@/components/layout/LocaleProvider";
+import { formatNumber, formatPercent } from "@/lib/format";
 import type { ProfileStatsData } from "./types";
 import { tw } from "@/lib/tw";
 
@@ -111,33 +111,42 @@ function finiteNonnegative(value: number | undefined): number {
 }
 
 export function TokenBreakdown({ stats, className }: TokenBreakdownProps) {
+  const t = useT();
+  const locale = useLocale();
   const headingId = useId();
   const descriptionId = useId();
+  // `key` is the catalogue path segment, so the label follows the locale and
+  // the React key stays stable across languages.
   const tokenTypes = [
     {
-      label: "Input",
+      key: "input",
+      label: t("profile.tokens.input"),
       value: finiteNonnegative(stats.inputTokens),
       color: TOKEN_MIX_COLORS.input,
     },
     {
-      label: "Output",
+      key: "output",
+      label: t("profile.tokens.output"),
       value: finiteNonnegative(stats.outputTokens),
       color: TOKEN_MIX_COLORS.output,
     },
     {
-      label: "Cache read",
+      key: "cacheRead",
+      label: t("profile.tokens.cacheRead"),
       value: finiteNonnegative(stats.cacheReadTokens),
       color: TOKEN_MIX_COLORS.cacheRead,
     },
     {
-      label: "Cache write",
+      key: "cacheWrite",
+      label: t("profile.tokens.cacheWrite"),
       value: finiteNonnegative(stats.cacheWriteTokens),
       color: TOKEN_MIX_COLORS.cacheWrite,
     },
     ...(finiteNonnegative(stats.reasoningTokens) > 0
       ? [
           {
-            label: "Reasoning",
+            key: "reasoning",
+            label: t("profile.tokens.reasoning"),
             value: finiteNonnegative(stats.reasoningTokens),
             color: TOKEN_MIX_COLORS.reasoning,
           },
@@ -148,8 +157,10 @@ export function TokenBreakdown({ stats, className }: TokenBreakdownProps) {
     (sum, type) => Math.min(Number.MAX_VALUE, sum + type.value),
     0,
   );
+  // A list, read out before the bar: joined with the locale's own separator
+  // would need another catalogue entry for one punctuation mark.
   const describedBreakdown = tokenTypes
-    .map((type) => `${type.label} ${formatNumber(type.value)}`)
+    .map((type) => `${type.label} ${formatNumber(type.value, true, locale)}`)
     .join(", ");
 
   return (
@@ -159,26 +170,29 @@ export function TokenBreakdown({ stats, className }: TokenBreakdownProps) {
       aria-describedby={descriptionId}
     >
       <BreakdownHeader>
-        <BreakdownHeading id={headingId}>Token mix</BreakdownHeading>
+        <BreakdownHeading id={headingId}>{t("profile.breakdown.heading")}</BreakdownHeading>
         <BreakdownDescription id={descriptionId}>
-          Distribution across input, output, cache, and reasoning tokens.
+          {t("profile.breakdown.description")}
         </BreakdownDescription>
       </BreakdownHeader>
 
       <BreakdownBody>
         <SegmentedBar
           role="img"
-          aria-label={`Token distribution: ${describedBreakdown}`}
+          aria-label={t("profile.breakdown.barAria", { list: describedBreakdown })}
         >
           {tokenTypes
             .filter((type) => type.value > 0)
             .map((type) => (
               <Segment
-                key={type.label}
+                key={type.key}
                 $color={type.color}
                 $weight={type.value}
                 aria-hidden="true"
-                title={`${type.label}: ${formatNumber(type.value)}`}
+                title={t("profile.composition.segmentTitle", {
+                  label: type.label,
+                  value: formatNumber(type.value, true, locale),
+                })}
               />
             ))}
         </SegmentedBar>
@@ -194,7 +208,7 @@ export function TokenBreakdown({ stats, className }: TokenBreakdownProps) {
 
             return (
               <BreakdownItem
-                key={type.label}
+                key={type.key}
                 style={{ "--segment-color": type.color } as CSSProperties}
               >
                 <LabelRow>
@@ -202,8 +216,8 @@ export function TokenBreakdown({ stats, className }: TokenBreakdownProps) {
                   <Label>{type.label}</Label>
                 </LabelRow>
                 <ValueRow>
-                  {formatNumber(type.value)}
-                  <Percentage>{formatPercent(percentage)}</Percentage>
+                  {formatNumber(type.value, true, locale)}
+                  <Percentage>{formatPercent(percentage, locale)}</Percentage>
                 </ValueRow>
               </BreakdownItem>
             );

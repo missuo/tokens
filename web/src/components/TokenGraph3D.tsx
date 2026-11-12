@@ -4,8 +4,10 @@ import { useRef, useEffect, useCallback, useState, useMemo } from "react";
 import { useTheme } from "next-themes";
 import type { DailyContribution, GraphColorPalette, TooltipPosition } from "@/lib/types";
 import { getThemeGradeColor } from "@/lib/themes";
-import { groupByWeek, hexToNumber, formatCurrency, formatTokenCount } from "@/lib/utils";
-import { formatContributionDate } from "@/lib/date-utils";
+import { groupByWeek, hexToNumber } from "@/lib/utils";
+import { formatContributionDayMonth } from "@/lib/date-utils";
+import { formatCurrency, formatNumber } from "@/lib/format";
+import { useLocale, useT } from "@/components/layout/LocaleProvider";
 import { CUBE_SIZE, MAX_CUBE_HEIGHT, MIN_CUBE_HEIGHT, ISO_CANVAS_WIDTH, ISO_CANVAS_HEIGHT } from "@/lib/constants";
 
 interface TokenGraph3DProps {
@@ -42,6 +44,8 @@ export function TokenGraph3D({
   onDayClick,
   onReturnTo2D,
 }: TokenGraph3DProps) {
+  const t = useT();
+  const locale = useLocale();
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [obeliskLoaded, setObeliskLoaded] = useState(false);
@@ -50,6 +54,7 @@ export function TokenGraph3D({
   const obeliskRef = useRef<any>(null);
   const weeksData = useMemo(() => groupByWeek(contributions, year), [contributions, year]);
   const { resolvedTheme } = useTheme();
+  const compactCost = (value: number) => formatCurrency(value, value >= 1000, locale);
   const isDark = resolvedTheme === "dark";
 
   useEffect(() => {
@@ -175,14 +180,14 @@ export function TokenGraph3D({
         style={aspect}
       >
         <p className="text-sm text-muted-foreground">
-          The 3D view could not be loaded.
+          {t("common.graph.failed3d")}
         </p>
         <button
           type="button"
           onClick={onReturnTo2D}
           className="inline-flex h-10 items-center justify-center rounded-lg border border-border bg-card px-4 text-sm font-medium text-foreground transition hover:border-foreground/20 hover:bg-muted"
         >
-          Return to 2D
+          {t("common.graph.returnTo2d")}
         </button>
       </div>
     );
@@ -191,7 +196,9 @@ export function TokenGraph3D({
   if (!obeliskLoaded) {
     return (
       <div ref={containerRef} className="flex w-full items-center justify-center bg-background" style={aspect}>
-        <div className="animate-pulse text-muted-foreground">Loading 3D view...</div>
+        <div className="animate-pulse text-muted-foreground">
+          {t("common.graph.loading3d")}
+        </div>
       </div>
     );
   }
@@ -214,41 +221,61 @@ export function TokenGraph3D({
       />
 
       <div className="absolute top-3 right-5">
-        <h5 className="mb-1 text-sm font-semibold text-foreground">Token Usage</h5>
+        <h5 className="mb-1 text-sm font-semibold text-foreground">
+          {t("common.tokenGraph3d.usage")}
+        </h5>
         <div className={statsBox}>
           <div className="p-2">
-            <span className={statValue} style={{ color: statColor }}>{formatCurrency(totalCost)}</span>
-            <span className={statLabel}>Total</span>
+            <span className={statValue} style={{ color: statColor }}>{compactCost(totalCost)}</span>
+            <span className={statLabel}>{t("common.tokenGraph3d.total")}</span>
             <span className={statSubtext}>{dateRange.start} → {dateRange.end}</span>
           </div>
           <div className="hidden p-2 min-[1280px]:block">
-            <span className={statValue} style={{ color: statColor }}>{formatTokenCount(totalTokens)}</span>
-            <span className={statLabel}>Tokens</span>
-            <span className={statSubtext}>{activeDays} active days</span>
+            <span className={statValue} style={{ color: statColor }}>{formatNumber(totalTokens, true, locale)}</span>
+            <span className={statLabel}>{t("common.tokenGraph3d.tokens")}</span>
+            <span className={statSubtext}>
+              {t("common.tokenGraph3d.activeDays", { count: activeDays })}
+            </span>
           </div>
           {bestDay && (
             <div className="p-2">
-              <span className={statValue} style={{ color: statColor }}>{formatCurrency(bestDay.totals.cost)}</span>
-              <span className={statLabel}>Best day</span>
-              <span className={statSubtext}>{formatContributionDate(bestDay).split(",")[0]}</span>
+              <span className={statValue} style={{ color: statColor }}>{compactCost(bestDay.totals.cost)}</span>
+              <span className={statLabel}>{t("common.tokenGraph3d.bestDay")}</span>
+              <span className={statSubtext}>{formatContributionDayMonth(bestDay, locale)}</span>
             </div>
           )}
         </div>
         <p className="mt-1 text-right text-xs text-muted-foreground">
-          Average: <span className="font-bold" style={{ color: statColor }}>{formatCurrency(activeDays > 0 ? totalCost / activeDays : 0)}</span> / day
+          {t("common.tokenGraph3d.average")}{" "}
+          <span className="font-bold" style={{ color: statColor }}>
+            {compactCost(activeDays > 0 ? totalCost / activeDays : 0)}
+          </span>{" "}
+          {t("common.tokenGraph3d.perDay")}
         </p>
       </div>
 
       <div className="absolute bottom-6 left-5">
-        <h5 className="mb-1 text-sm font-semibold text-foreground">Streaks</h5>
+        <h5 className="mb-1 text-sm font-semibold text-foreground">
+          {t("common.tokenGraph3d.streaks")}
+        </h5>
         <div className={statsBox}>
           <div className="p-2">
-            <span className={statValue} style={{ color: statColor }}>{longestStreak} <span className="text-base">days</span></span>
-            <span className={statLabel}>Longest</span>
+            <span className={statValue} style={{ color: statColor }}>
+              {formatNumber(longestStreak, false, locale)}{" "}
+              <span className="text-base">
+                {t("common.tokenGraph3d.dayWord", { count: longestStreak })}
+              </span>
+            </span>
+            <span className={statLabel}>{t("common.tokenGraph3d.longest")}</span>
           </div>
           <div className="p-2">
-            <span className={statValue} style={{ color: statColor }}>{currentStreak} <span className="text-base">days</span></span>
-            <span className={statLabel}>Current</span>
+            <span className={statValue} style={{ color: statColor }}>
+              {formatNumber(currentStreak, false, locale)}{" "}
+              <span className="text-base">
+                {t("common.tokenGraph3d.dayWord", { count: currentStreak })}
+              </span>
+            </span>
+            <span className={statLabel}>{t("common.tokenGraph3d.current")}</span>
           </div>
         </div>
       </div>
