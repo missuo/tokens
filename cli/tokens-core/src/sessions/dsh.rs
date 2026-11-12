@@ -26,165 +26,210 @@
 //! DSH never embeds a cost, so every message leaves the parser at `0.0` and
 //! pricing is its only cost source — the generic source cache is safe here.
 
-use super::utils::lossy_lines;
 use super::{workspace_label_from_key, UnifiedMessage};
 use crate::TokenBreakdown;
 use serde_json::Value;
 use std::collections::HashSet;
-use std::io::Read;
+use std::io::{BufRead, BufReader, Read};
 use std::path::Path;
 use tracing::warn;
 
 /// Zstandard frame magic number (RFC 8478 section 3.1.1).
 const ZSTD_MAGIC: [u8; 4] = [0x28, 0xB5, 0x2F, 0xFD];
 
-/// Decode buffer for the streaming zstd reader.
+/// Buffer for the streaming reader, on both the decoded and the plain side.
 const ZSTD_CHUNK_BYTES: usize = 128 * 1024;
 
-/// Ceiling on the bytes read off disk for one transcript.
+/// Ceiling on one transcript line, which is all this parser ever holds.
 ///
-/// `std::fs::read` sizes its buffer from the file and reads to the end, so the
-/// file decided how much this parser allocated: a corrupt, mislabeled, or
-/// runaway `session.jsonl` handed it an arbitrarily large `Vec`. The DSH lane
-/// walks transcripts with rayon, so that allocation is paid by every worker at
-/// once rather than once for the scan.
+/// The transcript is streamed line by line, so its total size no longer
+/// decides how much is allocated — a line does. Zstandard's expansion ratio is
+/// unbounded (a long run of one byte compresses to almost nothing), so a few
+/// kilobytes of frames can decode to one gigantic line; this ceiling is
+/// enforced while the line is being assembled, never on a finished buffer, so
+/// a high-ratio frame cannot materialise before it is refused.
 ///
-/// This is the same number as [`MAX_DECODED_TRANSCRIPT_BYTES`] by construction
-/// rather than by coincidence: `compression: none` writes the decoded rows
-/// straight to disk, so the plain spelling of the largest transcript worth
-/// parsing has to fit under this ceiling too. They stay separate constants
-/// because they bound different failure modes — this one bounds the read, the
-/// other bounds the expansion — and the diagnostic names whichever was hit.
-const MAX_TRANSCRIPT_FILE_BYTES: usize = 64 * 1024 * 1024;
+/// A line past it is skipped on its own and the rest of the transcript still
+/// counts (#119). The rows Tokens reads are single API calls; what grows past
+/// this is a tool result or similar payload, which carries no usage. 64 MiB is
+/// the ceiling the whole transcript used to answer to, so no line that parsed
+/// before is refused now, and the per-worker memory bound is unchanged.
+const MAX_TRANSCRIPT_LINE_BYTES: usize = 64 * 1024 * 1024;
 
-/// Ceiling on what one transcript may decode to.
+/// Ceiling on the decoded bytes walked for one transcript.
 ///
-/// Bounding the compressed read is not sufficient on its own. Zstandard's
-/// expansion ratio is unbounded — a long run of one byte compresses to almost
-/// nothing — so a few kilobytes of frames can decode to gigabytes, and the
-/// decoder below streams into a growing `Vec`. This is the ceiling that stops
-/// that, and it is enforced inside the decode loop rather than measured on the
-/// finished buffer, because a decode run to completion has already allocated
-/// whatever the frames chose by the time anything can measure it.
-///
-/// 64 MiB is generous for what it guards. A DSH transcript is a JSONL event
-/// stream whose rows are single API calls; real ones are single-digit MiB, and
-/// the sibling parsers cap comparable payloads at half this
-/// (`droid::MAX_TRANSCRIPT_BYTES`, `zed::MAX_ZED_THREAD_JSON_BYTES`). The
-/// doubling is deliberate: refusing a DSH transcript drops that session's
-/// tokens outright, where droid only loses attribution detail.
-const MAX_DECODED_TRANSCRIPT_BYTES: usize = 64 * 1024 * 1024;
+/// Streaming bounds memory, not work: an expansion bomb of a few megabytes on
+/// disk can decode to terabytes, and the scan would grind through all of it.
+/// This budget is a work bound, far above any real transcript (single-digit to
+/// tens of MiB). A transcript that exhausts it keeps the records read so far
+/// and is reported with a warning, rather than discarded whole.
+const MAX_TRANSCRIPT_WALK_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 
-/// Read a DSH transcript, decoding zstd frames when the payload carries them.
+/// What a [`TranscriptLines`] walk did not hand to the parser.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct TranscriptWalkGaps {
+    /// Lines skipped because they ran past the per-line ceiling.
+    oversized_lines: usize,
+    /// The walk stopped at the decoded byte budget before the end of input.
+    budget_exhausted: bool,
+}
+
+/// Bounded line iterator over a DSH transcript, decoding zstd frames when the
+/// payload carries them.
 ///
 /// A live DSH session appends one zstd frame per flush, so a scan racing a
 /// writer routinely sees a torn trailing frame. DSH itself treats that as
 /// expected and recovers the complete frames plus whatever prefix of the torn
-/// one decodes (`session-persistence-jsonl/src/index.ts`, `readZstdPrefix`),
-/// so decoding must be streaming: `decode_all` would surface one error and
-/// throw the entire session away, reporting zero tokens for a session that is
-/// merely being written to.
+/// one decodes (`session-persistence-jsonl/src/index.ts`, `readZstdPrefix`):
+/// a decode error therefore ends the walk quietly, keeping every line before
+/// it, and the torn final record fails to parse on its own.
 ///
-/// A transcript that crosses either ceiling is skipped with a warning naming
-/// the limit it hit, and contributes no messages — the same outcome an
-/// unreadable or undecodable one already has, and not a failure of the scan.
-fn read_session_bytes(path: &Path) -> Vec<u8> {
-    match read_session_bytes_bounded(
-        path,
-        MAX_TRANSCRIPT_FILE_BYTES,
-        MAX_DECODED_TRANSCRIPT_BYTES,
-    ) {
-        Ok(bytes) => bytes,
-        Err(err) => {
-            warn!(
-                path = %path.display(),
-                error = %err,
-                "Skipping DSH transcript"
-            );
-            Vec::new()
+/// Lines are decoded lossily, the terminator (`\n`, optional `\r`) and a
+/// leading BOM are stripped, and a final line without a newline is still
+/// yielded — the same contract as `utils::lossy_lines`, plus the ceilings.
+struct TranscriptLines {
+    reader: Box<dyn BufRead>,
+    max_line_bytes: usize,
+    max_walk_bytes: u64,
+    walked: u64,
+    line: Vec<u8>,
+    at_start: bool,
+    done: bool,
+    gaps: TranscriptWalkGaps,
+}
+
+impl TranscriptLines {
+    /// Open a transcript under the production ceilings. A missing or
+    /// unreadable file yields no lines: a scan races session deletion
+    /// routinely, and the pre-existing behaviour for it is silence.
+    fn open(path: &Path) -> Option<Self> {
+        Self::open_bounded(path, MAX_TRANSCRIPT_LINE_BYTES, MAX_TRANSCRIPT_WALK_BYTES)
+    }
+
+    /// Split from [`TranscriptLines::open`] so the ceiling tests can drive
+    /// caps small enough to reach in a test.
+    fn open_bounded(path: &Path, max_line_bytes: usize, max_walk_bytes: u64) -> Option<Self> {
+        let mut file = std::fs::File::open(path).ok()?;
+        // Sniff the frame magic without assuming one read returns it whole.
+        let mut head = Vec::with_capacity(ZSTD_MAGIC.len());
+        (&mut file)
+            .take(ZSTD_MAGIC.len() as u64)
+            .read_to_end(&mut head)
+            .ok()?;
+        let is_zstd = head == ZSTD_MAGIC;
+        let source = std::io::Cursor::new(head).chain(file);
+        // `compression: none` writes the same rows uncompressed, so those
+        // bytes are already the decoded transcript.
+        let reader: Box<dyn BufRead> = if is_zstd {
+            let decoder = zstd::stream::read::Decoder::new(source).ok()?;
+            Box::new(BufReader::with_capacity(ZSTD_CHUNK_BYTES, decoder))
+        } else {
+            Box::new(BufReader::with_capacity(ZSTD_CHUNK_BYTES, source))
+        };
+        Some(Self {
+            reader,
+            max_line_bytes,
+            max_walk_bytes,
+            walked: 0,
+            line: Vec::new(),
+            at_start: true,
+            done: false,
+            gaps: TranscriptWalkGaps::default(),
+        })
+    }
+
+    /// Assemble the next line into `self.line`. Returns `None` at the end of
+    /// input, `Some(false)` for a line skipped past the ceiling, and
+    /// `Some(true)` for a line held in full.
+    fn read_line(&mut self) -> Option<bool> {
+        self.line.clear();
+        let mut read_any = false;
+        let mut oversized = false;
+        loop {
+            let available = match self.reader.fill_buf() {
+                Ok(available) => available,
+                Err(err) if err.kind() == std::io::ErrorKind::Interrupted => continue,
+                // Torn trailing frame (or foreign payload): keep the prefix.
+                Err(_) => {
+                    self.done = true;
+                    break;
+                }
+            };
+            if available.is_empty() {
+                self.done = true;
+                break;
+            }
+            let budget = self.max_walk_bytes.saturating_sub(self.walked);
+            if budget == 0 {
+                // A partial line cut by the budget is not a record; drop it.
+                self.done = true;
+                self.gaps.budget_exhausted = true;
+                return None;
+            }
+            let window = &available[..available.len().min(budget as usize)];
+            let newline = window.iter().position(|&byte| byte == b'\n');
+            let payload = &window[..newline.unwrap_or(window.len())];
+            if !oversized {
+                let needed = self.line.len() + payload.len();
+                if needed > self.max_line_bytes {
+                    // Never hold more than the ceiling: drop what was kept
+                    // and discard the rest of this line as it streams past.
+                    oversized = true;
+                    self.line = Vec::new();
+                } else {
+                    // Amortized growth, but never reserving past the ceiling.
+                    if needed > self.line.capacity() {
+                        let target = needed
+                            .max(self.line.capacity().saturating_mul(2))
+                            .min(self.max_line_bytes);
+                        self.line.reserve_exact(target - self.line.len());
+                    }
+                    self.line.extend_from_slice(payload);
+                }
+            }
+            let consumed = newline.map_or(window.len(), |index| index + 1);
+            self.reader.consume(consumed);
+            self.walked += consumed as u64;
+            read_any = true;
+            if newline.is_some() {
+                break;
+            }
         }
+        if !read_any {
+            return None;
+        }
+        if oversized {
+            self.gaps.oversized_lines += 1;
+            return Some(false);
+        }
+        Some(true)
     }
 }
 
-/// Split from [`read_session_bytes`] so the ceiling tests can drive caps small
-/// enough to reach in a test, instead of having to move the production
-/// constants to prove the ceilings hold.
-///
-/// Both limits are applied while bytes are being produced, never to a finished
-/// buffer. The read stops one byte past `max_file_bytes`, and the decode loop
-/// only ever asks for one byte more than it is still allowed to keep: that
-/// single byte is what separates a transcript that exactly fills a ceiling
-/// from one that runs past it, and asking for no more than that is what keeps
-/// a high-ratio frame from materialising before it is refused.
-fn read_session_bytes_bounded(
-    path: &Path,
-    max_file_bytes: usize,
-    max_decoded_bytes: usize,
-) -> Result<Vec<u8>, String> {
-    // A transcript that vanished or was never readable is not an anomaly worth
-    // reporting: a scan races session deletion routinely, and the pre-existing
-    // behaviour for it is silence.
-    let Ok(file) = std::fs::File::open(path) else {
-        return Ok(Vec::new());
-    };
+impl Iterator for TranscriptLines {
+    type Item = String;
 
-    let mut raw = Vec::new();
-    if let Err(err) = file.take(max_file_bytes as u64 + 1).read_to_end(&mut raw) {
-        return Err(format!("failed to read transcript: {err}"));
-    }
-    if raw.len() > max_file_bytes {
-        return Err(format!(
-            "transcript exceeds the {max_file_bytes} byte read ceiling (aborted at {} bytes)",
-            raw.len()
-        ));
-    }
-
-    if raw.len() < ZSTD_MAGIC.len() || raw[..ZSTD_MAGIC.len()] != ZSTD_MAGIC {
-        // `compression: none` writes the same rows uncompressed, so these bytes
-        // are already the decoded transcript and answer to that ceiling as well.
-        if raw.len() > max_decoded_bytes {
-            return Err(format!(
-                "transcript exceeds the {max_decoded_bytes} byte decoded ceiling (aborted at {} bytes)",
-                raw.len()
-            ));
+    fn next(&mut self) -> Option<String> {
+        while !self.done {
+            match self.read_line()? {
+                false => continue,
+                true => {
+                    if self.line.last() == Some(&b'\r') {
+                        self.line.pop();
+                    }
+                    let bom = "\u{feff}".as_bytes();
+                    let start = if std::mem::take(&mut self.at_start) && self.line.starts_with(bom)
+                    {
+                        bom.len()
+                    } else {
+                        0
+                    };
+                    return Some(String::from_utf8_lossy(&self.line[start..]).into_owned());
+                }
+            }
         }
-        return Ok(raw);
+        None
     }
-
-    let Ok(mut decoder) = zstd::stream::read::Decoder::new(raw.as_slice()) else {
-        return Ok(Vec::new());
-    };
-    let mut decoded = Vec::new();
-    let mut chunk = vec![0u8; ZSTD_CHUNK_BYTES];
-    let mut over_ceiling = false;
-    loop {
-        // One byte past what may still be kept, so a decoder that has exactly
-        // filled the ceiling is still asked whether anything follows.
-        let headroom = (max_decoded_bytes - decoded.len()).saturating_add(1);
-        let want = headroom.min(chunk.len());
-        let read = match decoder.read(&mut chunk[..want]) {
-            Ok(0) => break,
-            Ok(read) => read,
-            // Torn trailing frame (or foreign payload): keep the prefix that
-            // did decode. `lossy_lines` then drops the partial final record.
-            Err(_) => break,
-        };
-        // The headroom byte came back, so more transcript follows than may be
-        // kept. It is refused rather than appended: nothing past the ceiling
-        // is ever held.
-        if decoded.len().saturating_add(read) > max_decoded_bytes {
-            over_ceiling = true;
-            break;
-        }
-        decoded.extend_from_slice(&chunk[..read]);
-    }
-    if over_ceiling {
-        return Err(format!(
-            "transcript decodes past the {max_decoded_bytes} byte ceiling (aborted at {} bytes)",
-            decoded.len()
-        ));
-    }
-    Ok(decoded)
 }
 
 /// Parse one DSH `session.jsonl.zstd` transcript into unified messages.
@@ -194,10 +239,9 @@ fn read_session_bytes_bounded(
 /// with a zero total is skipped so noise rows (e.g. echoed tool-call-only
 /// messages) do not produce zero-token contributions.
 pub fn parse_dsh_file(path: &Path) -> Vec<UnifiedMessage> {
-    let decoded = read_session_bytes(path);
-    if decoded.is_empty() {
+    let Some(mut lines) = TranscriptLines::open(path) else {
         return Vec::new();
-    }
+    };
 
     // The transcript directory is named after the session id; it is the
     // fallback when the leading `session` event is missing.
@@ -226,7 +270,7 @@ pub fn parse_dsh_file(path: &Path) -> Vec<UnifiedMessage> {
     // `user/message` arms the next assistant message as a turn start.
     let mut pending_user_turn = false;
 
-    for line in lossy_lines(decoded.as_slice()) {
+    for line in lines.by_ref() {
         let Ok(value) = serde_json::from_str::<Value>(&line) else {
             continue;
         };
@@ -418,6 +462,24 @@ pub fn parse_dsh_file(path: &Path) -> Vec<UnifiedMessage> {
         }
     }
 
+    // A gap costs only the lines it covers, but the count is then a lower
+    // bound for this transcript; say so rather than pass it off as complete.
+    if lines.gaps.oversized_lines > 0 {
+        warn!(
+            path = %path.display(),
+            skipped_lines = lines.gaps.oversized_lines,
+            line_ceiling_bytes = lines.max_line_bytes,
+            "Skipped oversized DSH transcript lines; usage on them is not counted"
+        );
+    }
+    if lines.gaps.budget_exhausted {
+        warn!(
+            path = %path.display(),
+            walk_ceiling_bytes = lines.max_walk_bytes,
+            "DSH transcript decodes past the walk ceiling; only its prefix is counted"
+        );
+    }
+
     messages
 }
 
@@ -494,17 +556,14 @@ mod tests {
     }
 
     /// Ceilings the bound tests drive. Small on purpose: the production
-    /// constants would have to be written to disk (or decoded in full) before
-    /// they proved anything, and the code under test is the same either way.
-    const TEST_FILE_CAP: usize = 64 * 1024;
-    const TEST_DECODED_CAP: usize = 1024 * 1024;
+    /// constants would have to be decoded in full before they proved
+    /// anything, and the code under test is the same either way.
+    const TEST_LINE_CAP: usize = 64 * 1024;
+    const TEST_WALK_CAP: u64 = 4 * 1024 * 1024;
 
-    /// A transcript that is trivial on disk and enormous once decoded.
-    ///
-    /// DSH appends one zstd frame per flush, so a real transcript is already a
-    /// concatenation of frames; repeating one frame of a single repeated byte
-    /// is the cheapest faithful way to build a payload whose decoded size
-    /// dwarfs the bytes that carry it. Returns the file and its on-disk size.
+    /// A transcript that is trivial on disk and enormous once decoded: one
+    /// newline-free run of a single byte, repeated frame after frame, so the
+    /// whole payload is one line. Returns the file and its on-disk size.
     fn write_high_expansion_zstd(decoded_mib: usize) -> (tempfile::NamedTempFile, usize) {
         let frame = zstd::encode_all(vec![b'a'; 1024 * 1024].as_slice(), 3).unwrap();
         let mut payload = Vec::with_capacity(frame.len() * decoded_mib);
@@ -517,124 +576,132 @@ mod tests {
         (file, on_disk)
     }
 
-    /// Pull the byte count out of an `(aborted at N bytes)` diagnostic.
-    fn aborted_at(diagnostic: &str) -> usize {
-        diagnostic
-            .split("aborted at ")
-            .nth(1)
-            .and_then(|rest| rest.split(' ').next())
-            .and_then(|count| count.parse().ok())
-            .unwrap_or_else(|| panic!("the diagnostic must report where it stopped: {diagnostic}"))
+    fn usage_row(seq: i64, input: i64, output: i64) -> String {
+        format!(
+            r#"{{"type":"assistant/message","seq":{seq},"time":{},"data":{{"turn":{seq},"message":{{"id":"synthetic-message-{seq}","source":{{"provider":"deepseek","model":"deepseek-v4.1-flash"}}}},"usage":{{"inputTokens":{input},"outputTokens":{output}}}}}}}"#,
+            1_793_851_200_000 + seq
+        )
     }
 
     #[test]
-    fn an_oversized_uncompressed_transcript_is_skipped_at_the_read_ceiling() {
-        // given: `compression: none` writes plain JSONL, and the read used to
-        // be a `std::fs::read` that sized its buffer from the file itself.
+    fn an_oversized_line_is_skipped_without_dropping_its_neighbours() {
+        // given: plain JSONL whose middle row runs past the line ceiling.
         let dir = tempfile::tempdir().unwrap();
         let session_dir = dir.path().join("session-oversized");
         std::fs::create_dir_all(&session_dir).unwrap();
         let path = session_dir.join("session.jsonl");
-        let mut body = String::from(concat!(
-            r#"{"type":"session","id":"session-oversized","createdAt":1,"cwd":"/work"}"#,
-            "\n"
-        ));
-        while body.len() < TEST_FILE_CAP * 4 {
-            body.push_str(r#"{"type":"user/message","time":1,"data":{"pad":""#);
-            body.push_str(&"x".repeat(512));
-            body.push_str("\"}}\n");
-        }
+        let body = [
+            r#"{"type":"session","id":"session-oversized","createdAt":1,"cwd":"/work"}"#
+                .to_string(),
+            usage_row(1, 10, 2),
+            format!(
+                r#"{{"type":"tool/result","seq":2,"time":1,"data":{{"content":"{}"}}}}"#,
+                "x".repeat(TEST_LINE_CAP * 4)
+            ),
+            usage_row(3, 5, 3),
+        ]
+        .join("\n");
         std::fs::write(&path, &body).unwrap();
 
         // when
-        let err = read_session_bytes_bounded(&path, TEST_FILE_CAP, TEST_DECODED_CAP)
-            .expect_err("a transcript past the read ceiling must not be buffered");
+        let mut lines = TranscriptLines::open_bounded(&path, TEST_LINE_CAP, TEST_WALK_CAP).unwrap();
+        let held: Vec<String> = lines.by_ref().collect();
 
-        // then: the diagnostic names the ceiling, and the point it stopped at
-        // is the ceiling plus its headroom byte rather than the file's true
-        // size — the whole file was never in memory to be measured.
-        assert!(
-            err.contains(&TEST_FILE_CAP.to_string()),
-            "the diagnostic must name the limit: {err}"
-        );
-        assert_eq!(aborted_at(&err), TEST_FILE_CAP + 1);
-        assert!(
-            body.len() > TEST_FILE_CAP * 2,
-            "the payload must be well past the ceiling to be evidence"
+        // then: only the oversized row is missing, and it is accounted for.
+        assert_eq!(held.len(), 3);
+        assert!(held.iter().all(|line| line.len() <= TEST_LINE_CAP));
+        assert_eq!(
+            lines.gaps,
+            TranscriptWalkGaps {
+                oversized_lines: 1,
+                budget_exhausted: false,
+            }
         );
     }
 
     #[test]
-    fn a_high_expansion_zstd_transcript_stops_at_the_decoded_ceiling() {
-        // given: 64 MiB of decoded bytes carried by a few kilobytes of frames.
-        // Bounding the compressed read cannot catch this: the ratio is the
-        // number the file controls, so the ceiling has to hold on the output.
+    fn a_high_expansion_zstd_transcript_stays_bounded() {
+        // given: 64 MiB of one newline-free line carried by a few kilobytes of
+        // frames. Bounding the compressed read cannot catch this: the ratio is
+        // the number the file controls, so the ceilings hold on the output.
         const DECODED_MIB: usize = 64;
         let (file, on_disk) = write_high_expansion_zstd(DECODED_MIB);
-        assert!(
-            on_disk < TEST_FILE_CAP,
-            "the payload must sit under the {TEST_FILE_CAP} byte read ceiling for this to test \
-             the decoded one, but it is {on_disk} bytes"
-        );
+        assert!(on_disk < 64 * 1024, "the payload must be tiny on disk");
 
         // when
-        let err = read_session_bytes_bounded(file.path(), TEST_FILE_CAP, TEST_DECODED_CAP)
-            .expect_err("a payload that expands past the ceiling must not be decoded whole");
+        let mut lines =
+            TranscriptLines::open_bounded(file.path(), TEST_LINE_CAP, TEST_WALK_CAP).unwrap();
+        let held: Vec<String> = lines.by_ref().collect();
 
-        // then: decoding stopped at the ceiling, not after materialising the
-        // whole expansion and measuring it.
-        let stopped = aborted_at(&err);
-        assert!(
-            stopped <= TEST_DECODED_CAP,
-            "the buffer must never pass the {TEST_DECODED_CAP} byte ceiling, but it held {stopped}"
+        // then: nothing past the line ceiling was ever held, and the walk
+        // stopped at its budget rather than decoding all 64 MiB.
+        assert!(held.is_empty());
+        assert_eq!(
+            lines.gaps.oversized_lines, 0,
+            "a line cut by the budget is not counted"
         );
-        assert!(
-            stopped + ZSTD_CHUNK_BYTES >= TEST_DECODED_CAP,
-            "decoding must run up to the ceiling rather than give up early, but it stopped at \
-             {stopped}"
-        );
-        assert!(
-            stopped < DECODED_MIB * 1024 * 1024 / 8,
-            "the decode must stop near the ceiling rather than buffer all {DECODED_MIB} MiB"
-        );
-
-        // and: the file is skipped, not counted from a truncated prefix.
+        assert!(lines.gaps.budget_exhausted);
+        assert_eq!(lines.walked, TEST_WALK_CAP);
         assert!(parse_dsh_file(file.path()).is_empty());
     }
 
     #[test]
-    fn the_production_decoded_ceiling_is_wired_into_the_parser() {
-        // The bound tests above drive injected caps; this one proves the
-        // constants the scan actually runs with are the ones enforced.
-        let (file, on_disk) =
-            write_high_expansion_zstd(MAX_DECODED_TRANSCRIPT_BYTES / (1024 * 1024) + 32);
-        assert!(
-            on_disk < MAX_TRANSCRIPT_FILE_BYTES,
-            "the payload must pass the read ceiling so the decoded one is what refuses it"
+    fn usage_around_a_payload_past_64_mib_decoded_is_counted() {
+        // given: the #119 shape — usage before and after 70 MiB of tool-result
+        // text, one zstd frame per row the way DSH flushes. Under the old
+        // whole-transcript ceiling this counted zero tokens.
+        let filler = format!(
+            "{}\n",
+            r#"{"type":"tool/result","seq":2,"time":1793851200000,"data":{"message":{"content":"PAD"}}}"#
+                .replace("PAD", &"x".repeat(1024 * 1024))
         );
+        let filler_frame = zstd::encode_all(filler.as_bytes(), 1).unwrap();
+        let frame = |row: String| zstd::encode_all(format!("{row}\n").as_bytes(), 3).unwrap();
 
-        assert!(read_session_bytes(file.path()).is_empty());
-        assert!(parse_dsh_file(file.path()).is_empty());
+        let mut payload = frame(
+            r#"{"type":"session","id":"synthetic-cap-repro","createdAt":1793851200000,"cwd":"/synthetic-fixture"}"#
+                .to_string(),
+        );
+        payload.extend(frame(usage_row(1, 10, 2)));
+        let mut decoded = 0usize;
+        while decoded <= 70 * 1024 * 1024 {
+            payload.extend_from_slice(&filler_frame);
+            decoded += filler.len();
+        }
+        payload.extend(frame(usage_row(100, 5, 3)));
+        assert!(decoded > 64 * 1024 * 1024);
+
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        std::io::Write::write_all(&mut file, &payload).unwrap();
+
+        // when
+        let messages = parse_dsh_file(file.path());
+
+        // then: both usage rows survive, matching the small control.
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].session_id, "synthetic-cap-repro");
+        let total: i64 = messages.iter().map(|m| m.tokens.total()).sum();
+        assert_eq!(total, 20);
     }
 
     #[test]
-    fn a_normal_transcript_is_read_byte_for_byte_under_the_ceilings() {
+    fn a_normal_transcript_is_read_line_for_line_under_the_ceilings() {
         // The ceilings must be invisible to every transcript that fits: the
-        // bytes handed to the parser are the same ones the unbounded read
-        // produced, in both spellings.
+        // lines handed to the parser are the rows written, in both spellings.
         let rows = [
             r#"{"type":"session","id":"session-normal","createdAt":1,"cwd":"/work"}"#,
             r#"{"type":"assistant/message","time":1786669454772,"data":{"turn":1,"message":{"id":"m-1","source":{"provider":"p","model":"m"}},"usage":{"inputTokens":10,"outputTokens":20}}}"#,
         ];
-        let expected = rows.join("\n");
 
         let compressed = write_zstd_session(&rows);
-        assert_eq!(read_session_bytes(compressed.path()), expected.as_bytes());
+        let held: Vec<String> = TranscriptLines::open(compressed.path()).unwrap().collect();
+        assert_eq!(held, rows);
 
         let dir = tempfile::tempdir().unwrap();
         let plain = dir.path().join("session.jsonl");
-        std::fs::write(&plain, &expected).unwrap();
-        assert_eq!(read_session_bytes(&plain), expected.as_bytes());
+        std::fs::write(&plain, format!("\u{feff}{}\r\n{}\n", rows[0], rows[1])).unwrap();
+        let held: Vec<String> = TranscriptLines::open(&plain).unwrap().collect();
+        assert_eq!(held, rows);
 
         // and: the transcript still parses to the same message it always did.
         let messages = parse_dsh_file(compressed.path());

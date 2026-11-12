@@ -2664,7 +2664,8 @@ fn parse_all_messages_streaming<S: MessageSink>(
     }
 
     // Pi branch/fork copies prior assistant records into a new session file
-    // (#1306). The parser stamps cross-session keys (`responseId` preferred);
+    // (#1306). The parser stamps cross-session keys (entry id + timestamp
+    // preferred, `responseId` only without an entry id, #122);
     // this lane drops the copies — first-wins in scan order, same key survives
     // warm cache hits.
     parse_cached_lane_deduped(
@@ -10225,6 +10226,70 @@ mod tests {
             assert_eq!(parsed.messages[0].input, 100);
             assert_eq!(parsed.messages[0].output, 20);
         }
+    }
+
+    /// #122: a provider (Magpie) reused one `responseId` across two distinct
+    /// requests. Both must count (2,220 tokens, not 1,110), while a fork copy
+    /// of the same file in another session must still collapse.
+    #[test]
+    #[serial_test::serial]
+    fn test_parse_local_clients_pi_reused_response_id_counts_each_request() {
+        let cache_home = tempfile::TempDir::new().unwrap();
+        let source_home = tempfile::TempDir::new().unwrap();
+        let _cache_env = redirect_cache_home(cache_home.path());
+
+        let sessions_dir = source_home.path().join(".pi/agent/sessions/--fixture--");
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+        let transcript = |session: &str| {
+            format!(
+                r#"{{"type":"session","id":"{session}","timestamp":"2026-11-09T00:00:00Z","cwd":"/tmp/test"}}"#
+            ) + "\n"
+                + concat!(
+                    r#"{"type":"message","id":"a","timestamp":"2026-11-09T00:00:01Z","message":{"role":"assistant","provider":"magpie","model":"deepseek-v4.1-flash","responseId":"reused-id","usage":{"input":100,"output":10,"cacheRead":1000,"cacheWrite":0,"totalTokens":1110}}}"#,
+                    "\n",
+                    r#"{"type":"message","id":"b","timestamp":"2026-11-09T00:00:02Z","message":{"role":"assistant","provider":"magpie","model":"deepseek-v4.1-flash","responseId":"reused-id","usage":{"input":100,"output":10,"cacheRead":1000,"cacheWrite":0,"totalTokens":1110}}}"#,
+                    "\n",
+                )
+        };
+        std::fs::write(
+            sessions_dir.join("example.jsonl"),
+            transcript("test-session"),
+        )
+        .unwrap();
+
+        let parse = || {
+            parse_local_clients(LocalParseOptions {
+                home_dir: Some(source_home.path().to_str().unwrap().to_string()),
+                use_env_roots: false,
+                clients: Some(vec!["pi".to_string()]),
+                since: None,
+                until: None,
+                year: None,
+                scanner_settings: scanner::ScannerSettings::default(),
+            })
+            .unwrap()
+        };
+        let total = |parsed: &crate::ParsedMessages| {
+            parsed
+                .messages
+                .iter()
+                .map(|m| m.input + m.output + m.cache_read + m.cache_write + m.reasoning)
+                .sum::<i64>()
+        };
+
+        let parsed = parse();
+        assert_eq!(parsed.messages.len(), 2);
+        assert_eq!(total(&parsed), 2_220);
+
+        // A fork copies both entries verbatim into a new session file.
+        std::fs::write(
+            sessions_dir.join("fork.jsonl"),
+            transcript("forked-session"),
+        )
+        .unwrap();
+        let parsed = parse();
+        assert_eq!(parsed.messages.len(), 2);
+        assert_eq!(total(&parsed), 2_220);
     }
 
     #[test]
