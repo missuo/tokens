@@ -230,6 +230,20 @@ export default function ProfilePageClient({
     () => getContributionDayForDate(data.contributions, todayContributionDate),
     [data.contributions, todayContributionDate],
   );
+  // The calendar day before, whatever "today" resolved to. Built in UTC so
+  // that subtracting a day is plain arithmetic on the date, with no DST hour
+  // to land on the wrong side of midnight.
+  const yesterdayContributionDate = useMemo(() => {
+    if (!todayContributionDate || !/^\d{4}-\d{2}-\d{2}$/.test(todayContributionDate)) {
+      return null;
+    }
+    const [year, month, day] = todayContributionDate.split("-").map(Number);
+    return new Date(Date.UTC(year, month - 1, day - 1)).toISOString().slice(0, 10);
+  }, [todayContributionDate]);
+  const yesterdayContributionDay = useMemo(
+    () => getContributionDayForDate(data.contributions, yesterdayContributionDate),
+    [data.contributions, yesterdayContributionDate],
+  );
 
   const user: ProfileUser = useMemo(
     () => ({
@@ -342,7 +356,9 @@ export default function ProfilePageClient({
             </p>
           )
         }
-        today={<ProfileToday day={todayContributionDay} />}
+        today={
+          <ProfileToday day={todayContributionDay} yesterday={yesterdayContributionDay} />
+        }
         usageChart={
           data.contributions.length > 0 ? (
             <ProfileUsageChart

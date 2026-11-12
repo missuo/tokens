@@ -8,7 +8,7 @@ function isMissingDatabaseUrl(error: unknown): boolean {
   return error instanceof Error && error.message === "DATABASE_URL environment variable is not set";
 }
 
-const VALID_PERIODS: Period[] = ["all", "month", "last-month", "week", "today", "custom"];
+const VALID_PERIODS: Period[] = ["all", "month", "last-month", "week", "today", "yesterday", "custom"];
 
 /**
  * The board is sent whole rather than a page at a time.
@@ -110,8 +110,12 @@ async function Board({
   // UTC+8. The client sends its own date up as `from` once it has hydrated;
   // this is the only place that reads it back. Without this the whole "today"
   // board is computed for the wrong day.
+  // "yesterday" reads the same parameter: it is the day before the viewer's
+  // local today, which the UTC date gets wrong for the same eight hours.
   const localToday =
-    period === "today" && isValidDateString(fromParam) ? fromParam : undefined;
+    (period === "today" || period === "yesterday") && isValidDateString(fromParam)
+      ? fromParam
+      : undefined;
 
   const customFrom = customDateRange?.from ?? localToday;
   const customTo = customDateRange?.to;

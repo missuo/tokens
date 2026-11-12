@@ -57,6 +57,7 @@ interface LeaderboardProps {
 const PERIODS: ReadonlyArray<{ value: Period; label: string }> = [
   { value: "all", label: "All time" },
   { value: "today", label: "Today" },
+  { value: "yesterday", label: "Yesterday" },
   { value: "week", label: "Week" },
   { value: "month", label: "Month" },
   { value: "last-month", label: "Last month" },
@@ -411,7 +412,9 @@ export default function Leaderboard({
   // does not sit in the back stack, and the equality check makes it idempotent
   // while still re-firing when the day rolls over under a long-lived tab.
   useEffect(() => {
-    if (period !== "today") return;
+    // "yesterday" is anchored on the same local date, so it needs the same
+    // correction.
+    if (period !== "today" && period !== "yesterday") return;
     const now = new Date();
     const localDate = toLocalDateString(now);
     const fromParam = searchParams.get("from");
@@ -530,7 +533,7 @@ export default function Leaderboard({
           targets stay at 40px on mobile; the desktop row tightens to 32px
           where the pointer is precise. */}
       <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-2">
-        {/* The five periods do not fit on a narrow screen, so the row scrolls
+        {/* The six periods do not fit on a narrow screen, so the row scrolls
             horizontally rather than wrapping into a ragged block. */}
         <div className="-mx-4 overflow-x-auto px-4 pb-1 sm:mx-0 sm:overflow-visible sm:px-0 sm:pb-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {/* Base UI's ToggleGroup is array-valued even in single-select mode. */}
@@ -548,7 +551,10 @@ export default function Leaderboard({
               pushQuery({
                 period: next,
                 page: null,
-                from: next === "today" ? toLocalDateString(new Date()) : null,
+                from:
+                  next === "today" || next === "yesterday"
+                    ? toLocalDateString(new Date())
+                    : null,
               });
             }}
             variant="outline"

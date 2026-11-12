@@ -14,6 +14,7 @@ const VALID_PERIODS: Period[] = [
   "last-month",
   "week",
   "today",
+  "yesterday",
   "custom",
 ];
 const VALID_SORT_BY: SortBy[] = ["tokens", "cost"];
@@ -55,7 +56,9 @@ export async function GET(request: Request) {
       period = "all";
     }
 
-    if (period === "today" && isValidDateString(fromParam)) {
+    // For both, `from` is the viewer's local today; "yesterday" resolves the
+    // day before it in getPeriodDateRange.
+    if ((period === "today" || period === "yesterday") && isValidDateString(fromParam)) {
       customFrom = fromParam;
       customTo = fromParam;
     }

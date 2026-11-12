@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { SourceLogo } from "@/components/SourceLogo";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { ModelIcon } from "./ModelIcon";
 import { SpeedTierLabel } from "./SpeedTier";
 import { cn } from "@/lib/utils";
@@ -16,8 +17,17 @@ import type { DailyContribution, TokenBreakdown } from "@/lib/types";
 export interface ProfileTodayProps {
   /** Today for the viewer, or null when they have submitted nothing today. */
   day: DailyContribution | null | undefined;
+  /** The day before, or null when nothing was submitted for it. */
+  yesterday?: DailyContribution | null | undefined;
   className?: string;
 }
+
+type DayChoice = "today" | "yesterday";
+
+const DAY_CHOICES: ReadonlyArray<{ value: DayChoice; label: string }> = [
+  { value: "today", label: "Today" },
+  { value: "yesterday", label: "Yesterday" },
+];
 
 const COMPOSITION: ReadonlyArray<{
   key: keyof TokenBreakdown;
@@ -51,7 +61,16 @@ function Figure({ label, value }: { label: string; value: string }) {
  * reasoning, and which clients and models produced them. Nothing inside
  * scrolls — a summary you have to scroll is not a summary.
  */
-export function ProfileToday({ day, className }: ProfileTodayProps) {
+export function ProfileToday({
+  day: todayDay,
+  yesterday: yesterdayDay,
+  className,
+}: ProfileTodayProps) {
+  // Today stays the default; Yesterday is the one finished day, which is what
+  // you check once today has only just started.
+  const [choice, setChoice] = useState<DayChoice>("today");
+  const day = choice === "today" ? todayDay : yesterdayDay;
+
   const clients = useMemo(
     () => (day ? createContributionClientDetails(day) : []),
     [day]
@@ -66,7 +85,7 @@ export function ProfileToday({ day, className }: ProfileTodayProps) {
   // the page twice — once here and once in the graph's own breakdown, for the
   // same day. The graph keeps the day you picked; this keeps the one you came
   // to check.
-  const heading = "Today";
+  const heading = choice === "today" ? "Today" : "Yesterday";
   const tokens = day?.totals.tokens ?? 0;
   const cost = day?.totals.cost ?? 0;
 
@@ -106,8 +125,26 @@ export function ProfileToday({ day, className }: ProfileTodayProps) {
       aria-label={`${heading} usage`}
     >
       <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-2 border-b px-4 py-3 sm:px-5">
-        <div className="flex items-baseline gap-3">
-          <h2 className="text-sm font-semibold tracking-tight">{heading}</h2>
+        <div className="flex items-center gap-3">
+          {/* The switch is the heading: the selected item names the day the
+              figures belong to, so a separate title would only repeat it. */}
+          <h2 className="sr-only">{heading}</h2>
+          <ToggleGroup
+            value={[choice]}
+            onValueChange={(value) => {
+              const next = value[0] as DayChoice | undefined;
+              if (next) setChoice(next);
+            }}
+            variant="outline"
+            aria-label="Day"
+            className="[&>*]:h-7 [&>*]:px-2.5 [&>*]:text-xs"
+          >
+            {DAY_CHOICES.map((c) => (
+              <ToggleGroupItem key={c.value} value={c.value}>
+                {c.label}
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
           {day?.date && (
             <span className="font-mono text-xs text-muted-foreground">{day.date}</span>
           )}
@@ -121,7 +158,9 @@ export function ProfileToday({ day, className }: ProfileTodayProps) {
 
       {ranked.length === 0 ? (
         <p className="px-4 py-5 text-sm text-muted-foreground sm:px-5">
-          Nothing recorded for this day yet.
+          {choice === "today"
+            ? "Nothing recorded for this day yet."
+            : "Nothing recorded for this day."}
         </p>
       ) : (
         <>
