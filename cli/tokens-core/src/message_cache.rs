@@ -1319,7 +1319,11 @@ fn parser_version(client: ClientId) -> u32 {
         // reparse the source to recover speed selections and turn boundaries.
         // v11->v12: recover compaction usage omitted from cumulative snapshots;
         // incremental state now retains a pending per-response record.
-        ClientId::Codex => 12,
+        // v12->v13: compressed rollouts (`.jsonl.zst`) are scanned and
+        // decoded, and their name-derived session ids drop the `.zst` so a
+        // session present in both forms dedups (missuo/tokens#109, upstream
+        // junhoyeo/tokscale#1423).
+        ClientId::Codex => 13,
         // v4->v5: jcode's assistant-message timestamp is now back-calculated
         // to the turn start (timestamp - tool_duration_ms) instead of using
         // the recorded (end-anchored) timestamp directly. Follow-up to #890.
@@ -1344,8 +1348,10 @@ fn parser_version(client: ClientId) -> u32 {
         // Devin CLI v1 could stop at a malformed chat_message. v2->v3:
         // message timestamp is now back-calculated to the turn start
         // (created_at - total_time_ms) instead of the recorded (end-anchored)
-        // created_at. Follow-up to #890.
-        ClientId::DevinCli => 3,
+        // created_at. Follow-up to #890. v3->v4 deduplicates CLI copies of one
+        // API response by metadata.request_id instead of database row id
+        // (missuo/tokens#109, upstream junhoyeo/tokscale#1359).
+        ClientId::DevinCli => 4,
         // Desktop v1 parsed a non-ACP shape and did not track its CLI title
         // lookup; its timestamp handling is unaffected by the #890 follow-up.
         ClientId::DevinDesktop => 2,
@@ -3945,8 +3951,8 @@ mod tests {
     }
 
     #[test]
-    fn test_devin_parser_versions_invalidate_v1_entries() {
-        assert_eq!(parser_version(ClientId::DevinCli), 3);
+    fn test_devin_parser_versions_invalidate_v3_entries() {
+        assert_eq!(parser_version(ClientId::DevinCli), 4);
         assert_eq!(parser_version(ClientId::DevinDesktop), 2);
     }
 
@@ -3958,10 +3964,11 @@ mod tests {
         // "Codex Guardian" / "Codex Headless" instead of the per-thread random
         // nickname, and v9->v10 (fork) keys and dates `codex exec --json`
         // captures by their thread. v10->v11 records selected inference speed
-        // and changes the incremental state layout.
+        // and changes the incremental state layout. v11->v12 recovers
+        // compaction usage, and v12->v13 decodes `.jsonl.zst` rollouts.
         // Each bump is what stops an existing cache from replaying the old
         // rows, so it has to be asserted rather than assumed.
-        assert_eq!(parser_version(ClientId::Codex), 12);
+        assert_eq!(parser_version(ClientId::Codex), 13);
         assert_eq!(parser_version(ClientId::Claude), 2);
     }
 
@@ -3986,7 +3993,7 @@ mod tests {
         // cache entries are also invalidated.
         assert_eq!(parser_version(ClientId::Junie), 3);
         assert_eq!(parser_version(ClientId::Jcode), 7);
-        assert_eq!(parser_version(ClientId::DevinCli), 3);
+        assert_eq!(parser_version(ClientId::DevinCli), 4);
         assert_eq!(parser_version(ClientId::Zcode), 3);
         assert_eq!(parser_version(ClientId::OpenCodeReview), 3);
         assert_eq!(parser_version(ClientId::Kiro), 2);

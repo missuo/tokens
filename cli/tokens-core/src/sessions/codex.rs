@@ -11,7 +11,7 @@
 //! Note: This parser has stateful logic to track model and delta calculations.
 
 use super::utils::{
-    extract_i64, extract_string, file_modified_timestamp_ms, parse_timestamp_value,
+    extract_i64, extract_string, file_modified_timestamp_ms, is_zst_path, parse_timestamp_value,
     session_id_from_path,
 };
 use super::{normalize_workspace_key, workspace_label_from_key, UnifiedMessage};
@@ -20,7 +20,8 @@ use crate::speed::InferenceSpeed;
 use crate::TokenBreakdown;
 use serde::Deserialize;
 use serde_json::Value;
-use std::io::{BufRead, BufReader, Seek, SeekFrom};
+use std::borrow::Cow;
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
 
 /// Agents-tab bucket for a regular interactive Codex thread. Codex stamps each
@@ -422,12 +423,14 @@ impl CodexTurnCoverage {
 /// Client id the `codex` parser tags rollouts OpenClaw drove with.
 pub(crate) const OPENCLAW_CLIENT_ID: &str = "openclaw";
 
-/// Codex thread id from a rollout filename, `rollout-<timestamp>-<uuid>.jsonl`.
+/// Codex thread id from a rollout filename, `rollout-<timestamp>-<uuid>.jsonl`
+/// (or its compressed form, `rollout-<timestamp>-<uuid>.jsonl.zst`).
 ///
 /// Used where a rollout's ownership comes from its location rather than its
 /// `session_meta.originator`, so the parser did not already put the thread id
 /// on its messages. Returns `None` for any other spelling rather than guessing.
 pub(crate) fn thread_id_from_rollout_path(path: &Path) -> Option<String> {
+    let path = uncompressed_rollout_path(path);
     let stem = path.file_stem()?.to_str()?;
     let stem = stem.strip_prefix("rollout-")?;
     // `2026-08-30T10-00-00-` is 20 chars; everything after is the thread id.
@@ -1412,24 +1415,97 @@ fn flush_pending_model_messages_as_unknown(
     );
 }
 
-/// Parse a Codex JSONL file with stateful tracking
+/// Parse a Codex `.jsonl` (or compressed `.jsonl.zst`) rollout with stateful
+/// tracking.
 pub fn parse_codex_file(path: &Path) -> Vec<UnifiedMessage> {
-    let file = match std::fs::File::open(path) {
-        Ok(f) => f,
-        Err(_) => return Vec::new(),
-    };
+    parse_codex_file_incremental(path, 0, CodexParseState::default()).messages
+}
 
-    let session_id = session_id_from_path(path);
-    let fallback_timestamp = file_modified_timestamp_ms(path);
-    let reader = BufReader::new(file);
-    let parsed = parse_codex_reader(
-        reader,
-        &session_id,
-        fallback_timestamp,
-        0,
-        CodexParseState::default(),
-    );
-    parsed.messages
+/// Upper bound on the decoded size of one compressed rollout. The archive is
+/// decoded as a stream, so this does not bound memory; it stops a corrupt or
+/// hostile archive from expanding without end. Real rollouts stay far below it.
+const MAX_CODEX_ARCHIVE_BYTES: u64 = 1024 * 1024 * 1024;
+
+/// The name a compressed rollout had before Codex compressed it in place:
+/// `rollout-….jsonl.zst` -> `rollout-….jsonl`. Identities derived from the
+/// file name (the fallback session id, the rollout thread id) then agree
+/// between the plain and compressed copies of one session, so the dedup keys
+/// built from them collapse the copies instead of counting both.
+fn uncompressed_rollout_path(path: &Path) -> Cow<'_, Path> {
+    if is_zst_path(path) {
+        Cow::Owned(path.with_extension(""))
+    } else {
+        Cow::Borrowed(path)
+    }
+}
+
+/// Reader that remembers whether the stream beneath it ever failed. The
+/// rollout parser treats an I/O error and a malformed line alike, but for an
+/// archive they differ: a zstd decode error means the archive is corrupt or
+/// truncated, and none of its usage can be trusted.
+struct FailureTrackingReader<R> {
+    inner: R,
+    failed: bool,
+}
+
+impl<R: Read> Read for FailureTrackingReader<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let result = self.inner.read(buf);
+        if let Err(error) = &result {
+            if error.kind() != std::io::ErrorKind::Interrupted {
+                self.failed = true;
+            }
+        }
+        result
+    }
+}
+
+/// Parse a zstd-compressed Codex rollout (`.jsonl.zst`). An archive is
+/// immutable and decoded whole, so there is no byte offset to resume from: a
+/// non-zero `start_offset` is refused and the caller reparses from the start.
+/// A corrupt, truncated or oversized archive contributes no usage at all
+/// rather than whatever prefix decoded before the failure.
+fn parse_codex_archive(
+    path: &Path,
+    session_id: &str,
+    fallback_timestamp: i64,
+    start_offset: u64,
+    state: CodexParseState,
+) -> ParsedCodexFile {
+    let unusable = |state: CodexParseState| ParsedCodexFile {
+        messages: Vec::new(),
+        fallback_timestamp_indices: Vec::new(),
+        consumed_offset: start_offset,
+        parse_succeeded: false,
+        unresolved_model_events: false,
+        state,
+    };
+    if start_offset != 0 {
+        return unusable(state);
+    }
+
+    let decoder = match std::fs::File::open(path).and_then(zstd::stream::read::Decoder::new) {
+        Ok(decoder) => decoder,
+        Err(error) => {
+            tracing::warn!(path = %path.display(), %error, "Skipping Codex archive");
+            return unusable(state);
+        }
+    };
+    let initial_state = state.clone();
+    let mut reader = BufReader::new(FailureTrackingReader {
+        inner: decoder.take(MAX_CODEX_ARCHIVE_BYTES + 1),
+        failed: false,
+    });
+    let parsed = parse_codex_reader(&mut reader, session_id, fallback_timestamp, 0, state);
+    if reader.get_ref().failed {
+        tracing::warn!(path = %path.display(), "Skipping corrupt or truncated Codex archive");
+        return unusable(initial_state);
+    }
+    if parsed.consumed_offset > MAX_CODEX_ARCHIVE_BYTES {
+        tracing::warn!(path = %path.display(), "Skipping Codex archive over the decoded size limit");
+        return unusable(initial_state);
+    }
+    parsed
 }
 
 fn reported_total_tokens(usage: &CodexTokenUsage) -> Option<i64> {
@@ -1472,6 +1548,12 @@ pub(crate) fn parse_codex_file_incremental(
     start_offset: u64,
     state: CodexParseState,
 ) -> ParsedCodexFile {
+    let session_id = session_id_from_path(&uncompressed_rollout_path(path));
+    let fallback_timestamp = file_modified_timestamp_ms(path);
+    if is_zst_path(path) {
+        return parse_codex_archive(path, &session_id, fallback_timestamp, start_offset, state);
+    }
+
     let mut file = match std::fs::File::open(path) {
         Ok(file) => file,
         Err(_) => {
@@ -1497,8 +1579,6 @@ pub(crate) fn parse_codex_file_incremental(
         };
     }
 
-    let session_id = session_id_from_path(path);
-    let fallback_timestamp = file_modified_timestamp_ms(path);
     let reader = BufReader::new(file);
     parse_codex_reader(reader, &session_id, fallback_timestamp, start_offset, state)
 }
@@ -3923,5 +4003,85 @@ mod tests {
             messages[1].is_turn_start,
             "the deferred turn-start marker must still apply"
         );
+    }
+
+    const COMPRESSED_FIXTURE: &str = concat!(
+        r#"{"timestamp":"2026-10-01T00:00:00Z","type":"turn_context","payload":{"model":"gpt-5"}}"#,
+        "\n",
+        r#"{"timestamp":"2026-10-01T00:00:01Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":140,"cached_input_tokens":30,"output_tokens":20,"reasoning_output_tokens":10,"total_tokens":160},"last_token_usage":{"input_tokens":140,"cached_input_tokens":30,"output_tokens":20,"reasoning_output_tokens":10,"total_tokens":160}}}}"#,
+        "\n"
+    );
+
+    #[test]
+    fn test_thread_id_from_rollout_path_handles_plain_and_compressed() {
+        let plain =
+            Path::new("/x/rollout-2026-08-30T10-00-00-550e8400-e29b-41d4-a716-446655440000.jsonl");
+        let compressed = Path::new(
+            "/x/rollout-2026-08-30T10-00-00-550e8400-e29b-41d4-a716-446655440000.jsonl.zst",
+        );
+        let expected = Some("550e8400-e29b-41d4-a716-446655440000".to_string());
+        assert_eq!(thread_id_from_rollout_path(plain), expected);
+        assert_eq!(thread_id_from_rollout_path(compressed), expected);
+    }
+
+    #[test]
+    fn test_compressed_rollout_matches_plain_rollout() {
+        // missuo/tokens#109: a `.jsonl.zst` rollout yields exactly what its
+        // plain form does, including the name-derived session id and dedup
+        // keys, so a session present in both forms collapses downstream.
+        let dir = tempfile::TempDir::new().unwrap();
+        let plain_path = dir.path().join("fixture.jsonl");
+        std::fs::write(&plain_path, COMPRESSED_FIXTURE).unwrap();
+        let expected = parse_codex_file(&plain_path);
+        assert_eq!(expected.len(), 1);
+        assert_eq!(expected[0].session_id, "fixture");
+        assert_eq!(expected[0].tokens.input, 110);
+        assert_eq!(expected[0].tokens.cache_read, 30);
+        assert_eq!(expected[0].tokens.output, 10);
+        assert_eq!(expected[0].tokens.reasoning, 10);
+        assert!(expected[0].dedup_key.is_some());
+
+        let zst_path = dir.path().join("fixture.jsonl.zst");
+        std::fs::write(
+            &zst_path,
+            zstd::encode_all(COMPRESSED_FIXTURE.as_bytes(), 3).unwrap(),
+        )
+        .unwrap();
+        // Same mtime so the fallback timestamp cannot differ either.
+        let mtime = std::fs::metadata(&plain_path).unwrap().modified().unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&zst_path)
+            .unwrap()
+            .set_modified(mtime)
+            .unwrap();
+
+        assert_eq!(parse_codex_file(&zst_path), expected);
+        let full = parse_codex_file_incremental(&zst_path, 0, CodexParseState::default());
+        assert!(full.parse_succeeded);
+        assert_eq!(full.messages, expected);
+        assert_eq!(full.consumed_offset, COMPRESSED_FIXTURE.len() as u64);
+
+        // An archive cannot be resumed at a byte offset.
+        let resumed = parse_codex_file_incremental(&zst_path, 10, CodexParseState::default());
+        assert!(!resumed.parse_succeeded);
+        assert!(resumed.messages.is_empty());
+    }
+
+    #[test]
+    fn test_corrupt_or_truncated_compressed_rollout_emits_no_usage() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("rollout.jsonl.zst");
+        let mut bytes = zstd::encode_all(COMPRESSED_FIXTURE.as_bytes(), 3).unwrap();
+        bytes.truncate(bytes.len() - 4);
+        std::fs::write(&path, &bytes).unwrap();
+        let truncated = parse_codex_file_incremental(&path, 0, CodexParseState::default());
+        assert!(!truncated.parse_succeeded);
+        assert!(truncated.messages.is_empty());
+
+        std::fs::write(&path, b"not a zstd stream").unwrap();
+        let garbage = parse_codex_file_incremental(&path, 0, CodexParseState::default());
+        assert!(!garbage.parse_succeeded);
+        assert!(garbage.messages.is_empty());
     }
 }

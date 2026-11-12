@@ -1112,16 +1112,28 @@ fn parse_all_messages_streaming<S: MessageSink>(
         fallback_timestamp_indices: Vec<usize>,
     ) -> Option<message_cache::CachedSourceEntry> {
         let fingerprint = message_cache::SourceFingerprint::from_path(path)?;
-        if fingerprint.size != consumed_offset {
-            return None;
-        }
-
-        let codex_incremental = message_cache::build_codex_incremental_cache_with_prefix_hash(
-            path,
-            consumed_offset,
-            state,
-            fingerprint.content_hash,
-        )?;
+        let codex_incremental = if sessions::utils::is_zst_path(path) {
+            // A compressed rollout is immutable and decoded whole: the parse
+            // consumed decoded bytes, which never equal the archive's size on
+            // disk. Record the archive as fully consumed so an unchanged file
+            // is a warm hit, and any change to it reparses from the start.
+            message_cache::CodexIncrementalCache {
+                state,
+                consumed_offset: fingerprint.size,
+                ends_with_newline: true,
+                prefix_hash: fingerprint.content_hash,
+            }
+        } else {
+            if fingerprint.size != consumed_offset {
+                return None;
+            }
+            message_cache::build_codex_incremental_cache_with_prefix_hash(
+                path,
+                consumed_offset,
+                state,
+                fingerprint.content_hash,
+            )?
+        };
 
         Some(message_cache::CachedSourceEntry::new(
             message_cache::CacheIdentity::for_client(ClientId::Codex),
@@ -1892,7 +1904,13 @@ fn parse_all_messages_streaming<S: MessageSink>(
                 return reparse_from_start(true);
             }
 
-            if let Some(codex_incremental) = cached.codex_incremental.as_ref() {
+            // A changed archive cannot be resumed at a byte offset: its
+            // compressed bytes are not the transcript's. Reparse it whole.
+            if let Some(codex_incremental) = cached
+                .codex_incremental
+                .as_ref()
+                .filter(|_| !sessions::utils::is_zst_path(path))
+            {
                 if fingerprint.size > codex_incremental.consumed_offset
                     && message_cache::codex_prefix_matches(path, codex_incremental)
                 {
@@ -12259,6 +12277,108 @@ mod tests {
         assert_eq!(parsed.counts.get(ClientId::OpenClaw), 1);
     }
 
+    /// missuo/tokens#109: Codex compresses older rollouts in place to
+    /// `.jsonl.zst`. A compressed-only session counts, and a session present
+    /// as both `.jsonl` and `.jsonl.zst` (or copied into `archived_sessions`
+    /// compressed) counts once, through the cold cached scan, the warm scan,
+    /// and the direct aggregate. One rollout carries a `session_meta` id and
+    /// one relies on the name-derived id, so both dedup scopes are covered.
+    #[test]
+    #[serial_test::serial]
+    fn test_codex_compressed_rollouts_count_once_across_aggregate_paths() {
+        let cache_home = tempfile::TempDir::new().unwrap();
+        let source_home = tempfile::TempDir::new().unwrap();
+        let _cache_env = redirect_cache_home(cache_home.path());
+        let sessions_dir = client_scan_root(source_home.path(), ClientId::Codex).join("2026/10/01");
+        let archived_dir = source_home.path().join(".codex/archived_sessions");
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+        std::fs::create_dir_all(&archived_dir).unwrap();
+
+        let rollout = |meta: Option<&str>, day: u32, input: i64| {
+            let mut lines = Vec::new();
+            if let Some(id) = meta {
+                lines.push(format!(
+                    r#"{{"timestamp":"2026-10-{day:02}T00:00:00Z","type":"session_meta","payload":{{"id":"{id}","cwd":"/tmp/project","originator":"codex_cli_rs"}}}}"#
+                ));
+            }
+            lines.push(format!(
+                r#"{{"timestamp":"2026-10-{day:02}T00:00:00Z","type":"turn_context","payload":{{"model":"gpt-5"}}}}"#
+            ));
+            lines.push(format!(
+                r#"{{"timestamp":"2026-10-{day:02}T00:00:01Z","type":"event_msg","payload":{{"type":"token_count","info":{{"total_token_usage":{{"input_tokens":{input},"cached_input_tokens":0,"output_tokens":10,"reasoning_output_tokens":0,"total_tokens":{}}},"last_token_usage":{{"input_tokens":{input},"cached_input_tokens":0,"output_tokens":10,"reasoning_output_tokens":0,"total_tokens":{}}}}}}}}}"#,
+                input + 10,
+                input + 10
+            ));
+            lines.join("\n") + "\n"
+        };
+        let compress = |text: &str| zstd::encode_all(text.as_bytes(), 3).unwrap();
+
+        // Session A: plain and compressed side by side (Codex mid-compression,
+        // or a manual decompress), with a session_meta id.
+        let a_name = "rollout-2026-10-01T00-00-00-0199a000-0000-7000-8000-00000000000a.jsonl";
+        let a = rollout(Some("0199a000-0000-7000-8000-00000000000a"), 1, 100);
+        std::fs::write(sessions_dir.join(a_name), &a).unwrap();
+        std::fs::write(sessions_dir.join(format!("{a_name}.zst")), compress(&a)).unwrap();
+        // Session B: plain in sessions, a compressed copy in
+        // archived_sessions; no session_meta, so its dedup scope is the
+        // name-derived session id, which must ignore the `.zst`.
+        let b_name = "rollout-2026-10-02T00-00-00-0199a000-0000-7000-8000-00000000000b.jsonl";
+        let b = rollout(None, 2, 1000);
+        std::fs::write(sessions_dir.join(b_name), &b).unwrap();
+        std::fs::write(archived_dir.join(format!("{b_name}.zst")), compress(&b)).unwrap();
+        // Session C: compressed only.
+        let c_name = "rollout-2026-10-03T00-00-00-0199a000-0000-7000-8000-00000000000c.jsonl.zst";
+        let c = rollout(Some("0199a000-0000-7000-8000-00000000000c"), 3, 10000);
+        std::fs::write(sessions_dir.join(c_name), compress(&c)).unwrap();
+
+        let clients = vec!["codex".to_string()];
+        let home = source_home.path().to_str().unwrap();
+        let cold = parse_all_messages_with_pricing(home, &clients, None);
+        let warm = parse_all_messages_with_pricing(home, &clients, None);
+        let direct = parse_local_clients(LocalParseOptions {
+            home_dir: Some(home.to_string()),
+            use_env_roots: false,
+            clients: Some(clients),
+            since: None,
+            until: None,
+            year: None,
+            scanner_settings: scanner::ScannerSettings::default(),
+        })
+        .unwrap();
+
+        for (label, messages) in [("cold", &cold), ("warm", &warm)] {
+            assert_eq!(messages.len(), 3, "{label}");
+            assert_eq!(
+                messages.iter().map(|m| m.tokens.input).sum::<i64>(),
+                11100,
+                "{label}"
+            );
+        }
+        assert_eq!(warm, cold);
+        assert_eq!(direct.messages.len(), 3);
+        assert_eq!(direct.messages.iter().map(|m| m.input).sum::<i64>(), 11100);
+
+        // The compressed archives were cached as complete, so the warm scan
+        // served them without a reparse.
+        let persisted = message_cache::SourceMessageCache::load();
+        for path in [
+            sessions_dir.join(format!("{a_name}.zst")),
+            archived_dir.join(format!("{b_name}.zst")),
+            sessions_dir.join(c_name),
+        ] {
+            assert!(
+                persisted
+                    .get(
+                        message_cache::CacheIdentity::for_client(ClientId::Codex),
+                        &path
+                    )
+                    .is_some_and(|entry| entry.messages.len() == 1),
+                "{} should be cached",
+                path.display()
+            );
+        }
+    }
+
     /// Carried over from #1291, which #1285 made necessary and this branch
     /// makes redundant: a plain transcript and its zstd archive in one
     /// sessions directory count each event once through the cached cold
@@ -17306,6 +17426,85 @@ mod tests {
         assert_eq!(parsed.messages.len(), 1);
         assert_eq!(parsed.messages[0].client, "devin-cli");
         assert_eq!(parsed.messages[0].session_id, "external-session");
+    }
+
+    fn devin_duplicate_request_db(path: &std::path::Path) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let conn = rusqlite::Connection::open(path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE sessions (
+                 id TEXT PRIMARY KEY,
+                 working_directory TEXT NOT NULL,
+                 backend_type TEXT NOT NULL,
+                 model TEXT NOT NULL,
+                 title TEXT,
+                 agent_mode TEXT NOT NULL,
+                 created_at INTEGER NOT NULL,
+                 last_activity_at INTEGER NOT NULL
+             );
+             CREATE TABLE message_nodes (
+                 row_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 session_id TEXT NOT NULL,
+                 node_id INTEGER NOT NULL,
+                 parent_node_id INTEGER,
+                 chat_message TEXT NOT NULL,
+                 created_at INTEGER NOT NULL,
+                 metadata TEXT
+             );",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO sessions (id, working_directory, backend_type, model, agent_mode, created_at, last_activity_at) VALUES ('dup-session', '/tmp/project', 'windsurf', 'gpt-5', 'accept-edits', 1, 1)",
+            [],
+        )
+        .unwrap();
+        // req-a is persisted in three rows, req-b in two: five rows, two
+        // API responses (missuo/tokens#109).
+        for (node_id, request_id, input, output) in [
+            (1, "req-a", 100, 10),
+            (2, "req-a", 100, 10),
+            (3, "req-b", 200, 20),
+            (4, "req-a", 100, 10),
+            (5, "req-b", 200, 20),
+        ] {
+            let chat = format!(
+                r#"{{"role":"assistant","metadata":{{"request_id":"{request_id}","generation_model":"gpt-5","metrics":{{"input_tokens":{input},"output_tokens":{output}}}}}}}"#
+            );
+            conn.execute(
+                "INSERT INTO message_nodes (session_id, node_id, chat_message, created_at) VALUES ('dup-session', ?1, ?2, 1700000000)",
+                rusqlite::params![node_id, chat],
+            )
+            .unwrap();
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_devin_cli_rows_sharing_a_request_id_count_once() {
+        let cache_home = tempfile::TempDir::new().unwrap();
+        let _cache_env = redirect_cache_home(cache_home.path());
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        devin_duplicate_request_db(&temp_dir.path().join(".local/share/devin/cli/sessions.db"));
+        let home = temp_dir.path().to_str().unwrap().to_string();
+
+        let parsed = parse_local_clients(LocalParseOptions {
+            home_dir: Some(home.clone()),
+            use_env_roots: false,
+            clients: Some(vec!["devin-cli".to_string()]),
+            since: None,
+            until: None,
+            year: None,
+            scanner_settings: scanner::ScannerSettings::default(),
+        })
+        .unwrap();
+        assert_eq!(parsed.messages.len(), 2);
+        assert_eq!(parsed.messages.iter().map(|m| m.input).sum::<i64>(), 300);
+        assert_eq!(parsed.messages.iter().map(|m| m.output).sum::<i64>(), 30);
+
+        let unified = parse_all_messages_with_pricing(&home, &["devin-cli".to_string()], None);
+        assert_eq!(unified.len(), 2);
+        assert_eq!(unified.iter().map(|m| m.tokens.input).sum::<i64>(), 300);
+        assert_eq!(unified.iter().map(|m| m.tokens.output).sum::<i64>(), 30);
     }
 
     #[test]

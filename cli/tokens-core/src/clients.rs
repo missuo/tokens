@@ -432,7 +432,9 @@ define_clients!(
             fallback_relative: ".codex",
         },
         relative: "sessions",
-        pattern: "*.jsonl",
+        // Codex compresses older rollouts in place to `<name>.jsonl.zst`
+        // (local thread store compression), so both forms are transcripts.
+        pattern: "*.jsonl|*.jsonl.zst",
         headless: true,
         parse_local: true,
         submit_default: true
