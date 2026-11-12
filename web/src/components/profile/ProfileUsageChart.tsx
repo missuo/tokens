@@ -11,8 +11,12 @@ import {
   type PointerEvent,
 } from "react";
 import { SOURCE_DISPLAY_NAMES } from "@/lib/constants";
+import { useLocale, useT } from "@/components/layout/LocaleProvider";
+import { formatDate } from "@/lib/i18n/format";
+import type { Locale } from "@/lib/i18n/config";
+import type { Translator } from "@/lib/i18n/translate";
 import type { DailyContribution } from "@/lib/types";
-import { formatCurrency, formatDate, formatNumber } from "@/lib/utils";
+import { formatCurrency, formatNumber } from "@/lib/utils";
 import {
   ALL_USAGE_PROVIDERS,
   MAX_LEGEND_MODELS,
@@ -156,8 +160,8 @@ function createChartStack(
   return { layers, maximum };
 }
 
-function providerName(provider: UsageProviderId): string {
-  if (provider === "unattributed") return "Unattributed";
+function providerName(provider: UsageProviderId, t: Translator): string {
+  if (provider === "unattributed") return t("profile.usage.unattributed");
   return SOURCE_DISPLAY_NAMES[provider] ?? provider;
 }
 
@@ -165,12 +169,36 @@ function formatMetric(value: number, metric: UsageMetric): string {
   return metric === "tokens" ? formatNumber(value) : formatCurrency(value);
 }
 
-function metricLabel(metric: UsageMetric): string {
-  return metric === "tokens" ? "Tokens" : "Cost";
+/** The button/label form, capitalised where the language has case. */
+function metricLabel(metric: UsageMetric, t: Translator): string {
+  return metric === "tokens" ? t("profile.usage.tokens") : t("profile.usage.cost");
 }
 
-function viewLabel(view: UsageView, averageWindowDays: number): string {
-  return view === "average" ? `${averageWindowDays}d average` : "Daily";
+/** The mid-sentence form, so a language with case can spell it lower. */
+function metricValue(metric: UsageMetric, t: Translator): string {
+  return metric === "tokens" ? t("profile.usage.metricTokens") : t("profile.usage.metricCost");
+}
+
+function viewLabel(
+  view: UsageView,
+  averageWindowDays: number,
+  t: Translator,
+): string {
+  return view === "average"
+    ? t("profile.usage.average", { days: averageWindowDays })
+    : t("profile.usage.daily");
+}
+
+/**
+ * A chart axis date. Pinned to UTC because the points are calendar dates: a
+ * viewer west of UTC would otherwise see the previous day's label under a bar.
+ */
+function formatChartDate(date: string, locale: Locale): string {
+  return formatDate(new Date(`${date}T00:00:00Z`), locale, {
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  });
 }
 
 function tooltipLeft(activeOffset: number, plotWidth: number): number {
@@ -223,6 +251,7 @@ function getProviderCostRows(
   activeIndex: number,
   view: UsageView,
   averageWindowDays: number,
+  t: Translator,
 ): ProviderCostRow[] {
   return providerTotals
     .filter(
@@ -240,7 +269,7 @@ function getProviderCostRows(
           : rawValues;
       return {
         provider,
-        label: providerName(provider),
+        label: providerName(provider, t),
         color: providerColor(provider),
         value: values[activeIndex] ?? 0,
       };
@@ -582,6 +611,7 @@ function BreakdownContent({
   stickyTotal = false,
   total,
 }: BreakdownProps) {
+  const t = useT();
   const labels = tooltipLabels(rows);
   const visibleRows = rows.slice(0, MAX_TOOLTIP_MODELS);
   const hiddenRows = rows.slice(MAX_TOOLTIP_MODELS);
@@ -609,13 +639,13 @@ function BreakdownContent({
       </BreakdownList>
       {hiddenRows.length > 0 && (
         <MoreRow>
-          <span>+{hiddenRows.length} more models</span>
+          <span>{t("profile.usage.moreModels", { count: hiddenRows.length })}</span>
           <span>{formatMetric(hiddenValue, metric)}</span>
         </MoreRow>
       )}
       {metric === "tokens" && providerCosts.length > 0 && (
         <CostSection>
-          <CostHeading>Cost by provider</CostHeading>
+          <CostHeading>{t("profile.usage.costByProvider")}</CostHeading>
           <BreakdownList>
             {visibleCosts.map((row) => (
               <BreakdownRow key={row.provider}>
@@ -627,7 +657,9 @@ function BreakdownContent({
           </BreakdownList>
           {hiddenCosts.length > 0 && (
             <MoreRow>
-              <span>+{hiddenCosts.length} more providers</span>
+              <span>
+                {t("profile.usage.moreProviders", { count: hiddenCosts.length })}
+              </span>
               <span>
                 {formatCurrency(
                   hiddenCosts.reduce((sum, row) => sum + row.value, 0),
@@ -638,7 +670,9 @@ function BreakdownContent({
         </CostSection>
       )}
       <BreakdownTotal $sticky={stickyTotal}>
-        <span>Total {metricLabel(metric).toLowerCase()}</span>
+        <span>
+          {t("profile.usage.breakdownTotal", { metric: metricValue(metric, t) })}
+        </span>
         <span>{formatMetric(total, metric)}</span>
       </BreakdownTotal>
     </>
@@ -648,11 +682,14 @@ function BreakdownContent({
 export function ProfileUsageChart({
   contributions,
   initialMetric = "tokens",
-  description = "Model activity, grouped by coding provider.",
+  description: providedDescription,
   averageWindowDays = 30,
   rangeStart = null,
   rangeEnd = null,
 }: ProfileUsageChartProps) {
+  const t = useT();
+  const locale = useLocale();
+  const description = providedDescription ?? t("profile.usage.description");
   const headingId = useId();
   const chartTitleId = useId();
   const chartDescriptionId = useId();
@@ -730,8 +767,9 @@ export function ProfileUsageChart({
         selectedProvider,
         view,
         averageWindowDays,
+        t,
       ),
-    [days, metric, selectedProvider, view, averageWindowDays],
+    [days, metric, selectedProvider, view, averageWindowDays, t],
   );
   // Everything below renders in visual order: with "Newest first" on, the
   // whole per-day pipeline (dates, series, totals) is mirrored once here so
@@ -828,6 +866,7 @@ export function ProfileUsageChart({
         chronologicalActiveIndex,
         view,
         chartData.averageWindowDays,
+        t,
       ),
     [
       days,
@@ -836,6 +875,7 @@ export function ProfileUsageChart({
       chronologicalActiveIndex,
       view,
       chartData.averageWindowDays,
+      t,
     ],
   );
 
@@ -908,23 +948,31 @@ export function ProfileUsageChart({
       : PLOT_LEFT;
   const activeOffset = (activeX / VIEWBOX_WIDTH) * 100;
   const activeTooltipLeft = tooltipLeft(activeOffset, plotWidth);
-  const modeLabel = viewLabel(view, chartData.averageWindowDays);
-  const chartTitle = `${modeLabel} ${metricLabel(metric).toLowerCase()} usage by model and provider`;
+  const modeLabel = viewLabel(view, chartData.averageWindowDays, t);
+  const chartTitle = t("profile.usage.chartTitle", {
+    mode: modeLabel,
+    metric: metricValue(metric, t),
+  });
   // Screen readers should hear the true chronological span, so build from/to
   // from `chronologicalChartData` (unmirrored source) rather than the possibly
   // reversed display order. When "Newest first" mirrors the visible axis, note
   // it so AT users know the plotted direction is flipped.
   const descriptionDates = chronologicalChartData.dates;
-  const chartDescription = `${chartTitle} from ${
-    descriptionDates[0] ? formatDate(descriptionDates[0]) : "no start date"
-  } to ${
-    descriptionDates.at(-1)
-      ? formatDate(descriptionDates.at(-1) as string)
-      : "no end date"
-  }${newestFirst ? ", displayed newest first" : ""}. Raw range total: ${formatMetric(
-    chartData.total,
-    metric,
-  )}.`;
+  const chartDescription = t(
+    newestFirst
+      ? "profile.usage.chartDescriptionNewestFirst"
+      : "profile.usage.chartDescription",
+    {
+      title: chartTitle,
+      start: descriptionDates[0]
+        ? formatChartDate(descriptionDates[0], locale)
+        : t("profile.usage.noStartDate"),
+      end: descriptionDates.at(-1)
+        ? formatChartDate(descriptionDates.at(-1) as string, locale)
+        : t("profile.usage.noEndDate"),
+      total: formatMetric(chartData.total, metric),
+    },
+  );
   const announcedIndex = announcedDate
     ? chartData.dates.indexOf(announcedDate)
     : -1;
@@ -933,22 +981,30 @@ export function ProfileUsageChart({
       ? getActiveTooltipRows(chartData.series, announcedIndex)
       : [];
   const announcedLabels = tooltipLabels(announcedRows);
+  const announcedSummary = announcedRows
+    .slice(0, 3)
+    .map(
+      ({ series, value }) =>
+        `${announcedLabels.get(series.id) ?? series.label} ${formatMetric(value, metric)}`,
+    )
+    .join(", ");
   const announcement =
     announcedIndex >= 0
-      ? `${formatDate(chartData.dates[announcedIndex])}, ${modeLabel}: ${formatMetric(
-          chartData.dailyTotals[announcedIndex] ?? 0,
-          metric,
-        )}. ${announcedRows
-          .slice(0, 3)
-          .map(
-            ({ series, value }) =>
-              `${announcedLabels.get(series.id) ?? series.label} ${formatMetric(value, metric)}`,
-          )
-          .join(", ")}${
+      ? t(
           announcedRows.length > 3
-            ? `, plus ${announcedRows.length - 3} more models`
-            : ""
-        }`
+            ? "profile.usage.announcementMore"
+            : "profile.usage.announcement",
+          {
+            date: formatChartDate(chartData.dates[announcedIndex], locale),
+            mode: modeLabel,
+            total: formatMetric(
+              chartData.dailyTotals[announcedIndex] ?? 0,
+              metric,
+            ),
+            rows: announcedSummary,
+            count: announcedRows.length - 3,
+          },
+        )
       : "";
   const isInspecting = interactionMode !== "idle" && currentDate !== null;
 
@@ -956,14 +1012,14 @@ export function ProfileUsageChart({
     <Section aria-labelledby={headingId}>
       <Header>
         <HeadingGroup>
-          <Heading id={headingId}>Usage over time</Heading>
+          <Heading id={headingId}>{t("profile.usage.heading")}</Heading>
           <Description>{description}</Description>
         </HeadingGroup>
         <Total>
           <TotalLabel>
-            Range total {metricLabel(metric).toLowerCase()}
+            {t("profile.usage.rangeTotal", { metric: metricValue(metric, t) })}
           </TotalLabel>
-          <TotalValue title={chartData.total.toLocaleString("en-US")}>
+          <TotalValue title={chartData.total.toLocaleString(locale)}>
             {formatMetric(chartData.total, metric)}
           </TotalValue>
         </Total>
@@ -971,7 +1027,7 @@ export function ProfileUsageChart({
 
       <Controls>
         <ControlCluster>
-          <MetricControl aria-label="Usage metric">
+          <MetricControl aria-label={t("profile.usage.metricLabel")}>
             {(["tokens", "cost"] as const).map((option) => (
               <MetricButton
                 key={option}
@@ -980,46 +1036,46 @@ export function ProfileUsageChart({
                 aria-pressed={metric === option}
                 onClick={() => setMetric(option)}
               >
-                {metricLabel(option)}
+                {metricLabel(option, t)}
               </MetricButton>
             ))}
           </MetricControl>
 
           <SelectControl>
-            <SelectCaption>Display</SelectCaption>
+            <SelectCaption>{t("profile.usage.display")}</SelectCaption>
             <CompactSelect
-              aria-label="Usage display"
+              aria-label={t("profile.usage.displayLabel")}
               value={view}
               onChange={(event) =>
                 setView(event.currentTarget.value as UsageView)
               }
             >
               <option value="average">
-                {chartData.averageWindowDays}d average
+                {t("profile.usage.average", { days: chartData.averageWindowDays })}
               </option>
-              <option value="daily">Daily</option>
+              <option value="daily">{t("profile.usage.daily")}</option>
             </CompactSelect>
           </SelectControl>
         </ControlCluster>
 
         <ControlCluster>
-          <NewestFirstControl title="Show newest activity on the left">
+          <NewestFirstControl title={t("profile.usage.newestFirstTitle")}>
             <input
               type="checkbox"
               name="profile-usage-newest-first"
-              aria-label="Show newest activity on the left"
+              aria-label={t("profile.usage.newestFirstTitle")}
               checked={newestFirst}
               onChange={(event) =>
                 commitNewestFirst(event.currentTarget.checked)
               }
             />
-            <span>Newest first</span>
+            <span>{t("profile.usage.newestFirst")}</span>
           </NewestFirstControl>
           <SelectControl>
-            <SelectCaption>Provider</SelectCaption>
+            <SelectCaption>{t("profile.usage.provider")}</SelectCaption>
             <CompactSelect
               name="profile-usage-provider"
-              aria-label="Usage provider"
+              aria-label={t("profile.usage.providerLabel")}
               value={selectedProvider}
               onChange={(event) =>
                 setProviderFilter(
@@ -1027,10 +1083,10 @@ export function ProfileUsageChart({
                 )
               }
             >
-              <option value={ALL_USAGE_PROVIDERS}>All</option>
+              <option value={ALL_USAGE_PROVIDERS}>{t("profile.usage.all")}</option>
               {providerTotals.map(({ provider }) => (
                 <option key={provider} value={provider}>
-                  {providerName(provider)}
+                  {providerName(provider, t)}
                 </option>
               ))}
             </CompactSelect>
@@ -1045,7 +1101,9 @@ export function ProfileUsageChart({
             tabIndex={0}
             role="group"
             aria-describedby={keyboardInstructionsId}
-            aria-label={`Interactive ${metricLabel(metric).toLowerCase()} chart`}
+            aria-label={t("profile.usage.chartAria", {
+              metric: metricValue(metric, t),
+            })}
             onKeyDown={handleKeyDown}
             onPointerMove={(event) => {
               if (event.pointerType === "mouse") {
@@ -1122,10 +1180,12 @@ export function ProfileUsageChart({
                 );
               })}
 
-            <DateRange aria-label="Chart date range">
-              <span>{formatDate(chartData.dates[0])}</span>
+            <DateRange aria-label={t("profile.usage.dateRangeAria")}>
+              <span>{formatChartDate(chartData.dates[0], locale)}</span>
               {chartData.dates.length > 1 && (
-                <span>{formatDate(chartData.dates.at(-1) as string)}</span>
+                <span>
+                  {formatChartDate(chartData.dates.at(-1) as string, locale)}
+                </span>
               )}
             </DateRange>
 
@@ -1153,17 +1213,15 @@ export function ProfileUsageChart({
             )}
           </InteractivePlot>
         ) : (
-          <EmptyState>No usage data yet.</EmptyState>
+          <EmptyState>{t("profile.usage.empty")}</EmptyState>
         )}
         <VisuallyHidden id={keyboardInstructionsId}>
-          Use Left Arrow and Right Arrow to inspect adjacent days. Use Home and
-          End to jump to the first or last day. Press Escape to close the
-          inspection.
+          {t("profile.usage.instructions")}
         </VisuallyHidden>
       </PlotRegion>
 
       {(modelLegend.visible.length > 0 || modelLegend.hiddenCount > 0) && (
-        <Legend role="list" aria-label="Usage models">
+        <Legend role="list" aria-label={t("profile.usage.modelsLegend")}>
           {modelLegend.visible.map((entry) => (
             <LegendItem key={entry.id}>
               <Swatch $color={entry.color} aria-hidden="true" />
@@ -1172,14 +1230,18 @@ export function ProfileUsageChart({
           ))}
           {modelLegend.hiddenCount > 0 && (
             <LegendItem>
-              <span>+{modelLegend.hiddenCount} more</span>
+              <span>{t("profile.usage.more", { count: modelLegend.hiddenCount })}</span>
             </LegendItem>
           )}
         </Legend>
       )}
 
       {interactionMode === "committed" && currentDate && (
-        <PinnedBreakdown aria-label={`Usage on ${currentDate}`}>
+        <PinnedBreakdown
+          aria-label={t("profile.usage.pinnedAria", {
+            date: formatChartDate(currentDate, locale),
+          })}
+        >
           <BreakdownContent
             date={currentDate}
             mode={modeLabel}

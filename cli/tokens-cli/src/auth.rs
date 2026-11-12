@@ -1,3 +1,4 @@
+use crate::{t, tr};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -234,7 +235,9 @@ fn get_device_name() -> String {
         .ok()
         .and_then(|h| h.into_string().ok())
         .unwrap_or_else(|| "unknown".to_string());
-    format!("CLI on {}", hostname)
+    // Stored on the server and shown to other people, so it stays English
+    // whatever language this run prints in.
+    format!("CLI on {hostname}")
 }
 
 /// A read token is about to be printed verbatim, so anything that is not the
@@ -265,7 +268,7 @@ async fn enable_private_mode(
 
     let status = response.status();
     if status == reqwest::StatusCode::NOT_FOUND {
-        anyhow::bail!("This Tokens server does not support private mode yet.");
+        anyhow::bail!(t!("top.auth.privateModeUnsupported"));
     }
     if !status.is_success() {
         let body: serde_json::Value = response.json().await.unwrap_or_default();
@@ -273,8 +276,12 @@ async fn enable_private_mode(
             .get("error")
             .and_then(|value| value.as_str())
             .map(sanitize_server_text)
-            .unwrap_or_else(|| "Failed to enable private mode".to_string());
-        anyhow::bail!("{} ({})", error, status);
+            .unwrap_or_else(|| t!("top.auth.enablePrivateFailed").to_string());
+        anyhow::bail!(tr!(
+            "top.auth.failedWithStatus",
+            error = error,
+            status = status
+        ));
     }
 
     let data: EnablePrivateResponse = response.json().await?;
@@ -282,39 +289,23 @@ async fn enable_private_mode(
         .read_token
         .map(|info| info.token)
         .filter(|token| is_valid_read_token(token))
-        .ok_or_else(|| anyhow::anyhow!("Server did not return a valid read token."))?;
+        .ok_or_else(|| anyhow::anyhow!(t!("top.auth.noValidReadToken")))?;
 
-    println!(
-        "  {}",
-        "Private mode is on. Your profile, devices, badges and embeds are hidden,".green()
-    );
-    println!("{}", "  and you are no longer on the leaderboard.".green());
+    println!("  {}", t!("top.auth.privateModeOn").green());
+    println!("{}", t!("top.auth.privateModeOffLeaderboard").green());
     println!();
-    println!(
-        "{}",
-        "  Your read token (shown only once — copy it now):".white()
-    );
+    println!("{}", t!("top.auth.readTokenHeading").white());
     println!(
         "{}
 ",
         format!("  {}", read_token).green().bold()
     );
+    println!("{}", t!("top.auth.readTokenUsageHint").bright_black());
+    println!("{}", t!("top.auth.readTokenBearerHint").bright_black());
+    println!("{}", t!("top.auth.readTokenUrlHint").bright_black());
     println!(
         "{}",
-        "  Use it to read your private data, e.g. in the iOS app, as".bright_black()
-    );
-    println!(
-        "{}",
-        "  `Authorization: Bearer <token>`, or by appending `?token=<token>` to a".bright_black()
-    );
-    println!("{}", "  badge or embed URL.".bright_black());
-    println!(
-        "{}",
-        format!(
-            "  Manage read tokens and privacy at {}/settings\n",
-            base_url
-        )
-        .bright_black()
+        tr!("top.auth.manageReadTokens", url = base_url).bright_black()
     );
 
     Ok(())
@@ -370,19 +361,19 @@ const CMD_METACHARACTERS: &[char] = &['&', '|', '<', '>', '^', '"', '%', '!'];
 
 fn validate_verification_url(url: &str) -> Result<()> {
     if url.chars().any(|c| c.is_control()) {
-        anyhow::bail!("Server returned a verification URL containing control characters.");
+        anyhow::bail!(t!("top.auth.urlControlChars"));
     }
 
-    let parsed = reqwest::Url::parse(url)
-        .map_err(|_| anyhow::anyhow!("Server returned an invalid verification URL."))?;
+    let parsed =
+        reqwest::Url::parse(url).map_err(|_| anyhow::anyhow!(t!("top.auth.urlInvalid")))?;
 
     let is_loopback_http = parsed.scheme() == "http"
         && matches!(parsed.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"));
 
     if parsed.scheme() != "https" && !is_loopback_http {
         anyhow::bail!(
-            "Server returned a verification URL with an unsupported scheme: {}",
-            parsed.scheme()
+            "{}",
+            tr!("top.auth.urlUnsupportedScheme", scheme = parsed.scheme())
         );
     }
 
@@ -390,12 +381,12 @@ fn validate_verification_url(url: &str) -> Result<()> {
     // (`https://accounts.google.com@evil.example/`), and nothing legitimate
     // puts credentials in a verification link.
     if !parsed.username().is_empty() || parsed.password().is_some() {
-        anyhow::bail!("Server returned a verification URL containing credentials.");
+        anyhow::bail!(t!("top.auth.urlCredentials"));
     }
 
     #[cfg(target_os = "windows")]
     if url.contains(CMD_METACHARACTERS) {
-        anyhow::bail!("Server returned a verification URL containing shell metacharacters.");
+        anyhow::bail!(t!("top.auth.urlShellMetacharacters"));
     }
 
     Ok(())
@@ -442,7 +433,7 @@ pub async fn login(private: bool) -> Result<()> {
     if let Some(creds) = load_credentials() {
         println!(
             "\n  {}",
-            format!("Already logged in as {}", creds.username.bold()).yellow()
+            tr!("top.auth.alreadyLoggedIn", user = creds.username.bold()).yellow()
         );
         // `--private` on an existing login switches that account rather than
         // asking the user to sign out and through the browser again.
@@ -450,15 +441,12 @@ pub async fn login(private: bool) -> Result<()> {
             println!();
             return enable_private_mode(&client, &base_url, &creds.token).await;
         }
-        println!(
-            "{}",
-            "  Run 'tokens logout' to sign out first.\n".bright_black()
-        );
+        println!("{}", t!("top.auth.logoutFirstHint").bright_black());
         return Ok(());
     }
 
-    println!("\n  {}\n", "Tokens - Login".cyan());
-    println!("{}", "  Requesting authorization code...".bright_black());
+    println!("\n  {}\n", t!("top.auth.loginTitle").cyan());
+    println!("{}", t!("top.auth.requesting").bright_black());
 
     let device_code_response = client
         .post(format!("{}/api/auth/device", base_url))
@@ -469,7 +457,10 @@ pub async fn login(private: bool) -> Result<()> {
         .await?;
 
     if !device_code_response.status().is_success() {
-        anyhow::bail!("Server returned {}", device_code_response.status());
+        anyhow::bail!(tr!(
+            "top.auth.serverReturned",
+            status = device_code_response.status()
+        ));
     }
 
     let device_data: DeviceCodeResponse = device_code_response.json().await?;
@@ -477,7 +468,7 @@ pub async fn login(private: bool) -> Result<()> {
     validate_verification_url(&device_data.verification_url)?;
 
     println!();
-    println!("{}", "  Open this URL in your browser:".white());
+    println!("{}", t!("top.auth.openUrl").white());
     let url_display = if std::io::stdout().is_terminal() {
         format!(
             "\x1b]8;;{}\x1b\\{}\x1b]8;;\x1b\\",
@@ -487,21 +478,17 @@ pub async fn login(private: bool) -> Result<()> {
         device_data.verification_url.clone()
     };
     println!("{}", format!("  {}\n", url_display).cyan());
-    println!("{}", "  Enter this code:".white());
+    println!("{}", t!("top.auth.enterCode").white());
     println!(
         "{}\n",
         format!("  {}", device_data.user_code).green().bold()
     );
 
     if !open_browser(&device_data.verification_url) {
-        println!(
-            "{}",
-            "  Browser auto-open unavailable in this environment. Continue with the URL above.\n"
-                .bright_black()
-        );
+        println!("{}", t!("top.auth.browserUnavailable").bright_black());
     }
 
-    println!("{}", "  Waiting for authorization...".bright_black());
+    println!("{}", t!("top.auth.waiting").bright_black());
 
     let poll_interval = std::time::Duration::from_secs(
         device_data
@@ -542,33 +529,26 @@ pub async fn login(private: bool) -> Result<()> {
 
                             println!(
                                 "\n  {}",
-                                format!("Success! Logged in as {}", user.username.bold()).green()
+                                tr!("top.auth.loggedInAs", user = user.username.bold()).green()
                             );
                             if private {
                                 println!();
-                                return enable_private_mode(
-                                    &client,
-                                    &base_url,
-                                    &credentials.token,
-                                )
-                                .await
-                                .map_err(|error| {
-                                    anyhow::anyhow!(
-                                        "{error}\n  You are logged in, but your profile is still public. Run `tokens login --private` to retry."
-                                    )
-                                });
+                                return enable_private_mode(&client, &base_url, &credentials.token)
+                                    .await
+                                    .map_err(|error| {
+                                        anyhow::anyhow!(tr!(
+                                            "top.auth.loginSucceededProfilePublic",
+                                            error = error
+                                        ))
+                                    });
                             }
-                            println!(
-                                "{}",
-                                "  You can now use 'tokens submit' to share your usage.\n"
-                                    .bright_black()
-                            );
+                            println!("{}", t!("top.auth.submitHint").bright_black());
                             return Ok(());
                         }
                     }
 
                     if data.status.as_deref() == Some("expired") {
-                        anyhow::bail!("Authorization code expired. Please try again.");
+                        anyhow::bail!(t!("top.auth.codeExpired"));
                     }
 
                     // Any other rejection (revoked code, banned account, rate
@@ -597,7 +577,7 @@ pub async fn login(private: bool) -> Result<()> {
         }
 
         if std::time::Instant::now() >= deadline {
-            anyhow::bail!("Timeout: Authorization took too long. Please try again.");
+            anyhow::bail!(t!("top.auth.timeout"));
         }
     }
 }
@@ -607,10 +587,10 @@ pub async fn login_with_token(token: &str, private: bool) -> Result<()> {
 
     let token = token.trim();
     if token.is_empty() {
-        anyhow::bail!("API token cannot be empty.");
+        anyhow::bail!(t!("top.auth.apiTokenEmpty"));
     }
     if !token.starts_with("tt_") {
-        anyhow::bail!("Tokens API tokens must start with `tt_`.");
+        anyhow::bail!(t!("top.auth.apiTokenPrefix"));
     }
 
     let base_url = get_api_base_url();
@@ -630,8 +610,12 @@ pub async fn login_with_token(token: &str, private: bool) -> Result<()> {
         let error = body
             .get("error")
             .and_then(|value| value.as_str())
-            .unwrap_or("API token validation failed");
-        anyhow::bail!("{} ({})", error, status);
+            .unwrap_or(t!("top.auth.apiTokenValidationFailed"));
+        anyhow::bail!(tr!(
+            "top.auth.failedWithStatus",
+            error = error,
+            status = status
+        ));
     }
 
     let data: TokenValidationResponse = response.json().await?;
@@ -645,22 +629,17 @@ pub async fn login_with_token(token: &str, private: bool) -> Result<()> {
 
     println!(
         "\n  {}",
-        format!("Success! Logged in as {}", credentials.username.bold()).green()
+        tr!("top.auth.loggedInAs", user = credentials.username.bold()).green()
     );
     if private {
         println!();
         return enable_private_mode(&client, &base_url, &credentials.token)
             .await
             .map_err(|error| {
-                anyhow::anyhow!(
-                    "{error}\n  You are logged in, but your profile is still public. Run `tokens login --private` to retry."
-                )
+                anyhow::anyhow!(tr!("top.auth.loginSucceededProfilePublic", error = error))
             });
     }
-    println!(
-        "{}",
-        "  You can now use 'tokens submit' to share your usage.\n".bright_black()
-    );
+    println!("{}", t!("top.auth.submitHint").bright_black());
 
     Ok(())
 }
@@ -671,7 +650,7 @@ pub fn logout() -> Result<()> {
     let credentials = load_credentials();
 
     let Some(creds) = credentials else {
-        println!("\n  {}\n", "Not logged in.".yellow());
+        println!("\n  {}\n", t!("top.auth.notLoggedIn").yellow());
         return Ok(());
     };
 
@@ -681,10 +660,10 @@ pub fn logout() -> Result<()> {
     if cleared {
         println!(
             "\n  {}\n",
-            format!("Logged out from {}", username.bold()).green()
+            tr!("top.auth.loggedOutFrom", user = username.bold()).green()
         );
     } else {
-        anyhow::bail!("Failed to clear credentials.");
+        anyhow::bail!(t!("top.auth.clearFailed"));
     }
 
     Ok(())
@@ -694,24 +673,21 @@ pub fn whoami() -> Result<()> {
     use colored::Colorize;
 
     let Some(creds) = load_credentials() else {
-        println!("\n  {}", "Not logged in.".yellow());
-        println!(
-            "{}",
-            "  Run 'tokens login' to authenticate.\n".bright_black()
-        );
+        println!("\n  {}", t!("top.auth.notLoggedIn").yellow());
+        println!("{}", t!("top.auth.loginHint").bright_black());
         return Ok(());
     };
 
-    println!("\n  {}\n", "Tokens - Account Info".cyan());
+    println!("\n  {}\n", t!("top.auth.accountInfoTitle").cyan());
     println!(
         "{}",
-        format!("  Username:  {}", creds.username.bold()).white()
+        tr!("top.auth.username", user = creds.username.bold()).white()
     );
 
     if let Ok(created) = chrono::DateTime::parse_from_rfc3339(&creds.created_at) {
         println!(
             "{}",
-            format!("  Logged in: {}", created.format("%Y-%m-%d")).bright_black()
+            tr!("top.auth.loggedInAt", date = created.format("%Y-%m-%d")).bright_black()
         );
     }
 

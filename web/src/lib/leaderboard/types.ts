@@ -4,6 +4,7 @@ export type Period =
   | "last-month"
   | "week"
   | "today"
+  | "yesterday"
   | "custom";
 export type SortBy = "tokens" | "cost";
 

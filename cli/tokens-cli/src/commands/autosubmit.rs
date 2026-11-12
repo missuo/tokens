@@ -2,7 +2,7 @@ use crate::settings::{
     AutosubmitSettings, DEFAULT_AUTOSUBMIT_INTERVAL_MINUTES, MAX_AUTOSUBMIT_INTERVAL_MINUTES,
     MIN_AUTOSUBMIT_INTERVAL_MINUTES,
 };
-use crate::{ClientFlags, DateRangeFlags};
+use crate::{t, tr, ClientFlags, DateRangeFlags};
 use anyhow::{bail, Context, Result};
 use clap::{Args, Subcommand, ValueEnum};
 use fs2::FileExt;
@@ -122,7 +122,7 @@ struct StatusOutput {
 pub fn enable(args: AutosubmitEnableArgs) -> Result<()> {
     let interval_minutes = parse_interval_minutes(&args.interval)?;
     let scheduler = args.scheduler.unwrap_or_else(default_scheduler_kind);
-    let exe = std::env::current_exe().context("Could not resolve current tokens executable")?;
+    let exe = std::env::current_exe().context(t!("commands.autosubmit.resolveExeFailed"))?;
     validate_scheduler_executable(&exe)?;
 
     let mut settings = crate::settings::Settings::load();
@@ -148,9 +148,12 @@ pub fn enable(args: AutosubmitEnableArgs) -> Result<()> {
     settings.save()?;
 
     println!(
-        "Autosubmit enabled: every {} minutes via {}.",
-        interval_minutes,
-        scheduler.as_str()
+        "{}",
+        tr!(
+            "commands.autosubmit.enabled",
+            interval = interval_minutes,
+            scheduler = scheduler.as_str()
+        )
     );
     Ok(())
 }
@@ -166,25 +169,49 @@ pub fn status(json: bool) -> Result<()> {
     }
 
     if autosubmit.enabled {
-        println!("Autosubmit is enabled.");
-        println!("  Interval: {} minutes", autosubmit.interval_minutes);
+        println!("{}", t!("commands.autosubmit.isEnabled"));
         println!(
-            "  Scheduler: {}",
-            autosubmit.scheduler.as_deref().unwrap_or("unknown")
+            "{}",
+            tr!(
+                "commands.autosubmit.interval",
+                interval = autosubmit.interval_minutes
+            )
+        );
+        println!(
+            "{}",
+            tr!(
+                "commands.autosubmit.scheduler",
+                scheduler = autosubmit
+                    .scheduler
+                    .as_deref()
+                    .unwrap_or(t!("commands.autosubmit.unknown"))
+            )
         );
         if !autosubmit.clients.is_empty() {
-            println!("  Clients: {}", autosubmit.clients.join(", "));
+            println!(
+                "{}",
+                tr!(
+                    "commands.autosubmit.clients",
+                    clients = autosubmit.clients.join(", ")
+                )
+            );
         } else {
-            println!("  Clients: default submit clients");
+            println!("{}", t!("commands.autosubmit.defaultClients"));
         }
     } else {
-        println!("Autosubmit is disabled.");
+        println!("{}", t!("commands.autosubmit.isDisabled"));
     }
     if let Some(last_run_at_ms) = autosubmit.last_run_at_ms {
-        println!("  Last run: {}", format_timestamp_ms(last_run_at_ms));
+        println!(
+            "{}",
+            tr!(
+                "commands.autosubmit.lastRun",
+                timestamp = format_timestamp_ms(last_run_at_ms)
+            )
+        );
     }
     if let Some(error) = autosubmit.last_error {
-        println!("  Last error: {error}");
+        println!("{}", tr!("commands.autosubmit.lastError", error = error));
     }
     Ok(())
 }
@@ -205,7 +232,7 @@ pub fn disable() -> Result<()> {
     settings.autosubmit.enabled = false;
     settings.autosubmit.last_error = None;
     settings.save()?;
-    println!("Autosubmit disabled.");
+    println!("{}", t!("commands.autosubmit.disabled"));
     Ok(())
 }
 
@@ -282,12 +309,12 @@ pub fn try_acquire_run_lock() -> Result<Option<AutosubmitRunLock>> {
         .create(true)
         .truncate(false)
         .open(&path)
-        .with_context(|| format!("Could not open autosubmit lock at {}", path.display()))?;
+        .with_context(|| tr!("commands.autosubmit.openLockFailed", path = path.display()))?;
     match file.try_lock_exclusive() {
         Ok(()) => Ok(Some(AutosubmitRunLock { _file: file })),
         Err(err) if is_lock_contention(&err) => Ok(None),
         Err(err) => Err(err)
-            .with_context(|| format!("Could not lock autosubmit state at {}", path.display())),
+            .with_context(|| tr!("commands.autosubmit.lockStateFailed", path = path.display())),
     }
 }
 
@@ -332,7 +359,7 @@ pub fn run_decision(
 pub fn parse_interval_minutes(input: &str) -> Result<u64> {
     let trimmed = input.trim();
     if trimmed.is_empty() {
-        bail!("Interval cannot be empty");
+        bail!("{}", t!("commands.autosubmit.intervalEmpty"));
     }
     let split = trimmed
         .find(|c: char| !c.is_ascii_digit())
@@ -340,21 +367,24 @@ pub fn parse_interval_minutes(input: &str) -> Result<u64> {
     let (number, unit) = trimmed.split_at(split);
     let amount: u64 = number
         .parse()
-        .with_context(|| format!("Invalid interval: {input}"))?;
+        .with_context(|| tr!("commands.autosubmit.intervalInvalid", input = input))?;
     let multiplier = match unit.trim().to_ascii_lowercase().as_str() {
         "" | "m" | "min" | "mins" | "minute" | "minutes" => 1,
         "h" | "hr" | "hrs" | "hour" | "hours" => 60,
         "d" | "day" | "days" => 24 * 60,
-        _ => bail!("Unsupported interval unit: {unit}"),
+        _ => bail!("{}", tr!("commands.autosubmit.intervalUnit", unit = unit)),
     };
     let minutes = amount
         .checked_mul(multiplier)
-        .ok_or_else(|| anyhow::anyhow!("Interval is too large"))?;
+        .ok_or_else(|| anyhow::anyhow!(t!("commands.autosubmit.intervalTooLarge")))?;
     if !(MIN_AUTOSUBMIT_INTERVAL_MINUTES..=MAX_AUTOSUBMIT_INTERVAL_MINUTES).contains(&minutes) {
         bail!(
-            "Interval must be between {} and {} minutes",
-            MIN_AUTOSUBMIT_INTERVAL_MINUTES,
-            MAX_AUTOSUBMIT_INTERVAL_MINUTES
+            "{}",
+            tr!(
+                "commands.autosubmit.intervalRange",
+                min = MIN_AUTOSUBMIT_INTERVAL_MINUTES,
+                max = MAX_AUTOSUBMIT_INTERVAL_MINUTES
+            )
         );
     }
     Ok(minutes)
@@ -460,7 +490,7 @@ fn render_scheduler_spec(
 }
 
 fn render_launchd_spec(exe: &Path, settings: &AutosubmitSettings) -> Result<SchedulerSpec> {
-    let home = dirs::home_dir().context("Could not determine home directory")?;
+    let home = dirs::home_dir().context(t!("commands.autosubmit.homeDirUnknown"))?;
     let plist_path = home
         .join("Library")
         .join("LaunchAgents")
@@ -569,7 +599,7 @@ fn systemd_user_dir() -> Result<PathBuf> {
         .or_else(dirs::config_dir)
         .or_else(|| dirs::home_dir().map(|home| home.join(".config")));
     Ok(config_dir
-        .context("Could not determine XDG config directory")?
+        .context(t!("commands.autosubmit.configDirUnknown"))?
         .join("systemd")
         .join("user"))
 }
@@ -767,7 +797,7 @@ fn windows_schedule(interval_minutes: u64) -> Result<(String, String)> {
         ));
     }
 
-    bail!("Windows Task Scheduler supports autosubmit intervals under 24h or whole-day multiples")
+    bail!("{}", t!("commands.autosubmit.windowsIntervalUnsupported"))
 }
 
 pub fn replace_cron_block(existing: &str, block: &str) -> String {
@@ -845,7 +875,10 @@ fn write_crontab(content: &str) -> Result<()> {
     }
     let status = child.wait()?;
     if !status.success() {
-        bail!("crontab exited with status {status}");
+        bail!(
+            "{}",
+            tr!("commands.autosubmit.crontabFailed", status = status)
+        );
     }
     Ok(())
 }
@@ -853,7 +886,14 @@ fn write_crontab(content: &str) -> Result<()> {
 fn run_status_command(program: &str, args: &[String]) -> Result<()> {
     let status = Command::new(program).args(args).status()?;
     if !status.success() {
-        bail!("{program} exited with status {status}");
+        bail!(
+            "{}",
+            tr!(
+                "commands.autosubmit.commandFailed",
+                program = program,
+                status = status
+            )
+        );
     }
     Ok(())
 }
@@ -873,7 +913,7 @@ fn autosubmit_lock_path() -> Result<PathBuf> {
 fn validate_scheduler_executable(path: &Path) -> Result<()> {
     let rendered = path.to_string_lossy();
     if rendered.contains('\n') || rendered.contains('\r') || rendered.contains('\0') {
-        bail!("Executable path contains unsupported control characters");
+        bail!("{}", t!("commands.autosubmit.exeControlChars"));
     }
     Ok(())
 }

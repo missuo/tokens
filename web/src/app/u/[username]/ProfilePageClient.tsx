@@ -6,6 +6,9 @@ import { ProfileView } from "@/components/profile/ProfileView";
 import { ProfileToday } from "@/components/profile/ProfileToday";
 import { ProfileEmbedDialog } from "@/components/profile/ProfileEmbedDialog";
 import { cn } from "@/lib/utils";
+import { useLocale, useT } from "@/components/layout/LocaleProvider";
+import { localizeHref } from "@/lib/i18n/config";
+import { richText } from "@/lib/i18n/rich";
 
 import { useEffect, useId, useMemo, useState } from "react";
 import { useRouter } from "nextjs-toploader/app";
@@ -101,6 +104,8 @@ export default function ProfilePageClient({
   username,
 }: ProfilePageClientProps) {
   const router = useRouter();
+  const t = useT();
+  const locale = useLocale();
   const [isEmbedOpen, setIsEmbedOpen] = useState(false);
 
   const [contributionView, setContributionView] =
@@ -134,9 +139,10 @@ export default function ProfilePageClient({
             data.contributions,
             rollingChartRange.start,
             rollingChartRange.end,
+            t("profile.graph.recentYear"),
           )
         : [],
-    [data.contributions, period, rollingChartRange],
+    [data.contributions, period, rollingChartRange, t],
   );
   const [contributionRangeValue, setContributionRangeValue] =
     useState("recent");
@@ -182,8 +188,9 @@ export default function ProfilePageClient({
         data.contributions,
         chartRange.start,
         contributionSelectionEnd,
+        locale,
       ),
-    [data.contributions, chartRange.start, contributionSelectionEnd],
+    [data.contributions, chartRange.start, contributionSelectionEnd, locale],
   );
   const selectedContributionDate = resolveContributionSelectedDate(
     reconciledContributionSelection,
@@ -230,6 +237,20 @@ export default function ProfilePageClient({
     () => getContributionDayForDate(data.contributions, todayContributionDate),
     [data.contributions, todayContributionDate],
   );
+  // The calendar day before, whatever "today" resolved to. Built in UTC so
+  // that subtracting a day is plain arithmetic on the date, with no DST hour
+  // to land on the wrong side of midnight.
+  const yesterdayContributionDate = useMemo(() => {
+    if (!todayContributionDate || !/^\d{4}-\d{2}-\d{2}$/.test(todayContributionDate)) {
+      return null;
+    }
+    const [year, month, day] = todayContributionDate.split("-").map(Number);
+    return new Date(Date.UTC(year, month - 1, day - 1)).toISOString().slice(0, 10);
+  }, [todayContributionDate]);
+  const yesterdayContributionDay = useMemo(
+    () => getContributionDayForDate(data.contributions, yesterdayContributionDate),
+    [data.contributions, yesterdayContributionDate],
+  );
 
   const user: ProfileUser = useMemo(
     () => ({
@@ -267,10 +288,11 @@ export default function ProfilePageClient({
       {showResubmitBanner && (
         <div className={cn(CONTAINER, "pt-6")}>
           <Alert>
-            <AlertTitle>Fresh detail is available</AlertTitle>
+            <AlertTitle>{t("profile.resubmit.title")}</AlertTitle>
             <AlertDescription>
-              Re-submit with <code className="font-mono">tokens submit</code> to add
-              daily model breakdowns.
+              {richText(t("profile.resubmit.description"), {
+                command: <code className="font-mono">tokens submit</code>,
+              })}
             </AlertDescription>
           </Alert>
         </div>
@@ -292,7 +314,8 @@ export default function ProfilePageClient({
         hasBackfill={data.hasBackfill}
         period={period}
         onPeriodChange={(next) => {
-          router.push(next === "all" ? `/u/${username}` : `/u/${username}?period=${next}`);
+          const path = next === "all" ? `/u/${username}` : `/u/${username}?period=${next}`;
+          router.push(localizeHref(path, locale));
         }}
         onEmbedClick={() => setIsEmbedOpen(true)}
         activity={
@@ -338,11 +361,13 @@ export default function ProfilePageClient({
             </div>
           ) : (
             <p className="py-10 text-center text-sm text-muted-foreground">
-              No activity recorded for this period.
+              {t("profile.activity.empty")}
             </p>
           )
         }
-        today={<ProfileToday day={todayContributionDay} />}
+        today={
+          <ProfileToday day={todayContributionDay} yesterday={yesterdayContributionDay} />
+        }
         usageChart={
           data.contributions.length > 0 ? (
             <ProfileUsageChart

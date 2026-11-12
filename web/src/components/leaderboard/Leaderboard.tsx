@@ -23,6 +23,8 @@ import { VerifiedBadge } from "@/components/ui/VerifiedBadge";
 import { cn } from "@/lib/utils";
 import { CONTAINER } from "@/components/layout/Container";
 import { PageHeader } from "@/components/layout/PageHeader";
+import { useLocale, useT } from "@/components/layout/LocaleProvider";
+import { localizeHref } from "@/lib/i18n/config";
 import { formatCurrency, formatNumber } from "@/lib/format";
 import { resolveSortByParam } from "@/lib/leaderboard/constants";
 import type {
@@ -54,12 +56,15 @@ interface LeaderboardProps {
 
 // All time leads because it is the standing everyone compares against; Today
 // stays the landing selection, which the server resolves.
+// `label` is a catalogue key, not the text: the order never changes, only the
+// word.
 const PERIODS: ReadonlyArray<{ value: Period; label: string }> = [
-  { value: "all", label: "All time" },
-  { value: "today", label: "Today" },
-  { value: "week", label: "Week" },
-  { value: "month", label: "Month" },
-  { value: "last-month", label: "Last month" },
+  { value: "all", label: "leaderboard.period.allTime" },
+  { value: "today", label: "leaderboard.period.today" },
+  { value: "yesterday", label: "leaderboard.period.yesterday" },
+  { value: "week", label: "leaderboard.period.week" },
+  { value: "month", label: "leaderboard.period.month" },
+  { value: "last-month", label: "leaderboard.period.lastMonth" },
 ];
 
 function avatarFor(user: { username: string; avatarUrl: string | null }) {
@@ -107,6 +112,8 @@ function DeveloperRow({
   sortBy: LeaderboardSortBy;
   tokenFormat: LeaderboardTokenFormat;
 }) {
+  const t = useT();
+  const locale = useLocale();
   const compact = tokenFormat === "compact";
   const primary = sortBy === "cost" ? user.totalCost : user.totalTokens;
   const share = max > 0 ? Math.max(primary / max, 0.006) : 0;
@@ -138,7 +145,7 @@ function DeveloperRow({
             visitor who will open at most one. Hover still prefetches, which is
             where the intent actually is. */}
         <Link
-          href={`/u/${user.username}`}
+          href={localizeHref(`/u/${user.username}`, locale)}
           prefetch={false}
           className="flex min-w-0 items-center gap-3"
         >
@@ -156,7 +163,7 @@ function DeveloperRow({
               {user.verified && <VerifiedBadge size={13} />}
             </span>
             <span className="truncate text-xs text-muted-foreground">
-              @{user.username}
+              {t("leaderboard.userHandle", { username: user.username })}
             </span>
           </span>
         </Link>
@@ -181,7 +188,7 @@ function DeveloperRow({
               : "text-muted-foreground"
           )}
         >
-          {formatNumber(user.totalTokens, true)}
+          {formatNumber(user.totalTokens, true, locale)}
         </span>
         <span
           className={cn(
@@ -191,7 +198,7 @@ function DeveloperRow({
               : "text-muted-foreground"
           )}
         >
-          {formatCurrency(user.totalCost, true)}
+          {formatCurrency(user.totalCost, true, locale)}
         </span>
       </TableCell>
 
@@ -205,7 +212,7 @@ function DeveloperRow({
                 : "text-muted-foreground"
             )}
           >
-            {formatNumber(user.totalTokens, compact)}
+            {formatNumber(user.totalTokens, compact, locale)}
           </span>
           {/* Share of the top row on this page — a shape you can scan without
               reading every number. */}
@@ -227,7 +234,7 @@ function DeveloperRow({
               : "text-muted-foreground"
           )}
         >
-          {formatCurrency(user.totalCost, compact)}
+          {formatCurrency(user.totalCost, compact, locale)}
         </span>
       </TableCell>
     </TableRow>
@@ -251,14 +258,22 @@ function FormatToggle({
   compact: boolean;
   onToggle: () => void;
 }) {
+  const t = useT();
+
   return (
     <button
       type="button"
       onClick={onToggle}
       aria-label={
-        compact ? `${label}: show exact numbers` : `${label}: abbreviate numbers`
+        compact
+          ? t("leaderboard.formatToggle.exactAria", { label })
+          : t("leaderboard.formatToggle.abbreviateAria", { label })
       }
-      title={compact ? "Show exact numbers" : "Abbreviate numbers"}
+      title={
+        compact
+          ? t("leaderboard.formatToggle.exact")
+          : t("leaderboard.formatToggle.abbreviate")
+      }
       className="flex h-full w-full items-center justify-end gap-1.5 px-2 py-2 transition-colors hover:text-foreground"
     >
       {label}
@@ -301,6 +316,8 @@ export default function Leaderboard({
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const t = useT();
+  const locale = useLocale();
 
   const {
     leaderboardSortBy,
@@ -411,7 +428,9 @@ export default function Leaderboard({
   // does not sit in the back stack, and the equality check makes it idempotent
   // while still re-firing when the day rolls over under a long-lived tab.
   useEffect(() => {
-    if (period !== "today") return;
+    // "yesterday" is anchored on the same local date, so it needs the same
+    // correction.
+    if (period !== "today" && period !== "yesterday") return;
     const now = new Date();
     const localDate = toLocalDateString(now);
     const fromParam = searchParams.get("from");
@@ -497,8 +516,8 @@ export default function Leaderboard({
   return (
     <div className={cn(CONTAINER, "pb-24 pt-10 sm:pt-14")}>
       <PageHeader
-        title="Leaderboard"
-        description="AI coding token usage, reported by the Tokens CLI."
+        title={t("leaderboard.title")}
+        description={t("leaderboard.description")}
       />
 
       {/* The rank card exists only when there is a rank to put in it. A signed
@@ -512,25 +531,37 @@ export default function Leaderboard({
           "grid grid-cols-2 gap-6",
           myRow ? "sm:grid-cols-4" : "sm:grid-cols-3"
         )}
-        aria-label="Totals"
+        aria-label={t("leaderboard.totals")}
       >
-        <Stat label="Tokens" value={formatNumber(stats.totalTokens, true)} />
-        <Stat label="Cost" value={formatCurrency(stats.totalCost, true)} />
         <Stat
-          label="Developers"
-          value={formatNumber(stats.uniqueUsers, false)}
+          label={t("leaderboard.stats.tokens")}
+          value={formatNumber(stats.totalTokens, true, locale)}
+        />
+        <Stat
+          label={t("leaderboard.stats.cost")}
+          value={formatCurrency(stats.totalCost, true, locale)}
+        />
+        <Stat
+          label={t("leaderboard.stats.developers")}
+          value={formatNumber(stats.uniqueUsers, false, locale)}
           className={myRow ? undefined : "col-span-2 sm:col-span-1"}
         />
         {/* The only figure here that is about the viewer, so it takes the
             accent — same signal as the highlighted self row below. */}
-        {myRow && <Stat label="Your rank" value={`#${myRow.rank}`} accent />}
+        {myRow && (
+          <Stat
+            label={t("leaderboard.stats.yourRank")}
+            value={t("leaderboard.stats.yourRankValue", { rank: myRow.rank })}
+            accent
+          />
+        )}
       </section>
 
       {/* Controls stack on phones and sit on one line from sm up. Touch
           targets stay at 40px on mobile; the desktop row tightens to 32px
           where the pointer is precise. */}
       <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-2">
-        {/* The five periods do not fit on a narrow screen, so the row scrolls
+        {/* The six periods do not fit on a narrow screen, so the row scrolls
             horizontally rather than wrapping into a ragged block. */}
         <div className="-mx-4 overflow-x-auto px-4 pb-1 sm:mx-0 sm:overflow-visible sm:px-0 sm:pb-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {/* Base UI's ToggleGroup is array-valued even in single-select mode. */}
@@ -548,16 +579,19 @@ export default function Leaderboard({
               pushQuery({
                 period: next,
                 page: null,
-                from: next === "today" ? toLocalDateString(new Date()) : null,
+                from:
+                  next === "today" || next === "yesterday"
+                    ? toLocalDateString(new Date())
+                    : null,
               });
             }}
             variant="outline"
-            aria-label="Period"
+            aria-label={t("leaderboard.period.label")}
             className="[&>*]:h-10 [&>*]:px-3.5 sm:[&>*]:h-8 sm:[&>*]:px-3"
           >
             {PERIODS.map((p) => (
               <ToggleGroupItem key={p.value} value={p.value}>
-                {p.label}
+                {t(p.label)}
               </ToggleGroupItem>
             ))}
           </ToggleGroup>
@@ -577,11 +611,11 @@ export default function Leaderboard({
               replaceQuery({ sortBy: next, page: null });
             }}
             variant="outline"
-            aria-label="Sort by"
+            aria-label={t("leaderboard.sortBy")}
             className="[&>*]:h-10 [&>*]:px-3.5 sm:[&>*]:h-8 sm:[&>*]:px-3"
           >
-            <ToggleGroupItem value="tokens">Tokens</ToggleGroupItem>
-            <ToggleGroupItem value="cost">Cost</ToggleGroupItem>
+            <ToggleGroupItem value="tokens">{t("leaderboard.sort.tokens")}</ToggleGroupItem>
+            <ToggleGroupItem value="cost">{t("leaderboard.sort.cost")}</ToggleGroupItem>
           </ToggleGroup>
 
           {/* Filters the rows already here, so results follow the keystrokes
@@ -600,8 +634,8 @@ export default function Leaderboard({
                 setPage(1);
                 replaceQuery({ search: event.target.value.trim() || null, page: null });
               }}
-              placeholder="Search…"
-              aria-label="Search developers"
+              placeholder={t("leaderboard.search.placeholder")}
+              aria-label={t("leaderboard.search.label")}
               className="h-10 w-full pl-8 text-sm sm:h-8 sm:w-56"
             />
           </form>
@@ -623,7 +657,7 @@ export default function Leaderboard({
           aria-busy={pending}
         >
           <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-            Your position
+            {t("leaderboard.yourPosition")}
           </span>
           <div className="mt-1.5 overflow-hidden rounded-lg border">
             <Table>
@@ -651,9 +685,11 @@ export default function Leaderboard({
         <Table>
           <TableHeader>
             <TableRow className="hover:bg-transparent">
-              <TableHead className="w-12 pl-4 sm:pl-6">#</TableHead>
-              <TableHead>Developer</TableHead>
-              <TableHead className="pr-4 text-right sm:hidden">Usage</TableHead>
+              <TableHead className="w-12 pl-4 sm:pl-6">{t("leaderboard.table.rank")}</TableHead>
+              <TableHead>{t("leaderboard.table.developer")}</TableHead>
+              <TableHead className="pr-4 text-right sm:hidden">
+                {t("leaderboard.table.usage")}
+              </TableHead>
               {/* Both numeric headers toggle abbreviated figures (1.2B) for
                   exact ones — a toggle contributed upstream by Fai Chou that
                   people rely on when comparing close totals. It was invisible:
@@ -663,7 +699,7 @@ export default function Leaderboard({
                   preference so the two columns cannot disagree. */}
               <TableHead className="hidden w-44 p-0 text-right sm:table-cell">
                 <FormatToggle
-                  label="Tokens"
+                  label={t("leaderboard.stats.tokens")}
                   compact={tokenFormat === "compact"}
                   onToggle={() =>
                     setLeaderboardTokenFormat(
@@ -674,7 +710,7 @@ export default function Leaderboard({
               </TableHead>
               <TableHead className="hidden w-32 p-0 pr-4 text-right sm:table-cell">
                 <FormatToggle
-                  label="Cost"
+                  label={t("leaderboard.stats.cost")}
                   compact={tokenFormat === "compact"}
                   onToggle={() =>
                     setLeaderboardTokenFormat(
@@ -709,8 +745,8 @@ export default function Leaderboard({
                   typed past what these results answer. */}
               <EmptyTitle>
                 {appliedSearch || directiveSearch
-                  ? "No developers found"
-                  : "Nothing recorded"}
+                  ? t("leaderboard.empty.noResults")
+                  : t("leaderboard.empty.nothing")}
               </EmptyTitle>
               {/* Three different situations, and saying "no usage was
                   submitted" for any of the other two reads as the leaderboard
@@ -719,10 +755,10 @@ export default function Leaderboard({
                   clears only the text box would still see nothing. */}
               <EmptyDescription>
                 {appliedSearch
-                  ? `No developer matches "${appliedSearch}" for this period.`
+                  ? t("leaderboard.empty.noMatch", { query: appliedSearch })
                   : directiveSearch
-                    ? `No developer matches "${directiveSearch}" for this period.`
-                    : "No usage was submitted for this period."}
+                    ? t("leaderboard.empty.noMatch", { query: directiveSearch })
+                    : t("leaderboard.empty.none")}
               </EmptyDescription>
             </EmptyHeader>
           </Empty>
@@ -734,17 +770,23 @@ export default function Leaderboard({
           page that changes under a reader halfway down reads as content
           shifting rather than as having moved. */}
       {totalPages > 1 && (
-        <nav className="mt-6 flex items-center justify-between" aria-label="Pagination">
+        <nav
+          className="mt-6 flex items-center justify-between"
+          aria-label={t("leaderboard.pagination.label")}
+        >
           <Button
             variant="outline"
             disabled={currentPage <= 1}
             className="h-10 sm:h-8"
             onClick={() => goToPage(currentPage - 1)}
           >
-            Previous
+            {t("leaderboard.pagination.previous")}
           </Button>
           <span className="tabular text-xs text-muted-foreground">
-            {currentPage} of {totalPages}
+            {t("leaderboard.pagination.page", {
+              current: currentPage,
+              total: totalPages,
+            })}
           </span>
           <Button
             variant="outline"
@@ -752,7 +794,7 @@ export default function Leaderboard({
             className="h-10 sm:h-8"
             onClick={() => goToPage(currentPage + 1)}
           >
-            Next
+            {t("leaderboard.pagination.next")}
           </Button>
         </nav>
       )}

@@ -1,6 +1,7 @@
 "use client";
 
 import type { ProfileSocialLink, ProfileSocialProvider } from "./types";
+import { useT } from "@/components/layout/LocaleProvider";
 import { tw } from "@/lib/tw";
 
 export interface ProfileSocialLinksProps {
@@ -31,18 +32,23 @@ const BRAND_PATHS: Record<Exclude<ProfileSocialProvider, "website">, string> = {
   npm: "M1.763 0C.786 0 0 .786 0 1.763v20.474C0 23.214.786 24 1.763 24h20.474c.977 0 1.763-.786 1.763-1.763V1.763C24 .786 23.214 0 22.237 0zM5.13 5.323l13.837.019-.009 13.836h-3.464l.01-10.382h-3.456L12.04 19.17H5.113z",
 };
 
+/**
+ * Catalogue keys, not the names themselves: most platforms keep their brand
+ * spelling in every language, but "Website" does not, and the aria-label is a
+ * sentence either way.
+ */
 const PROVIDER_LABELS: Record<ProfileSocialProvider, string> = {
-  website: "Website",
-  twitter: "X (Twitter)",
-  linkedin: "LinkedIn",
-  instagram: "Instagram",
-  facebook: "Facebook",
-  mastodon: "Mastodon",
-  bluesky: "Bluesky",
-  youtube: "YouTube",
-  twitch: "Twitch",
-  reddit: "Reddit",
-  npm: "npm",
+  website: "profile.social.website",
+  twitter: "profile.social.twitter",
+  linkedin: "profile.social.linkedin",
+  instagram: "profile.social.instagram",
+  facebook: "profile.social.facebook",
+  mastodon: "profile.social.mastodon",
+  bluesky: "profile.social.bluesky",
+  youtube: "profile.social.youtube",
+  twitch: "profile.social.twitch",
+  reddit: "profile.social.reddit",
+  npm: "profile.social.npm",
 };
 
 function SocialIcon({ provider }: { provider: ProfileSocialProvider }) {
@@ -80,18 +86,21 @@ function SocialIcon({ provider }: { provider: ProfileSocialProvider }) {
 }
 
 export function ProfileSocialLinks({ links, className }: ProfileSocialLinksProps) {
+  const t = useT();
   if (links.length === 0) return null;
 
   return (
-    <LinksRow className={className} aria-label="Social links">
+    <LinksRow className={className} aria-label={t("profile.social.aria")}>
       {links.map((link) => (
         <li key={link.url}>
           <IconLink
             href={link.url}
             target="_blank"
             rel="me noopener noreferrer"
-            title={PROVIDER_LABELS[link.provider]}
-            aria-label={`${PROVIDER_LABELS[link.provider]} (opens in new tab)`}
+            title={t(PROVIDER_LABELS[link.provider])}
+            aria-label={t("profile.social.opensInNewTab", {
+              provider: t(PROVIDER_LABELS[link.provider]),
+            })}
           >
             <SocialIcon provider={link.provider} />
           </IconLink>

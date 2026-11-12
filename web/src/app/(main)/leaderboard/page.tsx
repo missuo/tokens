@@ -1,14 +1,39 @@
+import type { Metadata } from "next";
 import { getLeaderboardData } from "@/lib/leaderboard/getLeaderboard";
 import type { LeaderboardData, Period, SortBy } from "@/lib/leaderboard/types";
 import { hasDirectives, parseSearchDirectives } from "@/lib/leaderboard/searchDirectives";
 import { isValidDateString, parseCustomDateRange } from "@/lib/leaderboard/dateRange";
 import LeaderboardClient from "@/components/leaderboard/Leaderboard";
+import { getTranslator } from "@/lib/i18n/server";
+import { localizeHref } from "@/lib/i18n/config";
+
+/**
+ * The board is the page most often linked to from outside, so it is the one
+ * that declares the language alternates. `canonical` is its own translated
+ * address rather than the English one — a Chinese page canonicalised to the
+ * English page would drop it from the Chinese index.
+ */
+export async function generateMetadata(): Promise<Metadata> {
+  const { locale } = await getTranslator();
+
+  return {
+    alternates: {
+      canonical: localizeHref("/leaderboard", locale),
+      languages: {
+        en: "/leaderboard",
+        "zh-CN": "/zh-CN/leaderboard",
+        ja: "/ja/leaderboard",
+        "x-default": "/leaderboard",
+      },
+    },
+  };
+}
 
 function isMissingDatabaseUrl(error: unknown): boolean {
   return error instanceof Error && error.message === "DATABASE_URL environment variable is not set";
 }
 
-const VALID_PERIODS: Period[] = ["all", "month", "last-month", "week", "today", "custom"];
+const VALID_PERIODS: Period[] = ["all", "month", "last-month", "week", "today", "yesterday", "custom"];
 
 /**
  * The board is sent whole rather than a page at a time.
@@ -110,8 +135,12 @@ async function Board({
   // UTC+8. The client sends its own date up as `from` once it has hydrated;
   // this is the only place that reads it back. Without this the whole "today"
   // board is computed for the wrong day.
+  // "yesterday" reads the same parameter: it is the day before the viewer's
+  // local today, which the UTC date gets wrong for the same eight hours.
   const localToday =
-    period === "today" && isValidDateString(fromParam) ? fromParam : undefined;
+    (period === "today" || period === "yesterday") && isValidDateString(fromParam)
+      ? fromParam
+      : undefined;
 
   const customFrom = customDateRange?.from ?? localToday;
   const customTo = customDateRange?.to;

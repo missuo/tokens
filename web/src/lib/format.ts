@@ -1,3 +1,13 @@
+import type { Locale } from "@/lib/i18n/config";
+
+/**
+ * Formatters take the locale last and default to `en`.
+ *
+ * The default matters: badges, embeds and the OG renderer format numbers in
+ * route handlers and static SVG where there is no request locale and English
+ * grouping is what the artwork was designed against. Only the interactive
+ * pages pass a locale, and they get it from `useLocale()`.
+ */
 export function escapeXml(value: string): string {
   return value
     .replace(/&/g, "&amp;")
@@ -11,31 +21,39 @@ function safeNumber(value: number): number {
   return Number.isFinite(value) ? value : 0;
 }
 
-export function formatCompact(value: number, kind: "number" | "currency"): string {
+export function formatCompact(
+  value: number,
+  kind: "number" | "currency",
+  locale: Locale = "en",
+): string {
   const clamped = Math.max(0, safeNumber(value));
 
   if (kind === "currency") {
-    const formatted = new Intl.NumberFormat("en-US", {
+    const formatted = new Intl.NumberFormat(locale, {
       notation: "compact",
       maximumFractionDigits: clamped >= 100 ? 1 : 2,
     }).format(clamped);
+    // The symbol is prepended rather than formatted as a currency because
+    // `currencyDisplay: "narrowSymbol"` plus compact notation produces "$1.2K"
+    // in English but "1.2K US$" in some locales, and these figures sit in
+    // fixed-width columns.
     return `$${formatted}`;
   }
 
-  return new Intl.NumberFormat("en-US", {
+  return new Intl.NumberFormat(locale, {
     notation: "compact",
     maximumFractionDigits: clamped >= 100 ? 1 : 2,
   }).format(Math.round(clamped));
 }
 
-export function formatNumber(value: number, compact = false): string {
-  if (compact) return formatCompact(value, "number");
-  return new Intl.NumberFormat("en-US").format(Math.max(0, Math.round(safeNumber(value))));
+export function formatNumber(value: number, compact = false, locale: Locale = "en"): string {
+  if (compact) return formatCompact(value, "number", locale);
+  return new Intl.NumberFormat(locale).format(Math.max(0, Math.round(safeNumber(value))));
 }
 
-export function formatCurrency(value: number, compact = false): string {
-  if (compact) return formatCompact(value, "currency");
-  return new Intl.NumberFormat("en-US", {
+export function formatCurrency(value: number, compact = false, locale: Locale = "en"): string {
+  if (compact) return formatCompact(value, "currency", locale);
+  return new Intl.NumberFormat(locale, {
     style: "currency",
     currency: "USD",
     minimumFractionDigits: 2,
@@ -47,9 +65,14 @@ export function formatCurrency(value: number, compact = false): string {
  * Format a 0–100 share with one decimal. A non-zero share that would round to
  * "0.0%" shows as "<0.1%" so a used category never reads as unused.
  */
-export function formatPercent(percent: number): string {
-  if (percent > 0 && percent < 0.05) return "<0.1%";
-  return `${percent.toFixed(1)}%`;
+export function formatPercent(percent: number, locale: Locale = "en"): string {
+  if (percent > 0 && percent < 0.05) return `<${formatNumber(0.1, false, locale)}%`;
+  // One decimal, but through the locale so the decimal separator follows it.
+  const digits = new Intl.NumberFormat(locale, {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+  }).format(percent);
+  return `${digits}%`;
 }
 
 /**
@@ -57,7 +80,10 @@ export function formatPercent(percent: number): string {
  * (largest remainder), so the parts of a split never disagree with the whole.
  * A non-zero share that rounds to 0 shows as "<1%".
  */
-export function formatWholePercents(percents: readonly number[]): string[] {
+export function formatWholePercents(
+  percents: readonly number[],
+  locale: Locale = "en",
+): string[] {
   const whole = percents.map((percent) => Math.floor(percent));
   let left =
     Math.round(percents.reduce((sum, percent) => sum + percent, 0)) -
@@ -70,38 +96,56 @@ export function formatWholePercents(percents: readonly number[]): string[] {
     whole[index] += 1;
     left -= 1;
   }
-  return whole.map((value, index) => (value === 0 && percents[index] > 0 ? "<1%" : `${value}%`));
+  return whole.map((value, index) =>
+    value === 0 && percents[index] > 0
+      ? `<${formatNumber(1, false, locale)}%`
+      : `${formatNumber(value, false, locale)}%`,
+  );
 }
 
 /**
- * Format an ISO timestamp as a short relative time, e.g. "just now",
- * "5m ago", "3h ago", "12d ago", "2mo ago", "1y ago". Returns "never"
- * for null/invalid input so callers can render it directly.
+ * Format an ISO timestamp as a relative time — "5m ago", "3h ago", "12d ago".
  *
- * `now` is injectable for tests; future timestamps clamp to "just now".
+ * Delegates the wording to `Intl.RelativeTimeFormat` so "yesterday" is 昨天 is
+ * 昨日 without a second dictionary here. `numeric: "always"` keeps the
+ * six-unit ladder below intact: "1 day ago" rather than "yesterday", because
+ * these strings sit in a column and a qualitative answer would break scanning.
+ *
+ * An absent or invalid timestamp returns an empty string — callers render
+ * `t("common.never")` for it, so that word is translated like any other copy
+ * instead of being baked into a formatter.
+ *
+ * `now` is injectable for tests; a time inside the last minute reads "0
+ * seconds ago"-ish rather than a future tense.
  */
 export function formatRelativeTime(
   iso: string | null | undefined,
-  now: Date = new Date()
+  locale: Locale = "en",
+  now: Date = new Date(),
 ): string {
-  if (!iso) return "never";
+  if (!iso) return "";
   const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "never";
+  if (Number.isNaN(date.getTime())) return "";
 
-  const diffMs = now.getTime() - date.getTime();
-  if (diffMs < 60_000) return "just now";
+  const format = (value: number, unit: Intl.RelativeTimeFormatUnit) =>
+    new Intl.RelativeTimeFormat(locale, { numeric: "always", style: "short" }).format(
+      -value,
+      unit,
+    );
+
+  const diffMs = Math.max(0, now.getTime() - date.getTime());
 
   const minutes = Math.floor(diffMs / 60_000);
-  if (minutes < 60) return `${minutes}m ago`;
+  if (minutes < 60) return format(minutes, "minute");
 
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
+  if (hours < 24) return format(hours, "hour");
 
   const days = Math.floor(hours / 24);
-  if (days < 30) return `${days}d ago`;
-  if (days < 365) return `${Math.floor(days / 30)}mo ago`;
+  if (days < 30) return format(days, "day");
+  if (days < 365) return format(Math.floor(days / 30), "month");
 
-  return `${Math.floor(days / 365)}y ago`;
+  return format(Math.floor(days / 365), "year");
 }
 
 /**

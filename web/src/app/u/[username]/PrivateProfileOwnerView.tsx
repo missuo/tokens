@@ -5,7 +5,10 @@ import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { CONTAINER } from "@/components/layout/Container";
+import { useLocale, useT } from "@/components/layout/LocaleProvider";
 import type { ProfileDevice } from "@/components/profile";
+import { localizeHref, stripLocale } from "@/lib/i18n/config";
+import { richText } from "@/lib/i18n/rich";
 import { cn } from "@/lib/utils";
 import ProfilePageClient, { type ProfileData } from "./ProfilePageClient";
 
@@ -40,9 +43,14 @@ export default function PrivateProfileOwnerView({
 }: {
   fallback: ReactNode;
 }) {
+  const t = useT();
+  const locale = useLocale();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const username = usernameFromPath(pathname);
+  // The prefix is not part of the name: `/zh/u/someone` has to identify the
+  // same account as `/u/someone`, or the owner view never fires on a
+  // translated URL.
+  const username = usernameFromPath(stripLocale(pathname || "/").path);
   const period = searchParams.get("period");
   const [state, setState] = useState<OwnerState>({ kind: "not-owner" });
 
@@ -98,15 +106,21 @@ export default function PrivateProfileOwnerView({
     <>
       <div className={cn(CONTAINER, "pt-6")}>
         <Alert>
-          <AlertTitle>Your profile is private</AlertTitle>
+          <AlertTitle>{t("profile.privacy.title")}</AlertTitle>
           <AlertDescription>
-            Only you can see this page. Everyone else gets &ldquo;User Not
-            Found&rdquo;, and you are left out of the leaderboard. Apps and
-            badges can read it with a read token from{" "}
-            <Link href="/settings" className="underline underline-offset-2">
-              Settings
-            </Link>
-            .
+            {richText(t("profile.privacy.description"), {
+              notFound: (
+                <>&ldquo;{t("errors.profileNotFoundTitle")}&rdquo;</>
+              ),
+              settings: (
+                <Link
+                  href={localizeHref("/settings", locale)}
+                  className="underline underline-offset-2"
+                >
+                  {t("profile.privacy.settings")}
+                </Link>
+              ),
+            })}
           </AlertDescription>
         </Alert>
       </div>

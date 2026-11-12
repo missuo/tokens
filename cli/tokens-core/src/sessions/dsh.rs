@@ -464,12 +464,15 @@ fn non_empty_string(value: &Value) -> Option<&str> {
 /// `grok.rs` and `zcode.rs` do for the same shape.
 fn tokens_from_usage(usage: &Value) -> TokenBreakdown {
     let output = int_field(usage, "outputTokens").max(0);
-    let reasoning = int_field(usage, "reasoningTokens").max(0);
+    // Normalize before pricing, deduplication and aggregation: clamping only
+    // the final breakdown leaves totals containing the negative counts.
+    // Reasoning is a subset of output, even when a malformed row says otherwise.
+    let reasoning = int_field(usage, "reasoningTokens").clamp(0, output);
     TokenBreakdown {
-        input: int_field(usage, "inputTokens"),
-        output: output.saturating_sub(reasoning),
-        cache_read: int_field(usage, "cacheReadTokens"),
-        cache_write: int_field(usage, "cacheWriteTokens"),
+        input: int_field(usage, "inputTokens").max(0),
+        output: output - reasoning,
+        cache_read: int_field(usage, "cacheReadTokens").max(0),
+        cache_write: int_field(usage, "cacheWriteTokens").max(0),
         reasoning,
     }
 }
@@ -845,6 +848,57 @@ mod tests {
         let messages = parse_dsh_file(file.path());
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].tokens.input, 30);
+    }
+
+    #[test]
+    fn negative_usage_keeps_daily_and_session_totals_consistent() {
+        for event in ["assistant/message", "compaction/summary"] {
+            let row = serde_json::json!({
+                "type": event, "time": 1787184000000_i64,
+                "data": {"usage": {
+                    "inputTokens": -861899, "outputTokens": 75387,
+                    "cacheReadTokens": 1562880
+                }}
+            })
+            .to_string();
+            let file = write_zstd_session(&[&row]);
+            let messages = parse_dsh_file(file.path());
+            assert_eq!(messages.len(), 1);
+            let days = crate::aggregator::aggregate_by_date(messages.clone());
+            let sessions = crate::aggregator::aggregate_by_session(messages);
+            assert_eq!(days[0].totals.tokens, days[0].token_breakdown.total());
+            assert_eq!(
+                days[0].totals.tokens,
+                days[0]
+                    .clients
+                    .iter()
+                    .map(|c| c.tokens.total())
+                    .sum::<i64>()
+            );
+            assert_eq!(
+                sessions[0].totals.tokens,
+                sessions[0].token_breakdown.total()
+            );
+            assert_eq!(days[0].totals.tokens, 1_638_267);
+        }
+    }
+
+    #[test]
+    fn malformed_usage_cannot_create_negative_buckets() {
+        let tokens = tokens_from_usage(&serde_json::json!({
+            "inputTokens": -1, "outputTokens": 20, "reasoningTokens": 30,
+            "cacheReadTokens": -2, "cacheWriteTokens": -3
+        }));
+        assert_eq!(tokens.input, 0);
+        assert_eq!(tokens.cache_read, 0);
+        assert_eq!(tokens.cache_write, 0);
+        assert_eq!(tokens.output, 0);
+        assert_eq!(tokens.reasoning, 20);
+        assert_eq!(tokens.total(), 20);
+        let tokens = tokens_from_usage(&serde_json::json!({
+            "outputTokens": -1, "reasoningTokens": -2
+        }));
+        assert_eq!(tokens.total(), 0);
     }
 
     #[test]

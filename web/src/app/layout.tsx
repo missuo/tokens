@@ -9,6 +9,10 @@ import "./globals.css";
 import "react-toastify/dist/ReactToastify.css";
 import { cn } from "@/lib/utils";
 import { ogImageUrl } from "@/lib/og/ogImage";
+import { getTranslator } from "@/lib/i18n/server";
+import { LOCALE_TAGS } from "@/lib/i18n/config";
+import { resolveMessages } from "@/lib/i18n/messages";
+import { LocaleProvider } from "@/components/layout/LocaleProvider";
 
 // Geist carries interface text and JetBrains Mono carries every figure, so
 // numeric columns stay aligned when scanned down the page.
@@ -24,56 +28,80 @@ const jetbrainsMono = JetBrains_Mono({
   display: "swap",
 });
 
-export const metadata: Metadata = {
-  title: "Tokens - AI Token Usage Tracker & Leaderboard",
-  description: "Track, visualize, and compete on AI coding assistant token usage across Claude Code, Cursor, OpenCode, Codex, Gemini, Kimi, and Qwen. The Kardashev Scale for AI Devs.",
-  metadataBase: new URL("https://tokens.ci"),
-  icons: {
-    icon: [
-      // SVG first so capable browsers get the theme-aware mark; the .ico stays
-      // for the ones that do not support SVG favicons.
-      { url: "/brand/tokens-favicon.svg", type: "image/svg+xml" },
-      { url: "/favicon.ico?v=2", sizes: "48x48", type: "image/x-icon" },
-      { url: "/favicon-16x16.png?v=2", sizes: "16x16", type: "image/png" },
-      { url: "/favicon-32x32.png?v=2", sizes: "32x32", type: "image/png" },
-    ],
-    apple: "/brand/tokens-app-icon-180.png",
-  },
-  manifest: "/site.webmanifest",
-  openGraph: {
-    title: "Tokens - AI Token Usage Tracker & Leaderboard",
-    description: "Track, visualize, and compete on AI coding assistant token usage across Claude Code, Cursor, OpenCode, Codex, Gemini, Kimi, and Qwen. The Kardashev Scale for AI Devs.",
-    type: "website",
-    url: "https://tokens.ci",
-    siteName: "Tokens",
-    // The dynamic renderer, not a static file: it draws the current mark, so
-    // the share card cannot drift from the brand the way a checked-in PNG did.
-    images: [
-      {
-        url: ogImageUrl(),
-        width: 1200,
-        height: 630,
-        alt: "Tokens - The leaderboard for AI coding usage",
-      },
-    ],
-  },
-  twitter: {
-    card: "summary_large_image",
-    title: "Tokens - AI Token Usage Tracker & Leaderboard",
-    description: "Track, visualize, and compete on AI coding assistant token usage across Claude Code, Cursor, OpenCode, Codex, Gemini, Kimi, and Qwen.",
-    images: [ogImageUrl()],
-  },
-};
+/**
+ * Metadata is generated rather than exported as a constant because the title
+ * and description are now translated, and a constant cannot call `headers()`.
+ *
+ * `metadataBase` and the icons stay literal: a URL and a PNG do not vary by
+ * language.
+ *
+ * `alternates` is deliberately *not* set here. Every route has its own address,
+ * so a canonical declared at the layout would claim the docs page canonically
+ * lives at /leaderboard. The board sets its own, which is the page most often
+ * linked to from outside.
+ */
+export async function generateMetadata(): Promise<Metadata> {
+  const { locale, t } = await getTranslator();
+  const title = t("meta.title");
+  const description = t("meta.description");
+
+  return {
+    title,
+    description,
+    metadataBase: new URL("https://tokens.ci"),
+    icons: {
+      icon: [
+        // SVG first so capable browsers get the theme-aware mark; the .ico stays
+        // for the ones that do not support SVG favicons.
+        { url: "/brand/tokens-favicon.svg", type: "image/svg+xml" },
+        { url: "/favicon.ico?v=2", sizes: "48x48", type: "image/x-icon" },
+        { url: "/favicon-16x16.png?v=2", sizes: "16x16", type: "image/png" },
+        { url: "/favicon-32x32.png?v=2", sizes: "32x32", type: "image/png" },
+      ],
+      apple: "/brand/tokens-app-icon-180.png",
+    },
+    manifest: "/site.webmanifest",
+    openGraph: {
+      title,
+      description,
+      type: "website",
+      url: "https://tokens.ci",
+      siteName: "Tokens",
+      // The dynamic renderer, not a static file: it draws the current mark, so
+      // the share card cannot drift from the brand the way a checked-in PNG did.
+      images: [
+        {
+          url: ogImageUrl({ locale }),
+          width: 1200,
+          height: 630,
+          alt: t("meta.ogAlt"),
+        },
+      ],
+    },
+    twitter: {
+      card: "summary_large_image",
+      title,
+      description,
+      images: [ogImageUrl({ locale })],
+    },
+  };
+}
 
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
 };
 
-export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+export default async function RootLayout({
+  children,
+}: Readonly<{ children: React.ReactNode }>) {
+  const { locale, t } = await getTranslator();
+  const { lang, dir } = LOCALE_TAGS[locale];
+
   return (
     <html
-      lang="en"
+      lang={lang}
+      dir={dir}
       suppressHydrationWarning
       className={cn(geist.variable, jetbrainsMono.variable)}
     >
@@ -102,19 +130,24 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
           href="#main-content"
           className="sr-only rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-[100]"
         >
-          Skip to content
+          {t("common.skipToContent")}
         </a>
-        <Providers>
-          {/* Rendered once here so it persists across route changes (no remount
-              flicker) and switching Leaderboard <-> Profile is a seamless
-              client-side transition. */}
-          <Navigation />
-          {/* Grows to fill the viewport so the footer stays at the bottom on
-              short pages instead of floating up under the content. */}
-          <div className="flex flex-1 flex-col">{children}</div>
-          <ServiceFooter />
-          <ThemedToastContainer />
-        </Providers>
+        {/* Outside the theme provider but inside the document: the locale is
+            known before the first byte, and every client component below it
+            reads one merge instead of threading a prop through each layer. */}
+        <LocaleProvider locale={locale} messages={resolveMessages(locale)}>
+          <Providers>
+            {/* Rendered once here so it persists across route changes (no remount
+                flicker) and switching Leaderboard <-> Profile is a seamless
+                client-side transition. */}
+            <Navigation />
+            {/* Grows to fill the viewport so the footer stays at the bottom on
+                short pages instead of floating up under the content. */}
+            <div className="flex flex-1 flex-col">{children}</div>
+            <ServiceFooter />
+            <ThemedToastContainer />
+          </Providers>
+        </LocaleProvider>
       </body>
     </html>
   );

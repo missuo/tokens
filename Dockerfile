@@ -62,6 +62,16 @@ COPY --from=builder --chown=nextjs:nextjs /repo/web/.next/standalone ./
 COPY --from=builder --chown=nextjs:nextjs /repo/web/.next/static ./web/.next/static
 COPY --from=builder --chown=nextjs:nextjs /repo/web/public ./web/public
 
+# The same assets a second time, at a path no volume covers.
+#
+# compose mounts a volume over `web/.next/static` so chunks outlive the deploy
+# that built them — see docker-entrypoint.sh for why. That mount also hides
+# whatever the image put there, so the entrypoint needs its own copy to layer
+# in. Docker seeds an *empty* volume from the image and never touches it again,
+# so the copy above only ever populates the very first deploy; every one after
+# it arrives through here. ~2 MB.
+COPY --from=builder --chown=nextjs:nextjs /repo/web/.next/static ./static-dist
+
 # Migrations run from this same image (see compose), which keeps the schema and
 # the code that assumes it on exactly the same versions. What the trace leaves
 # behind is not enough for them on its own: it keeps only the module graph the
@@ -75,8 +85,17 @@ COPY --from=builder --chown=nextjs:nextjs /repo/web/src/lib/db/migrations ./migr
 COPY --from=builder --chown=nextjs:nextjs /repo/web/scripts/migrate.mjs ./migrate.mjs
 COPY --from=builder --chown=nextjs:nextjs /repo/web/scripts/cron.mjs ./cron.mjs
 
+# Layers each deploy's static assets into the volume before starting whatever
+# CMD asks for. Harmless for the migrate and cron containers, which run from
+# this image without that volume: they copy into the image's own directory and
+# throw it away with the container.
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod 755 /usr/local/bin/docker-entrypoint.sh
+
 USER nextjs
 EXPOSE 3000
+
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 
 # Compose overrides this for the one-shot migration container.
 CMD ["node", "web/server.js"]

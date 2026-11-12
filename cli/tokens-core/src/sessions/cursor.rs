@@ -16,10 +16,9 @@
 use super::{timestamp_to_date_with_timezone, UnifiedMessage};
 use crate::{provider_identity, TokenBreakdown};
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::path::Path;
 
-#[cfg(test)]
-use std::collections::HashMap;
 #[cfg(test)]
 use std::path::PathBuf;
 #[cfg(test)]
@@ -138,6 +137,11 @@ fn infer_provider(model: &str) -> &'static str {
 
 /// One row of `usageEventsDisplay`. Only the fields tokens consumes are
 /// modeled; unknown fields are ignored so upstream additions don't break parsing.
+///
+/// The field order is a contract: serde also accepts a row in positional form
+/// (a JSON array whose entries fill these fields in order), so a field added
+/// here would shift every field after it. `usageEventId` is therefore read
+/// straight off the raw row by [`cursor_usage_event_id`] instead.
 #[derive(Debug, Deserialize)]
 struct CursorUsageEvent {
     #[serde(rename = "conversationId", default)]
@@ -349,8 +353,14 @@ pub fn parse_cursor_events_json(path: &Path) -> Vec<UnifiedMessage> {
 
     let account_id = account_id_from_cursor_cache_path(path);
     let mut messages = Vec::with_capacity(rows.len());
+    // Each parsed row's event identity, kept alongside its message so the
+    // duplicated snapshots of one event can be collapsed afterwards.
+    let mut snapshot_ids: Vec<Option<String>> = Vec::with_capacity(rows.len());
 
     for row in rows {
+        // Read before the deserializer consumes the row.
+        let usage_event_id = cursor_usage_event_id(&row);
+
         // Deserialize each row on its own so one malformed entry (an unexpected
         // type in a single field) skips just that row instead of discarding the
         // entire cache.
@@ -418,10 +428,76 @@ pub fn parse_cursor_events_json(path: &Path) -> Vec<UnifiedMessage> {
         if cost.is_some() {
             message.mark_provider_reported_cost();
         }
+        snapshot_ids.push(usage_event_id);
         messages.push(message);
     }
 
+    dedupe_cursor_event_snapshots(messages, snapshot_ids)
+}
+
+/// The event's own identity, when the row carries one.
+///
+/// Read from the raw row rather than through [`CursorUsageEvent`], whose field
+/// order is a contract — see the note on that struct.
+fn cursor_usage_event_id(row: &serde_json::Value) -> Option<String> {
+    row.get("usageEventId")?
+        .as_str()
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .map(str::to_string)
+}
+
+/// Collapse the repeated snapshots of one Cursor event into a single message.
+///
+/// Cursor's usage-events payload is a log of *snapshots*, not of independent
+/// events: the same event is reported again with its running token totals, both
+/// within one API response and across syncs. The event keeps its
+/// `usageEventId` and its timestamp while the counts grow, so summing every row
+/// counts one event many times over — upstream measured a cache holding 8269
+/// rows for 276 distinct ids, and a day reporting 4.1x the true consumption.
+///
+/// The surviving row is the one with the largest token total, which is also the
+/// row with the largest cost, because the metered cents grow with the tokens.
+/// Rows without a `usageEventId` carry no event identity and are all kept.
+fn dedupe_cursor_event_snapshots(
+    messages: Vec<UnifiedMessage>,
+    snapshot_ids: Vec<Option<String>>,
+) -> Vec<UnifiedMessage> {
+    if messages.len() < 2 {
+        return messages;
+    }
+
+    // The surviving row's index per event id, and the rows a larger snapshot of
+    // the same event supersedes.
+    let mut surviving: HashMap<&str, usize> = HashMap::new();
+    let mut superseded = vec![false; messages.len()];
+
+    for (index, snapshot_id) in snapshot_ids.iter().enumerate() {
+        let Some(snapshot_id) = snapshot_id.as_deref() else {
+            continue;
+        };
+        match surviving.get(snapshot_id).copied() {
+            Some(current) => {
+                let newer = (messages[index].tokens.total(), messages[index].cost)
+                    > (messages[current].tokens.total(), messages[current].cost);
+                if newer {
+                    superseded[current] = true;
+                    surviving.insert(snapshot_id, index);
+                } else {
+                    superseded[index] = true;
+                }
+            }
+            None => {
+                surviving.insert(snapshot_id, index);
+            }
+        }
+    }
+
     messages
+        .into_iter()
+        .zip(superseded)
+        .filter_map(|(message, is_superseded)| (!is_superseded).then_some(message))
+        .collect()
 }
 
 /// Parse a Cursor usage CSV file
@@ -1248,4 +1324,132 @@ mod tests {
         assert!(messages[0].timestamp > 0);
         assert_eq!(messages[0].timestamp, messages[1].timestamp);
     }
+    /// Three snapshots of one event, the shape that inflated real profiles:
+    /// same `usageEventId` and timestamp, token counts growing. Summing them
+    /// would report the event three times over.
+    #[test]
+    fn events_json_keeps_only_the_largest_snapshot_per_event() {
+        let json = r#"{
+            "usageEventsDisplay": [
+                {
+                    "timestamp": "1792841120156",
+                    "model": "gemini-3.8-flash-high",
+                    "usageEventId": "452fb2c1-c17e-4a0f-9b99-95a98967cfed",
+                    "conversationId": "09645c1b-1e4b-4c73-8218-f7dd143eaaab",
+                    "tokenUsage": {
+                        "inputTokens": 40000, "outputTokens": 4103,
+                        "cacheReadTokens": 400000, "totalCents": 33.39
+                    }
+                },
+                {
+                    "timestamp": "1792841120156",
+                    "model": "gemini-3.8-flash-high",
+                    "usageEventId": "452fb2c1-c17e-4a0f-9b99-95a98967cfed",
+                    "conversationId": "09645c1b-1e4b-4c73-8218-f7dd143eaaab",
+                    "tokenUsage": {
+                        "inputTokens": 1906404, "outputTokens": 11958,
+                        "cacheReadTokens": 10512194, "totalCents": 226.30
+                    }
+                },
+                {
+                    "timestamp": "1792841120156",
+                    "model": "gemini-3.8-flash-high",
+                    "usageEventId": "452fb2c1-c17e-4a0f-9b99-95a98967cfed",
+                    "conversationId": "09645c1b-1e4b-4c73-8218-f7dd143eaaab",
+                    "tokenUsage": {
+                        "inputTokens": 1900000, "outputTokens": 96958,
+                        "cacheReadTokens": 9000000, "totalCents": 214.28
+                    }
+                }
+            ]
+        }"#;
+
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("usage.json");
+        std::fs::write(&file_path, json).unwrap();
+
+        let messages = parse_cursor_events_json(&file_path);
+        assert_eq!(messages.len(), 1, "one event must produce one message");
+        // The largest snapshot, not the last one in the array.
+        assert_eq!(messages[0].tokens.input, 1_906_404);
+        assert_eq!(messages[0].tokens.output, 11_958);
+        assert_eq!(messages[0].tokens.cache_read, 10_512_194);
+        assert_eq!(messages[0].tokens.total(), 12_430_556);
+        assert!((messages[0].cost - 2.2630).abs() < 0.0001);
+        // What the bug cost: summing the snapshots.
+        assert_ne!(messages[0].tokens.total(), 12_430_556 + 444_103 + 10_996_958);
+    }
+
+    /// Rows with no `usageEventId` carry no event identity, so none of them may
+    /// be collapsed into another — that would silently drop real usage.
+    #[test]
+    fn events_json_keeps_every_row_without_an_event_id() {
+        let json = r#"{
+            "usageEventsDisplay": [
+                {"timestamp": "1792841120156", "model": "gpt-5.5",
+                 "conversationId": "c1",
+                 "tokenUsage": {"inputTokens": 10, "outputTokens": 1, "totalCents": 1}},
+                {"timestamp": "1792841120156", "model": "gpt-5.5",
+                 "conversationId": "c1",
+                 "tokenUsage": {"inputTokens": 10, "outputTokens": 1, "totalCents": 1}},
+                {"timestamp": "1792841120157", "model": "gpt-5.5",
+                 "conversationId": "c2",
+                 "tokenUsage": {"inputTokens": 20, "outputTokens": 2, "totalCents": 2}}
+            ]
+        }"#;
+
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("usage.json");
+        std::fs::write(&file_path, json).unwrap();
+
+        let messages = parse_cursor_events_json(&file_path);
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages.iter().map(|m| m.tokens.total()).sum::<i64>(), 44);
+    }
+
+    /// Distinct events are independent even when they share a conversation,
+    /// which is the normal case — a session has many events.
+    #[test]
+    fn events_json_keeps_distinct_events_sharing_a_conversation() {
+        let json = r#"{
+            "usageEventsDisplay": [
+                {"timestamp": "1792841120156", "model": "gpt-5.5",
+                 "usageEventId": "event-a", "conversationId": "same-session",
+                 "tokenUsage": {"inputTokens": 100, "outputTokens": 10, "totalCents": 5}},
+                {"timestamp": "1792841120999", "model": "gpt-5.5",
+                 "usageEventId": "event-b", "conversationId": "same-session",
+                 "tokenUsage": {"inputTokens": 200, "outputTokens": 20, "totalCents": 9}}
+            ]
+        }"#;
+
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("usage.json");
+        std::fs::write(&file_path, json).unwrap();
+
+        let messages = parse_cursor_events_json(&file_path);
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages.iter().map(|m| m.tokens.total()).sum::<i64>(), 330);
+    }
+
+    /// A blank or whitespace-only id is not an identity.
+    #[test]
+    fn events_json_treats_a_blank_event_id_as_absent() {
+        let json = r#"{
+            "usageEventsDisplay": [
+                {"timestamp": "1792841120156", "model": "gpt-5.5", "usageEventId": "  ",
+                 "conversationId": "c1",
+                 "tokenUsage": {"inputTokens": 10, "outputTokens": 1, "totalCents": 1}},
+                {"timestamp": "1792841120156", "model": "gpt-5.5", "usageEventId": "",
+                 "conversationId": "c1",
+                 "tokenUsage": {"inputTokens": 10, "outputTokens": 1, "totalCents": 1}}
+            ]
+        }"#;
+
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("usage.json");
+        std::fs::write(&file_path, json).unwrap();
+
+        assert_eq!(parse_cursor_events_json(&file_path).len(), 2);
+    }
+
 }
