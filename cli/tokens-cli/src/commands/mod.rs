@@ -1,5 +1,6 @@
 pub mod autosubmit;
 pub mod codex_activity;
 pub mod import;
+pub mod mcp_names;
 pub mod status;
 pub mod usage;

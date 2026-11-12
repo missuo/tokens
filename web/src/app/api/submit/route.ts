@@ -5,6 +5,7 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import {
   validateSubmission,
   generateSubmissionHash,
+  optedInMcpServers,
   type SubmissionData,
 } from "@/lib/validation/submission";
 import { authenticatePersonalToken } from "@/lib/auth/personalTokens";
@@ -178,13 +179,8 @@ export async function POST(request: Request) {
 
     normalizeSubmissionData(rawData);
 
-    const mcpServers: string[] | null =
-      rawData != null && typeof rawData === "object" &&
-      Array.isArray((rawData as Record<string, unknown>).mcpServers)
-        ? ((rawData as Record<string, unknown>).mcpServers as unknown[]).filter(
-            (s): s is string => typeof s === "string" && s.length > 0
-          )
-        : null;
+    // `null` unless the CLI says the user opted in to sharing MCP names.
+    const mcpServers = optedInMcpServers(rawData);
 
     const validation = validateSubmission(rawData);
 
@@ -902,9 +898,11 @@ export async function POST(request: Request) {
           } : {}),
           // A cloud container's MCP config belongs to the repository it ran
           // in, so a cloud submit leaves the account's list as it was.
-          ...(submitDevice.isCloud
-            ? {}
-            : { mcpServers: mcpServers && mcpServers.length > 0 ? mcpServers : null }),
+          // For a local device the list is replaced outright. `mcpServers` is
+          // null unless the payload carries `mcpServersOptIn: true`, so a
+          // submit without the opt-in (including any CLI older than it) clears
+          // what an earlier submit stored (#121).
+          ...(submitDevice.isCloud ? {} : { mcpServers }),
           updatedAt: new Date(),
         })
         .where(eq(submissions.id, submissionId));

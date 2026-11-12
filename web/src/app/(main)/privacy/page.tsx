@@ -39,7 +39,7 @@ export default async function PrivacyPage() {
         <p>{s("shortVersion.p2")}</p>
         <p>
           {richText(t("legal.privacy.sections.shortVersion.p3"), {
-            dryRun: <Code>tokens submit --dry-run</Code>,
+            dryRun: <Code>tokens submit --dry-run --json</Code>,
           })}
         </p>
       </Clause>
@@ -80,11 +80,26 @@ export default async function PrivacyPage() {
           </strong>{" "}
           {s("whatWeCollect.p4")}
         </p>
+        <p>
+          <strong className="font-medium text-foreground">
+            {s("whatWeCollect.p5Strong")}
+          </strong>{" "}
+          {richText(t("legal.privacy.sections.whatWeCollect.p5"), {
+            enable: <Code>tokens mcp-names enable</Code>,
+            flag: <Code>--include-mcp</Code>,
+            claudePath: <Code>~/.claude/.mcp.json</Code>,
+            cursorPath: <Code>~/.cursor/mcp.json</Code>,
+            kiroPath: <Code>~/.kiro/settings/mcp.json</Code>,
+            opencodePath: (
+              <Code>~/.config/opencode/skills, ~/.opencode/skills</Code>
+            ),
+          })}
+        </p>
       </Clause>
 
       <Clause heading={t("legal.privacy.sections.neverCollect.heading")}>
         <Bullets
-          items={["item1", "item2", "item3", "item4"].map((key) =>
+          items={["item1", "item2", "item3", "item4", "item5"].map((key) =>
             s(`neverCollect.${key}`),
           )}
         />
@@ -112,6 +127,7 @@ export default async function PrivacyPage() {
         </p>
         <p>{s("whatIsPublic.p3")}</p>
         <p>{s("whatIsPublic.p4")}</p>
+        <p>{s("whatIsPublic.p5")}</p>
       </Clause>
 
       <Clause heading={t("legal.privacy.sections.cookies.heading")}>
@@ -151,7 +167,7 @@ export default async function PrivacyPage() {
       <Clause heading={t("legal.privacy.sections.yourChoices.heading")}>
         <p>{s("yourChoices.intro")}</p>
         <Bullets
-          items={[1, 2, 3, 4].map((n) => (
+          items={[1, 2, 3, 4, 5].map((n) => (
             <>
               <strong className="font-medium text-foreground">
                 {s(`yourChoices.item${n}Strong`)}
@@ -160,7 +176,11 @@ export default async function PrivacyPage() {
                 ? richText(s("yourChoices.item1"), {
                     command: <Code>tokens delete-submitted-data</Code>,
                   })
-                : s(`yourChoices.item${n}`)}
+                : n === 5
+                  ? richText(s("yourChoices.item5"), {
+                      command: <Code>tokens mcp-names disable</Code>,
+                    })
+                  : s(`yourChoices.item${n}`)}
             </>
           ))}
         />

@@ -19,6 +19,23 @@ use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+/// Set for `tokens submit --dry-run --json`, whose stdout must carry the
+/// payload document and nothing else.
+static SUBMIT_HUMAN_TO_STDERR: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// `println!` for the human lines of a submit run: stdout normally, stderr
+/// while [`SUBMIT_HUMAN_TO_STDERR`] is set.
+macro_rules! say {
+    ($($arg:tt)*) => {
+        if SUBMIT_HUMAN_TO_STDERR.load(std::sync::atomic::Ordering::Relaxed) {
+            eprintln!($($arg)*)
+        } else {
+            println!($($arg)*)
+        }
+    };
+}
+
 #[derive(Parser)]
 #[command(name = "tokens")]
 #[command(author, version, about = "AI token usage analytics")]
@@ -93,6 +110,17 @@ enum Commands {
             help = "Authoritatively replace explicitly selected clients within --since/--until"
         )]
         replace: bool,
+        #[arg(
+            long,
+            help = "Include the selected clients' configured MCP server names in this submission (see `tokens mcp-names`)"
+        )]
+        include_mcp: bool,
+        #[arg(
+            long,
+            requires = "dry_run",
+            help = "With --dry-run, print the exact JSON payload that would be uploaded"
+        )]
+        json: bool,
     },
     #[command(about = "Run in the background and submit usage on a recurring interval")]
     Serve {
@@ -155,6 +183,13 @@ enum Commands {
     },
     #[command(about = "Delete all submitted usage data from the server")]
     DeleteSubmittedData,
+    #[command(
+        about = "Choose whether submissions include your configured MCP server names (off by default)"
+    )]
+    McpNames {
+        #[command(subcommand)]
+        subcommand: commands::mcp_names::McpNamesSubcommand,
+    },
     #[command(about = "Report usage from a cloud agent session (Claude Code cloud, Codex cloud)")]
     Cloud {
         #[command(subcommand)]
@@ -646,6 +681,8 @@ fn main() -> Result<()> {
             date,
             dry_run,
             replace,
+            include_mcp,
+            json,
         }) => {
             // Bypass settings.json defaultClients for the submit path: we want the
             // submit-specific default_submit_clients() fallback (in run_submit_command)
@@ -661,7 +698,8 @@ fn main() -> Result<()> {
                 since,
                 until,
                 year,
-                dry_run,
+                SubmitPreview::from_flags(dry_run, json),
+                include_mcp,
                 SubmitMode::Interactive,
                 replacement,
                 None,
@@ -686,6 +724,7 @@ fn main() -> Result<()> {
         Some(Commands::Warp { subcommand }) => run_warp_command(subcommand),
         Some(Commands::Hindsight { subcommand }) => run_hindsight_command(subcommand),
         Some(Commands::DeleteSubmittedData) => run_delete_data_command(),
+        Some(Commands::McpNames { subcommand }) => commands::mcp_names::run(subcommand),
         Some(Commands::Cloud { subcommand }) => run_cloud_command(subcommand),
         None => {
             // The dashboard and the report commands are gone, so a bare
@@ -1495,6 +1534,11 @@ struct TsTokenContributionData {
     time_metrics: Option<TsTimeMetrics>,
     #[serde(skip_serializing_if = "Option::is_none")]
     mcp_servers: Option<Vec<String>>,
+    /// `true` exactly when `mcp_servers` is sent: the user opted in. The server
+    /// stores names only beside this signal, so names from CLIs that predate
+    /// the opt-in are dropped (#121).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mcp_servers_opt_in: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     client_manifest: Option<TsClientManifest>,
 }
@@ -1579,6 +1623,7 @@ fn to_ts_token_contribution_data(
     graph: &tokens_core::GraphResult,
     device: Option<&device::SubmitDevice>,
     replacement: Option<&SubmitReplacementCoverage>,
+    mcp_servers: Option<Vec<String>>,
 ) -> TsTokenContributionData {
     let include_submit_provenance = device.is_some();
 
@@ -1676,14 +1721,77 @@ fn to_ts_token_contribution_data(
             max_concurrent_sessions: tm.max_concurrent_sessions,
             session_count: tm.session_count,
         }),
-        mcp_servers: {
-            let servers = tokens_core::mcp::discover_mcp_server_names(None);
-            if servers.is_empty() {
-                None
-            } else {
-                Some(servers)
-            }
-        },
+        mcp_servers_opt_in: mcp_servers
+            .as_ref()
+            .is_some_and(|servers| !servers.is_empty())
+            .then_some(true),
+        mcp_servers: mcp_servers.filter(|servers| !servers.is_empty()),
+    }
+}
+
+/// The MCP server names a submission carries, or `None` to send none.
+///
+/// Opt-in only (`shareMcpServerNames` / `--include-mcp`), and only the configs
+/// of the clients this submission selected are read. A cloud container's MCP
+/// config is the repository's, not the user's, so a cloud submit never carries
+/// any (and the server leaves the account's list alone for cloud devices).
+///
+/// Sending none is also how a stored list is removed: for a local device the
+/// server replaces the stored list with whatever arrives, and an absent or
+/// empty `mcpServers` clears it.
+fn resolve_submit_mcp_servers(
+    include: bool,
+    is_cloud: bool,
+    clients: &[String],
+    home_dir: Option<&Path>,
+) -> Option<Vec<String>> {
+    if !include || is_cloud {
+        return None;
+    }
+    let servers = tokens_core::mcp::discover_mcp_server_names_for_clients(home_dir, clients);
+    (!servers.is_empty()).then_some(servers)
+}
+
+/// The one place a submit payload is assembled. `tokens submit` uploads its
+/// result and `tokens submit --dry-run` prints it, so the preview cannot drift
+/// from what is actually sent.
+fn build_submit_payload(
+    graph: &tokens_core::GraphResult,
+    device: &device::SubmitDevice,
+    replacement: Option<&SubmitReplacementCoverage>,
+    mcp_servers: Option<Vec<String>>,
+) -> TsTokenContributionData {
+    to_ts_token_contribution_data(graph, Some(device), replacement, mcp_servers)
+}
+
+/// The request body `tokens submit` POSTs, byte for byte.
+fn submit_request_body(payload: &TsTokenContributionData) -> Result<Vec<u8>> {
+    Ok(serde_json::to_vec(payload)?)
+}
+
+/// What `tokens submit --dry-run --json` prints: the same payload, indented.
+fn submit_dry_run_json(payload: &TsTokenContributionData) -> Result<String> {
+    Ok(serde_json::to_string_pretty(payload)?)
+}
+
+/// How a submit run previews instead of uploading.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SubmitPreview {
+    /// Upload for real.
+    Off,
+    /// `--dry-run`: print the summary, including the MCP names line.
+    Summary,
+    /// `--dry-run --json`: print the exact payload as JSON on stdout.
+    Json,
+}
+
+impl SubmitPreview {
+    fn from_flags(dry_run: bool, json: bool) -> Self {
+        match (dry_run, json) {
+            (false, _) => Self::Off,
+            (true, false) => Self::Summary,
+            (true, true) => Self::Json,
+        }
     }
 }
 
@@ -2180,13 +2288,9 @@ fn run_import_command(
         return Ok(());
     }
 
-    let mut payload = to_ts_token_contribution_data(graph, None, None);
     // The imported data has no MCP provenance of its own — it's derived
-    // purely from a third-party clawdboard export. Reusing the graph/submit
-    // converter would otherwise embed the *local* machine's configured MCP
-    // server names, leaking unrelated metadata into a file that should only
-    // reflect the export's contents.
-    payload.mcp_servers = None;
+    // purely from a third-party clawdboard export — so no names are attached.
+    let payload = to_ts_token_contribution_data(graph, None, None, None);
     let json_output = serde_json::to_string_pretty(&payload)?;
 
     if let Some(output_path) = output {
@@ -2386,7 +2490,7 @@ fn report_excluded_tokenless_rows(excluded: &[ExcludedTokenlessRow]) {
     const MAX_DETAIL_ROWS: usize = 20;
     let total_cost: f64 = excluded.iter().map(|row| row.cost).sum();
 
-    println!(
+    say!(
         "{}",
         tr!("cli.submit.excludedRows", count = excluded.len()).yellow()
     );
@@ -2397,7 +2501,7 @@ fn report_excluded_tokenless_rows(excluded: &[ExcludedTokenlessRow]) {
         } else {
             format!(" (provider={})", row.provider_id)
         };
-        println!(
+        say!(
             "{}",
             tr!(
                 "cli.submit.excludedRow",
@@ -2412,7 +2516,7 @@ fn report_excluded_tokenless_rows(excluded: &[ExcludedTokenlessRow]) {
     }
 
     if excluded.len() > MAX_DETAIL_ROWS {
-        println!(
+        say!(
             "{}",
             tr!(
                 "cli.submit.excludedMore",
@@ -2422,7 +2526,7 @@ fn report_excluded_tokenless_rows(excluded: &[ExcludedTokenlessRow]) {
         );
     }
 
-    println!(
+    say!(
         "{}",
         tr!(
             "cli.submit.excludedTotal",
@@ -2430,7 +2534,7 @@ fn report_excluded_tokenless_rows(excluded: &[ExcludedTokenlessRow]) {
         )
         .bright_black()
     );
-    println!();
+    say!();
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2547,6 +2651,7 @@ fn run_autosubmit_command(subcommand: commands::autosubmit::AutosubmitSubcommand
                 since,
                 until,
                 year,
+                SubmitPreview::Off,
                 false,
                 SubmitMode::Autosubmit,
                 None,
@@ -2684,7 +2789,8 @@ fn run_cloud_submit(
         None,
         None,
         None,
-        dry_run,
+        SubmitPreview::from_flags(dry_run, false),
+        false,
         SubmitMode::Autosubmit,
         None,
         Some(&session),
@@ -2735,7 +2841,8 @@ fn run_submit_command(
     since: Option<String>,
     until: Option<String>,
     year: Option<String>,
-    dry_run: bool,
+    preview: SubmitPreview,
+    include_mcp: bool,
     mode: SubmitMode,
     replacement: Option<SubmitReplacementCoverage>,
     cloud_session: Option<&cloud::CloudSession>,
@@ -2744,6 +2851,14 @@ fn run_submit_command(
     use std::io::IsTerminal;
     use tokens_core::{generate_graph, GroupBy, ReportOptions};
     use tokio::runtime::Runtime;
+
+    // `--dry-run --json` keeps stdout for the payload alone; every progress and
+    // summary line moves to stderr for the run.
+    SUBMIT_HUMAN_TO_STDERR.store(
+        preview == SubmitPreview::Json,
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    let include_mcp = include_mcp || settings::Settings::load().share_mcp_server_names;
 
     let auth_token = match auth::resolve_api_token() {
         Some(token) => token,
@@ -2758,6 +2873,7 @@ fn run_submit_command(
     };
 
     if mode == SubmitMode::Interactive
+        && preview != SubmitPreview::Json
         && auth_token.source == auth::ApiTokenSource::StoredCredentials
         && std::io::stdin().is_terminal()
         && std::io::stdout().is_terminal()
@@ -2767,7 +2883,7 @@ fn run_submit_command(
         }
     }
 
-    println!("\n  {}\n", t!("cli.submit.title").cyan());
+    say!("\n  {}\n", t!("cli.submit.title").cyan());
 
     // Persist the detected timezone on first submit so every later submission —
     // including ones made from another timezone while traveling — buckets usage
@@ -2778,6 +2894,9 @@ fn run_submit_command(
     let explicit_warp_filter = client_filter_explicitly_requests_warp(&clients);
     let explicit_hindsight_filter = client_filter_explicitly_requests_hindsight(&clients);
     let clients = clients.or_else(|| Some(default_submit_clients()));
+    // The clients this submission covers — the only ones whose MCP configs may
+    // be read when names are opted in.
+    let selected_clients = clients.clone().unwrap_or_default();
 
     let include_cursor = clients
         .as_ref()
@@ -2786,17 +2905,17 @@ fn run_submit_command(
     // Only accounts stored by an explicit `tokens cursor login` are synced here;
     // submit never reads the local Cursor CLI or desktop login on its own.
     if include_cursor && cursor::is_cursor_logged_in() {
-        println!("{}", t!("cli.submit.syncingCursor").bright_black());
+        say!("{}", t!("cli.submit.syncingCursor").bright_black());
         let rt_sync = Runtime::new()?;
         let sync_result = rt_sync.block_on(async { cursor::sync_cursor_cache(false).await });
         if sync_result.synced {
-            println!(
+            say!(
                 "{}",
                 tr!("cli.submit.cursorSynced", rows = sync_result.rows).bright_black()
             );
         } else if let Some(err) = sync_result.error {
             if has_cursor_cache {
-                println!(
+                say!(
                     "{}",
                     tr!("cli.submit.cursorSyncFailedCached", error = err).yellow()
                 );
@@ -2811,13 +2930,13 @@ fn run_submit_command(
     if include_antigravity {
         match antigravity::detect_antigravity_connections() {
             Ok(active_connections) if !active_connections.is_empty() => {
-                println!("{}", t!("cli.submit.syncingAntigravity").bright_black());
+                say!("{}", t!("cli.submit.syncingAntigravity").bright_black());
                 let sync_result = antigravity::sync_antigravity_cache_with_connections(
                     &active_connections,
                     false,
                 );
                 if sync_result.synced {
-                    println!(
+                    say!(
                         "{}",
                         tr!(
                             "cli.submit.antigravitySynced",
@@ -2833,7 +2952,7 @@ fn run_submit_command(
                         .bright_black()
                     );
                 } else if sync_result.partial {
-                    println!(
+                    say!(
                         "{}",
                         tr!(
                             "cli.submit.antigravityPartial",
@@ -2850,12 +2969,12 @@ fn run_submit_command(
                     );
                 } else if let Some(err) = sync_result.error {
                     if has_antigravity_cache {
-                        println!(
+                        say!(
                             "{}",
                             tr!("cli.submit.antigravitySyncFailedCached", error = err).yellow()
                         );
                     } else {
-                        println!(
+                        say!(
                             "{}",
                             tr!("cli.submit.antigravitySyncFailed", error = err).yellow()
                         );
@@ -2865,12 +2984,12 @@ fn run_submit_command(
             Ok(_) => {}
             Err(err) => {
                 if has_antigravity_cache {
-                    println!(
+                    say!(
                         "{}",
                         tr!("cli.submit.antigravityDiscoveryFailedCached", error = err).yellow()
                     );
                 } else {
-                    println!(
+                    say!(
                         "{}",
                         tr!("cli.submit.antigravityDiscoveryFailed", error = err).yellow()
                     );
@@ -2883,7 +3002,7 @@ fn run_submit_command(
         emit_cursor_setup_warnings(&cursor_setup_warnings);
     }
 
-    println!("{}", t!("cli.submit.scanning").bright_black());
+    say!("{}", t!("cli.submit.scanning").bright_black());
 
     let rt = Runtime::new()?;
     let mut graph_result = rt
@@ -2930,8 +3049,8 @@ fn run_submit_command(
         }
     }
 
-    println!("{}", t!("cli.submit.dataToSubmit").white());
-    println!(
+    say!("{}", t!("cli.submit.dataToSubmit").white());
+    say!(
         "{}",
         tr!(
             "cli.submit.dateRange",
@@ -2940,7 +3059,7 @@ fn run_submit_command(
         )
         .bright_black()
     );
-    println!(
+    say!(
         "{}",
         tr!(
             "cli.submit.activeDays",
@@ -2948,7 +3067,7 @@ fn run_submit_command(
         )
         .bright_black()
     );
-    println!(
+    say!(
         "{}",
         tr!(
             "cli.submit.totalTokens",
@@ -2956,7 +3075,7 @@ fn run_submit_command(
         )
         .bright_black()
     );
-    println!(
+    say!(
         "{}",
         tr!(
             "cli.submit.totalCost",
@@ -2964,7 +3083,7 @@ fn run_submit_command(
         )
         .bright_black()
     );
-    println!(
+    say!(
         "{}",
         tr!(
             "cli.submit.clients",
@@ -2972,7 +3091,7 @@ fn run_submit_command(
         )
         .bright_black()
     );
-    println!(
+    say!(
         "{}",
         tr!(
             "cli.submit.models",
@@ -2980,21 +3099,12 @@ fn run_submit_command(
         )
         .bright_black()
     );
-    println!();
 
     if graph_result.summary.total_tokens == 0 {
-        println!("{}", t!("cli.submit.noData").yellow());
+        say!();
+        say!("{}", t!("cli.submit.noData").yellow());
         return Ok(());
     }
-
-    if dry_run {
-        println!("{}", t!("cli.submit.dryRun").yellow());
-        return Ok(());
-    }
-
-    println!("{}", t!("cli.submit.submitting").bright_black());
-
-    let api_url = auth::get_api_base_url();
 
     // A cloud session submits as a device keyed to the session, never the
     // container's device.json (see cloud.rs).
@@ -3002,13 +3112,58 @@ fn run_submit_command(
         Some(session) => session.submit_device(),
         None => device::resolve_submit_device()?,
     };
-    let mut submit_payload =
-        to_ts_token_contribution_data(&graph_result, Some(&submit_device), replacement.as_ref());
-    if cloud_session.is_some() {
-        // The container's MCP config is the repository's, not the user's, and
-        // the server would otherwise replace the account's list with it.
-        submit_payload.mcp_servers = None;
+    let mcp_servers = resolve_submit_mcp_servers(
+        include_mcp,
+        cloud_session.is_some(),
+        &selected_clients,
+        None,
+    );
+    // Built once, before the dry-run branch: a preview prints exactly this.
+    let submit_payload = build_submit_payload(
+        &graph_result,
+        &submit_device,
+        replacement.as_ref(),
+        mcp_servers,
+    );
+    let submit_body = submit_request_body(&submit_payload)?;
+
+    say!(
+        "{}",
+        match submit_payload.mcp_servers.as_deref() {
+            Some(servers) => tr!("cli.submit.mcpServers", servers = servers.join(", ")),
+            None if include_mcp && cloud_session.is_none() => {
+                t!("cli.submit.mcpServersNoneFound").to_string()
+            }
+            None => t!("cli.submit.mcpServersNotShared").to_string(),
+        }
+        .bright_black()
+    );
+    say!();
+
+    match preview {
+        SubmitPreview::Off => {}
+        SubmitPreview::Summary => {
+            say!("{}", t!("cli.submit.dryRun").yellow());
+            if cloud_session.is_none() {
+                say!("{}", t!("cli.submit.dryRunJsonHint").bright_black());
+            } else {
+                say!();
+            }
+            return Ok(());
+        }
+        SubmitPreview::Json => {
+            // stdout, not the human stream: this is the document a script reads.
+            std::io::Write::write_all(
+                &mut std::io::stdout(),
+                format!("{}\n", submit_dry_run_json(&submit_payload)?).as_bytes(),
+            )?;
+            return Ok(());
+        }
     }
+
+    say!("{}", t!("cli.submit.submitting").bright_black());
+
+    let api_url = auth::get_api_base_url();
 
     // `tokens serve` drives this unattended, so the request must be bounded.
     // The overall budget is more generous than the 30s used elsewhere because a
@@ -3023,7 +3178,7 @@ fn run_submit_command(
             .post(format!("{}/api/submit", api_url))
             .header("Content-Type", "application/json")
             .header("Authorization", format!("Bearer {}", auth_token.token))
-            .json(&submit_payload)
+            .body(submit_body)
             .send()
             .await
     });
@@ -3069,19 +3224,19 @@ fn run_submit_command(
                 std::process::exit(1);
             }
 
-            println!("\n  {}", t!("cli.submit.success").green());
-            println!();
+            say!("\n  {}", t!("cli.submit.success").green());
+            say!();
             if let Some(err) = &parse_error {
                 eprintln!("{}", tr!("cli.submit.unreadableNote", error = err).yellow());
-                println!();
+                say!();
             }
-            println!("{}", t!("cli.submit.summary").white());
+            say!("{}", t!("cli.submit.summary").white());
             if let Some(id) = body.submission_id {
-                println!("{}", tr!("cli.submit.submissionId", id = id).bright_black());
+                say!("{}", tr!("cli.submit.submissionId", id = id).bright_black());
             }
             if let Some(metrics) = &body.metrics {
                 if let Some(tokens) = metrics.total_tokens {
-                    println!(
+                    say!(
                         "{}",
                         tr!(
                             "cli.submit.totalTokens",
@@ -3091,13 +3246,13 @@ fn run_submit_command(
                     );
                 }
                 if let Some(cost) = metrics.total_cost {
-                    println!(
+                    say!(
                         "{}",
                         tr!("cli.submit.totalCost", cost = format_currency(cost)).bright_black()
                     );
                 }
                 if let Some(days) = metrics.active_days {
-                    println!(
+                    say!(
                         "{}",
                         tr!("cli.submit.activeDays", days = days).bright_black()
                     );
@@ -3108,8 +3263,8 @@ fn run_submit_command(
                 .clone()
                 .or_else(|| auth_token.username.clone())
             {
-                println!();
-                println!(
+                say!();
+                say!(
                     "{}",
                     osc8_link_with_text(
                         &format!("{}/u/{}", api_url, username),
@@ -3121,19 +3276,19 @@ fn run_submit_command(
                     )
                     .cyan()
                 );
-                println!();
+                say!();
             }
 
             if let Some(warnings) = body.warnings {
                 if !warnings.is_empty() {
-                    println!("{}", t!("cli.submit.warningsHeading").yellow());
+                    say!("{}", t!("cli.submit.warningsHeading").yellow());
                     for warning in warnings {
-                        println!(
+                        say!(
                             "{}",
                             tr!("cli.submit.warning", warning = warning).bright_black()
                         );
                     }
-                    println!();
+                    say!();
                 }
             }
         }
@@ -3381,7 +3536,7 @@ fn report_unpriced_submission_usage(unpriced: &[tokens_core::UnpricedSubmissionU
     });
 
     for row in ranked.iter().take(MAX_DETAIL_ROWS) {
-        println!(
+        say!(
             "{}",
             tr!(
                 "cli.submit.unpricedRow",
@@ -3397,7 +3552,7 @@ fn report_unpriced_submission_usage(unpriced: &[tokens_core::UnpricedSubmissionU
 
     if ranked.len() > MAX_DETAIL_ROWS {
         let capped = &ranked[MAX_DETAIL_ROWS..];
-        println!(
+        say!(
             "{}",
             tr!("cli.submit.unpricedMore", count = capped.len()).bright_black()
         );
@@ -3407,7 +3562,7 @@ fn report_unpriced_submission_usage(unpriced: &[tokens_core::UnpricedSubmissionU
                 .map(|row| format!("{}/{}", row.provider_id, row.model_id))
                 .collect::<Vec<_>>()
                 .join(", ");
-            println!("{}", format!("      {}", ids).bright_black());
+            say!("{}", format!("      {}", ids).bright_black());
         }
     }
 
@@ -3417,7 +3572,7 @@ fn report_unpriced_submission_usage(unpriced: &[tokens_core::UnpricedSubmissionU
     let total_tokens: i64 = unpriced
         .iter()
         .fold(0i64, |acc, row| acc.saturating_add(row.total_tokens));
-    println!(
+    say!(
         "{}",
         tr!(
             "cli.submit.unpricedTotal",
@@ -3429,7 +3584,7 @@ fn report_unpriced_submission_usage(unpriced: &[tokens_core::UnpricedSubmissionU
     );
 
     let pricing_path = crate::paths::get_config_dir().join("custom-pricing.json");
-    println!(
+    say!(
         "{}",
         tr!("cli.submit.unpricedHint", path = pricing_path.display()).bright_black()
     );
@@ -3736,6 +3891,188 @@ fn prepare_headless_args(
         );
     }
     Ok(args)
+}
+
+#[cfg(test)]
+mod submit_payload_tests {
+    use super::*;
+    use std::fs;
+
+    fn graph() -> tokens_core::GraphResult {
+        tokens_core::GraphResult {
+            meta: tokens_core::GraphMeta {
+                generated_at: "2026-11-11T00:00:00Z".into(),
+                version: "test".into(),
+                date_range_start: "2026-11-10".into(),
+                date_range_end: "2026-11-11".into(),
+                processing_time_ms: 0,
+            },
+            summary: tokens_core::DataSummary {
+                total_tokens: 10,
+                total_cost: 0.5,
+                total_days: 1,
+                active_days: 1,
+                average_per_day: 0.5,
+                max_cost_in_single_day: 0.5,
+                clients: vec!["codex".into()],
+                models: vec!["gpt-5".into()],
+            },
+            years: Vec::new(),
+            contributions: Vec::new(),
+            time_metrics: None,
+            unpriced_submission_usage: Vec::new(),
+            incomplete_cost_dates: Default::default(),
+        }
+    }
+
+    fn device() -> device::SubmitDevice {
+        device::SubmitDevice {
+            id: "dev_test".into(),
+            name: Some("laptop".into()),
+        }
+    }
+
+    /// A home with MCP configs for Cursor and Claude, none for Codex.
+    fn home_with_mcp_configs() -> tempfile::TempDir {
+        let home = tempfile::TempDir::new().unwrap();
+        fs::create_dir_all(home.path().join(".cursor")).unwrap();
+        fs::write(
+            home.path().join(".cursor").join("mcp.json"),
+            r#"{"mcpServers":{"example-internal-service":{}}}"#,
+        )
+        .unwrap();
+        fs::create_dir_all(home.path().join(".claude")).unwrap();
+        fs::write(
+            home.path().join(".claude").join(".mcp.json"),
+            r#"{"mcpServers":{"claude-only":{}}}"#,
+        )
+        .unwrap();
+        home
+    }
+
+    fn clients(ids: &[&str]) -> Vec<String> {
+        ids.iter().map(|id| id.to_string()).collect()
+    }
+
+    fn payload_json(mcp: Option<Vec<String>>) -> serde_json::Value {
+        let payload = build_submit_payload(&graph(), &device(), None, mcp);
+        serde_json::from_slice(&submit_request_body(&payload).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn default_submit_payload_carries_no_mcp_names() {
+        let home = home_with_mcp_configs();
+        let all = clients(&["claude", "codex", "cursor", "kiro", "opencode"]);
+
+        let mcp = resolve_submit_mcp_servers(false, false, &all, Some(home.path()));
+        assert_eq!(mcp, None);
+
+        let body = payload_json(mcp);
+        assert!(body.get("mcpServers").is_none(), "{body}");
+        assert!(body.get("mcpServersOptIn").is_none(), "{body}");
+        assert!(!body.to_string().contains("example-internal-service"));
+    }
+
+    #[test]
+    fn opted_in_payload_reads_only_the_selected_clients() {
+        let home = home_with_mcp_configs();
+
+        // The reproduction from #121: `--client codex` must not pick up Cursor's.
+        let codex =
+            resolve_submit_mcp_servers(true, false, &clients(&["codex"]), Some(home.path()));
+        assert_eq!(codex, None);
+        let codex_body = payload_json(codex);
+        assert!(codex_body.get("mcpServers").is_none());
+        assert!(codex_body.get("mcpServersOptIn").is_none());
+
+        let cursor = resolve_submit_mcp_servers(
+            true,
+            false,
+            &clients(&["codex", "cursor"]),
+            Some(home.path()),
+        );
+        assert_eq!(cursor, Some(vec!["example-internal-service".to_string()]));
+        let cursor_body = payload_json(cursor);
+        assert_eq!(
+            cursor_body["mcpServers"],
+            serde_json::json!(["example-internal-service"])
+        );
+        assert_eq!(cursor_body["mcpServersOptIn"], serde_json::json!(true));
+    }
+
+    #[test]
+    fn cloud_submissions_never_carry_mcp_names() {
+        let home = home_with_mcp_configs();
+        let mcp = resolve_submit_mcp_servers(true, true, &clients(&["cursor"]), Some(home.path()));
+        assert_eq!(mcp, None);
+    }
+
+    #[test]
+    fn dry_run_json_is_the_submitted_payload() {
+        let payload = build_submit_payload(
+            &graph(),
+            &device(),
+            None,
+            Some(vec!["example-internal-service".into()]),
+        );
+        let sent: serde_json::Value =
+            serde_json::from_slice(&submit_request_body(&payload).unwrap()).unwrap();
+        let previewed: serde_json::Value =
+            serde_json::from_str(&submit_dry_run_json(&payload).unwrap()).unwrap();
+        assert_eq!(previewed, sent);
+        assert_eq!(
+            previewed["mcpServers"],
+            serde_json::json!(["example-internal-service"])
+        );
+        assert_eq!(previewed["device"]["id"], "dev_test");
+    }
+
+    #[test]
+    fn submit_flags_parse() {
+        let parse = |args: &[&str]| Cli::try_parse_from(args.iter().copied());
+
+        let cli = parse(&["tokens", "submit", "--dry-run", "--json", "--include-mcp"]).unwrap();
+        match cli.command {
+            Some(Commands::Submit {
+                dry_run,
+                json,
+                include_mcp,
+                ..
+            }) => {
+                assert_eq!(
+                    SubmitPreview::from_flags(dry_run, json),
+                    SubmitPreview::Json
+                );
+                assert!(include_mcp);
+            }
+            _ => panic!("expected submit"),
+        }
+
+        // `--json` alone would upload while printing nothing useful.
+        assert!(parse(&["tokens", "submit", "--json"]).is_err());
+
+        match parse(&["tokens", "submit"]).unwrap().command {
+            Some(Commands::Submit {
+                dry_run,
+                json,
+                include_mcp,
+                ..
+            }) => {
+                assert_eq!(SubmitPreview::from_flags(dry_run, json), SubmitPreview::Off);
+                assert!(!include_mcp);
+            }
+            _ => panic!("expected submit"),
+        }
+    }
+
+    #[test]
+    fn mcp_names_sharing_is_off_unless_set() {
+        let settings: settings::Settings = serde_json::from_str("{}").unwrap();
+        assert!(!settings.share_mcp_server_names);
+        let settings: settings::Settings =
+            serde_json::from_str(r#"{"shareMcpServerNames":true}"#).unwrap();
+        assert!(settings.share_mcp_server_names);
+    }
 }
 
 #[cfg(test)]

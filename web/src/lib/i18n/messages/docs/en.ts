@@ -119,6 +119,10 @@ const messages = {
       title: "Device names",
       body: "Public or private, other people only ever see your device names masked — the first and last two characters, like {example} — since a device name is often a hostname. You see them in full on your own profile and in Settings.",
     },
+    mcpNames: {
+      title: "MCP server names",
+      body: "Off by default. {enable} makes each submission include the names of the MCP servers configured for the clients it covers (the MCP configs of Claude Code, Cursor and Kiro, and OpenCode skills); only the names are read, and other clients' configs are never opened. {flag} does the same for a single submit. Shared names are shown in full on your profile. {disable} stops sending them, and your next submission clears the stored list. Private mode only hides them from other people; turning the option off stops them being sent at all. {status} lists the exact files.",
+    },
   },
 
   verifiedBadge: {
@@ -168,7 +172,7 @@ const messages = {
     },
     cli: {
       title: "The CLI",
-      body: "Rust, distributed as a prebuilt binary per platform through npm. It reads the session files your clients already write, totals them on your machine, and sends only the totals — token counts, model names, timestamps. Prompts, completions and file contents never leave the machine. {dryRun} prints exactly what would be uploaded.",
+      body: "Rust, distributed as a prebuilt binary per platform through npm. It reads the session files your clients already write, totals them on your machine, and sends only the totals — token counts, model names, timestamps. Prompts, completions and file contents never leave the machine, and MCP server names are sent only if you opt in. {dryRun} prints exactly what would be uploaded.",
     },
     caching: {
       title: "Caching and scheduled work",
