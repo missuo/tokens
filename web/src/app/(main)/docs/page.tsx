@@ -180,6 +180,58 @@ const LINK = "underline underline-offset-4 hover:text-foreground";
 
 const BRAND_LINK = "font-medium text-foreground underline underline-offset-4";
 
+function ExternalLink({ href, children }: { href: string; children: React.ReactNode }) {
+  return (
+    <a href={href} target="_blank" rel="noopener noreferrer" className={LINK}>
+      {children}
+    </a>
+  );
+}
+
+interface ThirdPartyPerson {
+  label: string;
+  href: string;
+}
+
+/**
+ * Apps other people build on Tokens data. Names and handles stay verbatim in
+ * every locale; only the byline and description are translated. To be listed,
+ * authors open an issue on the repo.
+ */
+const THIRD_PARTY_APPS: ReadonlyArray<{
+  id: string;
+  name: string;
+  url: string;
+  urlLabel: string;
+  author: ThirdPartyPerson;
+  plugin?: { href: string; author: ThirdPartyPerson };
+  bylineKey: string;
+  bodyKey: string;
+}> = [
+  {
+    id: "nowdex",
+    name: "Nowdex",
+    url: "https://nowdex.app",
+    urlLabel: "nowdex.app",
+    author: { label: "Randy Lu (@randyloop)", href: "https://x.com/randyloop" },
+    bylineKey: "docs.thirdPartyApps.byline",
+    bodyKey: "docs.thirdPartyApps.nowdex.body",
+  },
+  {
+    id: "metrix",
+    name: "Metrix.Bar",
+    url: "https://metrix.bar",
+    urlLabel: "metrix.bar",
+    author: { label: "@miantiao_me", href: "https://x.com/miantiao_me" },
+    plugin: {
+      href: "https://awesome.metrix.bar/dashboards/tokens",
+      author: { label: "Baran Wang (@baranwang)", href: "https://github.com/baranwang" },
+    },
+    bylineKey: "docs.thirdPartyApps.bylineWithPlugin",
+    bodyKey: "docs.thirdPartyApps.metrix.body",
+  },
+];
+
 export default async function DocsPage() {
   const { locale, t } = await getTranslator();
 
@@ -302,49 +354,62 @@ export default async function DocsPage() {
           </Card>
         </Section>
 
-        {/* Endorsed rather than merely tolerated: someone else builds and
-            runs these, on the public profile API, and this project vouches
-            for them as a good way to read your usage. */}
+        {/* Built and run by other people on Tokens data. Listed, not
+            operated: each has its own support and privacy policy. */}
         <Section
           id="elsewhere"
-          title={t("docs.recognizedClients.title")}
-          description={t("docs.recognizedClients.description")}
+          title={t("docs.thirdPartyApps.title")}
+          description={t("docs.thirdPartyApps.description")}
         >
-          <Card>
-            <CardHeader className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
-              <div className="flex flex-wrap items-center gap-2">
-                <CardTitle className="text-base">Nowdex</CardTitle>
-                <Badge variant="secondary">{t("docs.recognizedClients.badge")}</Badge>
-              </div>
-              <Button
-                variant="outline"
-                className="w-full shrink-0 sm:w-auto"
-                render={
-                  <a
-                    href="https://nowdex.app"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  />
-                }
-              >
-                nowdex.app
-              </Button>
-            </CardHeader>
-            <CardContent className="text-sm leading-relaxed text-muted-foreground">
-              {richText(t("docs.recognizedClients.nowdex.body"), {
-                author: (
-                  <a
-                    href="https://x.com/randyloop"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="underline underline-offset-4"
+          <div className="flex flex-col gap-4">
+            {THIRD_PARTY_APPS.map((app) => (
+              <Card key={app.id}>
+                <CardHeader className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+                  <div className="flex flex-col gap-1">
+                    <CardTitle className="text-base">{app.name}</CardTitle>
+                    <p className="text-xs text-muted-foreground">
+                      {richText(t(app.bylineKey), {
+                        author: <ExternalLink href={app.author.href}>{app.author.label}</ExternalLink>,
+                        ...(app.plugin
+                          ? {
+                              plugin: (
+                                <ExternalLink href={app.plugin.href}>
+                                  {t("docs.thirdPartyApps.tokensPlugin")}
+                                </ExternalLink>
+                              ),
+                              pluginAuthor: (
+                                <ExternalLink href={app.plugin.author.href}>
+                                  {app.plugin.author.label}
+                                </ExternalLink>
+                              ),
+                            }
+                          : {}),
+                      })}
+                    </p>
+                  </div>
+                  <Button
+                    variant="outline"
+                    className="w-full shrink-0 sm:w-auto"
+                    render={<a href={app.url} target="_blank" rel="noopener noreferrer" />}
                   >
-                    Randy Lu
-                  </a>
+                    {app.urlLabel}
+                  </Button>
+                </CardHeader>
+                <CardContent className="text-sm leading-relaxed text-muted-foreground">
+                  {t(app.bodyKey)}
+                </CardContent>
+              </Card>
+            ))}
+            <p className="text-sm text-muted-foreground">
+              {richText(t("docs.thirdPartyApps.listYours"), {
+                repo: (
+                  <ExternalLink href="https://github.com/missuo/tokens/issues/new">
+                    github.com/missuo/tokens
+                  </ExternalLink>
                 ),
               })}
-            </CardContent>
-          </Card>
+            </p>
+          </div>
         </Section>
 
         <Section

@@ -68,12 +68,18 @@ const messages = {
     },
   },
 
-  recognizedClients: {
-    title: "公認クライアント",
-    description: "Tokens が使用量の確認用として推奨する、他の人が開発したアプリです。",
-    badge: "公認クライアント",
+  thirdPartyApps: {
+    title: "Awesome サードパーティアプリ",
+    description: "ほかの人が Tokens をもとに作ったアプリやプラグインです。それぞれ作者が運営しており、独自のサポートとプライバシーポリシーがあります。",
+    byline: "作者：{author}",
+    bylineWithPlugin: "作者：{author}／{plugin}の作者：{pluginAuthor}",
+    tokensPlugin: "Tokens プラグイン",
+    listYours: "ここに自分のプロジェクトを載せたい場合は、{repo} で issue を作成してください。",
     nowdex: {
-      body: "Nowdex は、Codex、Claude、Cursor などのプランの残り枠を Mac、iPhone、iPad で確認できるアプリで、ホーム画面ウィジェットとメニューバー項目に対応しています。Tokens の使用量（Token、コスト、メッセージ）もそれらの枠と並べて表示し、Tokens はその使用量を確認するクライアントとして公認しています。開発してくれた {author} に感謝します。Nowdex は彼のアプリで、独自のサポートとプライバシーポリシーがあります。公開プロフィール API を読み取るだけで、Tokens へのログインは不要です。",
+      body: "Nowdex は、Codex、Claude、Cursor などのプランの残り枠を Mac、iPhone、iPad で確認できるアプリで、ホーム画面ウィジェットとメニューバー項目に対応しています。Tokens の使用量（Token、コスト、メッセージ）もそれらの枠と並べて表示します。公開プロフィール API を読み取るだけで、Tokens へのログインは不要です。",
+    },
+    metrix: {
+      body: "Metrix.Bar は、よく確認する数値をダッシュボードにして、macOS のメニューバーや Windows・Linux のシステムトレイに表示します。Tokens プラグインでは、Token の使用量、日ごとの支出、モデルの内訳、デバイスを確認できます。tokens login でログイン済みなら CLI が保存した認証情報を読み取ります。そうでなければ、公開プロフィールには GitHub ユーザー名を、非公開プロフィールには読み取りトークンを入力します。",
     },
   },
 

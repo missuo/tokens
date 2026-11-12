@@ -67,12 +67,18 @@ const messages = {
     },
   },
 
-  recognizedClients: {
-    title: "认可的客户端",
-    description: "由其他人开发、Tokens 推荐用来查看你用量的应用。",
-    badge: "认可的客户端",
+  thirdPartyApps: {
+    title: "Awesome 第三方应用",
+    description: "其他人基于 Tokens 开发的应用和插件。它们由各自的作者运营，有自己的支持渠道和隐私政策。",
+    byline: "作者 {author}",
+    bylineWithPlugin: "作者 {author}，{plugin}作者 {pluginAuthor}",
+    tokensPlugin: "Tokens 插件",
+    listYours: "想把你的项目列在这里？欢迎在 {repo} 创建 issue。",
     nowdex: {
-      body: "Nowdex 可以在 Mac、iPhone 和 iPad 上查看 Codex、Claude、Cursor 等订阅额度还剩多少，支持主屏幕小组件和菜单栏。它也会在这些额度旁边显示你的 Tokens 用量——Token、花费和消息数，Tokens 认可它作为查看这些用量的客户端。感谢 {author} 开发了它。Nowdex 是他的应用，有自己的支持渠道和隐私政策；它读取公开的资料 API，从不需要你的 Tokens 登录。",
+      body: "Nowdex 可以在 Mac、iPhone 和 iPad 上查看 Codex、Claude、Cursor 等订阅额度还剩多少，支持主屏幕小组件和菜单栏。它也会在这些额度旁边显示你的 Tokens 用量（Token、花费和消息数）。它读取公开的资料 API，从不需要你的 Tokens 登录。",
+    },
+    metrix: {
+      body: "Metrix.Bar 把你常看的数据做成仪表盘，放在 macOS 的菜单栏或 Windows、Linux 的系统托盘里。它的 Tokens 插件会显示你的 Token 用量、每日花费、模型分布和设备。如果你已经用 tokens login 登录，它会读取 CLI 保存的凭据；否则可以填 GitHub 用户名查看公开主页，或填读取令牌查看私密主页。",
     },
   },
 

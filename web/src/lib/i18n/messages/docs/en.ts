@@ -87,14 +87,20 @@ const messages = {
     },
   },
 
-  // Apps someone else builds on the public profile API that this project
-  // vouches for. Product names, platforms and the author's name stay verbatim.
-  recognizedClients: {
-    title: "Recognized clients",
-    description: "Apps built by other people that Tokens endorses for viewing your usage.",
-    badge: "Recognized client",
+  // Apps other people build on Tokens data. Product names, platforms, people's
+  // names and handles stay verbatim.
+  thirdPartyApps: {
+    title: "Awesome third-party apps",
+    description: "Apps and plugins other people have built on Tokens. Each is run by its author, with its own support and privacy policy.",
+    byline: "by {author}",
+    bylineWithPlugin: "by {author}, with a {plugin} by {pluginAuthor}",
+    tokensPlugin: "Tokens plugin",
+    listYours: "Want your project listed here? Open an issue at {repo}.",
     nowdex: {
-      body: "Nowdex tracks how much of your Codex, Claude, Cursor and other plan quotas is left, on Mac, iPhone and iPad, with Home Screen widgets and a menu bar item. It shows Tokens usage too — tokens, cost and messages — alongside those quotas, and Tokens recognizes it as a client for viewing that usage. Thanks to {author} for building it. Nowdex is his app, with its own support and privacy policy; it reads the public profile API and never needs your Tokens login.",
+      body: "Nowdex tracks how much of your Codex, Claude, Cursor and other plan quotas is left, on Mac, iPhone and iPad, with Home Screen widgets and a menu bar item. It shows your Tokens usage (tokens, cost and messages) alongside those quotas. It reads the public profile API and never needs your Tokens login.",
+    },
+    metrix: {
+      body: "Metrix.Bar puts dashboards for the numbers you check often in the menu bar on macOS and the system tray on Windows and Linux. Its Tokens plugin shows your token usage, daily spend, model breakdown and devices. If you are logged in with tokens login, it reads the credentials the CLI saved; otherwise give it a GitHub username for a public profile, or a read token for a private one.",
     },
   },
 
