@@ -628,7 +628,10 @@ fn render_cron_spec(exe: &Path, settings: &AutosubmitSettings) -> Result<Schedul
 
 fn render_windows_task_spec(exe: &Path, settings: &AutosubmitSettings) -> Result<SchedulerSpec> {
     let (schedule, modifier) = windows_schedule(settings.interval_minutes)?;
-    let task = format!(r#""{}" autosubmit run"#, exe.display());
+    let task = format!(
+        r#""{}" autosubmit run"#,
+        windows_task_executable(exe).display()
+    );
     Ok(SchedulerSpec {
         files: Vec::new(),
         cron_block: None,
@@ -657,6 +660,129 @@ fn render_windows_task_spec(exe: &Path, settings: &AutosubmitSettings) -> Result
             ],
         )],
     })
+}
+
+/// `tokens.exe` is a console program, so Task Scheduler opens a console window
+/// for it on every run. Point the task at the windowless `tokensw.exe` shipped
+/// next to it instead; an install that predates it keeps the console binary.
+fn windows_task_executable(exe: &Path) -> PathBuf {
+    let launcher = exe.with_file_name(WINDOWS_LAUNCHER_EXE);
+    if launcher.is_file() {
+        launcher
+    } else {
+        exe.to_path_buf()
+    }
+}
+
+const WINDOWS_LAUNCHER_EXE: &str = "tokensw.exe";
+const WINDOWS_CONSOLE_EXE: &str = "tokens.exe";
+
+/// Re-point a scheduled task registered before `tokensw.exe` existed.
+///
+/// An npm/bun upgrade drops `tokensw.exe` next to `tokens.exe`, but the task
+/// that `autosubmit enable` registered earlier still runs `tokens.exe`, so a
+/// console window keeps flashing up until the user re-runs `enable`. The task
+/// itself calls `autosubmit run`, so doing the check there heals it on the next
+/// tick. Best-effort: any failure is reported on stderr and otherwise ignored.
+pub fn self_heal_windows_task(settings: &AutosubmitSettings) {
+    #[cfg(windows)]
+    {
+        match migrate_windows_task(settings) {
+            Ok(true) => {
+                eprintln!("Updated the autosubmit scheduled task to run without a console window.")
+            }
+            Ok(false) => {}
+            Err(err) => eprintln!("Could not update the autosubmit scheduled task: {err:#}"),
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = settings;
+}
+
+#[cfg(windows)]
+fn migrate_windows_task(settings: &AutosubmitSettings) -> Result<bool> {
+    if skip_scheduler_install() {
+        return Ok(false);
+    }
+    let exe = std::env::current_exe().context("Could not resolve current tokens executable")?;
+    let launcher_present = exe.with_file_name(WINDOWS_LAUNCHER_EXE).is_file();
+    if !windows_task_needs_migration(settings, launcher_present, registered_windows_task_command) {
+        return Ok(false);
+    }
+    install_scheduler(SchedulerKind::WindowsTaskScheduler, &exe, settings)?;
+    Ok(true)
+}
+
+/// The executable the registered task runs, read from `schtasks /Query /XML`
+/// (element names are not localized, unlike the `/FO LIST` labels).
+#[cfg(windows)]
+fn registered_windows_task_command() -> Option<String> {
+    let output = Command::new("schtasks")
+        .args(["/Query", "/TN", JOB_ID, "/XML"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    windows_task_command_from_xml(&decode_schtasks_output(&output.stdout))
+}
+
+/// Whether the registered autosubmit task should be re-created to run the
+/// windowless launcher. `registered_command` is only called (it spawns
+/// `schtasks`) once the cheap checks pass.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn windows_task_needs_migration(
+    settings: &AutosubmitSettings,
+    launcher_present: bool,
+    registered_command: impl FnOnce() -> Option<String>,
+) -> bool {
+    if !settings.enabled || !launcher_present {
+        return false;
+    }
+    let scheduler = settings
+        .scheduler
+        .as_deref()
+        .and_then(SchedulerKind::from_str);
+    if scheduler != Some(SchedulerKind::WindowsTaskScheduler) {
+        return false;
+    }
+    let Some(command) = registered_command() else {
+        return false;
+    };
+    // Only the file name matters, and it is ASCII, so this holds even if a
+    // non-ASCII directory came back mangled by the console code page.
+    let file_name = command
+        .trim()
+        .trim_matches('"')
+        .rsplit(['\\', '/'])
+        .next()
+        .unwrap_or_default();
+    file_name.eq_ignore_ascii_case(WINDOWS_CONSOLE_EXE)
+}
+
+/// `<Command>` of the task's first exec action.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn windows_task_command_from_xml(xml: &str) -> Option<String> {
+    let start = xml.find("<Command>")? + "<Command>".len();
+    let end = start + xml[start..].find("</Command>")?;
+    let command = xml[start..end].trim();
+    (!command.is_empty()).then(|| command.to_string())
+}
+
+/// `schtasks /XML` output may be UTF-16LE (with or without a BOM) or the
+/// console code page; decode either well enough to find `<Command>`.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn decode_schtasks_output(bytes: &[u8]) -> String {
+    let utf16 = bytes.starts_with(&[0xFF, 0xFE]) || (bytes.len() >= 2 && bytes[1] == 0);
+    if utf16 {
+        let body = bytes.strip_prefix(&[0xFF, 0xFE]).unwrap_or(bytes);
+        // A trailing odd byte is dropped, as `chunks_exact(2)` would.
+        let (pairs, _) = body.as_chunks::<2>();
+        let units: Vec<u16> = pairs.iter().map(|pair| u16::from_le_bytes(*pair)).collect();
+        String::from_utf16_lossy(&units)
+    } else {
+        String::from_utf8_lossy(bytes).into_owned()
+    }
 }
 
 fn windows_schedule(interval_minutes: u64) -> Result<(String, String)> {
@@ -848,4 +974,173 @@ fn build_date_filter_for_date(
         );
     }
     (date.since.clone(), date.until.clone())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn exe_in(dir: &Path, with_launcher: bool) -> PathBuf {
+        fs::create_dir_all(dir).unwrap();
+        let exe = dir.join(WINDOWS_CONSOLE_EXE);
+        fs::write(&exe, b"").unwrap();
+        if with_launcher {
+            fs::write(dir.join(WINDOWS_LAUNCHER_EXE), b"").unwrap();
+        }
+        exe
+    }
+
+    fn windows_settings() -> AutosubmitSettings {
+        AutosubmitSettings {
+            enabled: true,
+            interval_minutes: 30,
+            scheduler: Some(SchedulerKind::WindowsTaskScheduler.as_str().to_string()),
+            ..AutosubmitSettings::default()
+        }
+    }
+
+    fn task_run_arg(spec: &SchedulerSpec) -> String {
+        let (program, args) = &spec.install_commands[0];
+        assert_eq!(program, "schtasks");
+        let tr = args.iter().position(|arg| arg == "/TR").unwrap();
+        args[tr + 1].clone()
+    }
+
+    #[test]
+    fn windows_task_executable_prefers_launcher_when_present() {
+        let tmp = tempfile::tempdir().unwrap();
+        let exe = exe_in(tmp.path(), true);
+        assert_eq!(
+            windows_task_executable(&exe),
+            tmp.path().join(WINDOWS_LAUNCHER_EXE)
+        );
+    }
+
+    #[test]
+    fn windows_task_executable_falls_back_to_console_exe() {
+        let tmp = tempfile::tempdir().unwrap();
+        let exe = exe_in(tmp.path(), false);
+        assert_eq!(windows_task_executable(&exe), exe);
+    }
+
+    #[test]
+    fn windows_task_executable_ignores_launcher_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let exe = exe_in(tmp.path(), false);
+        fs::create_dir(tmp.path().join(WINDOWS_LAUNCHER_EXE)).unwrap();
+        assert_eq!(windows_task_executable(&exe), exe);
+    }
+
+    #[test]
+    fn windows_task_run_quotes_paths_with_spaces_and_non_ascii() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("Program Files").join("ノード 工具");
+        let settings = windows_settings();
+
+        let exe = exe_in(&dir, false);
+        let spec = render_windows_task_spec(&exe, &settings).unwrap();
+        assert_eq!(
+            task_run_arg(&spec),
+            format!(r#""{}" autosubmit run"#, exe.display())
+        );
+
+        let exe = exe_in(&dir, true);
+        let spec = render_windows_task_spec(&exe, &settings).unwrap();
+        assert_eq!(
+            task_run_arg(&spec),
+            format!(
+                r#""{}" autosubmit run"#,
+                dir.join(WINDOWS_LAUNCHER_EXE).display()
+            )
+        );
+    }
+
+    #[test]
+    fn migrates_task_that_still_runs_console_exe() {
+        let settings = windows_settings();
+        for command in [
+            r#"C:\Users\me\AppData\Roaming\npm\node_modules\tokens-cli\bin\tokens.exe"#,
+            r#""C:\Program Files\nodejs\TOKENS.EXE""#,
+            r#"C:\Users\ユーザー\tokens.exe"#,
+        ] {
+            assert!(
+                windows_task_needs_migration(&settings, true, || Some(command.to_string())),
+                "{command}"
+            );
+        }
+    }
+
+    #[test]
+    fn leaves_task_alone_when_not_applicable() {
+        let settings = windows_settings();
+        let old = || Some(r#"C:\npm\tokens.exe"#.to_string());
+
+        // Already on the launcher, or nothing registered / unreadable.
+        assert!(!windows_task_needs_migration(&settings, true, || Some(
+            r#""C:\npm\tokensw.exe""#.to_string()
+        )));
+        assert!(!windows_task_needs_migration(&settings, true, || None));
+        // No launcher shipped next to us.
+        assert!(!windows_task_needs_migration(&settings, false, old));
+        // Disabled, or a different scheduler.
+        let disabled = AutosubmitSettings {
+            enabled: false,
+            ..windows_settings()
+        };
+        assert!(!windows_task_needs_migration(&disabled, true, old));
+        let cron = AutosubmitSettings {
+            scheduler: Some("cron".to_string()),
+            ..windows_settings()
+        };
+        assert!(!windows_task_needs_migration(&cron, true, old));
+        let unknown = AutosubmitSettings {
+            scheduler: None,
+            ..windows_settings()
+        };
+        assert!(!windows_task_needs_migration(&unknown, true, old));
+    }
+
+    #[test]
+    fn skips_schtasks_query_when_cheap_checks_fail() {
+        let disabled = AutosubmitSettings {
+            enabled: false,
+            ..windows_settings()
+        };
+        let mut queried = false;
+        windows_task_needs_migration(&disabled, true, || {
+            queried = true;
+            None
+        });
+        windows_task_needs_migration(&windows_settings(), false, || {
+            queried = true;
+            None
+        });
+        assert!(!queried);
+    }
+
+    #[test]
+    fn reads_command_from_task_xml_in_utf16_and_utf8() {
+        let xml = "<?xml version=\"1.0\" encoding=\"UTF-16\"?>\r\n<Task><Actions Context=\"Author\"><Exec>\r\n  <Command>\"C:\\Program Files\\nodejs\\tokens.exe\"</Command>\r\n  <Arguments>autosubmit run</Arguments>\r\n</Exec></Actions></Task>";
+        let expected = "\"C:\\Program Files\\nodejs\\tokens.exe\"";
+
+        let mut utf16 = vec![0xFF, 0xFE];
+        utf16.extend(xml.encode_utf16().flat_map(u16::to_le_bytes));
+        let decoded = decode_schtasks_output(&utf16);
+        assert_eq!(
+            windows_task_command_from_xml(&decoded).as_deref(),
+            Some(expected)
+        );
+
+        let no_bom: Vec<u8> = xml.encode_utf16().flat_map(u16::to_le_bytes).collect();
+        assert_eq!(
+            windows_task_command_from_xml(&decode_schtasks_output(&no_bom)).as_deref(),
+            Some(expected)
+        );
+
+        assert_eq!(
+            windows_task_command_from_xml(&decode_schtasks_output(xml.as_bytes())).as_deref(),
+            Some(expected)
+        );
+        assert_eq!(windows_task_command_from_xml("<Task></Task>"), None);
+    }
 }

@@ -6,10 +6,17 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "CLI for tokens - AI token usage analytics"
+# Two binaries; `cargo run -p tokens-cli` should mean the CLI, not the launcher.
+default-run = "tokens"
 
 [[bin]]
 name = "tokens"
 path = "src/main.rs"
+
+# Windowless launcher the Windows autosubmit task runs; see src/bin/tokensw.rs.
+[[bin]]
+name = "tokensw"
+path = "src/bin/tokensw.rs"
 
 [dependencies]
 tokens-core = { workspace = true }

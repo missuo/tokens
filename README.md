@@ -297,6 +297,19 @@ bunx tokens-cli@latest login      # or: npx tokens-cli@latest login
 bunx tokens-cli@latest submit
 ```
 
+To keep submitting in the background on Windows, install it globally and let
+Task Scheduler run it. The scheduled task runs without a console window:
+
+```sh
+npm i -g tokens-cli               # or: bun add -g tokens-cli
+tokens login
+tokens autosubmit enable --interval 30m
+```
+
+The task runs `tokensw.exe`, a windowless launcher installed next to
+`tokens.exe`. A task registered by an older version that still runs
+`tokens.exe` is switched over automatically on its next run.
+
 ### Private mode
 
 ```sh
