@@ -1,7 +1,9 @@
 //! Terminal localization.
 //!
 //! Three languages, resolved once at startup from (`--lang`), then
-//! `TOKENS_LANG`, then `settings.json`, then the POSIX locale, then English.
+//! `TOKENS_LANG`, then `settings.json`, then English. Translation is opt-in:
+//! the POSIX locale (`LANG`, `LC_ALL`) is never read, so output people script
+//! against does not change under them because of a system setting.
 //! The catalogue is compiled in — `include_str!` per language and domain — so
 //! a run costs no file reads and the binary cannot be started without it.
 //!
@@ -111,25 +113,21 @@ pub fn set_lang(lang: Lang) {
 
 /// Resolve the startup language.
 ///
-/// Order: the `--lang` flag, `TOKENS_LANG`, the stored setting, the POSIX
-/// locale, then English. The flag wins so one run can be in another language
-/// without editing a config; the POSIX locale is last because it is the
-/// bluntest signal (a user with `LANG=ja_JP` who set the setting to English
-/// wants English).
+/// Order: the `--lang` flag, `TOKENS_LANG`, the stored setting, then English.
+/// The flag wins so one run can be in another language without editing a
+/// config. Every source is one the user set for this tool on purpose; the
+/// POSIX locale is deliberately not one of them, so English stays the default
+/// whatever `LANG` or `LC_ALL` say.
 pub fn resolve(flag: Option<&str>, stored: Option<&str>) -> Lang {
+    resolve_from(flag, std::env::var("TOKENS_LANG").ok().as_deref(), stored)
+}
+
+/// [`resolve`] with the environment passed in, so the chain can be tested
+/// without mutating process state.
+fn resolve_from(flag: Option<&str>, env: Option<&str>, stored: Option<&str>) -> Lang {
     flag.and_then(Lang::parse)
-        .or_else(|| {
-            std::env::var("TOKENS_LANG")
-                .ok()
-                .as_deref()
-                .and_then(Lang::parse)
-        })
+        .or_else(|| env.and_then(Lang::parse))
         .or_else(|| stored.and_then(Lang::parse))
-        .or_else(|| {
-            ["LC_ALL", "LC_MESSAGES", "LANG"]
-                .iter()
-                .find_map(|name| std::env::var(name).ok().as_deref().and_then(Lang::parse))
-        })
         .unwrap_or_default()
 }
 
@@ -271,6 +269,22 @@ mod tests {
         let _guard = EnGuard::take();
         assert_eq!(Lang::default(), Lang::En);
         assert_eq!(Lang::from_index(99), Lang::En);
+    }
+
+    #[test]
+    fn only_explicit_sources_choose_a_language() {
+        // Nothing set: English, whatever the system locale is.
+        assert_eq!(resolve_from(None, None, None), Lang::En);
+        // `auto` and junk fall through rather than picking something.
+        assert_eq!(resolve_from(Some("auto"), None, None), Lang::En);
+        assert_eq!(resolve_from(Some("de"), None, None), Lang::En);
+        // Each explicit source works on its own...
+        assert_eq!(resolve_from(Some("ja"), None, None), Lang::Ja);
+        assert_eq!(resolve_from(None, Some("zh-CN"), None), Lang::ZhCn);
+        assert_eq!(resolve_from(None, None, Some("ja")), Lang::Ja);
+        // ...and the flag beats the env, which beats the setting.
+        assert_eq!(resolve_from(Some("en"), Some("ja"), Some("zh-CN")), Lang::En);
+        assert_eq!(resolve_from(None, Some("ja"), Some("zh-CN")), Lang::Ja);
     }
 
     /// In a debug build a miss trips the assertion, so it is loud in

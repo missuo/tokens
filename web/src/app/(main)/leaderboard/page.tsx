@@ -29,25 +29,8 @@ export async function generateMetadata(): Promise<Metadata> {
   };
 }
 
-/**
- * Whether the failure means "there is no database configured" rather than
- * "the database answered and something went wrong".
- *
- * A refused connection is treated with the missing-URL case: both are a
- * checkout or a preview deploy with no database behind it, and both used to
- * turn the board into Next's English error screen. A live database that fails
- * mid-query still throws, so a real incident is still a 500 as the page
- * comment below intends. `/u/*` and `/shame` degrade the same way, which is
- * the part that matters — one page falling back and its neighbour 500ing
- * would be worse than either choice.
- */
 function isMissingDatabaseUrl(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    (error.message === "DATABASE_URL environment variable is not set" ||
-      error.message.includes("ECONNREFUSED") ||
-      (error as { code?: string }).code === "ECONNREFUSED")
-  );
+  return error instanceof Error && error.message === "DATABASE_URL environment variable is not set";
 }
 
 const VALID_PERIODS: Period[] = ["all", "month", "last-month", "week", "today", "yesterday", "custom"];

@@ -38,6 +38,7 @@ export default async function TermsPage() {
       title={t("legal.terms.title")}
       description={t("legal.terms.description")}
       updated={t("legal.terms.updated")}
+      englishHref="/terms"
     >
       <Clause heading={t("legal.terms.sections.agreement.heading")}>
         <p>

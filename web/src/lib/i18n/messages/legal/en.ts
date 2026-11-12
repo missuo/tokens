@@ -7,6 +7,11 @@
  */
 const messages = {
   lastUpdated: "Last updated {date}",
+  // Shown only above a translated policy; the English page is the binding one.
+  // `{english}` is a link to it.
+  translationNotice:
+    "This translation is provided for convenience. If it differs from the {english}, the English version prevails.",
+  englishVersion: "English version",
 
   terms: {
     title: "Terms of Service",

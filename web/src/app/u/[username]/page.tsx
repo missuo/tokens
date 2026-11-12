@@ -161,12 +161,7 @@ export default async function ProfilePage({
   const period = parseProfilePeriod(resolvedSearchParams.period);
   const { locale } = await getTranslator();
   const [data, devices, socialLinks] = await Promise.all([
-    // `getProfileData` throws on an upstream 5xx so the failure is not cached
-    // (see the note there). The page turns that back into "no such page", which
-    // still lands the reader on a translated page they can act on instead of a
-    // bare error screen — at the cost of blurring "could not load" and "does
-    // not exist" for one revalidate window.
-    getProfileData(username, period).catch(() => null),
+    getProfileData(username, period),
     getProfileDevices(username),
     getGitHubSocialLinks(username),
   ]);

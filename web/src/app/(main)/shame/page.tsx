@@ -49,10 +49,7 @@ export const dynamic = "force-dynamic";
 function isMissingDatabaseUrl(error: unknown): boolean {
   return (
     error instanceof Error &&
-    (error.message === "DATABASE_URL environment variable is not set" ||
-      error.message.includes("connect") ||
-      error.message.includes("ECONNREFUSED") ||
-      (error as { code?: string }).code === "ECONNREFUSED")
+    error.message === "DATABASE_URL environment variable is not set"
   );
 }
 

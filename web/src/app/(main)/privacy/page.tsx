@@ -32,6 +32,7 @@ export default async function PrivacyPage() {
       title={t("legal.privacy.title")}
       description={t("legal.privacy.description")}
       updated={t("legal.privacy.updated")}
+      englishHref="/privacy"
     >
       <Clause heading={t("legal.privacy.sections.shortVersion.heading")}>
         <p>{s("shortVersion.p1")}</p>

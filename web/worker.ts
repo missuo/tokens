@@ -7,6 +7,7 @@
 // request path.
 import { default as handler } from "./.open-next/worker.js";
 import { refreshAllSocialLinks } from "./src/lib/cron/refreshSocialLinks";
+import { DEFAULT_LOCALE, LOCALES } from "./src/lib/i18n/config";
 
 /**
  * Routes whose responses are a pure function of their URL and cost real work to
@@ -21,6 +22,13 @@ import { refreshAllSocialLinks } from "./src/lib/cron/refreshSocialLinks";
  * `caches.default` explicitly is what actually puts them there.
  */
 const CACHEABLE = /^\/api\/(og|embed\/[^/]+\/svg|badge\/[^/]+\/svg)/;
+
+/**
+ * An optional non-default locale prefix (`/zh-CN`, `/ja`). Each locale is its
+ * own URL and renders its own bytes, so a translated page is cached under its
+ * own key exactly like the English one; English stays unprefixed.
+ */
+const LOCALE_PREFIX = `(?:/(?:${LOCALES.filter((l) => l !== DEFAULT_LOCALE).join("|")}))?`;
 
 /**
  * HTML pages worth putting in the edge cache for signed-out readers.
@@ -40,8 +48,11 @@ const CACHEABLE = /^\/api\/(og|embed\/[^/]+\/svg|badge\/[^/]+\/svg)/;
  * leaderboard renders "Your position" from the session — and a shared cache is
  * exactly the wrong place for that. Anyone carrying a session cookie takes the
  * normal path and sees precisely what they see today.
+ *
+ * The root is not in this list. `/` redirects by the reader's remembered or
+ * negotiated language, so it must never be answered from a shared copy.
  */
-const PAGE_CACHEABLE = /^\/(leaderboard|shame)?$/;
+const PAGE_CACHEABLE = new RegExp(`^${LOCALE_PREFIX}/(?:leaderboard|shame)$`);
 
 /**
  * Public profiles, cacheable for *every* reader rather than signed-out ones.
@@ -56,7 +67,7 @@ const PAGE_CACHEABLE = /^\/(leaderboard|shame)?$/;
  * are stored — so a mixed-case URL keeps redirecting rather than caching a
  * redirect under the wrong key.
  */
-const PROFILE_CACHEABLE = /^\/u\/[^/]+$/;
+const PROFILE_CACHEABLE = new RegExp(`^${LOCALE_PREFIX}/u/[^/]+$`);
 
 /** Query parameters that change what a profile renders. Anything else — a
  *  utm tag, a cache-buster someone pasted — is dropped from the cache key so

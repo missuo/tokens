@@ -235,7 +235,9 @@ fn get_device_name() -> String {
         .ok()
         .and_then(|h| h.into_string().ok())
         .unwrap_or_else(|| "unknown".to_string());
-    tr!("top.auth.deviceName", host = hostname)
+    // Stored on the server and shown to other people, so it stays English
+    // whatever language this run prints in.
+    format!("CLI on {hostname}")
 }
 
 /// A read token is about to be printed verbatim, so anything that is not the

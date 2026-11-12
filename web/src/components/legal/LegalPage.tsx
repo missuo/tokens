@@ -2,6 +2,8 @@ import { CONTAINER } from "@/components/layout/Container";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { cn } from "@/lib/utils";
 import { getTranslator } from "@/lib/i18n/server";
+import { DEFAULT_LOCALE } from "@/lib/i18n/config";
+import { richText } from "@/lib/i18n/rich";
 
 export const CONTACT_EMAIL = "hi@tokens.ci";
 
@@ -16,18 +18,38 @@ export async function LegalPage({
   title,
   description,
   updated,
+  englishHref,
   children,
 }: {
   title: string;
   description: string;
   updated: string;
+  /** The unprefixed (English, binding) address of this policy. */
+  englishHref: string;
   children: React.ReactNode;
 }) {
-  const { t } = await getTranslator();
+  const { locale, t } = await getTranslator();
 
   return (
     <main className={cn(CONTAINER, "pb-24 pt-10 sm:pt-14")} id="main-content">
       <div className="mx-auto w-full max-w-[720px]">
+        {/* A translation is a courtesy, not the agreement: the English text
+            is the one that holds, so every other language says so up front. */}
+        {locale !== DEFAULT_LOCALE && (
+          <p className="mb-6 rounded-md border bg-muted/40 px-3 py-2 text-xs leading-relaxed text-muted-foreground">
+            {richText(t("legal.translationNotice"), {
+              english: (
+                <a
+                  href={englishHref}
+                  hrefLang="en"
+                  className="underline underline-offset-2 hover:text-foreground"
+                >
+                  {t("legal.englishVersion")}
+                </a>
+              ),
+            })}
+          </p>
+        )}
         <PageHeader title={title} description={description} />
         <p className="-mt-2 text-xs text-muted-foreground">
           {t("legal.lastUpdated", { date: updated })}

@@ -93,7 +93,6 @@
   "top.auth.browserUnavailable": "  当前环境无法自动打开浏览器，请用上面的 URL 继续。\n",
   "top.auth.clearFailed": "清理凭据失败。",
   "top.auth.codeExpired": "授权码已过期，请重试。",
-  "top.auth.deviceName": "{host} 上的 CLI",
   "top.auth.enablePrivateFailed": "开启私密模式失败",
   "top.auth.enterCode": "  输入以下验证码：",
   "top.auth.failedWithStatus": "{error}（{status}）",

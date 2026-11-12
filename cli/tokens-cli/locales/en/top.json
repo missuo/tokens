@@ -93,7 +93,6 @@
   "top.auth.browserUnavailable": "  Browser auto-open unavailable in this environment. Continue with the URL above.\n",
   "top.auth.clearFailed": "Failed to clear credentials.",
   "top.auth.codeExpired": "Authorization code expired. Please try again.",
-  "top.auth.deviceName": "CLI on {host}",
   "top.auth.enablePrivateFailed": "Failed to enable private mode",
   "top.auth.enterCode": "  Enter this code:",
   "top.auth.failedWithStatus": "{error} ({status})",

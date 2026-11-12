@@ -30,7 +30,8 @@ struct Cli {
     command: Option<Commands>,
 
     /// Terminal language: `en`, `zh-CN`, `ja`, or `auto` (the default, which
-    /// follows `TOKENS_LANG`, then settings.json, then your system locale).
+    /// follows `TOKENS_LANG`, then settings.json, then English). `--json`
+    /// output is always English.
     #[arg(long, global = true, value_name = "LANG")]
     lang: Option<String>,
 }
@@ -407,7 +408,11 @@ fn init_tracing() {
 /// the flag is global so its value is simply the next argument, and `--` ends
 /// the part clap will still interpret as flags.
 fn lang_flag_from_args() -> Option<String> {
-    let mut args = std::env::args_os().skip(1);
+    lang_flag_in(std::env::args_os().skip(1))
+}
+
+fn lang_flag_in(args: impl IntoIterator<Item = std::ffi::OsString>) -> Option<String> {
+    let mut args = args.into_iter();
     while let Some(arg) = args.next() {
         let Some(arg) = arg.to_str() else {
             continue;
@@ -425,6 +430,19 @@ fn lang_flag_from_args() -> Option<String> {
         }
     }
     None
+}
+
+/// Whether this run asked for `--json` anywhere before `--`.
+///
+/// JSON output is read by programs, so a run that asks for it is English from
+/// the first byte: the document itself and every error or warning around it.
+/// Checked on the raw arguments for the same reason as `--lang` — the language
+/// has to be settled before anything prints.
+fn json_requested_in(args: impl IntoIterator<Item = std::ffi::OsString>) -> bool {
+    args.into_iter()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .take_while(|arg| arg != "--")
+        .any(|arg| arg == "--json")
 }
 
 /// Replace clap's compile-time help text with the catalogue's, in place.
@@ -568,10 +586,13 @@ fn main() -> Result<()> {
     // message this program writes from here on is in the resolved language.
     // An unparseable `--lang` falls through the chain so the error itself can
     // be printed in whichever language that chain lands on.
-    i18n::set_lang(i18n::resolve(
-        lang_flag.as_deref(),
-        settings.language.as_deref(),
-    ));
+    // `--json` pins English regardless of `--lang`, `TOKENS_LANG` or the
+    // setting: machine-read output (errors and warnings included) never moves.
+    i18n::set_lang(if json_requested_in(std::env::args_os().skip(1)) {
+        i18n::Lang::En
+    } else {
+        i18n::resolve(lang_flag.as_deref(), settings.language.as_deref())
+    });
 
     if let Some(raw) = lang_flag.as_deref().filter(|raw| *raw != "auto") {
         if i18n::Lang::parse(raw).is_none() {
@@ -3704,6 +3725,27 @@ mod help_catalogues {
     use super::*;
     use serial_test::serial;
     use std::collections::HashMap;
+
+    fn os_args(args: &[&str]) -> Vec<std::ffi::OsString> {
+        args.iter().map(std::ffi::OsString::from).collect()
+    }
+
+    #[test]
+    fn json_runs_are_detected_before_parsing() {
+        assert!(json_requested_in(os_args(&["status", "--json"])));
+        assert!(json_requested_in(os_args(&["--lang", "ja", "status", "--json"])));
+        assert!(!json_requested_in(os_args(&["--lang", "ja", "status"])));
+        // After `--` it belongs to a wrapped command, not to us.
+        assert!(!json_requested_in(os_args(&["headless", "codex", "--", "--json"])));
+    }
+
+    #[test]
+    fn lang_flag_is_read_from_raw_arguments() {
+        assert_eq!(lang_flag_in(os_args(&["--lang", "ja", "status"])).as_deref(), Some("ja"));
+        assert_eq!(lang_flag_in(os_args(&["status", "--lang=zh-CN"])).as_deref(), Some("zh-CN"));
+        assert_eq!(lang_flag_in(os_args(&["status", "--", "--lang", "ja"])), None);
+        assert_eq!(lang_flag_in(os_args(&["status"])), None);
+    }
 
     fn catalogue(lang: &str) -> HashMap<String, String> {
         let text = match lang {

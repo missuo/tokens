@@ -167,7 +167,7 @@
   "cli.login.token.help": "Save an existing Tokens API token without browser auth",
   "cli.logout.about": "Logout from Tokens",
   "cli.root.about": "AI token usage analytics",
-  "cli.root.lang.help": "Terminal language: `en`, `zh-CN`, `ja`, or `auto` (the default, which follows `TOKENS_LANG`, then settings.json, then your system locale)",
+  "cli.root.lang.help": "Terminal language: `en`, `zh-CN`, `ja`, or `auto` (the default, which follows `TOKENS_LANG`, then settings.json, then English). `--json` output is always English",
   "cli.root.unknownLang": "Unknown value for --lang: '{value}'. Available: {options}.",
   "cli.serve.about": "Run in the background and submit usage on a recurring interval",
   "cli.serve.client_filter.help": "Filter by client(s). Repeatable or comma-separated (e.g. -c opencode,claude).",

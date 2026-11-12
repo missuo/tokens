@@ -1,5 +1,7 @@
 const messages = {
   lastUpdated: "最終更新: {date}",
+  translationNotice: "この翻訳は便宜上提供するものです。{english}との間に相違がある場合は、英語版が優先します。",
+  englishVersion: "英語の原文",
 
   terms: {
     title: "利用規約",

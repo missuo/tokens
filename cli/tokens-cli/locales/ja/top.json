@@ -93,7 +93,6 @@
   "top.auth.browserUnavailable": "  この環境ではブラウザを自動で開けません。上の URL から続行してください。\n",
   "top.auth.clearFailed": "認証情報の削除に失敗しました。",
   "top.auth.codeExpired": "認証コードの有効期限が切れました。もう一度お試しください。",
-  "top.auth.deviceName": "{host} 上の CLI",
   "top.auth.enablePrivateFailed": "プライベートモードを有効にできませんでした",
   "top.auth.enterCode": "  次のコードを入力してください：",
   "top.auth.failedWithStatus": "{error}（{status}）",

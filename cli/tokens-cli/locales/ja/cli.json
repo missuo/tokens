@@ -167,7 +167,7 @@
   "cli.login.token.help": "ブラウザ認証を行わず、既存の Tokens API トークンを保存します",
   "cli.logout.about": "Tokens からログアウトします",
   "cli.root.about": "AI トークン使用量の分析",
-  "cli.root.lang.help": "ターミナルの言語：`en`、`zh-CN`、`ja`、または `auto`（既定。`TOKENS_LANG`、settings.json、システムロケールの順に従います）",
+  "cli.root.lang.help": "ターミナルの言語：`en`、`zh-CN`、`ja`、または `auto`（既定。`TOKENS_LANG`、settings.json の順に従い、どちらもなければ英語）。`--json` の出力は常に英語です",
   "cli.root.unknownLang": "--lang の値が認識できません：'{value}'。指定できる言語：{options}。",
   "cli.serve.about": "バックグラウンドで動作し、一定間隔で使用量を送信します",
   "cli.serve.client_filter.help": "クライアントで絞り込みます。繰り返し指定もカンマ区切りも可能です（例：-c opencode,claude）。",

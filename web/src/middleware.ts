@@ -32,12 +32,17 @@ const PREFIXED_DEFAULT = "/en";
  * client finds the viewer's own row in it, which removes the personalisation
  * instead of hiding it, and has the better property besides: the card and the
  * table are read from one array, so they cannot disagree.
+ *
+ * Patterns are tested against the path with its locale prefix stripped, so
+ * `/zh-CN/leaderboard` and `/ja/u/x` get exactly the English page's cache
+ * header and query allowlist. Each locale is its own URL, so its own entry.
+ *
+ * `/` is deliberately absent: see `ROOT_CACHE_CONTROL`.
  */
 const SHARED_CACHE_ROUTES: ReadonlyArray<{
   pattern: RegExp;
   query: ReadonlySet<string>;
 }> = [
-  { pattern: /^\/$/, query: new Set() },
   { pattern: /^\/docs$/, query: new Set() },
   { pattern: /^\/terms$/, query: new Set() },
   { pattern: /^\/privacy$/, query: new Set() },
@@ -77,6 +82,16 @@ const SHARED_CACHE_ROUTES: ReadonlyArray<{
  */
 const SHARED_CACHE_CONTROL =
   "public, max-age=0, s-maxage=30, stale-while-revalidate=60";
+
+/**
+ * What the unprefixed root sends, whichever way it answers.
+ *
+ * `/` is the one URL whose response depends on the reader: a remembered or
+ * negotiated language turns it into a redirect to that language's board. The
+ * edge keys on the URL alone, so a cached copy would hand the first visitor's
+ * language to everyone behind the same colo. It is never stored anywhere.
+ */
+const ROOT_CACHE_CONTROL = "private, no-store";
 
 /**
  * Next fetches the RSC payload for a client-side navigation from the same path,
@@ -136,9 +151,11 @@ export function middleware(request: NextRequest) {
       : negotiateLocale(request.headers.get("accept-language"));
 
     if (preferred && preferred !== DEFAULT_LOCALE) {
-      return NextResponse.redirect(
+      const redirect = NextResponse.redirect(
         new URL(`/${preferred}/leaderboard`, request.url),
       );
+      redirect.headers.set("Cache-Control", ROOT_CACHE_CONTROL);
+      return redirect;
     }
   }
 
@@ -177,6 +194,12 @@ export function middleware(request: NextRequest) {
     // Note: We don't validate the session here to avoid database calls in
     // middleware. The actual validation happens in the page/API route.
     return pass();
+  }
+
+  if (!prefixed && path === "/") {
+    const response = pass();
+    response.headers.set("Cache-Control", ROOT_CACHE_CONTROL);
+    return response;
   }
 
   const route = SHARED_CACHE_ROUTES.find((entry) => entry.pattern.test(path));
