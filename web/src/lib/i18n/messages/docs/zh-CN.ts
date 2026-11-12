@@ -67,6 +67,15 @@ const messages = {
     },
   },
 
+  recognizedClients: {
+    title: "认可的客户端",
+    description: "由其他人开发、Tokens 推荐用来查看你用量的应用。",
+    badge: "认可的客户端",
+    nowdex: {
+      body: "Nowdex 可以在 Mac、iPhone 和 iPad 上查看 Codex、Claude、Cursor 等订阅额度还剩多少，支持主屏幕小组件和菜单栏。它也会在这些额度旁边显示你的 Tokens 用量——Token、花费和消息数，Tokens 认可它作为查看这些用量的客户端。感谢 {author} 开发了它。Nowdex 是他的应用，有自己的支持渠道和隐私政策；它读取公开的资料 API，从不需要你的 Tokens 登录。",
+    },
+  },
+
   everyday: {
     title: "日常使用",
     description: "五条命令覆盖整个流程。",

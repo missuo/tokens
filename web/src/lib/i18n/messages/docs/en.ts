@@ -87,6 +87,17 @@ const messages = {
     },
   },
 
+  // Apps someone else builds on the public profile API that this project
+  // vouches for. Product names, platforms and the author's name stay verbatim.
+  recognizedClients: {
+    title: "Recognized clients",
+    description: "Apps built by other people that Tokens endorses for viewing your usage.",
+    badge: "Recognized client",
+    nowdex: {
+      body: "Nowdex tracks how much of your Codex, Claude, Cursor and other plan quotas is left, on Mac, iPhone and iPad, with Home Screen widgets and a menu bar item. It shows Tokens usage too — tokens, cost and messages — alongside those quotas, and Tokens recognizes it as a client for viewing that usage. Thanks to {author} for building it. Nowdex is his app, with its own support and privacy policy; it reads the public profile API and never needs your Tokens login.",
+    },
+  },
+
   everyday: {
     title: "Everyday use",
     description: "Five commands cover the whole workflow.",

@@ -302,6 +302,51 @@ export default async function DocsPage() {
           </Card>
         </Section>
 
+        {/* Endorsed rather than merely tolerated: someone else builds and
+            runs these, on the public profile API, and this project vouches
+            for them as a good way to read your usage. */}
+        <Section
+          id="elsewhere"
+          title={t("docs.recognizedClients.title")}
+          description={t("docs.recognizedClients.description")}
+        >
+          <Card>
+            <CardHeader className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <CardTitle className="text-base">Nowdex</CardTitle>
+                <Badge variant="secondary">{t("docs.recognizedClients.badge")}</Badge>
+              </div>
+              <Button
+                variant="outline"
+                className="w-full shrink-0 sm:w-auto"
+                render={
+                  <a
+                    href="https://nowdex.app"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  />
+                }
+              >
+                nowdex.app
+              </Button>
+            </CardHeader>
+            <CardContent className="text-sm leading-relaxed text-muted-foreground">
+              {richText(t("docs.recognizedClients.nowdex.body"), {
+                author: (
+                  <a
+                    href="https://x.com/randyloop"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline underline-offset-4"
+                  >
+                    Randy Lu
+                  </a>
+                ),
+              })}
+            </CardContent>
+          </Card>
+        </Section>
+
         <Section
           id="usage"
           title={t("docs.everyday.title")}

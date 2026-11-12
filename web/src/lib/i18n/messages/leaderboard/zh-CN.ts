@@ -15,6 +15,7 @@ const messages = {
     "label": "时间范围",
     "allTime": "全部时间",
     "today": "今天",
+    "yesterday": "昨天",
     "week": "本周",
     "month": "本月",
     "lastMonth": "上月"

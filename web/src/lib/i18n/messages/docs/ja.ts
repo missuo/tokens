@@ -68,6 +68,15 @@ const messages = {
     },
   },
 
+  recognizedClients: {
+    title: "公認クライアント",
+    description: "Tokens が使用量の確認用として推奨する、他の人が開発したアプリです。",
+    badge: "公認クライアント",
+    nowdex: {
+      body: "Nowdex は、Codex、Claude、Cursor などのプランの残り枠を Mac、iPhone、iPad で確認できるアプリで、ホーム画面ウィジェットとメニューバー項目に対応しています。Tokens の使用量（Token、コスト、メッセージ）もそれらの枠と並べて表示し、Tokens はその使用量を確認するクライアントとして公認しています。開発してくれた {author} に感謝します。Nowdex は彼のアプリで、独自のサポートとプライバシーポリシーがあります。公開プロフィール API を読み取るだけで、Tokens へのログインは不要です。",
+    },
+  },
+
   everyday: {
     title: "日常的な使い方",
     description: "5 つのコマンドでワークフロー全体をまかなえます。",

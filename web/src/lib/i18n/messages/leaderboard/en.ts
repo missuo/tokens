@@ -23,6 +23,7 @@ const messages = {
     "label": "Period",
     "allTime": "All time",
     "today": "Today",
+    "yesterday": "Yesterday",
     "week": "Week",
     "month": "Month",
     "lastMonth": "Last month"

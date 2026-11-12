@@ -1311,7 +1311,9 @@ fn parser_version(client: ClientId) -> u32 {
         // state gained `selected_speed` / `turn_speed` after `current_model`.
         // Reject v10 envelopes before decoding that incompatible state, then
         // reparse the source to recover speed selections and turn boundaries.
-        ClientId::Codex => 11,
+        // v11->v12: recover compaction usage omitted from cumulative snapshots;
+        // incremental state now retains a pending per-response record.
+        ClientId::Codex => 12,
         // v4->v5: jcode's assistant-message timestamp is now back-calculated
         // to the turn start (timestamp - tool_duration_ms) instead of using
         // the recorded (end-anchored) timestamp directly. Follow-up to #890.
@@ -3949,7 +3951,7 @@ mod tests {
         // and changes the incremental state layout.
         // Each bump is what stops an existing cache from replaying the old
         // rows, so it has to be asserted rather than assumed.
-        assert_eq!(parser_version(ClientId::Codex), 11);
+        assert_eq!(parser_version(ClientId::Codex), 12);
         assert_eq!(parser_version(ClientId::Claude), 2);
     }
 

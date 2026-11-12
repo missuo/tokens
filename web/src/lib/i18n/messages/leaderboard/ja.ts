@@ -15,6 +15,7 @@ const messages = {
     "label": "期間",
     "allTime": "全期間",
     "today": "今日",
+    "yesterday": "昨日",
     "week": "今週",
     "month": "今月",
     "lastMonth": "先月"
