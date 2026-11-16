@@ -58,21 +58,19 @@ export function mergeSpeedUsage(
 }
 
 export interface SpeedTierRow {
-  speed: InferenceSpeed | "unknown";
+  speed: InferenceSpeed;
   sources: SpeedSource[];
   tokens: number;
   messages: number;
 }
 
 /**
- * One row per known speed (sources summed) in canonical order, then an
- * "unknown" row for whatever share of the totals no entry covers. Empty when
- * nothing is known, so callers can render no speed detail at all.
+ * One row per known speed (sources summed) in canonical order. Usage with no
+ * known speed gets no row. Empty when nothing is known, so callers can render
+ * no speed detail at all.
  */
 export function getSpeedTierRows(
   speedUsage: readonly SpeedUsage[] | undefined,
-  totalTokens: number,
-  totalMessages: number,
 ): SpeedTierRow[] {
   const known = (speedUsage ?? []).filter((entry) => entry.tokens > 0 || entry.messages > 0);
   const rows: SpeedTierRow[] = [];
@@ -85,17 +83,6 @@ export function getSpeedTierRows(
       sources: SPEED_SOURCES.filter((source) => entries.some((entry) => entry.source === source)),
       tokens: entries.reduce((sum, entry) => sum + entry.tokens, 0),
       messages: entries.reduce((sum, entry) => sum + entry.messages, 0),
-    });
-  }
-  if (rows.length === 0) return rows;
-
-  const unknownTokens = totalTokens - rows.reduce((sum, row) => sum + row.tokens, 0);
-  if (unknownTokens > 0) {
-    rows.push({
-      speed: "unknown",
-      sources: [],
-      tokens: unknownTokens,
-      messages: Math.max(0, totalMessages - rows.reduce((sum, row) => sum + row.messages, 0)),
     });
   }
   return rows;

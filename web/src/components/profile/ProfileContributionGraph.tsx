@@ -1619,7 +1619,7 @@ function modelMeta(
 function ModelSpeedTiers({ model }: { model: ContributionModelDetail }) {
   const t = useT();
   const locale = useLocale();
-  const tiers = getSpeedTierRows(model.speedUsage, model.totalTokens, model.messages);
+  const tiers = getSpeedTierRows(model.speedUsage);
   if (tiers.length === 0) return null;
   const percents = formatWholePercents(
     tiers.map((tier) => (model.totalTokens > 0 ? (tier.tokens / model.totalTokens) * 100 : 0)),
@@ -1640,7 +1640,7 @@ function ModelSpeedTiers({ model }: { model: ContributionModelDetail }) {
           <SpeedTierLine key={tier.speed}>
             <SpeedTierLabel
               tier={tier}
-              className={cn("flex-none", tier.speed !== "unknown" && "text-foreground")}
+              className="flex-none text-foreground"
             />
             <span className="min-w-0">{metrics.join(" · ")}</span>
           </SpeedTierLine>

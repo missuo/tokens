@@ -252,11 +252,7 @@ export function ProfileToday({
                           client.totalTokens > 0
                             ? model.totalTokens / client.totalTokens
                             : 0;
-                        const tiers = getSpeedTierRows(
-                          model.speedUsage,
-                          model.totalTokens,
-                          model.messages
-                        );
+                        const tiers = getSpeedTierRows(model.speedUsage);
                         // Same scale as the model rows, so a model's tiers add
                         // up to its own bar and percentage.
                         const tierShares = tiers.map((tier) =>
@@ -295,16 +291,11 @@ export function ProfileToday({
                                     <div className="flex min-w-0 flex-1">
                                       <SpeedTierLabel
                                         tier={tier}
-                                        className={cn(
-                                          "text-[0.6875rem]",
-                                          tier.speed === "unknown"
-                                            ? "text-muted-foreground/70"
-                                            : "text-muted-foreground"
-                                        )}
+                                        className="text-[0.6875rem] text-muted-foreground"
                                       />
                                     </div>
                                     <div className="hidden h-0.5 w-24 overflow-hidden rounded-full bg-border sm:block">
-                                      {tier.speed !== "unknown" && tier.tokens > 0 && (
+                                      {tier.tokens > 0 && (
                                         <div
                                           className={cn(
                                             "h-full min-w-px rounded-full",

@@ -50,13 +50,13 @@ const SpeedTierLine = tw(
  * Nested inside the model cell rather than given its own columns: the table's
  * "Share" column is a share of total *cost*, while a tier's share is of its
  * model's *tokens*. Putting the two in one column would invite reading one as
- * the other. Messages are omitted because the period-scoped `modelUsage` has
- * no message total to measure the Unknown remainder against.
+ * the other. Usage with no known speed gets no line, so the shares need not
+ * add up to 100%.
  */
 function ModelSpeedTiers({ usage }: { usage: ModelUsage }) {
   const t = useT();
   const locale = useLocale();
-  const tiers = getSpeedTierRows(usage.speedUsage, usage.tokens, 0);
+  const tiers = getSpeedTierRows(usage.speedUsage);
   if (tiers.length === 0) return null;
   const percents = formatWholePercents(
     tiers.map((tier) => (usage.tokens > 0 ? (tier.tokens / usage.tokens) * 100 : 0)),
@@ -69,7 +69,7 @@ function ModelSpeedTiers({ usage }: { usage: ModelUsage }) {
         <SpeedTierLine key={tier.speed}>
           <SpeedTierLabel
             tier={tier}
-            className={cn("flex-none", tier.speed !== "unknown" && "text-foreground")}
+            className="flex-none text-foreground"
           />
           <span className="min-w-0">
             {t("profile.models.tierLine", {
@@ -137,7 +137,7 @@ export function ProfileModels({
           </ListHead>
           <ListBody>
             {filteredUsage.map((usage) => {
-              const hasTiers = getSpeedTierRows(usage.speedUsage, usage.tokens, 0).length > 0;
+              const hasTiers = getSpeedTierRows(usage.speedUsage).length > 0;
               return (
               // Tier lines make the model cell taller, so the numeric cells
               // top-align with the model name instead of floating to the

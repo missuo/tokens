@@ -167,7 +167,6 @@ const messages = {
     standard: "Standard",
     fast: "Fast",
     ultrafast: "Ultrafast",
-    unknown: "Unknown",
     reported: "Reported",
     selected: "Selected",
     tooltip: "{label} · {sources}",

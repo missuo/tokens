@@ -151,7 +151,6 @@ const messages = {
     standard: "標準",
     fast: "高速",
     ultrafast: "超高速",
-    unknown: "不明",
     reported: "申告",
     selected: "選択",
     tooltip: "{label} · {sources}",

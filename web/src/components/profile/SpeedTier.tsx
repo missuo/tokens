@@ -10,7 +10,6 @@ const SPEED_LABELS = {
   standard: "profile.speed.standard",
   fast: "profile.speed.fast",
   ultrafast: "profile.speed.ultrafast",
-  unknown: "profile.speed.unknown",
 } as const;
 
 const SOURCE_LABELS = {
@@ -20,7 +19,7 @@ const SOURCE_LABELS = {
 
 const FAST_ZAP = "size-3 fill-current text-amber-500 dark:text-amber-400";
 
-/** Every tier, unknown included, takes the ultrafast width so labels line up. */
+/** Every tier takes the ultrafast width so labels line up. */
 function SpeedTierIcon({ speed }: { speed: SpeedTierRow["speed"] }) {
   return (
     <span className="relative inline-flex h-3 w-4 flex-none items-center justify-center" aria-hidden="true">
