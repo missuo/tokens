@@ -179,9 +179,8 @@ async fn fetch_from(
         .http1_only()
         .redirect(reqwest::redirect::Policy::none())
         .build()?;
-    let mut cookie =
-        reqwest::header::HeaderValue::from_str(&format!("WorkosCursorSessionToken={token}"))
-            .context("Invalid Cursor session cookie")?;
+    let mut cookie = reqwest::header::HeaderValue::from_str(&super::workos_session_cookie(token))
+        .context("Invalid Cursor session cookie")?;
     cookie.set_sensitive(true);
     let mut windows = Windows::new(since.and_then(DateTime::from_timestamp_millis), Utc::now());
     let mut window_items = 0;
