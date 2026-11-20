@@ -88,6 +88,7 @@ export const SOURCE_DISPLAY_NAMES: Record<ClientType, string> = {
   unsloth: "Unsloth",
   hindsight: "Hindsight",
   "craft-agent": "Craft Agent",
+  qoder: "Qoder",
 };
 
 // Client logos, served from this deployment rather than hotlinked.
@@ -162,6 +163,9 @@ export const SOURCE_LOGOS: Record<ClientType, string> = {
   unsloth: `${GITHUB_CDN_BASE}/client-unsloth.png`,
   hindsight: `${GITHUB_CDN_BASE}/client-hindsight.png`,
   "craft-agent": `${GITHUB_CDN_BASE}/client-craft-agent.png`,
+  // No Qoder brand asset is committed yet; the generic mark keeps the row
+  // identifiable without borrowing another product's logo.
+  qoder: `${GITHUB_CDN_BASE}/client-generic.svg`,
 };
 
 export const SOURCE_COLORS: Record<ClientType, string> = {
@@ -221,12 +225,13 @@ export const SOURCE_COLORS: Record<ClientType, string> = {
   unsloth: "#58CC02",
   hindsight: "#0891B2",
   "craft-agent": "#F97316",
+  qoder: "#2ADB5C",
 };
 
 /**
  * Every client the CLI scans, in display order.
  *
- * Mirrors `define_clients!` in `cli/tokens-core/src/clients.rs` — 54 entries,
+ * Mirrors `define_clients!` in `cli/tokens-core/src/clients.rs` — 55 entries,
  * excluding the two filter-only aliases (`synthetic`, `9router`) that have no
  * scan path of their own. Kept as an explicit list rather than derived from
  * SOURCE_DISPLAY_NAMES, which also carries those aliases and legacy keys.
@@ -276,6 +281,7 @@ export const SUPPORTED_CLIENTS: readonly ClientType[] = [
   "opencodereview",
   "pi",
   "prime-agent",
+  "qoder",
   "qwen",
   "reasonix",
   "roocode",

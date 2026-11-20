@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
-use crate::clients::ClientId;
+use crate::clients::{ClientId, PathRoot};
 use crate::sessions::{normalize_workspace_key, workspace_label_from_key};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -127,6 +127,12 @@ pub struct ScanResult {
     /// VS Code Copilot chat session JSONL files discovered under
     /// `workspaceStorage/*/chatSessions/*.jsonl`.
     pub copilot_vscode_sessions: Vec<PathBuf>,
+    /// Qoder and Qoder CN desktop IDE databases
+    /// (`<app data>/Qoder[CN]/SharedClientCache/cache/db/local.db`), which keep
+    /// per-message `token_info` for the IDE's chat panel. Only the two known
+    /// edition directories are probed; the newer `com.qoder*.app.stable` app
+    /// data layouts are not included because their token meaning is unverified.
+    pub qoder_ide_dbs: Vec<PathBuf>,
 }
 
 impl Default for ScanResult {
@@ -148,6 +154,7 @@ impl Default for ScanResult {
             opencode_json_dir: None,
             devin_dbs: Vec::new(),
             copilot_vscode_sessions: Vec::new(),
+            qoder_ide_dbs: Vec::new(),
         }
     }
 }
@@ -486,6 +493,16 @@ pub fn scan_directory(root: &str, pattern: &str) -> Vec<PathBuf> {
                 "*.json" => file_name.ends_with(".json"),
                 "*.json|*.jsonl" => file_name.ends_with(".json") || file_name.ends_with(".jsonl"),
                 "*.jsonl" => file_name.ends_with(".jsonl"),
+                // Qoder CLI segment logs: `<session>/segments/*.jsonl`. The
+                // parent-directory check keeps every other diagnostic file
+                // under `logs/sessions` out of the token lane.
+                "qoder-segments" => {
+                    file_name.ends_with(".jsonl")
+                        && path
+                            .parent()
+                            .and_then(Path::file_name)
+                            .is_some_and(|dir| dir == "segments")
+                }
                 // Codex: live rollouts plus the zstd form Codex rewrites older
                 // ones into. Only the exact `.jsonl.zst` suffix is a
                 // transcript; other `.zst` files and in-flight temporaries
@@ -769,6 +786,22 @@ pub fn built_in_extra_scan_paths_for(
     use_env_roots: bool,
 ) -> Vec<(ClientId, PathBuf)> {
     let mut paths = crate::paseo::discover_scan_paths(Path::new(home_dir), enabled, use_env_roots);
+
+    if enabled.contains(&ClientId::Qoder) {
+        // The China edition (`@qodercn-ai/qoderclicn`, Qoder CN CLI/Desktop)
+        // keeps its transcripts in `~/.qoder-cn` and honours its own
+        // `QODERCN_CONFIG_DIR`. Both editions are one client, so requesting
+        // `qoder` must find both.
+        let qoder_cn_root = PathRoot::EnvVar {
+            var: "QODERCN_CONFIG_DIR",
+            fallback_relative: ".qoder-cn",
+        }
+        .resolve_with_env_strategy(home_dir, use_env_roots);
+        paths.push((
+            ClientId::Qoder,
+            PathBuf::from(join_native(&qoder_cn_root, "projects")),
+        ));
+    }
 
     if enabled.contains(&ClientId::Claude) {
         // `transcripts` is a sibling of the registered `projects` root, not a
@@ -2016,6 +2049,31 @@ fn scan_all_clients_with_env_strategy_inner(
         push_unique_scan_task(&mut tasks, &mut seen_scan_roots, client_id, path);
     }
 
+    if enabled.contains(&ClientId::Qoder) {
+        // Qoder CLI 1.1.13+ writes per-request token truth for calls made with
+        // `--print --no-session-persistence` into diagnostic segment logs
+        // rather than a transcript. Only `<session>/segments/*.jsonl` is an
+        // event stream; the siblings under `logs/sessions` (runs, router logs)
+        // are diagnostics and are not scanned.
+        for (var, fallback_relative) in [
+            ("QODER_CONFIG_DIR", ".qoder"),
+            ("QODERCN_CONFIG_DIR", ".qoder-cn"),
+        ] {
+            let root = PathRoot::EnvVar {
+                var,
+                fallback_relative,
+            }
+            .resolve_with_env_strategy(home_dir, use_env_roots);
+            push_unique_scan_task_with_pattern(
+                &mut tasks,
+                &mut seen_scan_roots,
+                ClientId::Qoder,
+                PathBuf::from(join_native(&root, "logs/sessions")),
+                "qoder-segments",
+            );
+        }
+    }
+
     if enabled.contains(&ClientId::CodeBuddy) {
         let home_path = PathBuf::from(home_dir);
         let mut codebuddy_log_roots = vec![(
@@ -2597,6 +2655,27 @@ fn scan_all_clients_with_env_strategy_inner(
                 }
             }
         }
+    }
+
+    if enabled.contains(&ClientId::Qoder) {
+        // Both editions persist IDE chat usage in their own app-data directory.
+        // `PathRoot::AppData` resolves to `%APPDATA%` on Windows,
+        // `~/Library/Application Support` on macOS and the XDG config home on
+        // Linux, and follows the caller's home under `--home`.
+        let app_data = PathRoot::AppData.resolve_with_env_strategy(home_dir, use_env_roots);
+        let mut seen_qoder_dbs: HashSet<PathBuf> = HashSet::new();
+        for candidate in
+            crate::sessions::qoder::qoder_ide_db_candidates(Path::new(&app_data), use_env_roots)
+        {
+            if !candidate.is_file() {
+                continue;
+            }
+            let key = std::fs::canonicalize(&candidate).unwrap_or_else(|_| candidate.clone());
+            if seen_qoder_dbs.insert(key) {
+                result.qoder_ide_dbs.push(candidate);
+            }
+        }
+        result.qoder_ide_dbs.sort_unstable();
     }
 
     if enabled.contains(&ClientId::Crush) {
