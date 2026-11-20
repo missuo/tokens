@@ -1073,6 +1073,26 @@ define_clients!(
         headless: false,
         parse_local: true,
         submit_default: true
+    },
+    // Qoder (Alibaba) ships two fully separate editions — international
+    // (`~/.qoder`, `QODER_CONFIG_DIR`) and China (`~/.qoder-cn`,
+    // `QODERCN_CONFIG_DIR`) — with separate accounts and model pools. Both are
+    // registered under this one client; the scanner adds the other edition's
+    // roots as extra scan paths so a single `--client qoder` filter still
+    // merges them.
+    Qoder = 54 => {
+        id: "qoder",
+        display: "Qoder",
+        logo: None,
+        root: PathRoot::EnvVar {
+            var: "QODER_CONFIG_DIR",
+            fallback_relative: ".qoder",
+        },
+        relative: "projects",
+        pattern: "*.jsonl",
+        headless: false,
+        parse_local: true,
+        submit_default: true
     }
 );
 
@@ -1187,9 +1207,46 @@ mod tests {
     }
 
     #[test]
+    fn test_qoder_client_registered_as_local_session_source() {
+        let client = ClientId::from_str("qoder").expect("qoder client should be registered");
+        assert_eq!(client.display_name(), "Qoder");
+        assert_eq!(
+            client.data().root,
+            PathRoot::EnvVar {
+                var: "QODER_CONFIG_DIR",
+                fallback_relative: ".qoder",
+            }
+        );
+        assert_eq!(client.data().relative_path, "projects");
+        assert_eq!(client.data().pattern, "*.jsonl");
+        assert!(client.data().parse_local);
+        assert!(client.data().submit_default);
+        assert!(!client.data().headless);
+    }
+
+    #[test]
+    #[serial]
+    fn test_qoder_roots_resolve_both_editions() {
+        let mut env = EnvGuard::capture(&["QODER_CONFIG_DIR", "QODERCN_CONFIG_DIR"]);
+        env.remove("QODER_CONFIG_DIR");
+        env.remove("QODERCN_CONFIG_DIR");
+
+        assert_eq!(
+            ClientId::Qoder.data().resolve_path("/tmp/home"),
+            native_join(std::path::Path::new("/tmp/home"), ".qoder/projects")
+        );
+
+        env.set("QODER_CONFIG_DIR", "/custom/qoder");
+        assert_eq!(
+            ClientId::Qoder.data().resolve_path("/tmp/home"),
+            native_join(std::path::Path::new("/custom/qoder"), "projects")
+        );
+    }
+
+    #[test]
     fn test_client_id_count() {
         // 53 upstream clients plus this fork's Craft Agent.
-        assert_eq!(ClientId::COUNT, 54);
+        assert_eq!(ClientId::COUNT, 55);
     }
 
     #[test]

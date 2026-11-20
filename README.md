@@ -136,7 +136,7 @@ written sessions, it is counted.
 | <img src=".github/assets/client-kimi.png" width="16" height="16" alt="" /> Kimi | <img src=".github/assets/client-kiro.jpg" width="16" height="16" alt="" /> Kiro | <img src=".github/assets/client-micode.jpg" width="16" height="16" alt="" /> MiMo Code | <img src=".github/assets/client-mux.png" width="16" height="16" alt="" /> Mux |
 | <img src=".github/assets/client-openclaw.jpg" width="16" height="16" alt="" /> OpenClaw | <img src=".github/assets/client-opencode.png" width="16" height="16" alt="" /> OpenCode | <img src=".github/assets/client-opencodereview.png" width="16" height="16" alt="" /> OpenCodeReview | <img src=".github/assets/client-orca.png" width="16" height="16" alt="" /> Orca |
 | <img src=".github/assets/client-pi.png" width="16" height="16" alt="" /> Pi | <img src=".github/assets/client-qwen.png" width="16" height="16" alt="" /> Qwen | <img src=".github/assets/client-generic.svg" width="16" height="16" alt="" /> Reasonix | <img src=".github/assets/client-roocode.png" width="16" height="16" alt="" /> Roo Code |
-| <img src=".github/assets/client-paseo.svg" width="16" height="16" alt="" /> Paseo | <img src=".github/assets/client-trae.png" width="16" height="16" alt="" /> Trae |   |   |
+| <img src=".github/assets/client-paseo.svg" width="16" height="16" alt="" /> Paseo | <img src=".github/assets/client-generic.svg" width="16" height="16" alt="" /> Qoder | <img src=".github/assets/client-trae.png" width="16" height="16" alt="" /> Trae |   |
 | <img src=".github/assets/client-warp.png" width="16" height="16" alt="" /> Warp | <img src=".github/assets/client-workbuddy.png" width="16" height="16" alt="" /> WorkBuddy | <img src=".github/assets/client-zcode.png" width="16" height="16" alt="" /> ZCode | <img src=".github/assets/client-zed.webp" width="16" height="16" alt="" /> Zed Agent |
 
 <details>
@@ -151,6 +151,7 @@ written sessions, it is counted.
 | [Copilot CLI](https://docs.github.com/en/copilot) | `~/.copilot/otel/*.jsonl` |
 | [Gemini CLI](https://github.com/google-gemini/gemini-cli) | `~/.gemini/tmp/*/chats/*.json` |
 | [Kimi CLI](https://github.com/MoonshotAI/kimi-cli) | `~/.kimi/sessions/` |
+| [Qoder / Qoder CN](https://qoder.com/) | `~/.qoder/projects/` and `~/.qoder-cn/projects/` (override with `QODER_CONFIG_DIR` / `QODERCN_CONFIG_DIR`), `~/.qoder{,-cn}/logs/sessions/**/segments/`, plus the IDE's `SharedClientCache/cache/db/local.db` |
 | [Qwen CLI](https://github.com/QwenLM/qwen-cli) | `~/.qwen/projects/` |
 | Reasonix | `~/.reasonix/stats/*.jsonl` (override via `REASONIX_STATE_HOME` or `REASONIX_HOME`) |
 | [Amp](https://ampcode.com/) | `~/.local/share/amp/threads/` |
@@ -194,6 +195,43 @@ Run Tokens on the daemon host, where the session files live. Relative provider
 paths and paths set only in the daemon's launch environment cannot be discovered
 from this config; use absolute provider paths or Tokens' existing
 `scanner.extraScanPaths` setting for those installations.
+
+### Qoder
+
+Qoder ships two separate editions — international (`~/.qoder`, `QODER_CONFIG_DIR`)
+and China (`~/.qoder-cn`, `QODERCN_CONFIG_DIR`) — and both are reported under one
+`qoder` client. Tokens reads three local sources:
+
+- CLI/desktop **transcripts** under `<config>/projects/**/*.jsonl`, including
+  `subagents/agent-*.jsonl`;
+- structured **segment logs** under `<config>/logs/sessions/**/segments/*.jsonl`,
+  which are the only record of `qodercli --print --no-session-persistence` calls;
+- the desktop **IDE database** `<app data>/Qoder[CN]/SharedClientCache/cache/db/local.db`
+  (`chat_message.token_info`), opened read-only.
+
+One model request is counted once: transcript fragments sharing `message.id`
+collapse, and the three sources cross-deduplicate on Qoder's `request_id`, so a
+request that appears in both a transcript and a segment log, or in a forked
+session's replayed history, is not counted twice. `turn.finished` roll-ups are
+ignored. Token buckets are only ever taken from numbers Qoder recorded; cache
+reads are subtracted from the reported prompt so the cached subset is not added
+twice. See [docs/qoder.md](docs/qoder.md) for the field mapping and limits.
+
+Qoder's managed (plan-billed) models are charged in **credits**, and the CLI
+zeroes every token field for them unless token exposure is enabled. Those rows
+are not estimated from reply length, credits, or context occupancy — they are
+simply absent from the token totals, which is why a Qoder user on managed models
+can legitimately show little or no token usage. To record real counters for
+**future** CLI requests, export the flag in the environment Qoder inherits:
+
+```sh
+export QODER_EXPOSE_TOKEN_USAGE=1     # international
+export QODERCN_EXPOSE_TOKEN_USAGE=1   # Qoder CN
+```
+
+This does not backfill history, and Qoder versions differ in whether they honour
+it (the IDE ignores it entirely; its SQLite store always has real tokens).
+BYOK/custom-model requests carry real counters regardless.
 
 Clients that expose usage only through an account API need a sync step first —
 `tokens cursor sync`, `tokens antigravity sync`, `tokens trae sync`,
