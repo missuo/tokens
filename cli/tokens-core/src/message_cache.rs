@@ -1541,6 +1541,10 @@ fn parser_version(client: ClientId) -> u32 {
         // the family's driver base) or given an explicit independent arm.
         ClientId::Gemini => 1,
         ClientId::Amp => 1,
+        // Qoder / Qoder CN. Independent history: the parser owns the transcript,
+        // segment-log and IDE-SQLite merge rules, so a parse change bumps
+        // `QODER_PARSER_BASE_VERSION` here and nowhere else.
+        ClientId::Qoder => crate::sessions::qoder::QODER_PARSER_BASE_VERSION,
         ClientId::Qwen => 1,
         ClientId::Mux => 1,
         ClientId::Crush => 1,

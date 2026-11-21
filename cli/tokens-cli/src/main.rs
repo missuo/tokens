@@ -817,6 +817,7 @@ pub enum ClientFilter {
     Hindsight,
     #[value(name = "craft-agent")]
     CraftAgent,
+    Qoder,
     Kwwk,
     Synthetic,
 }
@@ -882,6 +883,7 @@ impl ClientFilter {
             Self::Unsloth => "unsloth",
             Self::Hindsight => "hindsight",
             Self::CraftAgent => "craft-agent",
+            Self::Qoder => "qoder",
             Self::Kwwk => "kwwk",
             Self::Synthetic => "synthetic",
         }
@@ -950,6 +952,7 @@ impl ClientFilter {
             Self::Unsloth => Some(ClientId::Unsloth),
             Self::Hindsight => Some(ClientId::Hindsight),
             Self::CraftAgent => Some(ClientId::CraftAgent),
+            Self::Qoder => Some(ClientId::Qoder),
             Self::Kwwk => Some(ClientId::Kwwk),
             Self::Synthetic => None,
         }
@@ -1014,6 +1017,7 @@ impl ClientFilter {
             ClientId::Unsloth => Self::Unsloth,
             ClientId::Hindsight => Self::Hindsight,
             ClientId::CraftAgent => Self::CraftAgent,
+            ClientId::Qoder => Self::Qoder,
             ClientId::Kwwk => Self::Kwwk,
         }
     }
@@ -4342,5 +4346,58 @@ mod submit_parser_revisions {
         assert_eq!(submit_parser_revision("devin-cli"), 2);
         assert_eq!(submit_parser_revision("devin-desktop"), 1);
         assert_eq!(submit_parser_revision("claude"), 1);
+    }
+}
+
+#[cfg(test)]
+mod client_filter_tests {
+    use super::ClientFilter;
+    use clap::ValueEnum;
+
+    #[test]
+    fn qoder_is_a_first_class_filter() {
+        let filter = ClientFilter::from_filter_str("qoder").expect("qoder filter");
+        assert_eq!(filter, ClientFilter::Qoder);
+        assert_eq!(filter.as_filter_str(), "qoder");
+        assert_eq!(
+            filter.to_client_id().map(|client| client.as_str()),
+            Some("qoder")
+        );
+        assert_eq!(
+            ClientFilter::from_client_id(tokens_core::ClientId::Qoder),
+            ClientFilter::Qoder
+        );
+        // `--client qoder` must be the CLI spelling, not the enum variant name.
+        let parsed = ClientFilter::from_str("qoder", true).expect("clap value");
+        assert_eq!(parsed, ClientFilter::Qoder);
+    }
+
+    /// Every filter except the synthetic pseudo-client round-trips through its
+    /// core `ClientId`, so a newly registered client cannot be half-wired (the
+    /// submit default list and the report filter both consume this mapping).
+    #[test]
+    fn every_filter_round_trips_through_its_client_id() {
+        for filter in ClientFilter::value_variants() {
+            // 9Router is a data-source alias for gjc-format transcripts, not a
+            // `ClientId` of its own; the mapping is intentionally one-way.
+            if *filter == ClientFilter::NineRouter {
+                assert_eq!(filter.to_client_id(), ClientFilter::Gjc.to_client_id());
+                continue;
+            }
+            let Some(client) = filter.to_client_id() else {
+                assert_eq!(*filter, ClientFilter::Synthetic);
+                continue;
+            };
+            assert_eq!(filter.as_filter_str(), client.as_str());
+            assert_eq!(ClientFilter::from_client_id(client), *filter);
+            assert_eq!(
+                ClientFilter::from_filter_str(filter.as_filter_str()),
+                Some(*filter)
+            );
+            assert_eq!(
+                tokens_core::ClientId::from_str(filter.as_filter_str()),
+                Some(client)
+            );
+        }
     }
 }

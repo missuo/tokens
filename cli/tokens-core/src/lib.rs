@@ -3113,6 +3113,70 @@ fn parse_all_messages_streaming<S: MessageSink>(
         sessions::qwen::parse_qwen_file,
     );
 
+    // Qoder and Qoder CN. One client lane fed by three local sources:
+    //
+    // - CLI transcripts under `<config>/projects/` (both editions, the China
+    //   root is added by the scanner as an extra scan path),
+    // - structured segment logs under `<config>/logs/sessions/**/segments/`,
+    //   which are the only record of `--no-session-persistence` calls,
+    // - the desktop IDE's `chat_message` SQLite store, whose `token_info`
+    //   survives even when the embedded agent reports zeroed token columns.
+    //
+    // The three sources overlap: a persisted session's request appears both in
+    // its transcript and in a segment log. Every per-request record is keyed on
+    // Qoder's own `request_id`, and `collapse_qoder_messages` keeps one row per
+    // key, so the scan order of the sources and of the files inside them cannot
+    // change the total. Rows whose usage Qoder zeroed (managed-model credits)
+    // never reach this lane: they carry no measurable tokens, and the parser
+    // does not estimate them.
+    {
+        let qoder_identity = message_cache::CacheIdentity::for_client(ClientId::Qoder);
+        let qoder_outcomes: Vec<CachedParseOutcome> = scan_result
+            .get(ClientId::Qoder)
+            .par_iter()
+            .map(|path| {
+                let parse: fn(&Path) -> Vec<UnifiedMessage> =
+                    if sessions::qoder::is_qoder_segment_path(path) {
+                        sessions::qoder::parse_qoder_segment_file
+                    } else {
+                        sessions::qoder::parse_qoder_transcript_file
+                    };
+                load_or_parse_source(qoder_identity, path, &source_cache, pricing, parse)
+            })
+            .collect();
+
+        // A store whose read stopped partway hands back the prefix it got —
+        // reported for this scan, but not cacheable: cached, it would stand in
+        // for the whole table until the database happened to change.
+        let qoder_ide_outcomes: Vec<CachedParseOutcome> = scan_result
+            .qoder_ide_dbs
+            .par_iter()
+            .map(|db_path| {
+                load_or_parse_source_with_fingerprint_and_policy(
+                    qoder_identity,
+                    db_path,
+                    &source_cache,
+                    pricing,
+                    HistoryRetention::LiveFileOnly,
+                    message_cache::SourceFingerprint::check_sqlite_path,
+                    |path, _| {
+                        let scan = sessions::qoder::scan_qoder_ide_db(path);
+                        (scan.messages, scan.complete)
+                    },
+                )
+            })
+            .collect();
+
+        let mut qoder_lane: Vec<UnifiedMessage> = Vec::new();
+        for outcome in qoder_outcomes.into_iter().chain(qoder_ide_outcomes) {
+            qoder_lane.extend(outcome.messages);
+            if let Some(entry) = outcome.cache_entry {
+                source_cache.insert(entry);
+            }
+        }
+        all_messages.extend(sessions::qoder::collapse_qoder_messages(qoder_lane));
+    }
+
     let roocode_outcomes: Vec<CachedParseOutcome> = scan_result
         .get(ClientId::RooCode)
         .par_iter()
@@ -6038,6 +6102,35 @@ pub fn parse_local_clients(options: LocalParseOptions) -> Result<ParsedMessages,
     let qwen_count = qwen_msgs.len() as i32;
     counts.set(ClientId::Qwen, qwen_count);
     messages.extend(qwen_msgs);
+
+    // Qoder / Qoder CN: transcripts, segment logs and the IDE database all
+    // collapse onto one row per request id (see the submit lane). This path has
+    // no pricing service in scope and therefore no source cache; the merge is
+    // the same function, so warm-cache and cold scans agree.
+    let qoder_msgs_raw: Vec<UnifiedMessage> = scan_result
+        .get(ClientId::Qoder)
+        .par_iter()
+        .flat_map(|path| {
+            if sessions::qoder::is_qoder_segment_path(path) {
+                sessions::qoder::parse_qoder_segment_file(path)
+            } else {
+                sessions::qoder::parse_qoder_transcript_file(path)
+            }
+        })
+        .chain(
+            scan_result
+                .qoder_ide_dbs
+                .par_iter()
+                .flat_map(|db_path| sessions::qoder::scan_qoder_ide_db(db_path).messages),
+        )
+        .collect();
+    let qoder_msgs: Vec<ParsedMessage> = sessions::qoder::collapse_qoder_messages(qoder_msgs_raw)
+        .iter()
+        .map(unified_to_parsed)
+        .collect();
+    let qoder_count = summed_parsed_message_count(&qoder_msgs);
+    counts.set(ClientId::Qoder, qoder_count);
+    messages.extend(qoder_msgs);
 
     let roocode_msgs: Vec<ParsedMessage> = scan_result
         .get(ClientId::RooCode)

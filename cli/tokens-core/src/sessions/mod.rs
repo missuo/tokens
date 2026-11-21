@@ -49,6 +49,7 @@ pub mod opencode_schema;
 pub mod opencodereview;
 pub mod pi;
 pub mod prime_agent;
+pub mod qoder;
 pub mod qwen;
 pub mod reasonix;
 pub mod roocode;

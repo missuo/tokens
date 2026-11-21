@@ -59,6 +59,7 @@ export const SUPPORTED_CLIENT_TYPES = [
   "unsloth",
   "hindsight",
   "craft-agent",
+  "qoder",
   "kwwk",
 ] as const;
 
