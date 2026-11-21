@@ -785,6 +785,42 @@ fn join_native_path(root: &std::path::Path, relative: &str) -> std::path::PathBu
     path
 }
 
+/// Per-profile Antigravity ACP conversation roots isolated by T3 Code.
+///
+/// T3 Code (pingdotgg/t3code) runs Antigravity over ACP and stores each
+/// profile's sessions at
+/// `<T3CODE_HOME>/userdata/providers/antigravity/<profile>/antigravity-acp/conversations/*.db`,
+/// in the same `gen_metadata` format the `antigravity-cli` client already
+/// parses. `T3CODE_HOME` defaults to `~/.t3`, is trimmed and `~`-expanded the
+/// way T3 Code resolves it itself, and — like every other root override — is
+/// only read when env roots are enabled: an explicit `--home` scan must not
+/// consult the caller's environment. Missing directories and non-directory
+/// profile entries are skipped silently.
+fn t3_antigravity_acp_scan_roots(home_dir: &Path, use_env_roots: bool) -> Vec<PathBuf> {
+    let t3_home = if use_env_roots {
+        std::env::var("T3CODE_HOME")
+            .ok()
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty())
+            .map(|value| expand_tilde_path_with_home(&value, home_dir.to_string_lossy().as_ref()))
+            .unwrap_or_else(|| home_dir.join(".t3"))
+    } else {
+        home_dir.join(".t3")
+    };
+    let Ok(entries) =
+        std::fs::read_dir(join_native_path(&t3_home, "userdata/providers/antigravity"))
+    else {
+        return Vec::new();
+    };
+    let mut roots: Vec<PathBuf> = entries
+        .filter_map(|entry| entry.ok())
+        .map(|entry| join_native_path(&entry.path(), "antigravity-acp/conversations"))
+        .filter(|path| path.is_dir())
+        .collect();
+    roots.sort_unstable();
+    roots
+}
+
 pub fn built_in_extra_scan_paths_for(
     home_dir: &str,
     enabled: &HashSet<ClientId>,
@@ -863,6 +899,14 @@ pub fn built_in_extra_scan_paths_for(
             ClientId::Senpi,
             senpi_omo_children_root(Path::new(home_dir), user_state_dir.as_deref()),
         ));
+    }
+
+    if enabled.contains(&ClientId::AntigravityCli) {
+        paths.extend(
+            t3_antigravity_acp_scan_roots(Path::new(home_dir), use_env_roots)
+                .into_iter()
+                .map(|path| (ClientId::AntigravityCli, path)),
+        );
     }
 
     paths
@@ -9209,6 +9253,148 @@ mod tests {
         assert!(
             discover_senpi_omo_children_roots(&temp.path().join("no-such-root"), None).is_empty(),
             "a missing sessions root must discover nothing"
+        );
+    }
+
+    fn setup_t3_antigravity_profile(t3_home: &Path, profile: &str) -> PathBuf {
+        let conversations = join_native_path(
+            t3_home,
+            &format!("userdata/providers/antigravity/{profile}/antigravity-acp/conversations"),
+        );
+        fs::create_dir_all(&conversations).unwrap();
+        conversations
+    }
+
+    #[test]
+    #[serial]
+    fn t3_antigravity_profiles_are_discovered_sorted_and_filtered() {
+        let home = TempDir::new().unwrap();
+        let t3_home = home.path().join(".t3");
+        let mut env = EnvGuard::capture(&["T3CODE_HOME"]);
+        env.remove("T3CODE_HOME");
+        // Created in reverse order so a sorted result proves ordering does not
+        // come from read_dir.
+        let profile_b = setup_t3_antigravity_profile(&t3_home, "profile-b");
+        let profile_a = setup_t3_antigravity_profile(&t3_home, "profile-a");
+        // A profile without `antigravity-acp/conversations`, and a
+        // non-directory entry under the provider root, must be skipped.
+        fs::create_dir_all(
+            t3_home.join("userdata/providers/antigravity/profile-empty/antigravity-acp"),
+        )
+        .unwrap();
+        fs::write(
+            t3_home.join("userdata/providers/antigravity/not-a-profile"),
+            b"x",
+        )
+        .unwrap();
+
+        let enabled = HashSet::from([ClientId::AntigravityCli]);
+        let roots: Vec<PathBuf> =
+            built_in_extra_scan_paths_for(home.path().to_str().unwrap(), &enabled, true)
+                .into_iter()
+                .filter(|(client_id, _)| *client_id == ClientId::AntigravityCli)
+                .map(|(_, path)| path)
+                .collect();
+        // Compare OsStr, not PathBuf: Path::eq folds `/` and `\` into the same
+        // components on Windows, so only the raw spelling fails if the roots
+        // stop carrying native separators.
+        assert_eq!(
+            roots
+                .iter()
+                .map(|path| path.as_os_str())
+                .collect::<Vec<_>>(),
+            vec![profile_a.as_os_str(), profile_b.as_os_str()]
+        );
+
+        let claude_only = HashSet::from([ClientId::Claude]);
+        assert!(
+            built_in_extra_scan_paths_for(home.path().to_str().unwrap(), &claude_only, true)
+                .iter()
+                .all(|(client_id, _)| *client_id != ClientId::AntigravityCli),
+            "T3 roots must not be scanned when antigravity-cli is disabled"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn t3_home_env_override_applies_only_to_env_roots() {
+        let home = TempDir::new().unwrap();
+        let custom = TempDir::new().unwrap();
+        let custom_profile = setup_t3_antigravity_profile(custom.path(), "profile-a");
+        let home_profile = setup_t3_antigravity_profile(&home.path().join(".t3"), "profile-b");
+        let mut env = EnvGuard::capture(&["T3CODE_HOME"]);
+        env.set("T3CODE_HOME", custom.path());
+        let enabled = HashSet::from([ClientId::AntigravityCli]);
+
+        assert_eq!(
+            built_in_extra_scan_paths_for(home.path().to_str().unwrap(), &enabled, true),
+            vec![(ClientId::AntigravityCli, custom_profile)],
+            "T3CODE_HOME must relocate the provider root when env roots are enabled"
+        );
+        assert_eq!(
+            built_in_extra_scan_paths_for(home.path().to_str().unwrap(), &enabled, false),
+            vec![(ClientId::AntigravityCli, home_profile.clone())],
+            "an explicit --home must resolve T3 roots against it and ignore T3CODE_HOME"
+        );
+
+        // Blank and whitespace-only overrides are unset, and `~` expands
+        // against the scan home — the way T3 Code resolves T3CODE_HOME itself.
+        for value in ["", "   "] {
+            env.set("T3CODE_HOME", value);
+            assert_eq!(
+                built_in_extra_scan_paths_for(home.path().to_str().unwrap(), &enabled, true),
+                vec![(ClientId::AntigravityCli, home_profile.clone())],
+                "blank T3CODE_HOME ({value:?}) must fall back to <home>/.t3"
+            );
+        }
+        let tilde_profile =
+            setup_t3_antigravity_profile(&home.path().join("custom-t3"), "profile-c");
+        env.set("T3CODE_HOME", "~/custom-t3");
+        assert_eq!(
+            built_in_extra_scan_paths_for(home.path().to_str().unwrap(), &enabled, true),
+            vec![(ClientId::AntigravityCli, tilde_profile)],
+            "T3CODE_HOME must expand ~ against the scan home"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn scan_discovers_t3_antigravity_acp_databases() {
+        let home = TempDir::new().unwrap();
+        // The developer machine may have T3CODE_HOME / GEMINI_CLI_HOME set for
+        // real installs; both must not leak into the synthetic home.
+        let mut env = EnvGuard::capture(&["T3CODE_HOME", "GEMINI_CLI_HOME"]);
+        env.remove("T3CODE_HOME");
+        env.remove("GEMINI_CLI_HOME");
+        // The native `~/.gemini` conversations root must keep being scanned
+        // alongside the T3 Code roots.
+        let cli_conversations =
+            join_native_path(home.path(), ".gemini/antigravity-cli/conversations");
+        fs::create_dir_all(&cli_conversations).unwrap();
+        let cli_db = cli_conversations.join("session-cli.db");
+        let t3_home = home.path().join(".t3");
+        let db_b = setup_t3_antigravity_profile(&t3_home, "profile-b").join("session-b.db");
+        let db_a = setup_t3_antigravity_profile(&t3_home, "profile-a").join("session-a.db");
+        for db in [&cli_db, &db_a, &db_b] {
+            // A synthetic SQLite database in the shape the parser reads.
+            let conn = rusqlite::Connection::open(db).unwrap();
+            conn.execute_batch("CREATE TABLE gen_metadata (idx integer, data blob, size integer);")
+                .unwrap();
+        }
+        // SQLite sidecars and non-`.db` files must not be picked up.
+        fs::write(db_a.with_extension("db-wal"), b"").unwrap();
+        fs::write(db_a.with_extension("txt"), b"").unwrap();
+
+        let result = scan_without_extra_dirs(
+            home.path().to_str().unwrap(),
+            &["antigravity-cli".to_string()],
+        );
+
+        // The native root registers before the T3 roots, which arrive in
+        // sorted profile order — the scan result must preserve that ordering.
+        assert_eq!(
+            result.get(ClientId::AntigravityCli),
+            &vec![cli_db, db_a, db_b]
         );
     }
 }
