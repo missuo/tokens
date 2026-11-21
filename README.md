@@ -122,7 +122,7 @@ We are not asking anyone to run their own copy. This repo exists to be read.
 
 ## Supported clients
 
-All 42 are detected automatically — if it is installed and has
+All 43 are detected automatically — if it is installed and has
 written sessions, it is counted.
 
 |  |  |  |  |
@@ -136,7 +136,7 @@ written sessions, it is counted.
 | <img src=".github/assets/client-kimi.png" width="16" height="16" alt="" /> Kimi | <img src=".github/assets/client-kiro.jpg" width="16" height="16" alt="" /> Kiro | <img src=".github/assets/client-micode.jpg" width="16" height="16" alt="" /> MiMo Code | <img src=".github/assets/client-mux.png" width="16" height="16" alt="" /> Mux |
 | <img src=".github/assets/client-openclaw.jpg" width="16" height="16" alt="" /> OpenClaw | <img src=".github/assets/client-opencode.png" width="16" height="16" alt="" /> OpenCode | <img src=".github/assets/client-opencodereview.png" width="16" height="16" alt="" /> OpenCodeReview | <img src=".github/assets/client-orca.png" width="16" height="16" alt="" /> Orca |
 | <img src=".github/assets/client-pi.png" width="16" height="16" alt="" /> Pi | <img src=".github/assets/client-qwen.png" width="16" height="16" alt="" /> Qwen | <img src=".github/assets/client-generic.svg" width="16" height="16" alt="" /> Reasonix | <img src=".github/assets/client-roocode.png" width="16" height="16" alt="" /> Roo Code |
-| <img src=".github/assets/client-paseo.svg" width="16" height="16" alt="" /> Paseo | <img src=".github/assets/client-trae.png" width="16" height="16" alt="" /> Trae |   |   |
+| <img src=".github/assets/client-paseo.svg" width="16" height="16" alt="" /> Paseo | <img src=".github/assets/client-trae.png" width="16" height="16" alt="" /> Trae | <img src=".github/assets/client-kwwk.png" width="16" height="16" alt="" /> KWWK |   |
 | <img src=".github/assets/client-warp.png" width="16" height="16" alt="" /> Warp | <img src=".github/assets/client-workbuddy.png" width="16" height="16" alt="" /> WorkBuddy | <img src=".github/assets/client-zcode.png" width="16" height="16" alt="" /> ZCode | <img src=".github/assets/client-zed.webp" width="16" height="16" alt="" /> Zed Agent |
 
 <details>
@@ -163,6 +163,7 @@ written sessions, it is counted.
 | [Goose](https://github.com/aaif-goose/goose) | `~/.local/share/goose/sessions/sessions.db` |
 | [Mux](https://github.com/coder/mux) | `~/.mux/sessions/` |
 | [Pi](https://github.com/badlogic/pi-mono) | `~/.pi/agent/sessions/`, `~/.omp/agent/sessions/` |
+| [KWWK](https://github.com/yellowplushq/kwwk) | `~/.kwwk/sessions/`. Programs embedding kwwk that keep a `.kwwk-sessions/` directory per task: add the parent of those task directories to `scanner.extraScanPaths.kwwk` (or `TOKENS_EXTRA_DIRS=kwwk:<dir>`); only session directories are read, not the code next to them |
 | [Zed Agent](https://zed.dev/docs/ai/agent-panel) | `~/.local/share/zed/threads/threads.db` |
 | Kiro | `~/.kiro/sessions/cli/`, `~/.local/share/kiro-cli/data.sqlite3` |
 | [Warp](https://www.warp.dev/) / Oz | `tokens warp sync` → `~/.config/tokens/warp-cache/usage.json` |

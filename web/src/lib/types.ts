@@ -59,6 +59,7 @@ export const SUPPORTED_CLIENT_TYPES = [
   "unsloth",
   "hindsight",
   "craft-agent",
+  "kwwk",
 ] as const;
 
 export type CcMirrorClientType = `cc-mirror/${string}`;

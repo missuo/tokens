@@ -446,9 +446,24 @@ pub fn scan_directory(root: &str, pattern: &str) -> Vec<PathBuf> {
     // and merely unpruned.
     let prune_extension_siblings = pattern == "codebuddy-extension-log";
 
-    let mut paths: Vec<PathBuf> = WalkDir::new(root)
+    // kwwk: sessions sit directly in the root (`~/.kwwk/sessions/<id>.jsonl`)
+    // or in a `.kwwk-sessions` directory one level below an embedder's task
+    // directory (`<tasks>/<task>/.kwwk-sessions/<id>.jsonl`). Those task
+    // directories also hold full code checkouts with `node_modules`, so cap the
+    // depth at the deepest layout and skip dependency / VCS trees outright.
+    let kwwk_sessions = pattern == "kwwk-session";
+    let mut walker = WalkDir::new(root);
+    if kwwk_sessions {
+        walker = walker.max_depth(3);
+    }
+
+    let mut paths: Vec<PathBuf> = walker
         .into_iter()
         .filter_entry(|e| {
+            if kwwk_sessions && e.depth() > 0 && e.file_type().is_dir() {
+                let name = e.file_name().to_string_lossy();
+                return !matches!(name.as_ref(), "node_modules" | ".git" | ".build" | "Pods" | "DerivedData");
+            }
             if !prune_extension_siblings || !e.file_type().is_dir() {
                 return true;
             }
@@ -534,6 +549,13 @@ pub fn scan_directory(root: &str, pattern: &str) -> Vec<PathBuf> {
                             }
                             _ => false,
                         }
+                }
+                "kwwk-session" => {
+                    file_name.ends_with(".jsonl")
+                        && path.parent().is_some_and(|dir| {
+                            dir == Path::new(root)
+                                || dir.file_name().is_some_and(|name| name == ".kwwk-sessions")
+                        })
                 }
                 "craft-agent-pi-session" => {
                     file_name.ends_with(".jsonl")
@@ -3915,6 +3937,62 @@ mod tests {
             result.get(ClientId::CraftAgent).as_slice(),
             std::slice::from_ref(&transcript)
         );
+    }
+
+    #[test]
+    fn test_scan_all_clients_reads_kwwk_cli_sessions() {
+        let dir = TempDir::new().unwrap();
+        let sessions = dir.path().join(".kwwk/sessions");
+        fs::create_dir_all(&sessions).unwrap();
+        let transcript = sessions.join("66ff7a63-f706-405b-ba34-e5b4b437f29c.jsonl");
+        File::create(&transcript).unwrap();
+        File::create(sessions.join("index.json")).unwrap();
+
+        let result = scan_all_clients_with_env_strategy(
+            dir.path().to_str().unwrap(),
+            &["kwwk".to_string()],
+            false,
+        );
+
+        assert_eq!(
+            result.get(ClientId::Kwwk).as_slice(),
+            std::slice::from_ref(&transcript)
+        );
+        assert!(result.get(ClientId::Pi).is_empty());
+    }
+
+    #[test]
+    fn test_kwwk_session_pattern_reads_task_session_dirs_only() {
+        // A bot embedding kwwk keeps `<tasks>/<task>/.kwwk-sessions/` next to
+        // full code checkouts; only the session directories may be read.
+        let dir = TempDir::new().unwrap();
+        let tasks = dir.path().join("tasks");
+        let live = tasks.join("T0001/.kwwk-sessions");
+        fs::create_dir_all(&live).unwrap();
+        let session = live.join("a1.jsonl");
+        File::create(&session).unwrap();
+        let flat = tasks.join("loose.jsonl");
+        File::create(&flat).unwrap();
+
+        let checkout = tasks.join("T0001/merchant");
+        let in_deps = checkout.join("node_modules/pkg/.kwwk-sessions");
+        fs::create_dir_all(&in_deps).unwrap();
+        File::create(in_deps.join("dep.jsonl")).unwrap();
+        let fixtures = checkout.join("fixtures");
+        fs::create_dir_all(&fixtures).unwrap();
+        File::create(fixtures.join("events.jsonl")).unwrap();
+        let too_deep = checkout.join("apps/x/.kwwk-sessions");
+        fs::create_dir_all(&too_deep).unwrap();
+        File::create(too_deep.join("deep.jsonl")).unwrap();
+
+        let mut found = scan_directory(tasks.to_str().unwrap(), "kwwk-session");
+        found.sort();
+        let mut expected = vec![session.clone(), flat.clone()];
+        expected.sort();
+        assert_eq!(found, expected);
+
+        // Pointing straight at one task's session directory works too.
+        assert_eq!(scan_directory(live.to_str().unwrap(), "kwwk-session"), vec![session]);
     }
 
     #[test]

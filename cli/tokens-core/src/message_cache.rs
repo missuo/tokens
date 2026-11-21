@@ -1145,6 +1145,9 @@ const SHARED_PARSER_FAMILIES: &[SharedParserFamily] = &[
             // Fork (missuo/tokens#48): Craft Agent rides the standard lane.
             // +1 (#122): entry-identity-first keys, as for Pi above.
             (ClientId::CraftAgent, 2),
+            // kwwk (Swift port of pi): epoch-ms timestamps are accepted by
+            // the shared parser; new member, nothing cached before it.
+            (ClientId::Kwwk, 0),
             // +3 for Prime Agent's independent history. v1->v2 strips a
             // leading BOM and recovers records containing undecodable
             // bytes; its accounting scan also continues past those records
@@ -1565,6 +1568,7 @@ fn parser_version(client: ClientId) -> u32 {
         | ClientId::Omp
         | ClientId::Senpi
         | ClientId::CraftAgent
+        | ClientId::Kwwk
         | ClientId::PrimeAgent
         | ClientId::RooCode
         | ClientId::KiloCode
@@ -5102,6 +5106,7 @@ mod tests {
                     (ClientId::Omp, 2),
                     (ClientId::Senpi, 2),
                     (ClientId::CraftAgent, 2),
+        (ClientId::Kwwk, 0),
                     (ClientId::PrimeAgent, 3),
                 ],
             ),

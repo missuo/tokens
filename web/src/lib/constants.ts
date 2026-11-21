@@ -88,6 +88,7 @@ export const SOURCE_DISPLAY_NAMES: Record<ClientType, string> = {
   unsloth: "Unsloth",
   hindsight: "Hindsight",
   "craft-agent": "Craft Agent",
+  kwwk: "KWWK",
 };
 
 // Client logos, served from this deployment rather than hotlinked.
@@ -162,6 +163,7 @@ export const SOURCE_LOGOS: Record<ClientType, string> = {
   unsloth: `${GITHUB_CDN_BASE}/client-unsloth.png`,
   hindsight: `${GITHUB_CDN_BASE}/client-hindsight.png`,
   "craft-agent": `${GITHUB_CDN_BASE}/client-craft-agent.png`,
+  kwwk: `${GITHUB_CDN_BASE}/client-kwwk.png`,
 };
 
 export const SOURCE_COLORS: Record<ClientType, string> = {
@@ -221,6 +223,7 @@ export const SOURCE_COLORS: Record<ClientType, string> = {
   unsloth: "#58CC02",
   hindsight: "#0891B2",
   "craft-agent": "#F97316",
+  kwwk: "#F5B800",
 };
 
 /**
@@ -266,6 +269,7 @@ export const SUPPORTED_CLIENTS: readonly ClientType[] = [
   "kimchi",
   "kimi",
   "kiro",
+  "kwwk",
   "lmstudio",
   "mcode",
   "micode",
