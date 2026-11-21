@@ -89,6 +89,7 @@ export const SOURCE_DISPLAY_NAMES: Record<ClientType, string> = {
   hindsight: "Hindsight",
   "craft-agent": "Craft Agent",
   qoder: "Qoder",
+  kwwk: "KWWK",
 };
 
 // Client logos, served from this deployment rather than hotlinked.
@@ -166,6 +167,7 @@ export const SOURCE_LOGOS: Record<ClientType, string> = {
   // No Qoder brand asset is committed yet; the generic mark keeps the row
   // identifiable without borrowing another product's logo.
   qoder: `${GITHUB_CDN_BASE}/client-generic.svg`,
+  kwwk: `${GITHUB_CDN_BASE}/client-kwwk.png`,
 };
 
 export const SOURCE_COLORS: Record<ClientType, string> = {
@@ -226,6 +228,7 @@ export const SOURCE_COLORS: Record<ClientType, string> = {
   hindsight: "#0891B2",
   "craft-agent": "#F97316",
   qoder: "#2ADB5C",
+  kwwk: "#F5B800",
 };
 
 /**
@@ -271,6 +274,7 @@ export const SUPPORTED_CLIENTS: readonly ClientType[] = [
   "kimchi",
   "kimi",
   "kiro",
+  "kwwk",
   "lmstudio",
   "mcode",
   "micode",

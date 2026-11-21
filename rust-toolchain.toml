@@ -1,0 +1,9 @@
+# Rust version for the CLI, used by local builds and by CI / release workflows
+# alike. Pinned so a new stable release (with new clippy lints) cannot turn CI
+# red on unrelated changes; bump it in its own commit, together with any fixes
+# the new clippy asks for, and update the `toolchain:` inputs in
+# .github/workflows/ci.yml and publish-cli.yml to the same version.
+[toolchain]
+channel = "1.100.0"
+components = ["clippy", "rustfmt"]
+profile = "minimal"

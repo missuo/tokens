@@ -1093,6 +1093,22 @@ define_clients!(
         headless: false,
         parse_local: true,
         submit_default: true
+    },
+    // kwwk (yellowplushq/kwwk) is a Swift port of pi and writes the pi record
+    // format with epoch-millisecond timestamps. The CLI keeps one flat file per
+    // session under `~/.kwwk/sessions`; embedders such as a bot running one
+    // agent per task keep `<task>/.kwwk-sessions/` directories, which users add
+    // as extra scan roots. See `sessions::kwwk` and the `kwwk-session` pattern.
+    Kwwk = 55 => {
+        id: "kwwk",
+        display: "KWWK",
+        logo: Some("https://raw.githubusercontent.com/missuo/tokens/main/.github/assets/client-kwwk.png"),
+        root: PathRoot::Home,
+        relative: ".kwwk/sessions",
+        pattern: "kwwk-session",
+        headless: false,
+        parse_local: true,
+        submit_default: true
     }
 );
 
@@ -1245,8 +1261,8 @@ mod tests {
 
     #[test]
     fn test_client_id_count() {
-        // 53 upstream clients plus this fork's Craft Agent.
-        assert_eq!(ClientId::COUNT, 55);
+        // 53 upstream clients plus this fork's Craft Agent, Qoder and kwwk.
+        assert_eq!(ClientId::COUNT, 56);
     }
 
     #[test]

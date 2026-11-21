@@ -42,6 +42,26 @@ use std::path::Path;
 /// the parser version retires those cached alias attributions.
 pub const PI_FORMAT_PARSER_BASE_VERSION: u32 = 2;
 
+/// Record timestamps are RFC 3339 strings in pi; kwwk (a Swift port) writes
+/// epoch milliseconds. Accept both, normalizing numbers to the RFC 3339 form
+/// the rest of the parser reads, so string timestamps are untouched. Any other
+/// shape is treated as absent rather than failing the whole record.
+fn deserialize_flexible_timestamp<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    Ok(match value {
+        Some(serde_json::Value::String(text)) => Some(text),
+        Some(serde_json::Value::Number(number)) => number
+            .as_i64()
+            .or_else(|| number.as_f64().map(|f| f as i64))
+            .and_then(chrono::DateTime::<chrono::Utc>::from_timestamp_millis)
+            .map(|at| at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)),
+        _ => None,
+    })
+}
+
 /// Pi session header (first line of JSONL)
 #[derive(Debug, Deserialize)]
 pub struct PiSessionHeader {
@@ -49,6 +69,7 @@ pub struct PiSessionHeader {
     pub entry_type: String,
     pub id: String,
     #[allow(dead_code)]
+    #[serde(default, deserialize_with = "deserialize_flexible_timestamp")]
     pub timestamp: Option<String>,
     #[allow(dead_code)]
     pub cwd: Option<String>,
@@ -214,6 +235,7 @@ pub struct PiSessionEntry {
     #[serde(rename = "parentId")]
     #[allow(dead_code)]
     pub parent_id: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_flexible_timestamp")]
     pub timestamp: Option<String>,
     pub message: Option<PiMessage>,
     pub name: Option<String>,

@@ -2796,6 +2796,15 @@ fn parse_all_messages_streaming<S: MessageSink>(
         sessions::craft_agent::parse_craft_agent_file,
     );
 
+    parse_cached_lane_deduped(
+        &scan_result,
+        &mut source_cache,
+        pricing,
+        &mut all_messages,
+        ClientId::Kwwk,
+        sessions::kwwk::parse_kwwk_file,
+    );
+
     let augment_outcomes: Vec<CachedParseOutcome> = scan_result
         .get(ClientId::Augment)
         .par_iter()
@@ -5845,6 +5854,21 @@ pub fn parse_local_clients(options: LocalParseOptions) -> Result<ParsedMessages,
     let craft_agent_count = craft_agent_msgs.len() as i32;
     counts.set(ClientId::CraftAgent, craft_agent_count);
     messages.extend(craft_agent_msgs);
+
+    let kwwk_msgs_raw: Vec<UnifiedMessage> = scan_result
+        .get(ClientId::Kwwk)
+        .par_iter()
+        .flat_map(|path| sessions::kwwk::parse_kwwk_file(path))
+        .collect();
+    let mut kwwk_seen: HashSet<String> = HashSet::new();
+    let kwwk_msgs: Vec<ParsedMessage> = kwwk_msgs_raw
+        .into_iter()
+        .filter(|message| should_keep_deduped_message(&mut kwwk_seen, message))
+        .map(|message| unified_to_parsed(&message))
+        .collect();
+    let kwwk_count = kwwk_msgs.len() as i32;
+    counts.set(ClientId::Kwwk, kwwk_count);
+    messages.extend(kwwk_msgs);
 
     let augment_msgs_raw: Vec<UnifiedMessage> = scan_result
         .get(ClientId::Augment)
