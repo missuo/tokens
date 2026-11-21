@@ -1754,11 +1754,7 @@ fn probe_https_heartbeat(port: u16, csrf_token: &str) -> bool {
     else {
         return false;
     };
-    if !heartbeat_value_looks_well_formed(&response) {
-        return false;
-    }
-
-    true
+    heartbeat_value_looks_well_formed(&response)
 }
 
 fn probe_plain_http_heartbeat(port: u16, csrf_token: &str) -> bool {
