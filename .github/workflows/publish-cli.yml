@@ -62,8 +62,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: dtolnay/rust-toolchain@stable
+      # Same version as rust-toolchain.toml (bump both together).
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: "1.100.0"
           targets: ${{ matrix.target }}
 
       - uses: actions/cache@v6
@@ -73,8 +75,8 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             cli/target/
-          key: cli-${{ matrix.target }}-${{ hashFiles('cli/Cargo.lock') }}
-          restore-keys: cli-${{ matrix.target }}-
+          key: cli-${{ matrix.target }}-rust-1.100.0-${{ hashFiles('cli/Cargo.lock') }}
+          restore-keys: cli-${{ matrix.target }}-rust-1.100.0-
 
       - uses: mlugg/setup-zig@v2
         if: matrix.zig
