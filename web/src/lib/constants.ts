@@ -89,7 +89,7 @@ export const SOURCE_DISPLAY_NAMES: Record<ClientType, string> = {
   hindsight: "Hindsight",
   "craft-agent": "Craft Agent",
   qoder: "Qoder",
-  kwwk: "KWWK",
+  kwwk: "kwwk",
 };
 
 // Client logos, served from this deployment rather than hotlinked.

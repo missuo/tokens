@@ -1105,7 +1105,7 @@ define_clients!(
     // as extra scan roots. See `sessions::kwwk` and the `kwwk-session` pattern.
     Kwwk = 55 => {
         id: "kwwk",
-        display: "KWWK",
+        display: "kwwk",
         logo: Some("https://raw.githubusercontent.com/missuo/tokens/main/.github/assets/client-kwwk.png"),
         root: PathRoot::Home,
         relative: ".kwwk/sessions",
@@ -1196,6 +1196,8 @@ mod tests {
 
     #[test]
     fn every_registered_client_has_human_readable_display_metadata() {
+        // Products whose own branding is the lowercase id itself.
+        const LOWERCASE_BRANDS: &[ClientId] = &[ClientId::Kwwk];
         for client in ClientId::iter() {
             let display_name = client.display_name();
             assert!(
@@ -1203,6 +1205,9 @@ mod tests {
                 "{} has no display name",
                 client.as_str()
             );
+            if LOWERCASE_BRANDS.contains(&client) {
+                continue;
+            }
             assert_ne!(
                 display_name,
                 client.as_str(),
