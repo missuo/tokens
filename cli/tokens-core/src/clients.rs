@@ -623,7 +623,11 @@ define_clients!(
         display: "Antigravity",
         logo: Some("https://raw.githubusercontent.com/missuo/tokens/main/.github/assets/client-antigravity.png"),root: PathRoot::Config,
         relative: "antigravity-cache/sessions",
-        pattern: "*.jsonl",
+        // The `antigravity sync` JSONL cache lives here; current desktop
+        // builds' `conversations/*.db` are added as built-in scan roots (see
+        // `scanner::antigravity_conversation_roots`). The pattern accepts both
+        // so `extraScanPaths.antigravity` works for either kind of root.
+        pattern: "antigravity-source",
         headless: false,
         parse_local: true,
         submit_default: true

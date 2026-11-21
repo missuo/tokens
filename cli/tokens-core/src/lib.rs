@@ -3433,19 +3433,16 @@ fn parse_all_messages_streaming<S: MessageSink>(
         all_messages.extend(crush_messages);
     }
 
-    let antigravity_messages: Vec<UnifiedMessage> = scan_result
-        .get(ClientId::Antigravity)
-        .par_iter()
-        .flat_map(|path| {
-            sessions::antigravity::parse_antigravity_file(path)
-                .into_iter()
-                .map(|mut msg| {
-                    apply_pricing_if_available(&mut msg, pricing);
-                    msg
-                })
-                .collect::<Vec<_>>()
-        })
-        .collect();
+    // Sync-cache JSONL and on-disk conversation databases are merged (and
+    // de-duplicated per session) by `parse_antigravity_sources`.
+    let antigravity_messages: Vec<UnifiedMessage> =
+        sessions::antigravity::parse_antigravity_sources(scan_result.get(ClientId::Antigravity))
+            .into_iter()
+            .map(|mut msg| {
+                apply_pricing_if_available(&mut msg, pricing);
+                msg
+            })
+            .collect();
     all_messages.extend(antigravity_messages);
 
     let antigravity_cli_messages: Vec<UnifiedMessage> = scan_result
@@ -6308,16 +6305,11 @@ pub fn parse_local_clients(options: LocalParseOptions) -> Result<ParsedMessages,
     counts.set(ClientId::Crush, crush_count);
     messages.extend(crush_msgs);
 
-    let antigravity_msgs: Vec<ParsedMessage> = scan_result
-        .get(ClientId::Antigravity)
-        .par_iter()
-        .flat_map(|path| {
-            sessions::antigravity::parse_antigravity_file(path)
-                .into_iter()
-                .map(|msg| unified_to_parsed(&msg))
-                .collect::<Vec<_>>()
-        })
-        .collect();
+    let antigravity_msgs: Vec<ParsedMessage> =
+        sessions::antigravity::parse_antigravity_sources(scan_result.get(ClientId::Antigravity))
+            .iter()
+            .map(unified_to_parsed)
+            .collect();
     let antigravity_count = antigravity_msgs.len() as i32;
     counts.set(ClientId::Antigravity, antigravity_count);
     messages.extend(antigravity_msgs);

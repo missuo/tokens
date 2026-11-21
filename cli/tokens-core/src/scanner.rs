@@ -717,6 +717,9 @@ pub fn scan_directory(root: &str, pattern: &str) -> Vec<PathBuf> {
                 // naturally rejects the `.db-wal`/`.db-shm`/`.db-journal`
                 // sidecars SQLite writes alongside the main file.
                 "*.db" => file_name.ends_with(".db"),
+                // Antigravity: the `antigravity sync` JSONL cache plus the
+                // conversation databases current desktop builds write.
+                "antigravity-source" => file_name.ends_with(".jsonl") || file_name.ends_with(".db"),
                 _ => false,
             }
         })
@@ -838,6 +841,44 @@ fn t3_antigravity_acp_scan_roots(home_dir: &Path, use_env_roots: bool) -> Vec<Pa
     roots
 }
 
+/// Conversation-database roots of the Antigravity desktop app.
+///
+/// Current Antigravity and Antigravity - Insiders builds store each
+/// conversation as `<gemini home>/<app data dir>/conversations/<cascade>.db`
+/// (the same schema as the Antigravity CLI), where the app data dir is the
+/// language server's `--app_data_dir` (`antigravity`, `antigravity-insiders`).
+/// Older builds wrote encrypted `.pb` files to the same directory; the
+/// `antigravity-source` pattern only admits `.db`/`.jsonl`, so those are
+/// ignored and still come from the `antigravity sync` cache.
+///
+/// The Gemini home honours `GEMINI_CLI_HOME` like the `antigravity-cli` root,
+/// and `~/.gemini` is always scanned too: the desktop app is not known to read
+/// that variable, so a relocated CLI home must not hide desktop usage.
+/// Duplicate roots are collapsed by the scan-task de-duplication.
+fn antigravity_conversation_roots(home_dir: &str, use_env_roots: bool) -> Vec<PathBuf> {
+    let mut gemini_homes = vec![join_native_path(Path::new(home_dir), ".gemini")];
+    let env_home = PathRoot::EnvVar {
+        var: "GEMINI_CLI_HOME",
+        fallback_relative: ".gemini",
+    }
+    .resolve_with_env_strategy(home_dir, use_env_roots);
+    let env_home = PathBuf::from(env_home);
+    if !gemini_homes.contains(&env_home) {
+        gemini_homes.push(env_home);
+    }
+
+    gemini_homes
+        .iter()
+        .flat_map(|gemini_home| {
+            ["antigravity", "antigravity-insiders"]
+                .into_iter()
+                .map(move |app_dir| {
+                    join_native_path(gemini_home, &format!("{app_dir}/conversations"))
+                })
+        })
+        .collect()
+}
+
 pub fn built_in_extra_scan_paths_for(
     home_dir: &str,
     enabled: &HashSet<ClientId>,
@@ -932,6 +973,14 @@ pub fn built_in_extra_scan_paths_for(
             ClientId::Senpi,
             senpi_omo_children_root(Path::new(home_dir), user_state_dir.as_deref()),
         ));
+    }
+
+    if enabled.contains(&ClientId::Antigravity) {
+        paths.extend(
+            antigravity_conversation_roots(home_dir, use_env_roots)
+                .into_iter()
+                .map(|path| (ClientId::Antigravity, path)),
+        );
     }
 
     if enabled.contains(&ClientId::AntigravityCli) {
@@ -9342,6 +9391,65 @@ mod tests {
         );
         fs::create_dir_all(&conversations).unwrap();
         conversations
+    }
+
+    #[test]
+    #[serial]
+    fn antigravity_desktop_conversation_dbs_are_scanned() {
+        let home = TempDir::new().unwrap();
+        let mut env = EnvGuard::capture(&["GEMINI_CLI_HOME"]);
+        env.remove("GEMINI_CLI_HOME");
+        let stable = home.path().join(".gemini/antigravity/conversations");
+        let insiders = home
+            .path()
+            .join(".gemini/antigravity-insiders/conversations");
+        fs::create_dir_all(&stable).unwrap();
+        fs::create_dir_all(&insiders).unwrap();
+        // Current builds write `.db`; older ones left encrypted `.pb` files in
+        // the same directory, and SQLite leaves `-wal`/`-shm` sidecars.
+        for name in ["new.db", "new.db-wal", "new.db-shm", "old.pb"] {
+            fs::write(stable.join(name), b"x").unwrap();
+        }
+        fs::write(insiders.join("ins.db"), b"x").unwrap();
+
+        let enabled = HashSet::from([ClientId::Antigravity]);
+        let roots: Vec<PathBuf> =
+            built_in_extra_scan_paths_for(home.path().to_str().unwrap(), &enabled, true)
+                .into_iter()
+                .filter(|(client_id, _)| *client_id == ClientId::Antigravity)
+                .map(|(_, path)| path)
+                .collect();
+        assert!(roots
+            .iter()
+            .any(|root| root.ends_with("antigravity/conversations")));
+        assert!(roots
+            .iter()
+            .any(|root| root.ends_with("antigravity-insiders/conversations")));
+
+        let pattern = ClientId::Antigravity.file_pattern();
+        let mut found: Vec<PathBuf> = roots
+            .iter()
+            .flat_map(|root| scan_directory(root.to_str().unwrap(), pattern))
+            .collect();
+        found.sort();
+        assert_eq!(found, vec![stable.join("new.db"), insiders.join("ins.db")]);
+
+        // The sync cache root still yields its JSONL rows under the same pattern.
+        let cache = home.path().join("antigravity-cache/sessions");
+        fs::create_dir_all(&cache).unwrap();
+        fs::write(cache.join("s.jsonl"), b"{}").unwrap();
+        assert_eq!(
+            scan_directory(cache.to_str().unwrap(), pattern),
+            vec![cache.join("s.jsonl")]
+        );
+
+        let cli_only = HashSet::from([ClientId::AntigravityCli]);
+        assert!(
+            built_in_extra_scan_paths_for(home.path().to_str().unwrap(), &cli_only, true)
+                .iter()
+                .all(|(client_id, _)| *client_id != ClientId::Antigravity),
+            "desktop roots must not be scanned when antigravity is disabled"
+        );
     }
 
     #[test]

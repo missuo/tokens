@@ -68,6 +68,18 @@ use std::ops::RangeInclusive;
 use std::path::Path;
 
 pub fn parse_antigravity_cli_file(path: &Path) -> Vec<UnifiedMessage> {
+    parse_antigravity_conversation_db(path, "antigravity-cli")
+}
+
+/// Parse one Antigravity conversation database and attribute its rows to
+/// `client`.
+///
+/// The CLI (`antigravity-cli`), T3 Code's ACP profiles, and current
+/// Antigravity / Antigravity - Insiders desktop builds (`antigravity`, under
+/// `~/.gemini/antigravity{,-insiders}/conversations/`) all write the same
+/// `gen_metadata` schema, so the decoding is shared and only the client label
+/// differs.
+pub fn parse_antigravity_conversation_db(path: &Path, client: &'static str) -> Vec<UnifiedMessage> {
     let Some(conn) = open_readonly_sqlite_opt(path) else {
         return Vec::new();
     };
@@ -102,6 +114,7 @@ pub fn parse_antigravity_cli_file(path: &Path) -> Vec<UnifiedMessage> {
     );
     let session_models = SessionModels::from_blobs(rows.iter().map(|(_, blob)| blob.as_slice()));
     let ctx = GenContext {
+        client,
         session_id: &session_id,
         session_timestamp: meta.fallback_ms,
         session_anchor: meta.created_ms,
@@ -278,6 +291,7 @@ fn display_label_to_model_id(label: &str) -> Option<&'static str> {
 }
 
 struct GenContext<'a> {
+    client: &'static str,
     session_id: &'a str,
     session_timestamp: i64,
     session_anchor: Option<i64>,
@@ -314,6 +328,24 @@ fn parse_gen_metadata(
     let dedup_key = string_field(usage, 11)
         .filter(|text| !text.trim().is_empty())
         .map(|text| text.to_string());
+
+    // A generation the backend rejected (e.g. `PERMISSION_DENIED (code 403)`)
+    // still gets a `gen_metadata` row: top-level `#5` holds the error text and
+    // the usage message carries only the locally-counted system prompt (`#1`),
+    // with no responseId, no output and no `#19` responseModel. Nothing was
+    // served, and the row would otherwise surface as `antigravity/unknown`,
+    // which has no price and blocks submission. Only rows matching every one
+    // of those signals are dropped, so a partial response that did produce
+    // output is still counted.
+    let failed_generation = non_empty_string_field(blob, 5).is_some()
+        && dedup_key.is_none()
+        && output == 0
+        && reasoning == 0
+        && cache_read == 0;
+    if failed_generation {
+        return None;
+    }
+
     if let Some(key) = &dedup_key {
         if !seen_response_ids.insert(key.clone()) {
             return None;
@@ -357,7 +389,7 @@ fn parse_gen_metadata(
         .to_string();
 
     Some(UnifiedMessage::new_with_dedup(
-        "antigravity-cli",
+        ctx.client,
         model_id,
         provider_id,
         ctx.session_id,
@@ -989,17 +1021,17 @@ fn non_empty_string_field(buf: &[u8], field: u64) -> Option<&str> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     use rusqlite::{params, Connection};
 
-    fn enc_varint(field: u64, value: u64) -> Vec<u8> {
+    pub(crate) fn enc_varint(field: u64, value: u64) -> Vec<u8> {
         let mut out = encode_varint(field << 3);
         out.extend(encode_varint(value));
         out
     }
 
-    fn enc_len(field: u64, payload: &[u8]) -> Vec<u8> {
+    pub(crate) fn enc_len(field: u64, payload: &[u8]) -> Vec<u8> {
         let mut out = encode_varint((field << 3) | 2);
         out.extend(encode_varint(payload.len() as u64));
         out.extend_from_slice(payload);
@@ -1065,6 +1097,7 @@ mod tests {
         let models = SessionModels::default();
         let step_timestamps = StepTimestamps::default();
         let ctx = GenContext {
+            client: "antigravity-cli",
             session_id: "s",
             session_timestamp: session_fallback,
             session_anchor: anchor,
@@ -1088,6 +1121,7 @@ mod tests {
         let models = SessionModels::default();
         let step_timestamps = StepTimestamps::default();
         let ctx = GenContext {
+            client: "antigravity-cli",
             session_id,
             session_timestamp,
             session_anchor: Some(session_timestamp),
@@ -1107,7 +1141,11 @@ mod tests {
 
     /// One `gen_metadata` blob with either model field independently present or
     /// absent, mirroring the real rows where `#19` is missing but `#21` is not.
-    fn build_row(model: Option<&str>, display: Option<&str>, response_id: &str) -> Vec<u8> {
+    pub(crate) fn build_row(
+        model: Option<&str>,
+        display: Option<&str>,
+        response_id: &str,
+    ) -> Vec<u8> {
         // usage message (#4 of chatModel)
         let mut usage = Vec::new();
         usage.extend(enc_varint(1, 1132)); // fixed system prompt
@@ -1131,7 +1169,7 @@ mod tests {
     }
 
     /// Build a conversation database from `gen_metadata` blobs in row order.
-    fn write_conversation(path: &Path, blobs: &[Vec<u8>]) {
+    pub(crate) fn write_conversation(path: &Path, blobs: &[Vec<u8>]) {
         let conn = Connection::open(path).unwrap();
         conn.execute_batch("CREATE TABLE gen_metadata (idx integer, data blob, size integer);")
             .unwrap();
@@ -1156,6 +1194,65 @@ mod tests {
         blob.extend(enc_len(1, &workspace));
         blob.extend(enc_len(2, &created));
         blob
+    }
+
+    /// A `gen_metadata` row for a generation the backend rejected, laid out as
+    /// agy 1.5.14 writes it: top-level `#5` error text, and a usage message
+    /// holding only the fixed system-prompt count — no responseId, no output,
+    /// no `#19` responseModel.
+    pub(crate) fn build_failed_row(error: &str) -> Vec<u8> {
+        let usage = enc_varint(1, 1418);
+        let mut chat_model = Vec::new();
+        chat_model.extend(enc_varint(3, 1418));
+        chat_model.extend(enc_len(4, &usage));
+        chat_model.extend(enc_len(21, b"Gemini 4 Argon (Medium)"));
+        let mut blob = Vec::new();
+        blob.extend(enc_len(4, b"8620db35-3d52-4dd9-a9d1-d7f8973ab9c3"));
+        blob.extend(enc_len(5, error.as_bytes()));
+        blob.extend(enc_len(1, &chat_model));
+        blob
+    }
+
+    #[test]
+    fn rejected_generations_are_not_counted() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rejected.db");
+        write_conversation(
+            &path,
+            &[
+                build_failed_row("PERMISSION_DENIED (code 403): This service has been disabled"),
+                build_failed_row("PERMISSION_DENIED (code 403): This service has been disabled"),
+            ],
+        );
+
+        assert!(parse_antigravity_cli_file(&path).is_empty());
+    }
+
+    #[test]
+    fn an_error_row_that_still_produced_output_is_counted() {
+        // Same error marker, but the generation was served (responseId and
+        // output present) before failing, so its tokens are real.
+        let mut blob = build_row(Some("gemini-3-flash-a"), None, "resp-partial");
+        blob.extend(enc_len(5, b"DEADLINE_EXCEEDED"));
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("partial.db");
+        write_conversation(&path, &[blob]);
+
+        let messages = parse_antigravity_cli_file(&path);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].tokens.output, 300);
+    }
+
+    #[test]
+    fn conversation_db_rows_carry_the_requested_client() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cascade-1.db");
+        write_conversation(&path, &[build_gen_metadata()]);
+
+        let messages = parse_antigravity_conversation_db(&path, "antigravity");
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].client, "antigravity");
+        assert_eq!(messages[0].session_id, "cascade-1");
     }
 
     #[test]

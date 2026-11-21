@@ -169,7 +169,7 @@ written sessions, it is counted.
 | Kiro | `~/.kiro/sessions/cli/`, `~/.local/share/kiro-cli/data.sqlite3` |
 | [Warp](https://www.warp.dev/) / Oz | `tokens warp sync` → `~/.config/tokens/warp-cache/usage.json` |
 | [Trae](https://www.trae.ai/) | `tokens trae sync` → `~/.config/tokens/trae-cache/sessions/` |
-| [Antigravity](https://antigravity.google/) | `tokens antigravity sync` → `~/.config/tokens/antigravity-cache/sessions/` |
+| [Antigravity](https://antigravity.google/) | `~/.gemini/antigravity/conversations/*.db`, `~/.gemini/antigravity-insiders/conversations/*.db` (current builds); older builds via `tokens antigravity sync` → `~/.config/tokens/antigravity-cache/sessions/` |
 | [OpenClaw](https://openclaw.ai/) | `~/.openclaw/agents/` |
 | [Codebuff](https://codebuff.com/) | `~/.config/manicode/` |
 | [Hermes](https://github.com/NousResearch/hermes-agent) | `$HERMES_HOME/state.db` |
