@@ -394,7 +394,7 @@ fn build_cursor_headers(session_token: &str) -> reqwest::header::HeaderMap {
         "Accept-Language",
         HeaderValue::from_static("en-US,en;q=0.9"),
     );
-    if let Ok(cookie) = format!("WorkosCursorSessionToken={}", session_token).parse() {
+    if let Ok(cookie) = workos_session_cookie(session_token).parse() {
         headers.insert("Cookie", cookie);
     }
     headers.insert(
@@ -406,6 +406,19 @@ fn build_cursor_headers(session_token: &str) -> reqwest::header::HeaderMap {
         HeaderValue::from_static("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"),
     );
     headers
+}
+
+/// `WorkosCursorSessionToken` header value.
+///
+/// Bridged-OAuth subjects contain `|` (`github|12345678`). Percent-encode it
+/// the same way `::` is sent as `%3A%3A`: cursor.com decodes the cookie before
+/// reading the id, and a raw `|` is rejected by strict cookie parsers in front
+/// of that host. JWTs are base64url and never contain `|`.
+fn workos_session_cookie(session_token: &str) -> String {
+    format!(
+        "WorkosCursorSessionToken={}",
+        session_token.replace('|', "%7C")
+    )
 }
 
 /// Headers for the JSON dashboard endpoints. Adds a JSON `Content-Type` and the
@@ -583,7 +596,12 @@ pub fn read_access_token_from_state_vscdb(db_path: &Path) -> Result<String> {
     Ok(token)
 }
 
-/// Extract the Cursor `user_…` id from a JWT `sub` claim (e.g. `auth0|user_abc`).
+/// Extract the id the `WorkosCursorSessionToken` cookie expects from a JWT `sub`.
+///
+/// WorkOS subjects (`user_abc`, `auth0|user_abc`, `github|user_01…`) collapse to
+/// the `user_…` id. A bridged login with no WorkOS id (`github|12345678`) keeps
+/// the whole subject: that is the id the dashboard matches, and the numeric tail
+/// alone is not accepted.
 fn user_id_from_access_token_jwt(access_token: &str) -> Result<String> {
     use base64::Engine;
 
@@ -609,6 +627,12 @@ fn user_id_from_access_token_jwt(access_token: &str) -> Result<String> {
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!(t!("top.cursor.jwtMissingSub")))?;
 
+    cursor_user_id_from_sub(sub)
+        .ok_or_else(|| anyhow::anyhow!(tr!("top.cursor.userIdUnparseable", sub = sub)))
+}
+
+/// `user_…` when the subject has one; otherwise a single `provider|id` subject.
+fn cursor_user_id_from_sub(sub: &str) -> Option<String> {
     if let Some(idx) = sub.find("user_") {
         let rest = &sub[idx..];
         let end = rest
@@ -616,11 +640,25 @@ fn user_id_from_access_token_jwt(access_token: &str) -> Result<String> {
             .unwrap_or(rest.len());
         let user_id = &rest[..end];
         if user_id.len() > "user_".len() {
-            return Ok(user_id.to_string());
+            return Some(user_id.to_string());
         }
     }
 
-    anyhow::bail!(tr!("top.cursor.userIdUnparseable", sub = sub));
+    // The subject is decoded from the JWT payload, then interpolated into a
+    // Cookie header, so each half has to be free of header metacharacters.
+    let (provider, id) = sub.split_once('|')?;
+    if is_cookie_safe_subject_part(provider) && is_cookie_safe_subject_part(id) {
+        Some(sub.to_string())
+    } else {
+        None
+    }
+}
+
+fn is_cookie_safe_subject_part(part: &str) -> bool {
+    !part.is_empty()
+        && part.bytes().all(|byte| {
+            !byte.is_ascii_control() && !matches!(byte, b' ' | b'"' | b',' | b';' | b'\\' | b'|')
+        })
 }
 
 /// Build the `WorkosCursorSessionToken` cookie value from a desktop access token.
@@ -2522,5 +2560,55 @@ mod incremental_sync_tests {
             "conversationId": "c", "tokenUsage": {"inputTokens": 1},
         });
         assert!(cursor_usage_event_identity(&blank).starts_with("row:"));
+    }
+}
+
+#[cfg(test)]
+mod session_subject_tests {
+    use super::{cursor_user_id_from_sub, session_token_from_access_token, workos_session_cookie};
+    use base64::Engine;
+
+    fn jwt(sub: &str) -> String {
+        let payload = serde_json::json!({"sub": sub}).to_string();
+        format!(
+            "header.{}.signature",
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(payload)
+        )
+    }
+
+    #[test]
+    fn github_numeric_subject_is_kept_whole() {
+        let token = jwt("github|12345678");
+        let session = session_token_from_access_token(&token).unwrap();
+        assert_eq!(session, format!("github|12345678%3A%3A{token}"));
+        assert_eq!(
+            workos_session_cookie(&session),
+            format!("WorkosCursorSessionToken=github%7C12345678%3A%3A{token}")
+        );
+    }
+
+    #[test]
+    fn workos_subject_still_collapses_to_the_user_id() {
+        assert_eq!(
+            cursor_user_id_from_sub("auth0|user_abc").as_deref(),
+            Some("user_abc")
+        );
+        assert_eq!(
+            cursor_user_id_from_sub("github|user_01ABC").as_deref(),
+            Some("user_01ABC")
+        );
+        assert_eq!(
+            cursor_user_id_from_sub("user_abc").as_deref(),
+            Some("user_abc")
+        );
+    }
+
+    #[test]
+    fn unsafe_or_empty_subjects_stay_unparseable() {
+        assert_eq!(cursor_user_id_from_sub("github|12345678;evil"), None);
+        assert_eq!(cursor_user_id_from_sub("github|id\r\nInjected"), None);
+        assert_eq!(cursor_user_id_from_sub("github|"), None);
+        assert_eq!(cursor_user_id_from_sub("a|b|c"), None);
+        assert!(session_token_from_access_token(&jwt("github|12345678;evil")).is_err());
     }
 }
