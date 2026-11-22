@@ -119,10 +119,24 @@ Checked read-only against Qoder CN desktop 0.4.x on Windows (2026-11-22):
   events, and all 18 `turn.finished` roll-ups carry `input_tokens: 0`,
   `output_tokens: 0`, `cache_read_input_tokens: 0`,
   `cache_creation_input_tokens: 0`.
+- `chat_session_context_usage` in the new desktop store states
+  `tokenCountsAvailable: false`, `totalTokens: 0`, `apiUsage: null` — while
+  still storing a `percentage`. So even Qoder's own context gauge has no token
+  numerator there, and `turn_credits` (billing) is the only counter.
 - Result: 97 discovered files, **0 measured messages**, and
   `tokens submit -c qoder --dry-run` reports "No usage data found to submit".
   That is the intended outcome for first-party models without token exposure:
   nothing is estimated, and no `$0.00` row is invented.
+
+Why that installation had no usage at all: every session ran on a first-party
+managed model (`message.model` is `auto`, slots `qmodel_latest_preview` /
+`qmodel_latest` / `dfmodel`, and the BYOK tables are empty), which Qoder bills
+in credits and, without token exposure, records without token counters. The
+gate (`QODERCN_EXPOSE_TOKEN_USAGE=1` here) was verified unset in the shell, the
+user environment and the shell profiles, and the desktop exposes no setting for
+it. The three local sources then genuinely contain no token numbers, so the
+honest total is zero — credits are not converted (no fixed credit-to-token
+rate), and `percentage` is not multiplied by a guessed context window.
 
 ## Known limits
 
