@@ -908,6 +908,7 @@ pub fn parse_qoder_segment_file(path: &Path) -> Vec<UnifiedMessage> {
     let mut requests: Vec<Turn> = Vec::new();
     let mut index_by_key: HashMap<String, usize> = HashMap::new();
     let mut anonymous_events: usize = 0;
+    let mut rollups_with_tokens: usize = 0;
 
     for_each_json_line(path, &mut |line_index, trimmed| {
         let Ok(value) = serde_json::from_str::<Value>(trimmed) else {
@@ -927,6 +928,21 @@ pub fn parse_qoder_segment_file(path: &Path) -> Vec<UnifiedMessage> {
                         }
                     }
                 }
+            }
+            return;
+        }
+
+        if entry_type == "turn.finished" {
+            // A whole-turn roll-up. Adding it to the per-request events above
+            // would double count a turn, so it is never counted — but a build
+            // that stops emitting `model.response.completed` and only fills
+            // this row would silently lose usage, which is worth flagging.
+            if value
+                .get("data")
+                .and_then(usage_from_value)
+                .is_some_and(|usage| usage.total() > 0)
+            {
+                rollups_with_tokens += 1;
             }
             return;
         }
@@ -1021,6 +1037,14 @@ pub fn parse_qoder_segment_file(path: &Path) -> Vec<UnifiedMessage> {
             usage: Some(usage),
         });
     });
+
+    if rollups_with_tokens > 0 {
+        tracing::debug!(
+            path = %path.display(),
+            rollups_with_token_counts = rollups_with_tokens,
+            "Qoder turn roll-up events carry token counts but are never added to per-request usage"
+        );
+    }
 
     let (messages, without_usage) = collect_measured_turns(requests, source);
     if without_usage > 0 {

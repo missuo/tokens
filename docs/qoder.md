@@ -106,15 +106,40 @@ is version-specific: it has been reported working on Qoder CN CLI 1.1.62 and
 later 1.1.7x builds, and the desktop IDE ignores it (its SQLite store always has
 real tokens). BYOK/custom models do not need it.
 
+## Verified against a real installation
+
+Checked read-only against Qoder CN desktop 0.4.x on Windows (2026-11-22):
+
+- The scanner finds the real tree: 90 `logs/sessions/**/segments/*.jsonl` files
+  and 7 `projects/**/*.jsonl` transcripts, and no
+  `Qoder/SharedClientCache/cache/db/local.db` (the 0.4.x desktop no longer
+  writes it).
+- Every real assistant line carries **no** `message.usage` at all, and no
+  `request_id`; the segment logs contain **no** `model.response.completed`
+  events, and all 18 `turn.finished` roll-ups carry `input_tokens: 0`,
+  `output_tokens: 0`, `cache_read_input_tokens: 0`,
+  `cache_creation_input_tokens: 0`.
+- Result: 97 discovered files, **0 measured messages**, and
+  `tokens submit -c qoder --dry-run` reports "No usage data found to submit".
+  That is the intended outcome for first-party models without token exposure:
+  nothing is estimated, and no `$0.00` row is invented.
+
 ## Known limits
 
 - **Newer desktop data layouts are not read.** Qoder desktop 0.4.x moved its app
   data into `com.qoder.app.stable` / `com.qodercn.app.stable`, where the stores
   are `main.sqlite`, `chat-session-turn-payload-buffer.sqlite`, and friends.
-  Their schema has not been verified to contain per-request tokens (the observed
-  first-party rows there carry credits and a context-window snapshot instead), so
-  Tokens does not read them. Only the documented
-  `Qoder[CN]/SharedClientCache/cache/db/local.db` `chat_message` shape is used.
+  Inspected read-only on the machine above: the per-message table
+  (`chat_session_messages`) has `turn_credits` but no token column, and no
+  token/usage key appears anywhere in its `payload_json`; `chat_session_context_usage`
+  holds context-window snapshots. So per-request Token values do not exist there
+  (matching issue #733's report), and Tokens deliberately does not read it. Only
+  the documented `Qoder[CN]/SharedClientCache/cache/db/local.db` `chat_message`
+  shape is used.
+- **`turn.finished` is never counted.** It is a whole-turn roll-up; adding it to
+  `model.response.completed` events would double count. If a future build fills
+  the roll-up while emitting no per-request events, that usage stays uncounted —
+  the parser logs the condition at debug level instead of guessing.
 - **Managed-model history stays unknown.** Rows written before the exposure flag
   was enabled have no recoverable token count; they are omitted rather than
   estimated.
@@ -131,7 +156,8 @@ real tokens). BYOK/custom models do not need it.
 
 ## References
 
-Field layouts and semantics were cross-checked against:
+Field layouts and semantics were cross-checked against the sources below, and
+the outcome was verified on a real Qoder CN desktop installation (see above):
 
 - Tokscale's Qoder parser and its follow-up fixes
   ([#1612](https://github.com/junhoyeo/tokscale/pull/1612),
