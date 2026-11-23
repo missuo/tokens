@@ -127,6 +127,10 @@ pub struct ScanResult {
     /// VS Code Copilot chat session JSONL files discovered under
     /// `workspaceStorage/*/chatSessions/*.jsonl`.
     pub copilot_vscode_sessions: Vec<PathBuf>,
+    /// Copilot SDK session journals at
+    /// `<COPILOT_HOME>/session-state/<sessionId>/events.jsonl`, written by
+    /// Copilot CLI and by VS Code's Agent mode "Copilot" harness.
+    pub copilot_session_state_events: Vec<PathBuf>,
     /// Qoder and Qoder CN desktop IDE databases
     /// (`<app data>/Qoder[CN]/SharedClientCache/cache/db/local.db`), which keep
     /// per-message `token_info` for the IDE's chat panel. Only the two known
@@ -154,6 +158,7 @@ impl Default for ScanResult {
             opencode_json_dir: None,
             devin_dbs: Vec::new(),
             copilot_vscode_sessions: Vec::new(),
+            copilot_session_state_events: Vec::new(),
             qoder_ide_dbs: Vec::new(),
         }
     }
@@ -1967,6 +1972,47 @@ fn discover_copilot_vscode_sessions(home_dir: &str, use_env_roots: bool) -> Vec<
     files
 }
 
+/// Copilot SDK session journals, `<COPILOT_HOME>/session-state/*/events.jsonl`.
+///
+/// The SDK resolves its home as a non-empty `COPILOT_HOME`, else
+/// `<home>/.copilot` (microsoft/vscode
+/// `src/vs/platform/environment/common/copilotHome.ts`), so both are probed.
+fn discover_copilot_session_state_events(home_dir: &str, use_env_roots: bool) -> Vec<PathBuf> {
+    let mut roots = vec![PathBuf::from(join_native(
+        home_dir,
+        ".copilot/session-state",
+    ))];
+    if use_env_roots {
+        if let Some(copilot_home) = std::env::var_os("COPILOT_HOME")
+            .map(PathBuf::from)
+            .filter(|path| path.is_absolute())
+        {
+            roots.push(copilot_home.join("session-state"));
+        }
+    }
+
+    let mut files = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for root in &roots {
+        let Ok(session_dirs) = std::fs::read_dir(root) else {
+            continue;
+        };
+        for entry in session_dirs.filter_map(|entry| entry.ok()) {
+            let events = entry.path().join("events.jsonl");
+            if !events.is_file() {
+                continue;
+            }
+            let key = std::fs::canonicalize(&events).unwrap_or_else(|_| events.clone());
+            if seen.insert(key) {
+                files.push(events);
+            }
+        }
+    }
+
+    files.sort_unstable();
+    files
+}
+
 /// Scan all session client directories in parallel, with user-controlled
 /// [`ScannerSettings`] merged in.
 ///
@@ -3126,6 +3172,8 @@ fn scan_all_clients_with_env_strategy_inner(
         }
 
         result.copilot_vscode_sessions = discover_copilot_vscode_sessions(home_dir, use_env_roots);
+        result.copilot_session_state_events =
+            discover_copilot_session_state_events(home_dir, use_env_roots);
 
         if let Some(path) = copilot_exporter_path_with_env_strategy(use_env_roots) {
             let key = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
@@ -6223,6 +6271,29 @@ mod tests {
 
         assert_eq!(result.get(ClientId::Copilot).len(), 1);
         assert!(result.get(ClientId::Copilot)[0].ends_with("copilot.jsonl"));
+    }
+
+    #[test]
+    fn test_scan_all_clients_copilot_finds_sdk_session_journals() {
+        let dir = TempDir::new().unwrap();
+        let home = dir.path();
+        let session = home.join(".copilot/session-state/8d3f1c2a-5b6e-4f70-9a81-2c3d4e5f6a7b");
+        fs::create_dir_all(&session).unwrap();
+        File::create(session.join("events.jsonl")).unwrap();
+        // A session directory without a journal yet, and a stray file.
+        fs::create_dir_all(home.join(".copilot/session-state/empty-session")).unwrap();
+        File::create(home.join(".copilot/session-state/session-store.db")).unwrap();
+
+        let result = scan_all_clients_with_env_strategy(
+            home.to_str().unwrap(),
+            &["copilot".to_string()],
+            false,
+        );
+
+        assert_eq!(
+            result.copilot_session_state_events,
+            vec![session.join("events.jsonl")]
+        );
     }
 
     #[test]
