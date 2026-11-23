@@ -907,6 +907,33 @@ pub fn built_in_extra_scan_paths_for(
         ));
     }
 
+    if enabled.contains(&ClientId::TraeCli) {
+        // TRAE CLI keeps its Codex-format store in `<TRAE_HOME>/cli`:
+        // `traex archive <id>` moves a rollout from `sessions/` into the flat
+        // `archived_sessions/`, as `codex archive` does. `TRAECLI_HOME`
+        // relocates that `cli` directory on its own, so it is read too.
+        let trae_home = ClientId::TraeCli
+            .data()
+            .root
+            .resolve_with_env_strategy(home_dir, use_env_roots);
+        paths.push((
+            ClientId::TraeCli,
+            PathBuf::from(join_native(&trae_home, "cli/archived_sessions")),
+        ));
+        if use_env_roots {
+            let cli_home = std::env::var("TRAECLI_HOME").unwrap_or_default();
+            let cli_home = cli_home.trim();
+            if !cli_home.is_empty() {
+                for relative in ["sessions", "archived_sessions"] {
+                    paths.push((
+                        ClientId::TraeCli,
+                        PathBuf::from(join_native(cli_home, relative)),
+                    ));
+                }
+            }
+        }
+    }
+
     if enabled.contains(&ClientId::Claude) {
         // `transcripts` is a sibling of the registered `projects` root, not a
         // fixed offset from `home_dir` — resolving through the client's own
@@ -7204,6 +7231,58 @@ mod tests {
         );
 
         restore_env("CODEX_HOME", previous_codex);
+    }
+
+    #[test]
+    #[serial]
+    fn test_scan_all_clients_trae_cli_live_archived_and_cli_home() {
+        // TRAE CLI 2.0 writes Codex rollouts under `<TRAE_HOME>/cli`, dated
+        // `sessions/` plus the flat `archived_sessions/`; `TRAECLI_HOME` moves
+        // that `cli` directory. `history.jsonl` beside them holds prompts only.
+        let mut env = EnvGuard::capture(&["TRAE_HOME", "TRAECLI_HOME"]);
+        env.remove("TRAE_HOME");
+        env.remove("TRAECLI_HOME");
+
+        let dir = TempDir::new().unwrap();
+        let home = dir.path();
+        let cli = home.join(".trae/cli");
+        let sessions = cli.join("sessions/2026/08/01");
+        let archived = cli.join("archived_sessions");
+        fs::create_dir_all(&sessions).unwrap();
+        fs::create_dir_all(&archived).unwrap();
+        File::create(sessions.join("rollout-live.jsonl")).unwrap();
+        File::create(archived.join("rollout-archived.jsonl")).unwrap();
+        File::create(cli.join("history.jsonl")).unwrap();
+
+        let relocated = dir.path().join("relocated-cli");
+        fs::create_dir_all(relocated.join("sessions/2026/09/01")).unwrap();
+        File::create(relocated.join("sessions/2026/09/01/rollout-moved.jsonl")).unwrap();
+
+        let scan_names = || {
+            let result = scan_without_extra_dirs(home.to_str().unwrap(), &["trae-cli".to_string()]);
+            let mut names: Vec<String> = result
+                .get(ClientId::TraeCli)
+                .iter()
+                .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
+                .collect();
+            names.sort();
+            names
+        };
+
+        assert_eq!(
+            scan_names(),
+            vec!["rollout-archived.jsonl", "rollout-live.jsonl"]
+        );
+
+        env.set("TRAECLI_HOME", &relocated);
+        assert_eq!(
+            scan_names(),
+            vec![
+                "rollout-archived.jsonl",
+                "rollout-live.jsonl",
+                "rollout-moved.jsonl"
+            ]
+        );
     }
 
     #[test]

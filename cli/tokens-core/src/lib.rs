@@ -2828,6 +2828,15 @@ fn parse_all_messages_streaming<S: MessageSink>(
         sessions::kwwk::parse_kwwk_file,
     );
 
+    parse_cached_lane_deduped(
+        &scan_result,
+        &mut source_cache,
+        pricing,
+        &mut all_messages,
+        ClientId::TraeCli,
+        sessions::trae_cli::parse_trae_cli_file,
+    );
+
     let augment_outcomes: Vec<CachedParseOutcome> = scan_result
         .get(ClientId::Augment)
         .par_iter()
@@ -5898,6 +5907,21 @@ pub fn parse_local_clients(options: LocalParseOptions) -> Result<ParsedMessages,
     let kwwk_count = kwwk_msgs.len() as i32;
     counts.set(ClientId::Kwwk, kwwk_count);
     messages.extend(kwwk_msgs);
+
+    let trae_cli_msgs_raw: Vec<UnifiedMessage> = scan_result
+        .get(ClientId::TraeCli)
+        .par_iter()
+        .flat_map(|path| sessions::trae_cli::parse_trae_cli_file(path))
+        .collect();
+    let mut trae_cli_seen: HashSet<String> = HashSet::new();
+    let trae_cli_msgs: Vec<ParsedMessage> = trae_cli_msgs_raw
+        .into_iter()
+        .filter(|message| should_keep_deduped_message(&mut trae_cli_seen, message))
+        .map(|message| unified_to_parsed(&message))
+        .collect();
+    let trae_cli_count = trae_cli_msgs.len() as i32;
+    counts.set(ClientId::TraeCli, trae_cli_count);
+    messages.extend(trae_cli_msgs);
 
     let augment_msgs_raw: Vec<UnifiedMessage> = scan_result
         .get(ClientId::Augment)

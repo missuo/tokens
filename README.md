@@ -122,7 +122,7 @@ We are not asking anyone to run their own copy. This repo exists to be read.
 
 ## Supported clients
 
-All 44 are detected automatically — if it is installed and has
+All 45 are detected automatically — if it is installed and has
 written sessions, it is counted.
 
 |  |  |  |  |
@@ -138,6 +138,7 @@ written sessions, it is counted.
 | <img src=".github/assets/client-pi.png" width="16" height="16" alt="" /> Pi | <img src=".github/assets/client-qwen.png" width="16" height="16" alt="" /> Qwen | <img src=".github/assets/client-generic.svg" width="16" height="16" alt="" /> Reasonix | <img src=".github/assets/client-roocode.png" width="16" height="16" alt="" /> Roo Code |
 | <img src=".github/assets/client-paseo.svg" width="16" height="16" alt="" /> Paseo | <img src=".github/assets/client-generic.svg" width="16" height="16" alt="" /> Qoder | <img src=".github/assets/client-trae.png" width="16" height="16" alt="" /> Trae | <img src=".github/assets/client-kwwk.png" width="16" height="16" alt="" /> kwwk |
 | <img src=".github/assets/client-warp.png" width="16" height="16" alt="" /> Warp | <img src=".github/assets/client-workbuddy.png" width="16" height="16" alt="" /> WorkBuddy | <img src=".github/assets/client-zcode.png" width="16" height="16" alt="" /> ZCode | <img src=".github/assets/client-zed.webp" width="16" height="16" alt="" /> Zed Agent |
+| <img src=".github/assets/client-trae.png" width="16" height="16" alt="" /> TRAE CLI |   |   |   |
 
 <details>
 <summary>Where each one stores its data</summary>
@@ -168,7 +169,8 @@ written sessions, it is counted.
 | [Zed Agent](https://zed.dev/docs/ai/agent-panel) | `~/.local/share/zed/threads/threads.db` |
 | Kiro | `~/.kiro/sessions/cli/`, `~/.local/share/kiro-cli/data.sqlite3` |
 | [Warp](https://www.warp.dev/) / Oz | `tokens warp sync` → `~/.config/tokens/warp-cache/usage.json` |
-| [Trae](https://www.trae.ai/) | `tokens trae sync` → `~/.config/tokens/trae-cache/sessions/` |
+| [Trae](https://www.trae.ai/) | `tokens trae sync` → `~/.config/tokens/trae-cache/sessions/` (international account usage API). The Trae / Trae CN desktop apps keep chat in an encrypted `ModularData/ai-agent/database.db` and write no readable token counts |
+| [TRAE CLI](https://docs.trae.cn/cli_get-started-with-trae-cli) 2.0 | `~/.trae/cli/sessions/` and `~/.trae/cli/archived_sessions/` (override with `TRAE_HOME` / `TRAECLI_HOME`) |
 | [Antigravity](https://antigravity.google/) | `~/.gemini/antigravity/conversations/*.db`, `~/.gemini/antigravity-insiders/conversations/*.db` (current builds); older builds via `tokens antigravity sync` → `~/.config/tokens/antigravity-cache/sessions/` |
 | [OpenClaw](https://openclaw.ai/) | `~/.openclaw/agents/` |
 | [Codebuff](https://codebuff.com/) | `~/.config/manicode/` |

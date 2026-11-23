@@ -28,6 +28,7 @@ export const SUPPORTED_CLIENT_TYPES = [
   "kiro",
   "zed",
   "trae",
+  "trae-cli",
   "warp",
   "cline",
   "synthetic",
