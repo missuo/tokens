@@ -2286,6 +2286,29 @@ fn parse_all_messages_streaming<S: MessageSink>(
                 }),
         );
     }
+    if !scan_result.copilot_session_state_events.is_empty() {
+        // The SDK journals are the same `session-state` files the desktop lane
+        // reads for its own sessions, and OTEL keys Copilot SDK spans by the
+        // same session id, so a session either source already reported is
+        // left to it.
+        let covered_sessions: HashSet<String> = all_messages
+            .iter()
+            .filter(|message| message.client == "copilot")
+            .map(|message| message.session_id.clone())
+            .collect();
+        let session_state_msgs = sessions::copilot_session_state::parse_copilot_session_state_files(
+            &scan_result.copilot_session_state_events,
+        );
+        all_messages.extend(
+            session_state_msgs
+                .into_iter()
+                .filter(|message| !covered_sessions.contains(&message.session_id))
+                .map(|mut message| {
+                    apply_pricing_if_available(&mut message, pricing);
+                    message
+                }),
+        );
+    }
     {
         let existing_dedup_keys: HashSet<String> = all_messages
             .iter()
@@ -5515,6 +5538,19 @@ pub fn parse_local_clients(options: LocalParseOptions) -> Result<ParsedMessages,
             sessions::copilot_desktop::parse_copilot_desktop_db(db_path)
                 .into_iter()
                 .filter(|message| !otel_sessions.contains(&message.session_id)),
+        );
+    }
+    if !scan_result.copilot_session_state_events.is_empty() {
+        let covered_sessions: HashSet<String> = copilot_unified_msgs
+            .iter()
+            .map(|message| message.session_id.clone())
+            .collect();
+        copilot_unified_msgs.extend(
+            sessions::copilot_session_state::parse_copilot_session_state_files(
+                &scan_result.copilot_session_state_events,
+            )
+            .into_iter()
+            .filter(|message| !covered_sessions.contains(&message.session_id)),
         );
     }
     {
@@ -17148,6 +17184,83 @@ mod tests {
         assert_eq!(messages[0].client, "opencode");
         assert_eq!(messages[0].model_id, "deepseek-v3-0324");
         assert_eq!(messages[0].provider_id, "synthetic");
+    }
+
+    /// VS Code's Agent mode "Copilot" harness runs the Copilot SDK in the Agent
+    /// Host, which journals sessions under `~/.copilot/session-state` rather
+    /// than `workspaceStorage/*/chatSessions` (#131). A session the desktop
+    /// app's `data.db` already reports must not be counted again from its
+    /// journal.
+    #[test]
+    fn test_copilot_session_state_journals_are_parsed_once_per_session() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let copilot_home = temp_dir.path().join(".copilot");
+        let checkpoint = |session: &str| {
+            format!(
+                "{}\n{}\n",
+                format_args!(
+                    r#"{{"type":"session.start","data":{{"sessionId":"{session}","version":1,"producer":"copilot-agent","copilotVersion":"1.0.111-0","startTime":"2026-11-18T10:00:00.000Z","context":{{"cwd":"/Users/alice/project"}}}},"id":"{session}-start","timestamp":"2026-11-18T10:00:00.000Z","parentId":null}}"#
+                ),
+                format_args!(
+                    r#"{{"type":"session.usage_checkpoint","data":{{"totalNanoAiu":0,"providerModelMetrics":[{{"modelId":"gpt-5.4","provider":{{"id":"github-copilot","kind":"copilot","label":"GitHub Copilot"}},"metrics":{{"requests":{{"count":2,"cost":1}},"usage":{{"inputTokens":1000,"outputTokens":100,"cacheReadTokens":400,"cacheWriteTokens":0,"reasoningTokens":0}}}}}}]}},"id":"{session}-checkpoint","timestamp":"2026-11-18T10:05:00.000Z","parentId":"{session}-start"}}"#
+                ),
+            )
+        };
+        for session in ["agent-host-session", "desktop-session"] {
+            let dir = copilot_home.join("session-state").join(session);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("events.jsonl"), checkpoint(session)).unwrap();
+        }
+        let conn = rusqlite::Connection::open(copilot_home.join("data.db")).unwrap();
+        conn.execute_batch(
+            r#"CREATE TABLE sessions (id TEXT, title TEXT, model TEXT, total_input_tokens INTEGER,
+                total_output_tokens INTEGER, total_cached_tokens INTEGER, total_reasoning_tokens INTEGER,
+                total_nano_aiu INTEGER, created_at TEXT);
+            INSERT INTO sessions VALUES ('desktop-session', 't', 'gpt-5.4', 1000, 100, 400, 0, 0, '2026-11-18T10:00:00Z');"#,
+        )
+        .unwrap();
+        drop(conn);
+
+        let count_by_session = |messages: &[(String, i64)]| {
+            let mut counts: HashMap<String, i64> = HashMap::new();
+            for (session, output) in messages {
+                *counts.entry(session.clone()).or_default() += output;
+            }
+            counts
+        };
+
+        let streamed = parse_all_messages_with_pricing_with_cache_policy(
+            temp_dir.path().to_str().unwrap(),
+            &["copilot".to_string()],
+            None,
+            false,
+            &scanner::ScannerSettings::default(),
+            SourceCachePolicy::InMemory,
+        );
+        let streamed: Vec<(String, i64)> = streamed
+            .iter()
+            .map(|m| (m.session_id.clone(), m.tokens.output))
+            .collect();
+        let streamed = count_by_session(&streamed);
+        assert_eq!(streamed.get("agent-host-session"), Some(&100));
+        assert_eq!(streamed.get("desktop-session"), Some(&100));
+
+        let local = parse_local_clients(LocalParseOptions {
+            home_dir: Some(temp_dir.path().to_str().unwrap().to_string()),
+            use_env_roots: false,
+            clients: Some(vec!["copilot".to_string()]),
+            since: None,
+            until: None,
+            year: None,
+            scanner_settings: scanner::ScannerSettings::default(),
+        })
+        .unwrap();
+        let local: Vec<(String, i64)> = local
+            .messages
+            .iter()
+            .map(|m| (m.session_id.clone(), m.output))
+            .collect();
+        assert_eq!(count_by_session(&local), streamed);
     }
 
     #[test]
