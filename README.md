@@ -155,7 +155,7 @@ written sessions, it is counted.
 | [Qoder / Qoder CN](https://qoder.com/) | `~/.qoder/projects/` and `~/.qoder-cn/projects/` (override with `QODER_CONFIG_DIR` / `QODERCN_CONFIG_DIR`), `~/.qoder{,-cn}/logs/sessions/**/segments/`, plus the IDE's `SharedClientCache/cache/db/local.db` |
 | [Qwen CLI](https://github.com/QwenLM/qwen-cli) | `~/.qwen/projects/` |
 | Reasonix | `~/.reasonix/stats/*.jsonl` (override via `REASONIX_STATE_HOME` or `REASONIX_HOME`) |
-| [Amp](https://ampcode.com/) | `~/.local/share/amp/threads/` |
+| [Amp](https://ampcode.com/) | `tokens amp sync` → `~/.config/tokens/amp-cache/threads/` (current Amp keeps threads on ampcode.com); older releases' `~/.local/share/amp/threads/` |
 | [Droid](https://factory.ai/) | `~/.factory/sessions/` |
 | [Cline](https://github.com/cline/cline) | VS Code globalStorage tasks, or `~/.cline/data/sessions/` for the Cline CLI / desktop |
 | [Roo Code](https://github.com/RooCodeInc/Roo-Code) | VS Code globalStorage tasks |
@@ -238,10 +238,10 @@ BYOK/custom-model requests carry real counters regardless.
 
 Clients that expose usage only through an account API need a sync step first —
 `tokens cursor sync`, `tokens antigravity sync`, `tokens trae sync`,
-`tokens warp sync` — after which they submit like everything else. Antigravity
-needs it only on older builds: current Antigravity and Antigravity - Insiders
-conversation databases are read directly (`tokens antigravity status` shows
-which ones were found).
+`tokens warp sync`, `tokens amp sync` — after which they submit like everything
+else. Antigravity needs it only on older builds: current Antigravity and
+Antigravity - Insiders conversation databases are read directly
+(`tokens antigravity status` shows which ones were found).
 
 Tokens detects Cursor Agent CLI sign-ins without requiring the desktop IDE.
 It reads the CLI's `cursor-access-token` / `cursor-user` Keychain item on macOS,
@@ -277,6 +277,25 @@ cache are kept. Once an account has synced from billing it stays on billing:
 a failed billing request skips that sync instead of falling back to the legacy
 usage endpoint, and legacy events from the period billing covers are dropped so
 no usage is counted twice.
+
+Amp keeps threads on ampcode.com, including threads that ran in the cloud, and
+no longer writes them to disk. `tokens amp sync` uses the `amp` CLI you are
+signed in to — tokens never reads Amp's credentials — to list your threads
+(`amp threads list` and `amp threads search author:me`) and export each new or
+changed one (`amp threads export`). Only the thread id, its creation time and
+each message's role, id and usage are written to
+`~/.config/tokens/amp-cache/threads/`; prompts, replies and titles are dropped
+first. After the first sync, `tokens submit` (and so `tokens serve`) syncs
+again before every scan. A thread that is also in
+`~/.local/share/amp/threads/` is read from the sync cache only, so it is not
+counted twice. `tokens amp status` shows the CLI found and the cache.
+
+An export holds only the requests of the thread's main agent. Subagent (Task)
+and system-model requests (thread titles and the like), which Amp bills to the
+same thread, are not in it and are not counted; in one account measured, they
+were about 15% of the tokens `amp usage` reports. A first sync also misses old
+threads that ran on Amp's servers, which `amp threads list` leaves out and
+`amp threads search` finds only among the 100 most recently active.
 
 Pricing comes from a combination of
 [LiteLLM](https://github.com/BerriAI/litellm),

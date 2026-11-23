@@ -1,3 +1,4 @@
+mod amp;
 mod antigravity;
 mod auth;
 mod cloud;
@@ -175,6 +176,11 @@ enum Commands {
     Warp {
         #[command(subcommand)]
         subcommand: WarpSubcommand,
+    },
+    #[command(about = "Amp thread sync commands (ampcode.com)")]
+    Amp {
+        #[command(subcommand)]
+        subcommand: AmpSubcommand,
     },
     #[command(about = "Hindsight memory backend integration commands")]
     Hindsight {
@@ -383,6 +389,22 @@ enum HindsightSubcommand {
             help = "Bearer authentication token (or set HINDSIGHT_API_API_TOKEN)"
         )]
         token: Option<String>,
+        #[arg(long, help = "Output as JSON")]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum AmpSubcommand {
+    #[command(about = "Sync Amp threads from ampcode.com into local cache")]
+    Sync {
+        #[arg(long, help = "Re-export every thread, not only new or changed ones")]
+        force: bool,
+        #[arg(long, help = "Output as JSON")]
+        json: bool,
+    },
+    #[command(about = "Show Amp sync status")]
+    Status {
         #[arg(long, help = "Output as JSON")]
         json: bool,
     },
@@ -722,6 +744,7 @@ fn main() -> Result<()> {
         Some(Commands::Codex { subcommand }) => run_codex_command(subcommand),
         Some(Commands::Trae { subcommand }) => run_trae_command(subcommand),
         Some(Commands::Warp { subcommand }) => run_warp_command(subcommand),
+        Some(Commands::Amp { subcommand }) => run_amp_command(subcommand),
         Some(Commands::Hindsight { subcommand }) => run_hindsight_command(subcommand),
         Some(Commands::DeleteSubmittedData) => run_delete_data_command(),
         Some(Commands::McpNames { subcommand }) => commands::mcp_names::run(subcommand),
@@ -3021,6 +3044,39 @@ fn run_submit_command(
             }
         }
     }
+
+    let include_amp = clients
+        .as_ref()
+        .is_none_or(|s| s.iter().any(|src| src == "amp"));
+    // Only after an explicit `tokens amp sync`: submit never starts reading
+    // the account's threads on ampcode.com on its own.
+    if include_amp && amp::has_amp_cache() {
+        say!("{}", t!("cli.submit.syncingAmp").bright_black());
+        let sync_result = amp::sync_amp_cache(false);
+        if sync_result.synced {
+            say!(
+                "{}",
+                tr!("cli.submit.ampSynced", exported = sync_result.exported).bright_black()
+            );
+            if sync_result.failed > 0 {
+                say!(
+                    "{}",
+                    tr!(
+                        "top.amp.exportsFailed",
+                        failed = sync_result.failed,
+                        error = sync_result.error.unwrap_or_default()
+                    )
+                    .yellow()
+                );
+            }
+        } else if let Some(err) = sync_result.error {
+            say!(
+                "{}",
+                tr!("cli.submit.ampSyncFailedCached", error = err).yellow()
+            );
+        }
+    }
+
     if explicit_cursor_filter || explicit_warp_filter || explicit_hindsight_filter {
         let cursor_setup_warnings = setup_warnings(&clients);
         emit_cursor_setup_warnings(&cursor_setup_warnings);
@@ -3533,6 +3589,13 @@ fn run_warp_command(subcommand: WarpSubcommand) -> Result<()> {
         WarpSubcommand::Logout { purge_cache } => warp::run_warp_logout(purge_cache),
         WarpSubcommand::Status { json } => warp::run_warp_status(json),
         WarpSubcommand::Sync { json } => warp::run_warp_sync(json),
+    }
+}
+
+fn run_amp_command(subcommand: AmpSubcommand) -> Result<()> {
+    match subcommand {
+        AmpSubcommand::Sync { force, json } => amp::run_amp_sync(force, json),
+        AmpSubcommand::Status { json } => amp::run_amp_status(json),
     }
 }
 
