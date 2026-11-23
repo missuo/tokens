@@ -2,10 +2,11 @@
 //!
 //! The Antigravity CLI (the terminal agent, distinct from the Antigravity IDE)
 //! stores each conversation as a SQLite database under
-//! `~/.gemini/antigravity-cli/conversations/<uuid>.db`. Unlike the IDE-backed
-//! [`super::antigravity`] source — which depends on a *running* language server
-//! reachable over RPC and caches JSONL under the config dir — the CLI usage is
-//! already on disk and can be read directly. No RPC, no `antigravity sync`.
+//! `~/.gemini/antigravity-cli/conversations/<uuid>.db`, already on disk and read
+//! directly. No RPC, no `antigravity sync`. Current Antigravity desktop builds
+//! write the same schema; [`super::antigravity`] reuses
+//! [`parse_antigravity_conversation_db`] for them and keeps the RPC-synced
+//! JSONL cache only for older builds.
 //!
 //! Each `gen_metadata` row is one generation encoded as the same
 //! `GeneratorMetadata` protobuf the IDE returns over
@@ -1253,6 +1254,40 @@ pub(super) mod tests {
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].client, "antigravity");
         assert_eq!(messages[0].session_id, "cascade-1");
+    }
+
+    #[test]
+    fn rows_still_in_the_write_ahead_log_are_read() {
+        // A running agy keeps its conversation open in WAL mode, so recent
+        // turns sit in `<cascade>.db-wal` until a checkpoint copies them into
+        // the main file. The read-only scan must see them while the writer
+        // is still attached.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("live.db");
+        let writer = Connection::open(&path).unwrap();
+        writer
+            .execute_batch(
+                "PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0;
+                 CREATE TABLE gen_metadata (idx integer, data blob, size integer);",
+            )
+            .unwrap();
+        for (idx, response_id) in ["resp-1", "resp-2"].into_iter().enumerate() {
+            writer
+                .execute(
+                    "INSERT INTO gen_metadata (idx, data, size) VALUES (?1, ?2, 0)",
+                    params![
+                        idx as i64,
+                        build_row(Some("gemini-3-flash-a"), None, response_id)
+                    ],
+                )
+                .unwrap();
+        }
+        let wal = dir.path().join("live.db-wal");
+        assert!(std::fs::metadata(&wal).unwrap().len() > 0);
+
+        let messages = parse_antigravity_cli_file(&path);
+        assert_eq!(messages.len(), 2);
+        drop(writer);
     }
 
     #[test]

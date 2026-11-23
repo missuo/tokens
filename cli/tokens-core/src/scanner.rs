@@ -855,7 +855,7 @@ fn t3_antigravity_acp_scan_roots(home_dir: &Path, use_env_roots: bool) -> Vec<Pa
 /// and `~/.gemini` is always scanned too: the desktop app is not known to read
 /// that variable, so a relocated CLI home must not hide desktop usage.
 /// Duplicate roots are collapsed by the scan-task de-duplication.
-fn antigravity_conversation_roots(home_dir: &str, use_env_roots: bool) -> Vec<PathBuf> {
+pub fn antigravity_conversation_roots(home_dir: &str, use_env_roots: bool) -> Vec<PathBuf> {
     let mut gemini_homes = vec![join_native_path(Path::new(home_dir), ".gemini")];
     let env_home = PathRoot::EnvVar {
         var: "GEMINI_CLI_HOME",

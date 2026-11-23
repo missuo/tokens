@@ -236,7 +236,10 @@ BYOK/custom-model requests carry real counters regardless.
 
 Clients that expose usage only through an account API need a sync step first —
 `tokens cursor sync`, `tokens antigravity sync`, `tokens trae sync`,
-`tokens warp sync` — after which they submit like everything else.
+`tokens warp sync` — after which they submit like everything else. Antigravity
+needs it only on older builds: current Antigravity and Antigravity - Insiders
+conversation databases are read directly (`tokens antigravity status` shows
+which ones were found).
 
 Tokens detects Cursor Agent CLI sign-ins without requiring the desktop IDE.
 It reads the CLI's `cursor-access-token` / `cursor-user` Keychain item on macOS,
