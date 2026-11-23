@@ -80,4 +80,44 @@ mod tests {
         assert!(keys[1].contains("msg_01B"), "{keys:?}");
         assert_ne!(keys[0], keys[1]);
     }
+
+    #[test]
+    fn kwwk_reported_speed_is_labelled_and_missing_speed_stays_unknown() {
+        use crate::speed::{Speed, SpeedSource};
+
+        let turn = |id: &str, speed: &str| {
+            format!(
+                r#"{{"type":"message","timestamp":1795279700123,"message":{{"role":"assistant","content":[],"api":"anthropic-messages","provider":"anthropic","model":"claude-opus-5-5","responseId":"{id}","usage":{{"input":10,"output":50,"cacheRead":0,"cacheWrite":0,"totalTokens":60{speed}}}}}}}"#
+            )
+        };
+        let header = SESSION.lines().next().unwrap();
+        let body = [
+            header.to_string(),
+            turn("msg_fast", r#","speed":"fast""#),
+            turn("msg_standard", r#","speed":"standard""#),
+            turn("msg_none", ""),
+            turn("msg_odd", r#","speed":"turbo""#),
+            turn("msg_typed", r#","speed":7"#),
+        ]
+        .join("\n");
+        let file = session_file(&body);
+        let messages = parse_kwwk_file(file.path());
+
+        let speeds: Vec<_> = messages
+            .iter()
+            .map(|m| m.inference_speed.map(|s| (s.speed, s.source)))
+            .collect();
+        assert_eq!(
+            speeds,
+            vec![
+                Some((Speed::Fast, SpeedSource::Reported)),
+                Some((Speed::Standard, SpeedSource::Reported)),
+                None,
+                None,
+                None,
+            ]
+        );
+        // A malformed speed never costs the record its tokens.
+        assert!(messages.iter().all(|m| m.tokens.output == 50));
+    }
 }
