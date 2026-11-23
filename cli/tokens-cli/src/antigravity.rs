@@ -115,6 +115,53 @@ fn antigravity_data_roots() -> Result<Vec<PathBuf>> {
     Ok(roots)
 }
 
+/// Conversation databases current Antigravity and Antigravity - Insiders
+/// builds write under `<gemini home>/antigravity{,-insiders}/conversations/`.
+///
+/// The scanner reads these directly (see
+/// `tokens_core::scanner::antigravity_conversation_roots`), so they need no
+/// running app and no RPC. `sync` and `status` count them only to explain
+/// where Antigravity usage comes from when no language server exposes the
+/// sync RPC, as is the case for Insiders' standalone language server.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+struct LocalConversationDatabases {
+    /// Every conversation directory holding at least one `*.db`, with its count.
+    dirs: Vec<(PathBuf, usize)>,
+}
+
+impl LocalConversationDatabases {
+    fn total(&self) -> usize {
+        self.dirs.iter().map(|(_, count)| count).sum()
+    }
+}
+
+fn local_conversation_databases() -> LocalConversationDatabases {
+    match home_dir() {
+        Ok(home) => local_conversation_databases_in(&home, true),
+        Err(_) => LocalConversationDatabases::default(),
+    }
+}
+
+fn local_conversation_databases_in(home: &Path, use_env_roots: bool) -> LocalConversationDatabases {
+    let mut dirs: Vec<(PathBuf, usize)> = Vec::new();
+    let roots = tokens_core::scanner::antigravity_conversation_roots(
+        &home.to_string_lossy(),
+        use_env_roots,
+    );
+    for root in roots {
+        if dirs.iter().any(|(dir, _)| *dir == root) {
+            continue;
+        }
+        // Same file filter the scanner applies, so `-wal`/`-shm` sidecars and
+        // older builds' encrypted `.pb` conversations are not counted.
+        let count = tokens_core::scanner::scan_directory(&root.to_string_lossy(), "*.db").len();
+        if count > 0 {
+            dirs.push((root, count));
+        }
+    }
+    LocalConversationDatabases { dirs }
+}
+
 pub fn get_antigravity_cache_dir() -> Result<PathBuf> {
     // Route through `paths::get_config_dir()` so `TOKENS_CONFIG_DIR`
     // covers the antigravity sync cache too — without this, an isolated
@@ -157,6 +204,23 @@ struct ProcessCandidate {
     ppid: u32,
     declared_port: Option<u16>,
     csrf_token: String,
+}
+
+/// Result of scanning the process table for Antigravity language servers.
+#[derive(Debug, Default)]
+struct ProcessDiscovery {
+    /// Servers launched with RPC credentials (`--csrf_token`) that sync can probe.
+    candidates: Vec<ProcessCandidate>,
+    /// Servers in standalone mode (see [`is_standalone_language_server`]),
+    /// which expose no RPC credentials and cannot be synced.
+    standalone_servers: usize,
+}
+
+/// Language servers found by [`discover_antigravity`].
+#[derive(Debug, Default)]
+struct AntigravityDiscovery {
+    connections: Vec<AntigravityConnection>,
+    standalone_servers: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -219,6 +283,12 @@ struct AntigravityStatus {
     manifest_exists: bool,
     #[serde(rename = "detectedConnections")]
     detected_connections: usize,
+    #[serde(rename = "standaloneLanguageServers")]
+    standalone_language_servers: usize,
+    #[serde(rename = "localConversationDatabases")]
+    local_conversation_databases: usize,
+    #[serde(rename = "localConversationDirs")]
+    local_conversation_dirs: Vec<String>,
     #[serde(rename = "cachedSessions")]
     cached_sessions: usize,
     #[serde(rename = "lastSyncedAt")]
@@ -319,24 +389,6 @@ pub fn sync_antigravity_cache_with_connections(
             error: Some(err.to_string()),
         },
     }
-}
-
-pub fn sync_antigravity_cache(explicit: bool) -> SyncAntigravityResult {
-    let connections = match detect_antigravity_connections() {
-        Ok(conns) => conns,
-        Err(err) => {
-            return SyncAntigravityResult {
-                synced: false,
-                partial: false,
-                sessions: 0,
-                retained_sessions: 0,
-                failed_sessions: 0,
-                connections: 0,
-                error: Some(err.to_string()),
-            };
-        }
-    };
-    sync_antigravity_cache_with_connections(&connections, explicit)
 }
 
 fn sync_antigravity_cache_impl(
@@ -565,7 +617,79 @@ fn sync_antigravity_cache_impl_with_deadline(
 }
 
 pub fn run_antigravity_sync() -> Result<()> {
-    report_sync_outcome(sync_antigravity_cache(true))
+    use colored::Colorize;
+
+    let local = local_conversation_databases();
+    let discovery = match discover_antigravity() {
+        Ok(discovery) => discovery,
+        // Discovery only matters for builds without conversation databases;
+        // when those exist, a failed process scan loses nothing.
+        Err(err) if local.total() > 0 => {
+            eprintln!(
+                "{}",
+                tr!("cli.submit.antigravityDiscoveryFailed", error = err).yellow()
+            );
+            print_local_databases_notice(&local);
+            return Ok(());
+        }
+        Err(err) => {
+            return report_sync_outcome(SyncAntigravityResult {
+                error: Some(err.to_string()),
+                ..SyncAntigravityResult::default()
+            })
+        }
+    };
+
+    if discovery.connections.is_empty() {
+        if discovery.standalone_servers > 0 {
+            println!(
+                "\n  {}",
+                tr!(
+                    "top.antigravity.standaloneServers",
+                    count = discovery.standalone_servers
+                )
+                .yellow()
+            );
+        }
+        // Nothing to sync over RPC, and the usage is already readable from
+        // disk: running the sync would only rewrite the manifest unchanged.
+        if local.total() > 0 {
+            print_local_databases_notice(&local);
+            return Ok(());
+        }
+    }
+
+    report_sync_outcome(sync_antigravity_cache_with_connections(
+        &discovery.connections,
+        true,
+    ))
+}
+
+fn print_local_databases_notice(local: &LocalConversationDatabases) {
+    use colored::Colorize;
+
+    println!("\n  {}", t!("top.antigravity.syncTitle").cyan());
+    println!(
+        "  {}",
+        tr!(
+            "top.antigravity.localDatabasesNoSync",
+            count = local.total(),
+            plural = if local.total() == 1 { "" } else { "s" }
+        )
+        .bright_black()
+    );
+    for (dir, count) in &local.dirs {
+        println!(
+            "  {}",
+            tr!(
+                "top.antigravity.localDatabasesDir",
+                path = dir.display(),
+                count = count
+            )
+            .bright_black()
+        );
+    }
+    println!();
 }
 
 fn report_sync_outcome(result: SyncAntigravityResult) -> Result<()> {
@@ -606,7 +730,9 @@ pub fn run_antigravity_status(json: bool) -> Result<()> {
     let cache_dir = get_antigravity_cache_dir()?;
     let sessions_dir = get_antigravity_sessions_dir()?;
     let manifest_path = get_antigravity_manifest_path()?;
-    let connections = detect_antigravity_connections()?;
+    let discovery = discover_antigravity()?;
+    let connections = discovery.connections;
+    let local = local_conversation_databases();
     let manifest = load_antigravity_manifest()?;
 
     let status = AntigravityStatus {
@@ -616,6 +742,13 @@ pub fn run_antigravity_status(json: bool) -> Result<()> {
         sessions_dir_exists: sessions_dir.exists(),
         manifest_exists: manifest_path.exists(),
         detected_connections: connections.len(),
+        standalone_language_servers: discovery.standalone_servers,
+        local_conversation_databases: local.total(),
+        local_conversation_dirs: local
+            .dirs
+            .iter()
+            .map(|(dir, _)| dir.display().to_string())
+            .collect(),
         cached_sessions: manifest.sessions.len(),
         last_synced_at: manifest.synced_at,
     };
@@ -654,6 +787,16 @@ pub fn run_antigravity_status(json: bool) -> Result<()> {
         )
         .bright_black()
     );
+    if status.standalone_language_servers > 0 {
+        println!(
+            "  {}",
+            tr!(
+                "top.antigravity.statusStandaloneServers",
+                count = status.standalone_language_servers
+            )
+            .bright_black()
+        );
+    }
     println!(
         "  {}",
         tr!(
@@ -668,7 +811,33 @@ pub fn run_antigravity_status(json: bool) -> Result<()> {
             tr!("top.antigravity.statusLastSynced", time = last_synced_at).bright_black()
         );
     }
-    println!("  {}", t!("top.antigravity.statusSyncHint").bright_black());
+    println!(
+        "  {}",
+        tr!(
+            "top.antigravity.statusLocalDatabases",
+            count = status.local_conversation_databases
+        )
+        .bright_black()
+    );
+    for (dir, count) in &local.dirs {
+        println!(
+            "    {}",
+            tr!(
+                "top.antigravity.localDatabasesDir",
+                path = dir.display(),
+                count = count
+            )
+            .bright_black()
+        );
+    }
+    if status.local_conversation_databases > 0 {
+        println!(
+            "  {}",
+            t!("top.antigravity.statusLocalDatabasesHint").bright_black()
+        );
+    } else {
+        println!("  {}", t!("top.antigravity.statusSyncHint").bright_black());
+    }
     println!();
     Ok(())
 }
@@ -1303,7 +1472,14 @@ fn bool_label(value: bool) -> &'static str {
 }
 
 pub fn detect_antigravity_connections() -> Result<Vec<AntigravityConnection>> {
-    let candidates = detect_process_candidates()?;
+    Ok(discover_antigravity()?.connections)
+}
+
+fn discover_antigravity() -> Result<AntigravityDiscovery> {
+    let ProcessDiscovery {
+        candidates,
+        standalone_servers,
+    } = detect_process_candidates()?;
     let mut connections = Vec::new();
 
     for candidate in candidates {
@@ -1329,7 +1505,10 @@ pub fn detect_antigravity_connections() -> Result<Vec<AntigravityConnection>> {
     });
     connections.dedup_by(|left, right| left.pid == right.pid && left.port == right.port);
 
-    Ok(connections)
+    Ok(AntigravityDiscovery {
+        connections,
+        standalone_servers,
+    })
 }
 
 fn candidate_probe_ports(candidate: &ProcessCandidate, mut ports: Vec<u16>) -> Vec<u16> {
@@ -1344,7 +1523,7 @@ fn candidate_probe_ports(candidate: &ProcessCandidate, mut ports: Vec<u16>) -> V
     ports
 }
 
-fn detect_process_candidates() -> Result<Vec<ProcessCandidate>> {
+fn detect_process_candidates() -> Result<ProcessDiscovery> {
     #[cfg(target_os = "windows")]
     {
         detect_windows_process_candidates()
@@ -1357,9 +1536,10 @@ fn detect_process_candidates() -> Result<Vec<ProcessCandidate>> {
 }
 
 #[cfg(not(target_os = "windows"))]
-fn detect_unix_process_candidates() -> Result<Vec<ProcessCandidate>> {
+fn detect_unix_process_candidates() -> Result<ProcessDiscovery> {
     let output = run_command("ps", &["-ww", "-eo", "pid,ppid,args"])?;
     let mut candidates = Vec::new();
+    let mut standalone_servers = 0;
 
     for line in output.lines() {
         let trimmed = line.trim();
@@ -1403,6 +1583,9 @@ fn detect_unix_process_candidates() -> Result<Vec<ProcessCandidate>> {
         }
 
         let Some(csrf_token) = extract_csrf_token(&command) else {
+            if is_standalone_language_server(&command) {
+                standalone_servers += 1;
+            }
             continue;
         };
         let declared_port = extract_declared_port(&command);
@@ -1424,11 +1607,14 @@ fn detect_unix_process_candidates() -> Result<Vec<ProcessCandidate>> {
     });
     candidates.dedup_by(|left, right| left.pid == right.pid);
 
-    Ok(candidates)
+    Ok(ProcessDiscovery {
+        candidates,
+        standalone_servers,
+    })
 }
 
 #[cfg(target_os = "windows")]
-fn detect_windows_process_candidates() -> Result<Vec<ProcessCandidate>> {
+fn detect_windows_process_candidates() -> Result<ProcessDiscovery> {
     let script = "$ErrorActionPreference = 'Stop'; Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,ExecutablePath,CommandLine | ConvertTo-Json -Compress";
     let output = run_windows_powershell(script)?;
     if output.trim().is_empty() {
@@ -1438,7 +1624,7 @@ fn detect_windows_process_candidates() -> Result<Vec<ProcessCandidate>> {
 }
 
 #[cfg(any(test, target_os = "windows"))]
-fn parse_windows_process_candidates(output: &str) -> Result<Vec<ProcessCandidate>> {
+fn parse_windows_process_candidates(output: &str) -> Result<ProcessDiscovery> {
     let value: Value =
         serde_json::from_str(output.trim()).context(t!("top.antigravity.windowsDiscoveryParse"))?;
     let items: Vec<&Value> = match &value {
@@ -1450,6 +1636,7 @@ fn parse_windows_process_candidates(output: &str) -> Result<Vec<ProcessCandidate
         }
     };
     let mut candidates = Vec::new();
+    let mut standalone_servers = 0;
 
     for item in items {
         let Some(pid) = item
@@ -1478,6 +1665,9 @@ fn parse_windows_process_candidates(output: &str) -> Result<Vec<ProcessCandidate
         }
 
         let Some(csrf_token) = extract_csrf_token(command) else {
+            if is_standalone_language_server(command) {
+                standalone_servers += 1;
+            }
             continue;
         };
         let declared_port = extract_declared_port(command);
@@ -1499,7 +1689,10 @@ fn parse_windows_process_candidates(output: &str) -> Result<Vec<ProcessCandidate
     });
     candidates.dedup_by(|left, right| left.pid == right.pid);
 
-    Ok(candidates)
+    Ok(ProcessDiscovery {
+        candidates,
+        standalone_servers,
+    })
 }
 
 #[cfg(any(test, target_os = "windows"))]
@@ -1559,6 +1752,31 @@ fn process_executable_path(pid: u32) -> Option<PathBuf> {
         let _ = pid;
         None
     }
+}
+
+/// Whether an Antigravity language server runs in the standalone mode current
+/// Antigravity - Insiders builds use:
+///
+/// ```text
+/// language_server --standalone ... --app_data_dir antigravity-insiders \
+///   --host_bridge_url=http://127.0.0.1:<port> --read_host_bridge_token_from_stdin
+/// ```
+///
+/// It is launched without `--csrf_token` / `--extension_server_port` and gets
+/// its host-bridge credential over stdin, so the sync RPC has nothing to
+/// authenticate with. Its conversations are on disk as `conversations/*.db`
+/// instead, which the scanner reads directly.
+fn is_standalone_language_server(command: &str) -> bool {
+    command.split_whitespace().any(|arg| {
+        ["--standalone", "--read_host_bridge_token_from_stdin"]
+            .iter()
+            .any(|flag| {
+                arg == *flag
+                    || arg
+                        .strip_prefix(flag)
+                        .is_some_and(|rest| rest.starts_with('='))
+            })
+    })
 }
 
 fn extract_csrf_token(command: &str) -> Option<String> {
@@ -3824,7 +4042,7 @@ mod tests {
             }
         ]"#;
 
-        let candidates = parse_windows_process_candidates(output).unwrap();
+        let candidates = parse_windows_process_candidates(output).unwrap().candidates;
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0].pid, 4242);
         assert_eq!(candidates[0].ppid, 100);
@@ -3841,10 +4059,97 @@ mod tests {
             "CommandLine": "\"C:\\Antigravity\\language_server.exe\" --extension_server_port 49323 --csrf_token abcdef0123456789abcdef0123456789"
         }"#;
 
-        let candidates = parse_windows_process_candidates(output).unwrap();
+        let candidates = parse_windows_process_candidates(output).unwrap().candidates;
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0].pid, 4243);
         assert_eq!(candidates[0].declared_port, Some(49323));
+    }
+
+    /// The Antigravity - Insiders launch line from missuo/tokens#134.
+    const INSIDERS_STANDALONE_COMMAND: &str = "/Applications/Antigravity - Insiders.app/Contents/Resources/bin/language_server --standalone --override_ide_name antigravity --subclient_type hub --override_ide_version 1.0.20261120110703 --override_user_agent_name antigravity --https_server_port 0 --app_data_dir antigravity-insiders --enable_sidecars --host_bridge_url=http://127.0.0.1:52345 --read_host_bridge_token_from_stdin";
+
+    #[test]
+    fn insiders_standalone_language_server_is_recognized() {
+        assert!(is_antigravity_process(INSIDERS_STANDALONE_COMMAND));
+        assert!(is_standalone_language_server(INSIDERS_STANDALONE_COMMAND));
+        // It carries none of the RPC flags sync authenticates with.
+        assert_eq!(extract_csrf_token(INSIDERS_STANDALONE_COMMAND), None);
+        assert_eq!(extract_declared_port(INSIDERS_STANDALONE_COMMAND), None);
+
+        assert!(!is_standalone_language_server(
+            "language_server --app_data_dir antigravity --extension_server_port=49321 --csrf_token=abcdef0123456789abcdef0123456789"
+        ));
+        assert!(!is_standalone_language_server(
+            "language_server --standalone_mode_hint --app_data_dir antigravity"
+        ));
+        assert!(is_standalone_language_server(
+            "language_server --standalone=true --app_data_dir antigravity"
+        ));
+    }
+
+    #[test]
+    fn windows_discovery_counts_standalone_servers_separately() {
+        let output = r#"[
+            {
+                "ProcessId": 4242,
+                "ParentProcessId": 100,
+                "ExecutablePath": "C:\\Users\\me\\AppData\\Local\\Programs\\Antigravity\\language_server.exe",
+                "CommandLine": "\"C:\\Users\\me\\AppData\\Local\\Programs\\Antigravity\\language_server.exe\" --app_data_dir antigravity --extension_server_port=49321 --csrf_token=abcdef0123456789abcdef0123456789"
+            },
+            {
+                "ProcessId": 4243,
+                "ParentProcessId": 100,
+                "ExecutablePath": "C:\\Users\\me\\AppData\\Local\\Programs\\Antigravity Insiders\\resources\\bin\\language_server.exe",
+                "CommandLine": "\"C:\\Users\\me\\AppData\\Local\\Programs\\Antigravity Insiders\\resources\\bin\\language_server.exe\" --standalone --app_data_dir antigravity-insiders --host_bridge_url=http://127.0.0.1:52345 --read_host_bridge_token_from_stdin"
+            },
+            {
+                "ProcessId": 4244,
+                "ParentProcessId": 100,
+                "ExecutablePath": "C:\\Tools\\other.exe",
+                "CommandLine": "other.exe --standalone"
+            }
+        ]"#;
+
+        let discovery = parse_windows_process_candidates(output).unwrap();
+        assert_eq!(discovery.candidates.len(), 1);
+        assert_eq!(discovery.candidates[0].pid, 4242);
+        assert_eq!(discovery.standalone_servers, 1);
+    }
+
+    #[test]
+    fn local_conversation_databases_count_current_desktop_dbs() {
+        let home = tempfile::tempdir().unwrap();
+        assert_eq!(
+            local_conversation_databases_in(home.path(), false),
+            LocalConversationDatabases::default()
+        );
+
+        let stable = home.path().join(".gemini/antigravity/conversations");
+        let insiders = home
+            .path()
+            .join(".gemini/antigravity-insiders/conversations");
+        let cli = home.path().join(".gemini/antigravity-cli/conversations");
+        for dir in [&stable, &insiders, &cli] {
+            fs::create_dir_all(dir).unwrap();
+        }
+        // SQLite sidecars and older builds' encrypted `.pb` files are not
+        // conversation databases; Antigravity CLI databases belong to the
+        // `antigravity-cli` client and do not make desktop sync unnecessary.
+        for name in ["a.db", "a.db-wal", "a.db-shm", "old.pb"] {
+            fs::write(stable.join(name), b"x").unwrap();
+        }
+        fs::write(insiders.join("b.db"), b"x").unwrap();
+        fs::write(insiders.join("c.db"), b"x").unwrap();
+        fs::write(cli.join("d.db"), b"x").unwrap();
+
+        let local = local_conversation_databases_in(home.path(), false);
+        assert_eq!(local.total(), 3);
+        let counts: Vec<(bool, usize)> = local
+            .dirs
+            .iter()
+            .map(|(dir, count)| (dir.ends_with("antigravity-insiders/conversations"), *count))
+            .collect();
+        assert_eq!(counts, vec![(false, 1), (true, 2)]);
     }
 
     #[test]

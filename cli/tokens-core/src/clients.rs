@@ -742,11 +742,12 @@ define_clients!(
         submit_default: true
     },
     // Antigravity CLI stores each conversation as a SQLite `.db` under
-    // `~/.gemini/antigravity-cli/conversations/`. Unlike the IDE-backed
-    // `Antigravity` client (which pulls usage from a running language server
-    // over RPC and caches JSONL under the config dir), the CLI usage sits on
-    // disk and is read directly — no RPC, no `antigravity sync` needed. Honors
-    // `GEMINI_CLI_HOME` so a relocated Gemini home is picked up.
+    // `~/.gemini/antigravity-cli/conversations/`, read directly — no RPC, no
+    // `antigravity sync` needed. Current desktop builds write the same schema
+    // under `~/.gemini/antigravity{,-insiders}/conversations/`; those rows
+    // belong to the `Antigravity` client, which also keeps the older builds'
+    // RPC-synced JSONL cache. Honors `GEMINI_CLI_HOME` so a relocated Gemini
+    // home is picked up.
     AntigravityCli = 31 => {
         id: "antigravity-cli",
         display: "Antigravity CLI",
