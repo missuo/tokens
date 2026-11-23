@@ -51,11 +51,18 @@ const MAX_SUPPORTED_DEVIN_CLI_PROVENANCE_SCHEMA_VERSION = 2;
 // at revision 1, which the same-revision regression guard would otherwise keep
 // beside the usage that moved to later days (missuo/tokens#129).
 const MAX_SUPPORTED_HERMES_PROVENANCE_SCHEMA_VERSION = 2;
+// Amp revision 2: message usage is dated by its own timestamp instead of the
+// thread's creation. The higher revision lets the creation day's now-lower
+// total replace the one stored at revision 1, which the same-revision
+// regression guard would otherwise keep beside the usage that moved to later
+// days (missuo/tokens#64).
+const MAX_SUPPORTED_AMP_PROVENANCE_SCHEMA_VERSION = 2;
 const MAX_SUPPORTED_DEFAULT_PROVENANCE_SCHEMA_VERSION = 1;
 const MAX_SUPPORTED_PROVENANCE_SCHEMA_VERSION_BY_CLIENT: Readonly<Record<string, number>> = {
   codex: MAX_SUPPORTED_CODEX_PROVENANCE_SCHEMA_VERSION,
   "devin-cli": MAX_SUPPORTED_DEVIN_CLI_PROVENANCE_SCHEMA_VERSION,
   hermes: MAX_SUPPORTED_HERMES_PROVENANCE_SCHEMA_VERSION,
+  amp: MAX_SUPPORTED_AMP_PROVENANCE_SCHEMA_VERSION,
 };
 const MAX_SUPPORTED_ANY_PROVENANCE_SCHEMA_VERSION = Math.max(
   MAX_SUPPORTED_DEFAULT_PROVENANCE_SCHEMA_VERSION,

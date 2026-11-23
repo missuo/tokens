@@ -1573,7 +1573,11 @@ struct TsTokenContributionData {
 /// (missuo/tokens#129); the start day's stored total has to be allowed to drop
 /// or the moved usage counts twice. That also lets days shrink for sessions
 /// deleted from state.db, which #129 measured at under 1%, far less than the
-/// double count. Claude's and Grok's smaller
+/// double count. Amp 2: message usage is dated by its own timestamp instead of
+/// the thread's creation (missuo/tokens#64), which in threads exported from
+/// ampcode.com moved a fifth of the tokens off the day they were booked on;
+/// Amp does not delete thread files, so the creation day may drop to its real
+/// total. Claude's and Grok's smaller
 /// corrections are deliberately not bumped: both clients delete old session
 /// files, and a bump would let a total that shrank because history vanished
 /// overwrite the stored one.
@@ -1585,6 +1589,7 @@ fn submit_parser_revision(client: &str) -> u32 {
         "codex" => 4,
         "devin-cli" => 2,
         "hermes" => 2,
+        "amp" => 2,
         _ => 1,
     }
 }
@@ -4357,6 +4362,8 @@ mod submit_parser_revisions {
         assert_eq!(submit_parser_revision("devin-cli"), 2);
         // missuo/tokens#129: usage moves off the session start day.
         assert_eq!(submit_parser_revision("hermes"), 2);
+        // missuo/tokens#64: usage moves off the thread creation day.
+        assert_eq!(submit_parser_revision("amp"), 2);
         assert_eq!(submit_parser_revision("devin-desktop"), 1);
         assert_eq!(submit_parser_revision("claude"), 1);
     }

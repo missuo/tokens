@@ -1529,6 +1529,11 @@ fn parser_version(client: ClientId) -> u32 {
         // byte-identical before and after, so only this bump discards the v1
         // rows still holding a provider-reported zero.
         ClientId::Fx => 2,
+        // v1->v2: message usage is dated by its own `usage.timestamp` (present
+        // in every thread exported from ampcode.com) instead of thread
+        // creation plus one second per message id. An unchanged thread file
+        // parses onto different days, so only this bump re-dates cached rows.
+        ClientId::Amp => 2,
         // The remaining clients parse their own formats and have never
         // shipped a parser-only change that leaves byte-identical input
         // parsing differently, so all of them are at version 1. Repeating
@@ -1543,7 +1548,6 @@ fn parser_version(client: ClientId) -> u32 {
         // either added to a shared family (its version then derives from
         // the family's driver base) or given an explicit independent arm.
         ClientId::Gemini => 1,
-        ClientId::Amp => 1,
         // Qoder / Qoder CN. Independent history: the parser owns the transcript,
         // segment-log and IDE-SQLite merge rules, so a parse change bumps
         // `QODER_PARSER_BASE_VERSION` here and nowhere else.
@@ -4260,6 +4264,12 @@ mod tests {
     fn test_hermes_parser_version_invalidates_v2_entries() {
         // v2->v3 re-dates usage from the session start onto its messages.
         assert_eq!(parser_version(ClientId::Hermes), 3);
+    }
+
+    #[test]
+    fn test_amp_parser_version_invalidates_v1_entries() {
+        // v1->v2 dates message usage by `usage.timestamp`, not thread creation.
+        assert_eq!(parser_version(ClientId::Amp), 2);
     }
 
     #[test]
