@@ -4105,7 +4105,8 @@ mod tests {
 
     #[test]
     fn test_lossy_jsonl_parser_versions_invalidate_v3_entries() {
-        assert_eq!(parser_version(ClientId::PrimeAgent), 5);
+        // Prime Agent's 5 plus the pi-format v3 speed bump below.
+        assert_eq!(parser_version(ClientId::PrimeAgent), 6);
         assert_eq!(parser_version(ClientId::Reasonix), 4);
     }
 
@@ -4116,9 +4117,10 @@ mod tests {
     #[test]
     fn test_pi_format_parser_version_invalidates_v1_entries() {
         // pi-format base 1 -> 2, applied to every family member's offset
-        // (the standard-lane members took a further +1 for #122, below).
-        assert_eq!(parser_version(ClientId::Kimchi), 3);
-        assert_eq!(parser_version(ClientId::PrimeAgent), 5);
+        // (the standard-lane members took a further +1 for #122, below),
+        // plus the base 2 -> 3 speed bump.
+        assert_eq!(parser_version(ClientId::Kimchi), 4);
+        assert_eq!(parser_version(ClientId::PrimeAgent), 6);
     }
 
     /// #122: the standard cross-session lane (Pi, OMP, Senpi, Craft Agent)
@@ -4127,10 +4129,20 @@ mod tests {
     /// response-level keys that collapse distinct requests sharing one id.
     #[test]
     fn test_pi_entry_identity_dedup_parser_version_invalidates_prior_entries() {
-        assert_eq!(parser_version(ClientId::Pi), 5);
-        assert_eq!(parser_version(ClientId::Omp), 4);
-        assert_eq!(parser_version(ClientId::Senpi), 4);
-        assert_eq!(parser_version(ClientId::CraftAgent), 4);
+        // Each includes the base 2 -> 3 speed bump.
+        assert_eq!(parser_version(ClientId::Pi), 6);
+        assert_eq!(parser_version(ClientId::Omp), 5);
+        assert_eq!(parser_version(ClientId::Senpi), 5);
+        assert_eq!(parser_version(ClientId::CraftAgent), 5);
+    }
+
+    /// pi-format v3 reads the provider-reported `usage.speed` (kwwk copies
+    /// Anthropic's value verbatim). A warm v2 cache holds those records with
+    /// no speed evidence, so every family member moves with the base.
+    #[test]
+    fn test_pi_format_speed_parser_version_invalidates_v2_entries() {
+        assert_eq!(crate::sessions::pi::PI_FORMAT_PARSER_BASE_VERSION, 3);
+        assert_eq!(parser_version(ClientId::Kwwk), 3);
     }
 
     #[test]

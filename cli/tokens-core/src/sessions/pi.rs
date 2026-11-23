@@ -40,7 +40,11 @@ use std::path::Path;
 /// client asked for), so proxied usage stops caching under the proxy's
 /// routing alias. Source files are byte-identical before and after, so only
 /// the parser version retires those cached alias attributions.
-pub const PI_FORMAT_PARSER_BASE_VERSION: u32 = 2;
+///
+/// v2 -> v3: assistant records carry the provider-reported `usage.speed`
+/// (kwwk writes Anthropic's value verbatim) as reported inference speed.
+/// Cached rows from v2 have no speed evidence for those records.
+pub const PI_FORMAT_PARSER_BASE_VERSION: u32 = 3;
 
 /// Record timestamps are RFC 3339 strings in pi; kwwk (a Swift port) writes
 /// epoch milliseconds. Accept both, normalizing numbers to the RFC 3339 form
@@ -298,6 +302,10 @@ pub struct PiUsage {
     /// rather than an accident of the schema, but never summed.
     #[allow(dead_code)]
     pub reasoning: Option<i64>,
+    /// Provider-reported speed tier (Anthropic `usage.speed`, copied verbatim
+    /// by kwwk). Kept as a raw value so a wrong type never discards the
+    /// record's tokens.
+    pub speed: Option<serde_json::Value>,
     #[serde(flatten)]
     extra_fields: BTreeMap<String, serde_json::Value>,
 }
@@ -319,6 +327,11 @@ impl PiUsage {
             cache_write: self.cache_write.unwrap_or(0).max(0),
             reasoning: 0,
         }
+    }
+
+    /// Only the exact Anthropic values count; anything else stays unknown.
+    pub(crate) fn inference_speed(&self) -> Option<crate::speed::InferenceSpeed> {
+        crate::speed::InferenceSpeed::claude(self.speed.as_ref().and_then(|v| v.as_str()))
     }
 
     pub(crate) fn has_damaged_key(&self) -> bool {
@@ -778,6 +791,7 @@ fn parse_pi_format_file_inner(
             0.0,
             agent.clone(),
         );
+        unified.inference_speed = usage.inference_speed();
         if let Some(namespace) = dedup_namespace {
             if options.cross_session_dedup {
                 let clean_response_key = message
