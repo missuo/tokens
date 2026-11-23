@@ -75,6 +75,8 @@ describe("per-client parser revision caps", () => {
     expect(maxSupportedParserRevision("codex")).toBe(4);
     // missuo/tokens#109: Devin CLI rows sharing a request_id count once.
     expect(maxSupportedParserRevision("devin-cli")).toBe(2);
+    // missuo/tokens#129: Hermes usage moves off the session start day.
+    expect(maxSupportedParserRevision("hermes")).toBe(2);
     expect(maxSupportedParserRevision("devin-desktop")).toBe(1);
     expect(maxSupportedParserRevision("claude")).toBe(1);
     // Prototype keys are not clients with a raised cap.
@@ -84,6 +86,7 @@ describe("per-client parser revision caps", () => {
   for (const [client, cap] of [
     ["codex", 4],
     ["devin-cli", 2],
+    ["hermes", 2],
     ["claude", 1],
   ] as const) {
     test(`${client} accepts revision ${cap} and rejects ${cap + 1}`, () => {
@@ -112,6 +115,26 @@ describe("per-client parser revision caps", () => {
     );
     expect(corrected.merged["devin-cli"].tokens).toBe(196_000_000);
     expect(corrected.merged["devin-cli"].provenance?.schemaVersion).toBe(2);
+  });
+
+  test("hermes revision 2 lowers a start day that revision 1 inflated", () => {
+    const existing = { hermes: breakdownAt(1, 3_000_000) };
+    const clients = new Set(["hermes"]);
+
+    const sameRevision = mergeClientBreakdownsWithRegressionGuard(
+      existing,
+      { hermes: breakdownAt(1, 1_000_000) },
+      clients
+    );
+    expect(sameRevision.merged.hermes.tokens).toBe(3_000_000);
+
+    const corrected = mergeClientBreakdownsWithRegressionGuard(
+      existing,
+      { hermes: breakdownAt(2, 1_000_000) },
+      clients
+    );
+    expect(corrected.merged.hermes.tokens).toBe(1_000_000);
+    expect(corrected.merged.hermes.provenance?.schemaVersion).toBe(2);
   });
 });
 

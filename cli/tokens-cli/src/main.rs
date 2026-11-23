@@ -1563,7 +1563,12 @@ struct TsTokenContributionData {
 /// rollouts only adds usage, so it needs no bump. Devin CLI 2: one API
 /// response stored in several `sessions.db` rows counts once (deduped by
 /// request_id, missuo/tokens#109); the database keeps the whole history, so
-/// the recount covers it. Claude's and Grok's smaller
+/// the recount covers it. Hermes 2: a session's lifetime usage is spread
+/// across the days of its assistant messages instead of its start day
+/// (missuo/tokens#129); the start day's stored total has to be allowed to drop
+/// or the moved usage counts twice. That also lets days shrink for sessions
+/// deleted from state.db, which #129 measured at under 1%, far less than the
+/// double count. Claude's and Grok's smaller
 /// corrections are deliberately not bumped: both clients delete old session
 /// files, and a bump would let a total that shrank because history vanished
 /// overwrite the stored one.
@@ -1574,6 +1579,7 @@ fn submit_parser_revision(client: &str) -> u32 {
     match client {
         "codex" => 4,
         "devin-cli" => 2,
+        "hermes" => 2,
         _ => 1,
     }
 }
@@ -4344,6 +4350,8 @@ mod submit_parser_revisions {
         assert_eq!(submit_parser_revision("codex"), 4);
         // missuo/tokens#109: rows sharing a request_id count once.
         assert_eq!(submit_parser_revision("devin-cli"), 2);
+        // missuo/tokens#129: usage moves off the session start day.
+        assert_eq!(submit_parser_revision("hermes"), 2);
         assert_eq!(submit_parser_revision("devin-desktop"), 1);
         assert_eq!(submit_parser_revision("claude"), 1);
     }
