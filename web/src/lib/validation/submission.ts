@@ -45,10 +45,17 @@ const MAX_SUPPORTED_CODEX_PROVENANCE_SCHEMA_VERSION = 4;
 // corrected total replace days stored at revision 1, which the same-revision
 // regression guard would otherwise keep (missuo/tokens#109).
 const MAX_SUPPORTED_DEVIN_CLI_PROVENANCE_SCHEMA_VERSION = 2;
+// Hermes revision 2: a session's lifetime usage is spread across the days of
+// its assistant messages instead of all landing on the day it started. The
+// higher revision lets the start day's now-lower total replace the one stored
+// at revision 1, which the same-revision regression guard would otherwise keep
+// beside the usage that moved to later days (missuo/tokens#129).
+const MAX_SUPPORTED_HERMES_PROVENANCE_SCHEMA_VERSION = 2;
 const MAX_SUPPORTED_DEFAULT_PROVENANCE_SCHEMA_VERSION = 1;
 const MAX_SUPPORTED_PROVENANCE_SCHEMA_VERSION_BY_CLIENT: Readonly<Record<string, number>> = {
   codex: MAX_SUPPORTED_CODEX_PROVENANCE_SCHEMA_VERSION,
   "devin-cli": MAX_SUPPORTED_DEVIN_CLI_PROVENANCE_SCHEMA_VERSION,
+  hermes: MAX_SUPPORTED_HERMES_PROVENANCE_SCHEMA_VERSION,
 };
 const MAX_SUPPORTED_ANY_PROVENANCE_SCHEMA_VERSION = Math.max(
   MAX_SUPPORTED_DEFAULT_PROVENANCE_SCHEMA_VERSION,

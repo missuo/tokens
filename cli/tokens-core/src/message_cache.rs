@@ -1443,7 +1443,10 @@ fn parser_version(client: ClientId) -> u32 {
         // v1->v2: per-model token attribution now comes from
         // session_model_usage instead of crediting the whole session to
         // sessions.model, and dedup keys are namespaced per (session, model).
-        ClientId::Hermes => 2,
+        // v2->v3 spreads each lifetime usage row across the assistant
+        // messages in its window instead of booking it on the session's start
+        // day (missuo/tokens#129).
+        ClientId::Hermes => 3,
         // v1->v2: Unsloth Studio now reads the responding model and provider
         // route from scalar responseDetails fields. Reparse cached rows so
         // local usage stays authoritatively free, metered providers receive
@@ -4238,8 +4241,9 @@ mod tests {
     }
 
     #[test]
-    fn test_hermes_parser_version_invalidates_v1_entries() {
-        assert_eq!(parser_version(ClientId::Hermes), 2);
+    fn test_hermes_parser_version_invalidates_v2_entries() {
+        // v2->v3 re-dates usage from the session start onto its messages.
+        assert_eq!(parser_version(ClientId::Hermes), 3);
     }
 
     #[test]

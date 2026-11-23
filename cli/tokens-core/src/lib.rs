@@ -3304,15 +3304,11 @@ fn parse_all_messages_streaming<S: MessageSink>(
         all_messages.extend(kilo_messages);
     }
 
-    let mut hermes_seen: HashSet<String> = HashSet::new();
-    for db_path in scan_result.hermes_db_paths() {
-        let hermes_messages = parse_hermes_sqlite_with_pricing(&db_path, pricing);
-        all_messages.extend(
-            hermes_messages
-                .into_iter()
-                .filter(|message| should_keep_deduped_message(&mut hermes_seen, message)),
-        );
-    }
+    // Rows shared by several Hermes databases are deduped inside the parser.
+    all_messages.extend(parse_hermes_databases_with_pricing(
+        &scan_result.hermes_db_paths(),
+        pricing,
+    ));
 
     if let Some(db_path) = &scan_result.goose_db {
         let goose_messages: Vec<UnifiedMessage> = sessions::goose::parse_goose_sqlite(db_path)
@@ -5209,11 +5205,11 @@ fn merge_claude_cross_file_duplicate(
     apply_pricing_if_available(existing, pricing);
 }
 
-fn parse_hermes_sqlite_with_pricing(
-    db_path: &Path,
+fn parse_hermes_databases_with_pricing(
+    db_paths: &[PathBuf],
     pricing: Option<&pricing::PricingService>,
 ) -> Vec<UnifiedMessage> {
-    sessions::hermes::parse_hermes_sqlite(db_path)
+    sessions::hermes::parse_hermes_databases(db_paths)
         .into_iter()
         .map(|mut msg| {
             if msg.cost <= 0.0 {
@@ -6227,13 +6223,12 @@ pub fn parse_local_clients(options: LocalParseOptions) -> Result<ParsedMessages,
 
     let hermes_db_paths = scan_result.hermes_db_paths();
     if !hermes_db_paths.is_empty() {
-        let mut hermes_seen: HashSet<String> = HashSet::new();
-        let hermes_msgs: Vec<ParsedMessage> = hermes_db_paths
-            .iter()
-            .flat_map(|db_path| sessions::hermes::parse_hermes_sqlite(db_path))
-            .filter(|msg| should_keep_deduped_message(&mut hermes_seen, msg))
-            .map(|msg| unified_to_parsed(&msg))
-            .collect();
+        // Rows shared by several databases are deduped inside the parser.
+        let hermes_msgs: Vec<ParsedMessage> =
+            sessions::hermes::parse_hermes_databases(&hermes_db_paths)
+                .iter()
+                .map(unified_to_parsed)
+                .collect();
         let count = summed_parsed_message_count(&hermes_msgs);
         counts.set(ClientId::Hermes, count);
         messages.extend(hermes_msgs);
