@@ -1564,6 +1564,12 @@ fn parser_version(client: ClientId) -> u32 {
         ClientId::Mcode => 1,
         ClientId::LmStudio => 1,
         ClientId::Hindsight => 1,
+        // TRAE CLI rollouts go through the Codex parser before the
+        // `trae_cli` relabel and `token_usage_record` fallback, so a Codex
+        // parser bump moves this one too.
+        ClientId::TraeCli => {
+            parser_version(ClientId::Codex) + crate::sessions::trae_cli::TRAE_CLI_PARSER_OFFSET
+        }
         // Shared-family members are versioned by `SHARED_PARSER_FAMILIES`
         // through the roster lookup at the top of this function. Listing
         // them here keeps the match exhaustive at compile time; reaching
@@ -3981,6 +3987,16 @@ mod tests {
         // rows, so it has to be asserted rather than assumed.
         assert_eq!(parser_version(ClientId::Codex), 13);
         assert_eq!(parser_version(ClientId::Claude), 2);
+    }
+
+    #[test]
+    fn trae_cli_parser_version_follows_the_codex_parser() {
+        // TRAE CLI rollouts are parsed by the Codex parser; a Codex bump must
+        // invalidate their cached rows as well.
+        assert_eq!(
+            parser_version(ClientId::TraeCli),
+            parser_version(ClientId::Codex) + crate::sessions::trae_cli::TRAE_CLI_PARSER_OFFSET
+        );
     }
 
     #[test]

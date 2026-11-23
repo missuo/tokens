@@ -145,7 +145,7 @@ pub(crate) struct CodexTotals {
 }
 
 impl CodexTotals {
-    fn from_usage(usage: &CodexTokenUsage) -> Self {
+    pub(crate) fn from_usage(usage: &CodexTokenUsage) -> Self {
         Self {
             input: usage.input_tokens.unwrap_or(0).max(0),
             output: usage.output_tokens.unwrap_or(0).max(0),
@@ -215,7 +215,7 @@ impl CodexTotals {
             || current_total.saturating_add(last_total.saturating_mul(2)) >= previous_total
     }
 
-    fn into_tokens(self) -> TokenBreakdown {
+    pub(crate) fn into_tokens(self) -> TokenBreakdown {
         // Clamp cached to not exceed input to prevent inflated totals when
         // malformed data reports more cached tokens than input tokens.
         let clamped_cached = self.cached.min(self.input).max(0);
@@ -467,7 +467,7 @@ pub(crate) struct ParsedCodexFile {
     pub state: CodexParseState,
 }
 
-fn codex_workspace_from_cwd(cwd: &str) -> (Option<String>, Option<String>) {
+pub(crate) fn codex_workspace_from_cwd(cwd: &str) -> (Option<String>, Option<String>) {
     let workspace_key = normalize_codex_workspace_key(cwd);
     let workspace_label = workspace_key.as_deref().and_then(workspace_label_from_key);
 
@@ -1745,7 +1745,7 @@ const CODEX_SYSTEM_INJECTED_PREFIXES: [&str; 3] = [
 /// `<div>`, pasting an XML snippet, etc.). The `kind` field can't be used to
 /// distinguish them: both human and injected bodies appear as `kind:"plain"` or
 /// with no `kind` at all.
-fn codex_message_is_human_turn(message: Option<&str>) -> bool {
+pub(crate) fn codex_message_is_human_turn(message: Option<&str>) -> bool {
     match message {
         Some(text) => {
             let trimmed = text.trim_start();

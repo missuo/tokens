@@ -1114,6 +1114,26 @@ define_clients!(
         headless: false,
         parse_local: true,
         submit_default: true
+    },
+    // TRAE CLI 2.0 (`traex`, reports itself as `traecli 0.2xx`) is a
+    // closed-source fork of codex-rs and writes Codex rollouts under
+    // `${TRAE_HOME:-~/.trae}/cli/sessions/YYYY/MM/DD/`. The scanner adds
+    // `cli/archived_sessions` and a `TRAECLI_HOME` override; see
+    // `sessions::trae_cli`. Separate from `trae`, which reads the account-level
+    // usage API dump that `tokens trae sync` writes.
+    TraeCli = 56 => {
+        id: "trae-cli",
+        display: "TRAE CLI",
+        logo: None,
+        root: PathRoot::EnvVar {
+            var: "TRAE_HOME",
+            fallback_relative: ".trae",
+        },
+        relative: "cli/sessions",
+        pattern: "*.jsonl|*.jsonl.zst",
+        headless: false,
+        parse_local: true,
+        submit_default: true
     }
 );
 
@@ -1252,6 +1272,29 @@ mod tests {
 
     #[test]
     #[serial]
+    fn test_trae_cli_root_follows_trae_home() {
+        let client = ClientId::from_str("trae-cli").expect("trae-cli client should be registered");
+        assert_eq!(client.display_name(), "TRAE CLI");
+        assert_eq!(client.data().pattern, "*.jsonl|*.jsonl.zst");
+        assert!(client.data().parse_local);
+        assert!(client.data().submit_default);
+
+        let mut env = EnvGuard::capture(&["TRAE_HOME"]);
+        env.remove("TRAE_HOME");
+        assert_eq!(
+            client.data().resolve_path("/tmp/home"),
+            native_join(std::path::Path::new("/tmp/home"), ".trae/cli/sessions")
+        );
+
+        env.set("TRAE_HOME", "/custom/trae");
+        assert_eq!(
+            client.data().resolve_path("/tmp/home"),
+            native_join(std::path::Path::new("/custom/trae"), "cli/sessions")
+        );
+    }
+
+    #[test]
+    #[serial]
     fn test_qoder_roots_resolve_both_editions() {
         let mut env = EnvGuard::capture(&["QODER_CONFIG_DIR", "QODERCN_CONFIG_DIR"]);
         env.remove("QODER_CONFIG_DIR");
@@ -1271,8 +1314,9 @@ mod tests {
 
     #[test]
     fn test_client_id_count() {
-        // 53 upstream clients plus this fork's Craft Agent, Qoder and kwwk.
-        assert_eq!(ClientId::COUNT, 56);
+        // 53 upstream clients plus this fork's Craft Agent, Qoder, kwwk and
+        // TRAE CLI.
+        assert_eq!(ClientId::COUNT, 57);
     }
 
     #[test]
