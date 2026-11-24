@@ -2637,8 +2637,9 @@ fn run_autosubmit_command(subcommand: commands::autosubmit::AutosubmitSubcommand
         AutosubmitSubcommand::Status { json } => commands::autosubmit::status(json),
         AutosubmitSubcommand::Disable => commands::autosubmit::disable(),
         AutosubmitSubcommand::Run { force } => {
-            let now_ms = chrono::Utc::now().timestamp_millis();
-            let (settings, decision) = commands::autosubmit::load_run_config(force, now_ms)?;
+            // Schedulers tick start-to-start; recording finish time made every other tick NotDue.
+            let started_at_ms = chrono::Utc::now().timestamp_millis();
+            let (settings, decision) = commands::autosubmit::load_run_config(force, started_at_ms)?;
             // No-op unless Windows, enabled, and the task predates tokensw.exe.
             commands::autosubmit::self_heal_windows_task(&settings);
             match decision {
@@ -2677,9 +2678,7 @@ fn run_autosubmit_command(subcommand: commands::autosubmit::AutosubmitSubcommand
                 None,
             ) {
                 Ok(()) => {
-                    commands::autosubmit::record_run_success(
-                        chrono::Utc::now().timestamp_millis(),
-                    )?;
+                    commands::autosubmit::record_run_success(started_at_ms)?;
                     Ok(())
                 }
                 Err(err) => {
