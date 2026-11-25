@@ -46,6 +46,9 @@ pub struct AmpMessageUsage {
     #[serde(rename = "cacheCreationInputTokens")]
     pub cache_creation_input_tokens: Option<i64>,
     pub credits: Option<f64>,
+    /// When the request finished. Current Amp writes it on every assistant
+    /// message; older local thread files did not.
+    pub timestamp: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -70,6 +73,12 @@ pub struct AmpThread {
     pub usage_ledger: Option<AmpUsageLedger>,
 }
 
+/// Amp names some models by their upstream org, such as
+/// `zai-org/GLM-5.3-Flash`; other clients report the same model without it.
+fn strip_org_prefix(model: &str) -> &str {
+    model.rsplit('/').next().unwrap_or(model)
+}
+
 /// Get provider from model name
 fn get_provider_from_model(model: &str) -> &'static str {
     provider_identity::inferred_provider_from_model(model).unwrap_or("anthropic")
@@ -92,10 +101,11 @@ impl AmpUsageRecord {
     }
 
     fn into_unified(self, thread_id: &str) -> UnifiedMessage {
+        let model = strip_org_prefix(&self.model);
         UnifiedMessage::new(
             "amp",
-            &self.model,
-            get_provider_from_model(&self.model),
+            model,
+            get_provider_from_model(model),
             thread_id.to_string(),
             self.timestamp,
             self.tokens,
@@ -192,12 +202,18 @@ fn parse_amp_message_records(
             let usage = msg.usage?;
             let model = usage.model?;
             let message_id = msg.message_id.unwrap_or(0).max(0);
-            let timestamp = base_timestamp.saturating_add(message_id.saturating_mul(1000));
+            // Without its own timestamp a message is placed just after the
+            // thread's creation, which puts a thread that runs for days on
+            // its first day.
+            let explicit_timestamp = parse_amp_timestamp(usage.timestamp);
+            let timestamp = explicit_timestamp.unwrap_or_else(|| {
+                base_timestamp.saturating_add(message_id.saturating_mul(1000))
+            });
 
             Some(AmpUsageRecord {
                 model,
                 timestamp,
-                has_explicit_timestamp: false,
+                has_explicit_timestamp: explicit_timestamp.is_some(),
                 message_id: Some(message_id).filter(|id| *id > 0),
                 ledger_to_message_id: None,
                 tokens: TokenBreakdown {
@@ -618,5 +634,62 @@ mod tests {
         assert_eq!(messages.len(), 1);
         assert!(messages[0].timestamp >= file_mtime_ms);
         assert_ne!(messages[0].date, "1970-01-01");
+    }
+
+    #[test]
+    fn test_parse_amp_places_each_message_on_its_own_timestamp() {
+        // The shape `amp threads export` writes today: no usage ledger, and a
+        // timestamp on every assistant message's usage.
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let path = temp_dir.path().join("T-multi-day.json");
+        let thread_created = timestamp_ms("2026-11-21T10:00:00Z");
+        let later = "2026-11-24T09:30:00.123Z";
+
+        write_amp_thread(
+            &path,
+            &serde_json::json!({
+                "v": 3,
+                "id": "T-multi-day",
+                "created": thread_created,
+                "messages": [
+                    { "role": "user", "messageId": 0 },
+                    {
+                        "role": "assistant",
+                        "messageId": 1,
+                        "usage": {
+                            "model": "claude-opus-5-5",
+                            "features": [],
+                            "timestamp": later,
+                            "inputTokens": 2,
+                            "outputTokens": 165,
+                            "maxInputTokens": 872000,
+                            "totalInputTokens": 111015,
+                            "cacheReadInputTokens": 0,
+                            "cacheCreationInputTokens": 111013
+                        }
+                    },
+                    {
+                        "role": "assistant",
+                        "messageId": 3,
+                        "usage": {
+                            "model": "zai-org/GLM-5.3-Flash",
+                            "inputTokens": 10,
+                            "outputTokens": 5
+                        }
+                    }
+                ]
+            })
+            .to_string(),
+        );
+
+        let messages = parse_amp_file(&path);
+        assert_eq!(messages.len(), 2);
+        // A message without a timestamp still falls back to thread creation.
+        assert_eq!(messages[0].timestamp, thread_created + 3000);
+        assert_eq!(messages[0].model_id, "GLM-5.3-Flash");
+        assert_eq!(messages[1].model_id, "claude-opus-5-5");
+        assert_eq!(messages[1].timestamp, timestamp_ms(later));
+        assert_eq!(messages[1].date, local_date(timestamp_ms(later)));
+        assert_eq!(messages[1].tokens.cache_write, 111013);
     }
 }

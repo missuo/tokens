@@ -1543,7 +1543,11 @@ fn parser_version(client: ClientId) -> u32 {
         // either added to a shared family (its version then derives from
         // the family's driver base) or given an explicit independent arm.
         ClientId::Gemini => 1,
-        ClientId::Amp => 1,
+        // v1->v2: each message is dated by its own `usage.timestamp` instead
+        // of thread creation, and an upstream org prefix is dropped from the
+        // model (`zai-org/GLM-5.3-Flash`). Thread files whose usage has not
+        // changed keep their fingerprint, so only this bump reparses them.
+        ClientId::Amp => 2,
         // Qoder / Qoder CN. Independent history: the parser owns the transcript,
         // segment-log and IDE-SQLite merge rules, so a parse change bumps
         // `QODER_PARSER_BASE_VERSION` here and nowhere else.
