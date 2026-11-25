@@ -155,7 +155,7 @@ written sessions, it is counted.
 | [Qoder / Qoder CN](https://qoder.com/) | `~/.qoder/projects/` and `~/.qoder-cn/projects/` (override with `QODER_CONFIG_DIR` / `QODERCN_CONFIG_DIR`), `~/.qoder{,-cn}/logs/sessions/**/segments/`, plus the IDE's `SharedClientCache/cache/db/local.db` |
 | [Qwen CLI](https://github.com/QwenLM/qwen-cli) | `~/.qwen/projects/` |
 | Reasonix | `~/.reasonix/stats/*.jsonl` (override via `REASONIX_STATE_HOME` or `REASONIX_HOME`) |
-| [Amp](https://ampcode.com/) | `~/.local/share/amp/threads/` |
+| [Amp](https://ampcode.com/) | `tokens amp sync` → `~/.config/tokens/amp-cache/threads/` (older builds: `~/.local/share/amp/threads/`) |
 | [Droid](https://factory.ai/) | `~/.factory/sessions/` |
 | [Cline](https://github.com/cline/cline) | VS Code globalStorage tasks, or `~/.cline/data/sessions/` for the Cline CLI / desktop |
 | [Roo Code](https://github.com/RooCodeInc/Roo-Code) | VS Code globalStorage tasks |
@@ -242,6 +242,16 @@ Clients that expose usage only through an account API need a sync step first —
 needs it only on older builds: current Antigravity and Antigravity - Insiders
 conversation databases are read directly (`tokens antigravity status` shows
 which ones were found).
+
+Current Amp keeps threads on its server. `tokens amp sync` asks the installed
+`amp` CLI for your threads (`amp threads list`, `amp threads export`) and keeps
+only each assistant message's usage; prompts and replies are not written to
+disk. Run it on **one** device: the threads belong to the account, so every
+device that syncs them reports the same days. After the first run, `tokens
+submit` and `tokens serve` on that device sync Amp on their own; delete
+`~/.config/tokens/amp-cache/` to stop. Usage from Task subagents and other side
+requests (compaction, thread titles) is not in the export and is not counted
+yet.
 
 Tokens detects Cursor Agent CLI sign-ins without requiring the desktop IDE.
 It reads the CLI's `cursor-access-token` / `cursor-user` Keychain item on macOS,

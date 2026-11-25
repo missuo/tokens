@@ -884,6 +884,10 @@ pub fn antigravity_conversation_roots(home_dir: &str, use_env_roots: bool) -> Ve
         .collect()
 }
 
+/// Where `tokens amp sync` writes thread usage, relative to the tokens config
+/// directory.
+pub const AMP_CACHE_THREADS_RELATIVE: &str = "amp-cache/threads";
+
 pub fn built_in_extra_scan_paths_for(
     home_dir: &str,
     enabled: &HashSet<ClientId>,
@@ -1004,6 +1008,17 @@ pub fn built_in_extra_scan_paths_for(
         paths.push((
             ClientId::Senpi,
             senpi_omo_children_root(Path::new(home_dir), user_state_dir.as_deref()),
+        ));
+    }
+
+    if enabled.contains(&ClientId::Amp) {
+        // Current Amp keeps threads on its server; `tokens amp sync` mirrors
+        // their usage here. The client's own root is where older Amp builds
+        // wrote thread files locally.
+        let config_root = PathRoot::Config.resolve_with_env_strategy(home_dir, use_env_roots);
+        paths.push((
+            ClientId::Amp,
+            PathBuf::from(join_native(&config_root, AMP_CACHE_THREADS_RELATIVE)),
         ));
     }
 

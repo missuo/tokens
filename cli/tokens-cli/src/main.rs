@@ -1,3 +1,4 @@
+mod amp;
 mod antigravity;
 mod auth;
 mod cloud;
@@ -175,6 +176,11 @@ enum Commands {
     Warp {
         #[command(subcommand)]
         subcommand: WarpSubcommand,
+    },
+    #[command(about = "Amp integration commands")]
+    Amp {
+        #[command(subcommand)]
+        subcommand: AmpSubcommand,
     },
     #[command(about = "Hindsight memory backend integration commands")]
     Hindsight {
@@ -383,6 +389,17 @@ enum HindsightSubcommand {
             help = "Bearer authentication token (or set HINDSIGHT_API_API_TOKEN)"
         )]
         token: Option<String>,
+        #[arg(long, help = "Output as JSON")]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum AmpSubcommand {
+    #[command(
+        about = "Sync Amp thread usage into local cache and keep it synced on submit from this device"
+    )]
+    Sync {
         #[arg(long, help = "Output as JSON")]
         json: bool,
     },
@@ -722,6 +739,9 @@ fn main() -> Result<()> {
         Some(Commands::Codex { subcommand }) => run_codex_command(subcommand),
         Some(Commands::Trae { subcommand }) => run_trae_command(subcommand),
         Some(Commands::Warp { subcommand }) => run_warp_command(subcommand),
+        Some(Commands::Amp {
+            subcommand: AmpSubcommand::Sync { json },
+        }) => amp::run_amp_sync(json),
         Some(Commands::Hindsight { subcommand }) => run_hindsight_command(subcommand),
         Some(Commands::DeleteSubmittedData) => run_delete_data_command(),
         Some(Commands::McpNames { subcommand }) => commands::mcp_names::run(subcommand),
@@ -2939,6 +2959,29 @@ fn run_submit_command(
                     tr!("cli.submit.cursorSyncFailedCached", error = err).yellow()
                 );
             }
+        }
+    }
+
+    let include_amp = clients
+        .as_ref()
+        .is_none_or(|s| s.iter().any(|src| src == "amp"));
+    // Only a device where `tokens amp sync` has been run syncs: the threads are
+    // account-wide, so every device syncing them would report the same days.
+    if include_amp && amp::is_sync_enabled() {
+        say!("{}", t!("cli.submit.syncingAmp").bright_black());
+        let sync_result = amp::sync_amp_cache();
+        if sync_result.synced {
+            say!(
+                "{}",
+                tr!(
+                    "cli.submit.ampSynced",
+                    threads = sync_result.threads,
+                    exported = sync_result.exported
+                )
+                .bright_black()
+            );
+        } else if let Some(err) = sync_result.error {
+            say!("{}", tr!("cli.submit.ampSyncFailedCached", error = err).yellow());
         }
     }
 
