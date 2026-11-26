@@ -180,6 +180,11 @@ written sessions, it is counted.
 
 </details>
 
+`--client claude` means Claude Code. Chats in the Claude web, desktop and mobile
+apps, Projects included, are not counted: the apps keep no local per-message
+token counts, and tokens does not read your claude.ai account. Claude Code on
+the web is covered separately, see [Cloud agent sessions](#cloud-agent-sessions).
+
 ### Paseo
 
 [Paseo](https://github.com/getpaseo/paseo) runs agents through their native

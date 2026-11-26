@@ -227,6 +227,7 @@
   "cli.submit.models": "    モデル数：{count}",
   "cli.submit.month.help": "今月を表示します",
   "cli.submit.noData": "  送信できる使用量データが見つかりません。\n",
+  "cli.submit.claudeAppsNotScanned": "  集計対象は Claude Code のセッションのみです。Claude の Web・デスクトップ・モバイルアプリでのチャット（Projects を含む）はローカルに使用量の記録が残らないため、収集されません。\n",
   "cli.submit.notLoggedIn": "未ログインです。",
   "cli.submit.profileLink": "  プロフィールを表示：{base_url}/u/{username}",
   "cli.submit.replace.help": "--since/--until の範囲で、明示的に選んだクライアントを今回のデータで正式に置き換えます",
