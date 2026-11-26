@@ -1,6 +1,6 @@
 "use client";
 
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { LanguagesIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -31,13 +31,20 @@ import { useLocale, useT } from "@/components/layout/LocaleProvider";
  *
  * The cookie records the choice for `/`, which is the only route with no page
  * of its own — everywhere else the URL already says which language it is.
+ *
+ * The switch is a full navigation, not `router.push`. Middleware rewrites
+ * `/zh/leaderboard` to the same `/leaderboard` route the English page uses, so
+ * a client-side push lands on an unchanged route tree and Next keeps the root
+ * layout as it was: `LocaleProvider`, the nav and `<html lang>` all stayed in
+ * the old language until a reload. A real page load renders the layout again
+ * in the new language, and changing language is rare enough for that to cost
+ * nothing that matters.
  */
 export function LanguageSwitcher() {
   const locale = useLocale();
   const t = useT();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const router = useRouter();
 
   const switchTo = (next: Locale) => {
     const { path } = stripLocale(pathname || "/");
@@ -49,7 +56,7 @@ export function LanguageSwitcher() {
     // cookie without a round trip.
     // eslint-disable-next-line react-hooks/immutability
     document.cookie = `${LOCALE_COOKIE}=${next}; path=/; max-age=${LOCALE_COOKIE_MAX_AGE}; samesite=lax`;
-    router.push(href);
+    window.location.assign(href);
   };
 
   return (
