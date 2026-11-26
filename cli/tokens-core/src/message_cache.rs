@@ -1533,6 +1533,8 @@ fn parser_version(client: ClientId) -> u32 {
         // in every thread exported from ampcode.com) instead of thread
         // creation plus one second per message id. An unchanged thread file
         // parses onto different days, so only this bump re-dates cached rows.
+        // The same version also drops an upstream org prefix from the model
+        // (`zai-org/GLM-5.3-Flash` -> `GLM-5.3-Flash`); both shipped together.
         ClientId::Amp => 2,
         // The remaining clients parse their own formats and have never
         // shipped a parser-only change that leaves byte-identical input
