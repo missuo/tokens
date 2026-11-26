@@ -884,12 +884,26 @@ pub fn antigravity_conversation_roots(home_dir: &str, use_env_roots: bool) -> Ve
         .collect()
 }
 
+/// Where `tokens amp sync` keeps the usage of threads stored on ampcode.com,
+/// one `T-<id>.json` per thread. Current Amp no longer writes the legacy
+/// `amp/threads` data directory (missuo/tokens#64).
+pub fn amp_sync_cache_root(home_dir: &str, use_env_roots: bool) -> PathBuf {
+    join_native_path(
+        Path::new(&PathRoot::Config.resolve_with_env_strategy(home_dir, use_env_roots)),
+        "amp-cache/threads",
+    )
+}
+
 pub fn built_in_extra_scan_paths_for(
     home_dir: &str,
     enabled: &HashSet<ClientId>,
     use_env_roots: bool,
 ) -> Vec<(ClientId, PathBuf)> {
     let mut paths = crate::paseo::discover_scan_paths(Path::new(home_dir), enabled, use_env_roots);
+
+    if enabled.contains(&ClientId::Amp) {
+        paths.push((ClientId::Amp, amp_sync_cache_root(home_dir, use_env_roots)));
+    }
 
     if enabled.contains(&ClientId::Qoder) {
         // The China edition (`@qodercn-ai/qoderclicn`, Qoder CN CLI/Desktop)
@@ -3218,7 +3232,29 @@ fn scan_all_clients_with_env_strategy_inner(
     // twice.
     prefer_cursor_json_over_csv(result.get_mut(ClientId::Cursor));
 
+    // A thread can sit both in the legacy Amp data directory (written by old
+    // Amp releases, or by scripts that export threads into it) and in the
+    // `tokens amp sync` cache. Both are named `T-<id>.json`; parse the synced
+    // copy only, so the thread is never counted twice.
+    prefer_synced_amp_threads(
+        result.get_mut(ClientId::Amp),
+        &amp_sync_cache_root(home_dir, use_env_roots),
+    );
+
     result
+}
+
+/// Drop each Amp thread file outside `sync_root` whose file name is also
+/// present inside it.
+fn prefer_synced_amp_threads(files: &mut Vec<PathBuf>, sync_root: &Path) {
+    let synced: HashSet<std::ffi::OsString> = files
+        .iter()
+        .filter(|path| path.starts_with(sync_root))
+        .filter_map(|path| path.file_name().map(ToOwned::to_owned))
+        .collect();
+    files.retain(|path| {
+        path.starts_with(sync_root) || !path.file_name().is_some_and(|name| synced.contains(name))
+    });
 }
 
 /// Drop each Cursor `usage[.account].csv` whose `usage[.account].json` sibling
@@ -3552,6 +3588,38 @@ mod tests {
             std::slice::from_ref(&expected)
         );
         assert_eq!(result.total_files(), 1);
+    }
+
+    #[test]
+    #[serial]
+    fn test_scan_amp_prefers_synced_threads_over_legacy_copies() {
+        let dir = TempDir::new().unwrap();
+        let home = dir.path().to_str().unwrap();
+        let legacy = dir.path().join(".local/share/amp/threads");
+        let synced = amp_sync_cache_root(home, false);
+        fs::create_dir_all(&legacy).unwrap();
+        fs::create_dir_all(&synced).unwrap();
+        // T-both is in both places; each other thread is in one.
+        for name in ["T-both.json", "T-legacy.json"] {
+            File::create(legacy.join(name)).unwrap();
+        }
+        for name in ["T-both.json", "T-synced.json"] {
+            File::create(synced.join(name)).unwrap();
+        }
+        // The sync state beside the threads is not a thread.
+        File::create(synced.parent().unwrap().join("state.json")).unwrap();
+
+        let result = scan_all_clients_with_env_strategy(home, &["amp".to_string()], false);
+
+        let mut found = result.get(ClientId::Amp).clone();
+        found.sort();
+        let mut expected = vec![
+            legacy.join("T-legacy.json"),
+            synced.join("T-both.json"),
+            synced.join("T-synced.json"),
+        ];
+        expected.sort();
+        assert_eq!(found, expected);
     }
 
     #[test]

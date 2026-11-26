@@ -137,6 +137,13 @@ CLI and the server for that case.
 Legacy Codex cloud environments (Settings › Codex cloud (legacy)), still used
 for code review and the Linear and GitHub integrations, were not tested.
 
+## Amp
+
+Not needed. Amp keeps every thread on ampcode.com, including threads that run
+in its cloud orbs, and `tokens amp sync` on your own machine counts them (see
+the README). An orb writes no thread files, so there is nothing for
+`tokens cloud submit` to read inside it.
+
 ## Other cloud agents
 
 Any agent whose sessions the CLI already parses can report the same way once

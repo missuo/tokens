@@ -77,6 +77,8 @@ describe("per-client parser revision caps", () => {
     expect(maxSupportedParserRevision("devin-cli")).toBe(2);
     // missuo/tokens#129: Hermes usage moves off the session start day.
     expect(maxSupportedParserRevision("hermes")).toBe(2);
+    // missuo/tokens#64: Amp usage moves off the thread creation day.
+    expect(maxSupportedParserRevision("amp")).toBe(2);
     expect(maxSupportedParserRevision("devin-desktop")).toBe(1);
     expect(maxSupportedParserRevision("claude")).toBe(1);
     // Prototype keys are not clients with a raised cap.
@@ -87,6 +89,7 @@ describe("per-client parser revision caps", () => {
     ["codex", 4],
     ["devin-cli", 2],
     ["hermes", 2],
+    ["amp", 2],
     ["claude", 1],
   ] as const) {
     test(`${client} accepts revision ${cap} and rejects ${cap + 1}`, () => {

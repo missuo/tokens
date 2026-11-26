@@ -1,3 +1,4 @@
+mod amp;
 mod antigravity;
 mod auth;
 mod cloud;
@@ -175,6 +176,11 @@ enum Commands {
     Warp {
         #[command(subcommand)]
         subcommand: WarpSubcommand,
+    },
+    #[command(about = "Amp thread sync commands (ampcode.com)")]
+    Amp {
+        #[command(subcommand)]
+        subcommand: AmpSubcommand,
     },
     #[command(about = "Hindsight memory backend integration commands")]
     Hindsight {
@@ -383,6 +389,22 @@ enum HindsightSubcommand {
             help = "Bearer authentication token (or set HINDSIGHT_API_API_TOKEN)"
         )]
         token: Option<String>,
+        #[arg(long, help = "Output as JSON")]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum AmpSubcommand {
+    #[command(about = "Sync Amp threads from ampcode.com into local cache")]
+    Sync {
+        #[arg(long, help = "Re-export every thread, not only new or changed ones")]
+        force: bool,
+        #[arg(long, help = "Output as JSON")]
+        json: bool,
+    },
+    #[command(about = "Show Amp sync status")]
+    Status {
         #[arg(long, help = "Output as JSON")]
         json: bool,
     },
@@ -722,6 +744,7 @@ fn main() -> Result<()> {
         Some(Commands::Codex { subcommand }) => run_codex_command(subcommand),
         Some(Commands::Trae { subcommand }) => run_trae_command(subcommand),
         Some(Commands::Warp { subcommand }) => run_warp_command(subcommand),
+        Some(Commands::Amp { subcommand }) => run_amp_command(subcommand),
         Some(Commands::Hindsight { subcommand }) => run_hindsight_command(subcommand),
         Some(Commands::DeleteSubmittedData) => run_delete_data_command(),
         Some(Commands::McpNames { subcommand }) => commands::mcp_names::run(subcommand),
@@ -1573,7 +1596,11 @@ struct TsTokenContributionData {
 /// (missuo/tokens#129); the start day's stored total has to be allowed to drop
 /// or the moved usage counts twice. That also lets days shrink for sessions
 /// deleted from state.db, which #129 measured at under 1%, far less than the
-/// double count. Claude's and Grok's smaller
+/// double count. Amp 2: message usage is dated by its own timestamp instead of
+/// the thread's creation (missuo/tokens#64), which in threads exported from
+/// ampcode.com moved a fifth of the tokens off the day they were booked on;
+/// Amp does not delete thread files, so the creation day may drop to its real
+/// total. Claude's and Grok's smaller
 /// corrections are deliberately not bumped: both clients delete old session
 /// files, and a bump would let a total that shrank because history vanished
 /// overwrite the stored one.
@@ -1585,6 +1612,7 @@ fn submit_parser_revision(client: &str) -> u32 {
         "codex" => 4,
         "devin-cli" => 2,
         "hermes" => 2,
+        "amp" => 2,
         _ => 1,
     }
 }
@@ -3015,6 +3043,39 @@ fn run_submit_command(
             }
         }
     }
+
+    let include_amp = clients
+        .as_ref()
+        .is_none_or(|s| s.iter().any(|src| src == "amp"));
+    // Only after an explicit `tokens amp sync`: submit never starts reading
+    // the account's threads on ampcode.com on its own.
+    if include_amp && amp::has_amp_cache() {
+        say!("{}", t!("cli.submit.syncingAmp").bright_black());
+        let sync_result = amp::sync_amp_cache(false);
+        if sync_result.synced {
+            say!(
+                "{}",
+                tr!("cli.submit.ampSynced", exported = sync_result.exported).bright_black()
+            );
+            if sync_result.failed > 0 {
+                say!(
+                    "{}",
+                    tr!(
+                        "top.amp.exportsFailed",
+                        failed = sync_result.failed,
+                        error = sync_result.error.unwrap_or_default()
+                    )
+                    .yellow()
+                );
+            }
+        } else if let Some(err) = sync_result.error {
+            say!(
+                "{}",
+                tr!("cli.submit.ampSyncFailedCached", error = err).yellow()
+            );
+        }
+    }
+
     if explicit_cursor_filter || explicit_warp_filter || explicit_hindsight_filter {
         let cursor_setup_warnings = setup_warnings(&clients);
         emit_cursor_setup_warnings(&cursor_setup_warnings);
@@ -3527,6 +3588,13 @@ fn run_warp_command(subcommand: WarpSubcommand) -> Result<()> {
         WarpSubcommand::Logout { purge_cache } => warp::run_warp_logout(purge_cache),
         WarpSubcommand::Status { json } => warp::run_warp_status(json),
         WarpSubcommand::Sync { json } => warp::run_warp_sync(json),
+    }
+}
+
+fn run_amp_command(subcommand: AmpSubcommand) -> Result<()> {
+    match subcommand {
+        AmpSubcommand::Sync { force, json } => amp::run_amp_sync(force, json),
+        AmpSubcommand::Status { json } => amp::run_amp_status(json),
     }
 }
 
@@ -4356,6 +4424,8 @@ mod submit_parser_revisions {
         assert_eq!(submit_parser_revision("devin-cli"), 2);
         // missuo/tokens#129: usage moves off the session start day.
         assert_eq!(submit_parser_revision("hermes"), 2);
+        // missuo/tokens#64: usage moves off the thread creation day.
+        assert_eq!(submit_parser_revision("amp"), 2);
         assert_eq!(submit_parser_revision("devin-desktop"), 1);
         assert_eq!(submit_parser_revision("claude"), 1);
     }
