@@ -336,6 +336,9 @@ fn status_output(settings: &AutosubmitSettings) -> StatusOutput {
     }
 }
 
+/// Slack for on-cadence ticks that wake slightly early, so they are not skipped.
+const DUE_JITTER_TOLERANCE_MS: i64 = 30_000;
+
 pub fn run_decision(
     settings: &AutosubmitSettings,
     now_ms: i64,
@@ -349,9 +352,13 @@ pub fn run_decision(
     }
     let interval_ms = (settings.interval_minutes as i64).saturating_mul(60_000);
     match settings.last_run_at_ms {
-        Some(last) if now_ms < last.saturating_add(interval_ms) => AutosubmitRunDecision::NotDue {
-            next_run_at_ms: last.saturating_add(interval_ms),
-        },
+        Some(last)
+            if now_ms < last.saturating_add(interval_ms.saturating_sub(DUE_JITTER_TOLERANCE_MS)) =>
+        {
+            AutosubmitRunDecision::NotDue {
+                next_run_at_ms: last.saturating_add(interval_ms),
+            }
+        }
         _ => AutosubmitRunDecision::Due,
     }
 }
@@ -1142,5 +1149,33 @@ mod tests {
             Some(expected)
         );
         assert_eq!(windows_task_command_from_xml("<Task></Task>"), None);
+    }
+
+    #[test]
+    fn run_decision_tolerates_early_scheduler_tick() {
+        let last = 1_700_000_000_000_i64;
+        let next_run_at_ms = last + 30 * 60_000;
+        let settings = AutosubmitSettings {
+            enabled: true,
+            interval_minutes: 30,
+            last_run_at_ms: Some(last),
+            ..AutosubmitSettings::default()
+        };
+        assert_eq!(
+            run_decision(&settings, next_run_at_ms - 1, false),
+            AutosubmitRunDecision::Due
+        );
+        assert_eq!(
+            run_decision(&settings, next_run_at_ms - DUE_JITTER_TOLERANCE_MS, false),
+            AutosubmitRunDecision::Due
+        );
+        assert_eq!(
+            run_decision(
+                &settings,
+                next_run_at_ms - DUE_JITTER_TOLERANCE_MS - 1,
+                false
+            ),
+            AutosubmitRunDecision::NotDue { next_run_at_ms }
+        );
     }
 }
