@@ -291,3 +291,55 @@ jobs:
             --generate-notes \
             $PRERELEASE \
             dist/*.tar.gz
+
+  # Point the Homebrew tap at the release just published. It used to be a
+  # manual step after every release, and a missed one left `brew install
+  # tokens` a version behind. Its own job, so a tap problem shows up as one red
+  # job that can be re-run alone, after npm and the GitHub Release are already
+  # out.
+  homebrew:
+    name: Update Homebrew formula
+    needs: publish
+    # A prerelease is not something `brew upgrade` should pick up.
+    if: ${{ !contains(inputs.version, '-') }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # The formula covers macOS and glibc Linux, arm64 and x64.
+      - name: Download the release tarballs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release download "v${{ inputs.version }}" \
+            --repo "${{ github.repository }}" \
+            --pattern '*-apple-darwin.tar.gz' \
+            --pattern '*-unknown-linux-gnu.tar.gz' \
+            --dir dist
+          ls -la dist
+
+      # A deploy key with write access to owo-network/homebrew-brew only. The
+      # workflow's GITHUB_TOKEN cannot push to another repository.
+      - uses: actions/checkout@v7
+        with:
+          repository: owo-network/homebrew-brew
+          ref: main
+          ssh-key: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+          path: tap
+
+      - name: Bump the formula and push
+        run: |
+          set -euo pipefail
+          python3 -I scripts/bump-homebrew-formula.py \
+            tap/Formula/tokens.rb "${{ inputs.version }}" dist
+          cd tap
+          if git diff --quiet; then
+            echo "Formula/tokens.rb already points at ${{ inputs.version }}"
+            exit 0
+          fi
+          git diff
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "tokens ${{ inputs.version }}"
+          git push origin HEAD:main
