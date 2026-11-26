@@ -2351,12 +2351,25 @@ pub(super) mod tests {
         let path = dir.path().join("session-1118.db");
 
         let session_created_ms = 1_781_502_653_000_i64; // build_trajectory_meta
-        let two_days_ago = recent_epoch_seconds() - 2 * 24 * 60 * 60;
-        let now_ish = recent_epoch_seconds();
+        // Pinned one and three days into the session rather than read off the
+        // clock. Each row stores raw micros bytes, and for some clock values
+        // the byte-reversed mirror is also a plausible time, which the parser
+        // declines as ambiguous and dates at the session start instead. That
+        // made this test fail on roughly one run in a hundred; see
+        // `agy_1_1_18_gen9_field_10_dates_the_turn` for the same pin. Past
+        // stamps never leave the session window, which only extends forward.
+        let first_turn = 1_781_589_053_i64; // 2026-06-16
+        let second_turn = 1_781_761_853_i64; // 2026-06-18
 
         let row = |seconds: i64, id: &str| {
+            let micros = (seconds * 1_000_000) as u64;
+            assert_eq!(
+                epoch_scalar_with_unit(micros.swap_bytes()),
+                None,
+                "the fixture's mirror reading must not be a time"
+            );
             let mut gen9 = enc_varint(2, u64::MAX); // the unset sentinel
-            gen9.extend(enc_len(10, &((seconds * 1_000_000) as u64).to_le_bytes()));
+            gen9.extend(enc_len(10, &micros.to_le_bytes()));
             build_row_with_gen9(&gen9, id)
         };
 
@@ -2367,7 +2380,7 @@ pub(super) mod tests {
                  CREATE TABLE trajectory_metadata_blob (id text, data blob);",
             )
             .unwrap();
-            for (idx, blob) in [row(two_days_ago, "turn-1"), row(now_ish, "turn-2")]
+            for (idx, blob) in [row(first_turn, "turn-1"), row(second_turn, "turn-2")]
                 .iter()
                 .enumerate()
             {
@@ -2386,8 +2399,8 @@ pub(super) mod tests {
 
         let messages = parse_antigravity_cli_file(&path);
         assert_eq!(messages.len(), 2);
-        assert_eq!(messages[0].timestamp, two_days_ago * 1_000);
-        assert_eq!(messages[1].timestamp, now_ish * 1_000);
+        assert_eq!(messages[0].timestamp, first_turn * 1_000);
+        assert_eq!(messages[1].timestamp, second_turn * 1_000);
         assert!(
             messages.iter().all(|m| m.timestamp != session_created_ms),
             "no row may keep the session-created stamp once #9.#10 decodes"
