@@ -235,6 +235,7 @@
   "cli.submit.models": "    Models: {count} models",
   "cli.submit.month.help": "Show current month",
   "cli.submit.noData": "  No usage data found to submit.\n",
+  "cli.submit.claudeAppsNotScanned": "  Only Claude Code sessions are counted. Chats in the Claude web, desktop and mobile apps, Projects included, keep no local usage records, so they are not collected.\n",
   "cli.submit.notLoggedIn": "Not logged in.",
   "cli.submit.profileLink": "  View your profile: {base_url}/u/{username}",
   "cli.submit.replace.help": "Authoritatively replace explicitly selected clients within --since/--until",

@@ -235,6 +235,7 @@
   "cli.submit.models": "    模型数：{count}",
   "cli.submit.month.help": "显示当月",
   "cli.submit.noData": "  没有找到可提交的用量数据。\n",
+  "cli.submit.claudeAppsNotScanned": "  只统计 Claude Code 会话。Claude 网页版、桌面版和移动端里的对话（包括 Projects）不会在本地留下用量记录，因此不会被收集。\n",
   "cli.submit.notLoggedIn": "尚未登录。",
   "cli.submit.profileLink": "  查看你的资料页：{base_url}/u/{username}",
   "cli.submit.replace.help": "在 --since/--until 范围内，以本次数据权威替换显式选中的客户端",

@@ -3081,6 +3081,12 @@ fn run_submit_command(
         emit_cursor_setup_warnings(&cursor_setup_warnings);
     }
 
+    // `--client claude` reads Claude Code only; the Claude apps keep no local
+    // usage records (missuo/tokens#94).
+    let claude_selected = clients
+        .as_ref()
+        .is_some_and(|s| s.iter().any(|src| src == "claude"));
+
     say!("{}", t!("cli.submit.scanning").bright_black());
 
     let rt = Runtime::new()?;
@@ -3182,6 +3188,9 @@ fn run_submit_command(
     if graph_result.summary.total_tokens == 0 {
         say!();
         say!("{}", t!("cli.submit.noData").yellow());
+        if claude_selected {
+            say!("{}", t!("cli.submit.claudeAppsNotScanned").bright_black());
+        }
         return Ok(());
     }
 
